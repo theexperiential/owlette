@@ -1,18 +1,10 @@
 /**
- * GET /api/users/activity
+ * GET /api/users/activity — `{ activity: Record<uid, { lastSignInTime,
+ * lastRefreshTime, disabled }> }` straight from Firebase Auth, which is the
+ * authoritative "last active": Firestore user docs carry no sign-in timestamps.
  *
- * Last-seen source for platform users. Returns Firebase Auth sign-in metadata
- * keyed by uid — the authoritative source for "last active" since Firestore
- * user docs don't track sign-in timestamps.
- *
- * Auth:
- *   - api key with `user=*:read` scope (superadmin-only at minting)
- *   - session / id-token from a superadmin user
- *
- * Response:
- *   { activity: Record<uid, { lastSignInTime, lastRefreshTime, disabled }> }
- *
- * Added for the user-management "last seen" column.
+ * Auth: `user=*:read` api key (superadmin-only at minting), or a superadmin
+ * session / id-token.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';

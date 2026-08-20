@@ -65,9 +65,7 @@ beforeEach(() => {
   mocks.collectionGet.mockResolvedValue(querySnapshot([]));
 });
 
-/* ========================================================================== */
-/*  GET /api/roosts                                                           */
-/* ========================================================================== */
+// GET /api/roosts
 describe('GET /api/roosts', () => {
   it('400 when siteId missing', async () => {
     const req = createMockRequest('http://localhost/api/roosts');
@@ -179,9 +177,7 @@ describe('GET /api/roosts', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/roosts                                                          */
-/* ========================================================================== */
+// POST /api/roosts
 describe('POST /api/roosts', () => {
   it('400 when siteId invalid', async () => {
     const req = createMockRequest('http://localhost/api/roosts', {
@@ -252,9 +248,7 @@ describe('POST /api/roosts', () => {
   });
 });
 
-/* ========================================================================== */
-/*  GET /api/roosts/{id}                                                      */
-/* ========================================================================== */
+// GET /api/roosts/{id}
 describe('GET /api/roosts/{id}', () => {
   it('400 when roostId has bad format', async () => {
     const req = createMockRequest(
@@ -314,9 +308,7 @@ describe('GET /api/roosts/{id}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  PATCH /api/roosts/{id}                                                    */
-/* ========================================================================== */
+// PATCH /api/roosts/{id}
 describe('PATCH /api/roosts/{id}', () => {
   it('400 when neither name/targets/extractPath provided', async () => {
     const req = createMockRequest(
@@ -377,9 +369,7 @@ describe('PATCH /api/roosts/{id}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  DELETE /api/roosts/{id}                                                   */
-/* ========================================================================== */
+// DELETE /api/roosts/{id}
 describe('DELETE /api/roosts/{id}', () => {
   it('400 when siteId missing', async () => {
     const req = createMockRequest(`http://localhost/api/roosts/${ROOST}`, {
@@ -429,6 +419,4 @@ describe('DELETE /api/roosts/{id}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  billing gate — roost mutations are pro-only (wave 0.6)                    */
-/* ========================================================================== */
+// billing gate — roost mutations are pro-only (wave 0.6)

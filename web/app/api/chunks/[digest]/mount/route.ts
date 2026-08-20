@@ -9,8 +9,6 @@
  * Writes an idempotent entry to
  *   sites/{siteId}/chunk_referrers/{hash}/entries/mount_{from}_{to}
  * which `GET /referrers` paginates over.
- *
- * roost public api wave 3.4.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -61,8 +59,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // Query params win over body for the common gh-style invocation
-    // `?from=x&to=y&siteId=z`; body supported for programmatic clients.
+    // Query params win; the body form exists for programmatic clients.
     const qp = request.nextUrl.searchParams;
     const siteIdRaw = qp.get('siteId');
     const fromRaw = qp.get('from');
@@ -70,10 +67,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     let body: MountBody = {};
     if (!siteIdRaw || !fromRaw || !toRaw) {
-      // Only try to parse body if any required value is missing in query.
-      // parseJsonBody returns an error problem when body is absent or
-      // invalid — avoid that by only reading body when needed and
-      // gracefully defaulting.
+      // parseJsonBody errors on an absent body, so only read one when a
+      // required value is actually missing from the query.
       const contentLength = Number(request.headers.get('content-length') ?? 0);
       if (contentLength > 0) {
         const parsed = await parseJsonBody(request);
@@ -114,8 +109,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
     if (gateRes) return gateRes;
 
-    // Zero-byte check: the chunk must already exist under this site. Mount
-    // never moves/copies bytes.
+    // Mount never moves bytes, so the chunk must already exist here.
     const present = await hasChunk(site.siteId, digest);
     if (!present) {
       return problem({
@@ -127,7 +121,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // Verify both roosts exist (prevents mounting into/out-of phantom roosts).
+    // No mounting into or out of phantom roosts.
     const db = getAdminDb();
     const roostsCol = db.collection('sites').doc(site.siteId).collection('roosts');
     const [fromSnap, toSnap] = await Promise.all([
@@ -153,8 +147,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // Idempotent entry — same (from, to) pair maps to the same doc id, so
-    // repeat mounts from the same client don't double-count.
+    // Same (from, to) maps to the same doc id, so repeats don't double-count.
     const entryId = `mount_${fromCandidate}_${toCandidate}`;
     const entryRef = db
       .collection('sites')

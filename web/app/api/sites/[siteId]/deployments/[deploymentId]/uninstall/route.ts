@@ -1,14 +1,10 @@
 /**
  * POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall
  *
- * Queues an `uninstall_software` command for every target machine in the
- * deployment. Flips the deployment-level status to `uninstalling`.
- * Per-target reconciliation lands later — this endpoint does NOT block
- * waiting for completion (track it via GET poll).
+ * Queues `uninstall_software` for every target and flips the deployment status
+ * to `uninstalling`. Non-blocking — poll GET for per-target reconciliation.
  *
  * Requires `site=<id>:admin` and an `Idempotency-Key` header.
- *
- * api-sprint wave 1 — track 1A (installer-deploys-api).
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -38,8 +34,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 
-    // Per the api-surface spec, uninstall is privileged: requires
-    // site=<id>:admin (vs write for create/retry/cancel).
+    // Privileged: `admin`, not the `write` that create/retry/cancel take.
     const auth = await requireSiteAuthAndScope(request, siteId, 'admin');
     if (!auth.ok) return auth.response;
 

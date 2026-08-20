@@ -1,16 +1,11 @@
 /**
- * Node-side chunker for the `owlette roost push` CLI command.
+ * Node-side chunker for `owlette roost push`: walk a directory, slice each
+ * file into fixed 4 MiB chunks, sha-256 each chunk, emit ChunkedFileEntry
+ * values byte-identical to the web's (`web/lib/chunking.ts`, Blob + Web
+ * Crypto).
  *
- * The web counterpart lives in `web/lib/chunking.ts` and operates on Blobs
- * via Web Crypto. This is the fs-streaming equivalent used by the cli:
- * walk a directory, slice each file into fixed 4 MiB chunks, compute
- * sha-256 over each chunk's bytes, yield ChunkedFileEntry values
- * compatible with the server's schema (matches the web's per-file entry
- * shape byte-for-byte).
- *
- * Zero-byte files are skipped — the version schema requires at least
- * one positive-size chunk per file. Walk respects symlinks only when
- * they point inside the supplied root (refuses to escape).
+ * Zero-byte files are skipped — the version schema requires at least one
+ * positive-size chunk per file. Symlinks are followed only inside the root.
  */
 
 import { createReadStream, promises as fs } from 'fs';
@@ -27,9 +22,8 @@ export interface ChunkedFileEntry {
 }
 
 /**
- * Recursively walk `root` and return absolute file paths. Ignores
- * `.git/`, `node_modules/`, and any `roost.ignore` lines supplied by
- * the caller (v1 — no .gitignore parsing, keep it simple).
+ * Absolute file paths under `root`. Ignores `.git/`, `node_modules/`, and any
+ * caller-supplied `roost.ignore` lines. No .gitignore parsing.
  */
 export async function walkFiles(
   root: string,
@@ -67,10 +61,7 @@ export async function walkFiles(
   return files;
 }
 
-/**
- * Chunk + hash one file. Streams 4 MiB at a time to keep peak memory
- * bounded regardless of file size.
- */
+/** Chunk + hash one file, streaming 4 MiB at a time so peak memory is bounded. */
 export async function chunkOneFile(
   absPath: string,
   relPath: string,
@@ -128,10 +119,8 @@ export async function chunkOneFile(
 }
 
 /**
- * Chunk every non-zero file under `root` into a `ChunkedFileEntry[]`.
- * Files are processed sequentially; parallelism across files would
- * raise peak memory without improving wall-clock (crypto is fast vs
- * disk).
+ * Chunk every non-zero file under `root`. Sequential on purpose: crypto is
+ * fast next to disk, so parallelism would only raise peak memory.
  */
 export interface ChunkDirectoryOpts {
   ignore?: readonly string[];

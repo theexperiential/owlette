@@ -3,15 +3,15 @@
 /**
  * Stage 3 of the talon pipeline — WHAT happens when it fires.
  *
- * One to five rows (`TALON_MIN_OUTPUTS` … `TALON_MAX_OUTPUTS`), each carrying
- * its own config. Rows keep a client-side `key` so React identity survives a
- * reorder-by-removal; the key is never persisted — `TalonOutput` has no id.
+ * One to five rows (`TALON_MIN_OUTPUTS`…`TALON_MAX_OUTPUTS`), each with its own
+ * config. Rows carry a client-side `key` so React identity survives
+ * reorder-by-removal; it is never persisted — `TalonOutput` has no id.
  *
  * `command` outputs queue real process control, so the store only accepts them
- * from a site admin (`assertCommandOutputsAllowed`). The picker mirrors that:
- * `command` is offered only when `isSiteAdmin`. An existing command row is
- * still rendered for a non-admin (so an edit can't silently drop it) — the
- * server refuses the save, which is the honest outcome.
+ * from a site admin (`assertCommandOutputsAllowed`) and the picker offers
+ * `command` only when `isSiteAdmin`. An EXISTING command row still renders for
+ * a non-admin so an edit can't silently drop it; the server then refuses the
+ * save, which is the honest outcome.
  *
  * Naming: the assistant is **hoot** in copy; the wire type stays `'cortex'`.
  */
@@ -40,9 +40,7 @@ import { TALON_DIRECTIVE_MAX_LENGTH, TALON_MAX_OUTPUTS } from '@/lib/talons/vali
 
 import type { TalonMachineOption } from './ConditionCard';
 
-/* -------------------------------------------------------------------------- */
-/*  draft shape                                                               */
-/* -------------------------------------------------------------------------- */
+// draft shape
 
 export interface OutputDraft {
   /** React key only — outputs have no persisted id. */
@@ -51,9 +49,8 @@ export interface OutputDraft {
   url: string;
   directive: string;
   /**
-   * hoot outputs only — whether hoot may use its repair tools on the machine
-   * rather than only investigating. Off by default: an automation that acts
-   * without being asked to is the one thing an operator has to opt into.
+   * hoot outputs only — may hoot use its repair tools, or only investigate?
+   * Off by default: acting unasked is the thing an operator must opt into.
    */
   allowActions: boolean;
   commandType: TalonCommandType;
@@ -142,9 +139,7 @@ export function outputDraftToInput(draft: OutputDraft): TalonOutput {
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  process options                                                           */
-/* -------------------------------------------------------------------------- */
+// process options
 
 interface ProcessOption {
   /** `id:<processId>` or `name:<processName>` — ids win when the agent reported one. */
@@ -180,9 +175,7 @@ function selectedProcessValue(draft: OutputDraft): string {
   return '';
 }
 
-/* -------------------------------------------------------------------------- */
-/*  card                                                                      */
-/* -------------------------------------------------------------------------- */
+// card
 
 interface OutputsCardProps {
   drafts: OutputDraft[];
@@ -193,9 +186,9 @@ interface OutputsCardProps {
   disabled: boolean;
   /**
    * Message for one error slot — see `slotForField` in `TalonEditorDialog`.
-   * `outputs` is the LIST's own slot (too few, too many, a malformed row); the
-   * per-row paths have their own slots and are never folded in here, which is
-   * what stopped a row's message printing twice.
+   * `outputs` is the LIST's own slot (too few, too many, malformed row); per-row
+   * paths have their own slots and are never folded in, which is what stopped a
+   * row's message printing twice.
    */
   errorFor: (slot: string) => string | undefined;
 }

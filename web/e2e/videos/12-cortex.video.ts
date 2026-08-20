@@ -1,8 +1,6 @@
 /**
- * Scene — episode 12, "hoot — manage machines by chat".
- *
- * Every beat in this episode is SCREEN capture (no B-ROLL). Beat list with
- * rendered VO durations (voiceover/out/12-cortex/, ffprobe):
+ * Scene — episode 12, "hoot — manage machines by chat". All SCREEN capture,
+ * no B-ROLL. VO durations from voiceover/out/12-cortex/ (ffprobe):
  *   b01 what hoot is             ~20.8s  → seeded incident chat at /hoot/<id>
  *   b02 one-time setup             ~21.2s  → account settings → hoot tab
  *   b03 pick what it's talking to  ~16.4s  → MachineSelector at the top of the chat
@@ -10,21 +8,15 @@
  *   b05 ask it to act              ~36.8s  → scroll to the act/tool-call turn
  *   b06 guardrails                 ~30.3s  → per-machine hoot active/inactive toggle
  *
- * NOTE from the script (b04 + b05): the chat needs a live LLM, so we cannot
- * type a prompt and await a real response. Instead the seeded conversation
- * already contains the user→assistant turn this episode narrates. This scene
- * scrolls/highlights, it never types into the ChatInput.
+ * b04/b05 scroll and highlight, never type: a real prompt needs a live LLM, so
+ * the seeded conversation already holds the turn being narrated.
  *
- * NOTE from the script (b05): per the product-gap call-out, do NOT script a
- * "hoot pauses to confirm" beat — `requiresConfirmation` is unimplemented
- * and tier-3 tools auto-run. We highlight the inline tool-call card the
- * fixture already renders (`tool-checkLogs`) and the VO covers the actual
- * behavior (admin tier + per-machine switch).
+ * b05 must NOT script a "hoot pauses to confirm" beat — `requiresConfirmation`
+ * is unimplemented and tier-3 tools auto-run.
  *
- * Reuses the screenshots harness verbatim: the `diagnose-cortex-chat` fixture
- * seeds the user's LLM key bypass, the focus conversation
- * `screenshot-cortex-${siteId}`, sidebar filler chats, and the seeded
- * media-server-stage machine + 03:14 incident transcript.
+ * Reuses the screenshots harness verbatim (`diagnose-cortex-chat` fixture:
+ * LLM key bypass, focus conversation `screenshot-cortex-${siteId}`, filler
+ * chats, media-server-stage machine + 03:14 incident transcript).
  *
  * Run:  cd web && npm run videos -- --grep "episode 12"
  * Out:  web/e2e/.output/videos/12-cortex.mp4
@@ -140,9 +132,8 @@ test('episode 12 — hoot — manage machines by chat', async ({ browser }) => {
         await narrate(page, 'b05 chat input frame', 13);
 
         // [b06] guardrails — the per-machine hoot on/off toggle (~30.3s VO).
-        // The toggle only renders when a SINGLE machine is selected (not site mode).
-        // The seeded conversation targets media-server-stage, so switch the
-        // selector off "All Machines" and onto that machine to surface it.
+        // Only renders for a SINGLE selected machine, so switch off "All
+        // Machines" onto media-server-stage.
         await clickWithCursor(page, machineSelector);
         await page.waitForTimeout(400);
         const mediaServerOption = page

@@ -1,21 +1,14 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for the hoot output — the headless assistant turn a talon fires
- * (talons wave 3, task 3.3).
+ * Unit tests for the hoot output — the headless assistant turn a talon fires.
+ * Only the three outside collaborators are mocked (author pre-flight, turn
+ * store, detached runner); everything this module decides runs for real.
  *
- * The three collaborators that reach outside this module are mocked at their
- * boundary: the author pre-flight (access + llm key), the turn store (lock +
- * turnId), and the detached turn runner. Everything this module actually
- * decides — whether the creator may still drive a turn, what the chat doc looks
- * like, what the assistant is told, what privileges it gets, and the tee cancel
- * that stops the unread HTTP branch buffering — is exercised for real.
- *
- * `author.server` is mocked with `requireActual` spread over it so the REAL
- * `TalonAuthorError` class is in play: this module classifies on `instanceof`,
- * and a hand-rolled stand-in would keep passing after the real class moved.
- *
- * `Date.now` is pinned so the generated chatId is assertable verbatim.
+ * `author.server` keeps `requireActual` so the REAL `TalonAuthorError` is in
+ * play — this module classifies on `instanceof`, and a stand-in would keep
+ * passing after the real class moved. `Date.now` is pinned so the chatId is
+ * assertable verbatim.
  */
 
 const mockResolveTalonAuthor = jest.fn();
@@ -66,10 +59,6 @@ import {
 } from '@/lib/talons/hootOutput.server';
 import type { StoredTalon } from '@/lib/talons/store.server';
 import type { TalonDoc } from '@/lib/talons/types';
-
-/* ------------------------------------------------------------------------- */
-/*  fixtures                                                                  */
-/* ------------------------------------------------------------------------- */
 
 const SITE = 'site-a';
 const RUN_ID = 'run-1';
@@ -172,10 +161,6 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-/* ------------------------------------------------------------------------- */
-/*  fire-time access re-resolution                                            */
-/* ------------------------------------------------------------------------- */
-
 describe('fire-time access re-resolution', () => {
   it('re-resolves the creator against the site on every run', async () => {
     await runHootOutput(db, args());
@@ -183,12 +168,8 @@ describe('fire-time access re-resolution', () => {
     expect(mockResolveTalonAuthor).toHaveBeenCalledWith(db, SITE, args().talon);
   });
 
-  /**
-   * Every unrecoverable author problem, in one table. Each one must fail the
-   * run AND carry `disabledReason` — that field is the whole difference between
-   * "this talon is switched off because its author left" and ten more silent
-   * 3am failures ending in a disable nobody can explain.
-   */
+  // Every unrecoverable author problem. Each must fail the run AND carry
+  // `disabledReason` — without it a disable is unexplainable after the fact.
   it.each([
     ['creator_not_a_user', 'Talon t1 has no user author'],
     ['creator_deleted', 'Talon t1 author admin-uid can no longer run it: User is deleted'],
@@ -222,8 +203,8 @@ describe('fire-time access re-resolution', () => {
       detail: 'creator_missing_llm_key',
       disabledReason: 'creator_missing_llm_key',
     });
-    // Pre-flighted BEFORE the chat and the lock, so a keyless creator does not
-    // leave an empty conversation and a claimed lock behind on every firing.
+    // Pre-flighted before the chat and the lock, so a keyless creator leaves no
+    // empty conversation or claimed lock behind on every firing.
     expect(mockAssertTalonAuthorLlmKey).toHaveBeenCalledWith(db, 'admin-uid');
     expect(fake.docs.size).toBe(0);
     expect(mockAcquireTurnLock).not.toHaveBeenCalled();
@@ -245,10 +226,6 @@ describe('fire-time access re-resolution', () => {
     expect(mockStartTurn).not.toHaveBeenCalled();
   });
 });
-
-/* ------------------------------------------------------------------------- */
-/*  fresh chat per run                                                        */
-/* ------------------------------------------------------------------------- */
 
 describe('the chat', () => {
   it('creates a fresh chat keyed by timestamp and run id', async () => {
@@ -324,10 +301,6 @@ describe('the chat', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  the turn                                                                  */
-/* ------------------------------------------------------------------------- */
-
 describe('the turn', () => {
   it('starts headless with the run identifiers, the talon source, and the recovery index', async () => {
     mockAcquireTurnLock.mockResolvedValue({ call_1: { m1: { commandId: 'cmd_1' } } });
@@ -347,9 +320,8 @@ describe('the turn', () => {
   });
 
   it('cancels the unread http tee branch immediately', async () => {
-    // The runner returns the HTTP branch of a tee. Nothing reads it here, and
-    // an unread branch buffers the whole turn in memory — the snapshot pump
-    // owns the other branch and keeps the turn alive.
+    // The runner returns the HTTP branch of a tee; unread, it buffers the whole
+    // turn in memory. The snapshot pump owns the other branch.
     await runHootOutput(db, args());
 
     expect(mockCancel).toHaveBeenCalledTimes(1);
@@ -380,10 +352,6 @@ describe('the turn', () => {
 
 });
 
-/* ------------------------------------------------------------------------- */
-/*  privilege clamp                                                           */
-/* ------------------------------------------------------------------------- */
-
 describe('privilege ceiling', () => {
   it('caps a turn at read-only tools by default', async () => {
     mockResolveTalonAuthor.mockResolvedValue({
@@ -398,9 +366,8 @@ describe('privilege ceiling', () => {
 
     await runHootOutput(db, args());
 
-    // The ceiling is explicit, NOT laundered through a degraded access object:
-    // `startTurn` intersects it with what the access earns, so the resolved
-    // access is forwarded verbatim and still governs the upper bound.
+    // The ceiling is explicit, not laundered through a degraded access object —
+    // `startTurn` intersects it with what the access earns.
     expect(startTurnParams().maxToolTier).toBe(READ_ONLY_TIER);
     expect(startTurnParams().access).toEqual({
       role: 'superadmin',
@@ -424,10 +391,6 @@ describe('privilege ceiling', () => {
     expect(UNATTENDED_MAX_TIER).toBe(2);
   });
 });
-
-/* ------------------------------------------------------------------------- */
-/*  the directive message                                                     */
-/* ------------------------------------------------------------------------- */
 
 describe('the directive message', () => {
   it('opens with the directive and names the talon, trigger, and machine', async () => {

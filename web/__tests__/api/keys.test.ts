@@ -17,9 +17,8 @@ jest.mock('@/lib/withRateLimit', () => ({
   withRateLimit: (handler: unknown) => handler,
 }));
 
-// scopeFingerprint stays real: PATCH puts its output in the audit payload, and
-// the "never the raw scopes" assertion is only worth anything if what actually
-// ships is the hash rather than a stub.
+// scopeFingerprint stays unmocked: PATCH puts its output in the audit payload, and the
+// "never the raw scopes" assertion only means something against the real hash.
 jest.mock('@/lib/auditLogClient', () => ({
   ...jest.requireActual('@/lib/auditLogClient'),
   emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
@@ -270,8 +269,8 @@ describe('/api/keys POST', () => {
   it('still validates explicit site scopes against caller site access', async () => {
     const res = await makePost({
       name: 'Site key',
-      // Still sent, because the shipped CLI and both SDKs still send it. The
-      // route accepts and ignores it rather than 400-ing, and mints live.
+      // The shipped CLI and both SDKs still send it, so the route accepts and ignores it
+      // rather than 400-ing.
       environment: 'test',
       scopes: [{ resource: 'site', id: 'site-1', permissions: ['read'] }],
     });
@@ -413,9 +412,8 @@ describe('/api/keys/{keyId} PATCH', () => {
   }
 
   it('writes the new scopes to the LOOKUP doc, not just the user record', async () => {
-    // The one assertion that matters. Authorization reads scopes only from
-    // api_keys/{keyHash}; updating the user doc alone would leave the
-    // credential on its old permissions while the ui claimed otherwise.
+    // Authorization reads scopes only from api_keys/{keyHash} — updating the user doc alone
+    // would leave the credential on its old permissions while the ui claimed otherwise.
     seedKey();
     const res = await makePatch('key-a', {
       scopes: [{ resource: 'site', id: 'site-1', permissions: ['read', 'write'] }],
@@ -495,8 +493,8 @@ describe('/api/keys/{keyId} PATCH', () => {
     );
     const payload = JSON.stringify(mockEmitMutation.mock.calls.at(-1));
     expect(payload).not.toContain('permissions');
-    // Fingerprints are what makes the redacted record still auditable: they
-    // must actually differ, or the event proves nothing changed.
+    // Fingerprints are what keeps the redacted record auditable: they must actually differ,
+    // or the event proves nothing.
     const attrs = mockEmitMutation.mock.calls.at(-1)?.[0].attributes as Record<string, unknown>;
     expect(attrs.scopeFingerprintBefore).toEqual(expect.any(String));
     expect(attrs.scopeFingerprintAfter).not.toEqual(attrs.scopeFingerprintBefore);

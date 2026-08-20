@@ -5,34 +5,17 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import logger from '@/lib/logger';
 
 /**
- * POST /api/agent/auth/exchange
+ * POST /api/agent/auth/exchange — first step of agent pairing: trade the
+ * installer's one-time registration code for tokens.
  *
- * Exchange a registration code for authentication tokens.
- * This is the first step in the agent OAuth flow - the registration code
- * is embedded in the installer and exchanged for a custom token + refresh token.
+ * In:  `{registrationCode, machineId, version}`
+ * Out: `{accessToken (1h ID token), refreshToken (no expiry, admin-revocable),
+ *       expiresIn, siteId}`; 401 on an invalid/used/expired code.
  *
- * Request body:
- * - registrationCode: string - One-time registration code from installer
- * - machineId: string - Unique machine identifier (hostname)
- * - version: string - Agent version (e.g., "2.0.0")
- *
- * Response (200 OK):
- * - accessToken: string - OAuth 2.0 access token for Firestore API (1 hour expiry)
- * - refreshToken: string - Long-lived refresh token (never expires, can be revoked by admin)
- * - expiresIn: number - Access token expiry in seconds (3600)
- * - siteId: string - Site ID this agent is authorized for
- *
- * Errors:
- * - 400: Missing required fields
- * - 401: Invalid or expired registration code
- * - 429: Rate limit exceeded (20 attempts per hour per IP)
- * - 500: Server error
- *
- * SECURITY: Rate limited to prevent brute force token exchange attempts
+ * Rate limited against brute-forcing registration codes.
  */
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
-    // Parse request body
     const body = await request.json();
     const { registrationCode, machineId, version } = body;
 
@@ -43,13 +26,12 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Two-phase exchange: validate first, generate tokens, then mark used.
-    // This prevents burning the registration code if token generation fails
-    // (e.g., Firebase Auth is temporarily down).
+    // Two-phase: validate, mint, THEN mark used — so a Firebase Auth outage
+    // doesn't burn the code.
     const adminDb = getAdminDb();
     const tokenRef = adminDb.collection('agent_tokens').doc(registrationCode);
 
-    // Phase 1: Validate the registration code (read-only check)
+    // Phase 1: read-only validation.
     const tokenDoc = await tokenRef.get();
 
     if (!tokenDoc.exists) {
@@ -78,7 +60,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     const agentUid = `agent_${siteId}_${machineId}`.replace(/[^a-zA-Z0-9_]/g, '_');
 
-    // Generate Firebase Custom Token for agent
     const adminAuth = getAdminAuth();
     const customToken = await adminAuth.createCustomToken(agentUid, {
       role: 'agent',
@@ -87,8 +68,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       version,
     });
 
-    // Exchange custom token for ID token (required for Firestore REST API)
-    // This uses Firebase Auth REST API to convert the custom token
+    // Firestore REST needs an ID token, so trade the custom token for one.
     const firebaseApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
     if (!firebaseApiKey) {
       throw new Error('Firebase API key not configured');
@@ -108,13 +88,11 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       throw new Error(`Failed to exchange custom token: ${errorData.error?.message || 'Unknown error'}`);
     }
 
-    // Response body intentionally unused — the refreshAuthResponse call below
-    // returns the ID token we actually need (with custom claims baked in).
+    // Body unused: the second exchange below returns the token with claims.
     authResponse.body?.cancel();
 
-    // CRITICAL: Set custom claims on the user account
-    // Custom token claims are NOT automatically persisted - must explicitly set them
-    // This ensures future ID tokens contain the required claims for Firestore security rules
+    // Custom-token claims are NOT persisted to the account, so set them here or
+    // future ID tokens fail the Firestore rules.
     await adminAuth.setCustomUserClaims(agentUid, {
       role: 'agent',
       site_id: siteId,
@@ -122,9 +100,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       version,
     });
 
-    // Force token refresh to get ID token with custom claims
-    // The previous ID token won't have the claims until we refresh
-    // We need to create a NEW custom token and exchange it again
+    // Claims only appear after a fresh exchange, so mint and trade a new token.
     const customTokenWithClaims = await adminAuth.createCustomToken(agentUid, {
       role: 'agent',
       site_id: siteId,
@@ -147,20 +123,17 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     const refreshAuthData = await refreshAuthResponse.json();
-    const finalIdToken = refreshAuthData.idToken; // This token has the custom claims
+    const finalIdToken = refreshAuthData.idToken; // carries the custom claims
 
-    // Generate refresh token (cryptographically secure random)
     const crypto = await import('crypto');
     const refreshToken = crypto.randomBytes(64).toString('base64url');
 
-    // Hash refresh token for storage (prevent theft if DB compromised)
+    // Stored hashed so a DB compromise doesn't yield usable tokens.
     const refreshTokenHash = crypto.createHash('sha256')
       .update(refreshToken)
       .digest('hex');
 
-    // Store refresh token in Firestore
-    // Note: expiresAt is intentionally omitted - tokens never expire for long-duration installations
-    // Admins can manually revoke tokens via the admin panel if needed
+    // No expiresAt on purpose: installs run for years; revocation is manual.
     await adminDb.collection('agent_refresh_tokens').doc(refreshTokenHash).set({
       siteId,
       machineId,
@@ -171,8 +144,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       agentUid,
     });
 
-    // Phase 2: Token generation succeeded — now atomically mark code as used.
-    // Transaction prevents TOCTOU races (two concurrent requests both passing Phase 1).
+    // Phase 2: claim the code in a txn — two requests can both clear Phase 1.
     try {
       await adminDb.runTransaction(async (transaction) => {
         const freshDoc = await transaction.get(tokenRef);
@@ -187,8 +159,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         });
       });
     } catch (txError: unknown) {
-      // Another request won the race — but we already generated tokens.
-      // This is rare; the agent will get a 401 and can re-pair with a new code.
+      // Lost the race after minting; agent re-pairs with a new code.
       const message = txError instanceof Error ? txError.message : String(txError);
       logger.warn(`Registration code claim race: ${message}`);
       return NextResponse.json({ error: 'Registration code already used' }, { status: 401 });
@@ -198,9 +169,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     return NextResponse.json(
       {
-        accessToken: finalIdToken, // Use the refreshed token with custom claims
+        accessToken: finalIdToken,
         refreshToken,
-        expiresIn: 3600, // 1 hour in seconds
+        expiresIn: 3600,
         siteId,
       },
       { status: 200 }

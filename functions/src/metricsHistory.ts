@@ -1,30 +1,13 @@
 /**
- * Metrics History Cloud Function
+ * Fans the agent's single machine-doc metrics write out into
+ * `metrics_history/{bucket}` and evaluates threshold alert rules, so the agent
+ * never has to write twice.
  *
- * Triggered on every metrics write to populate the metrics_history subcollection.
- * This approach uses the single metrics write from the agent to populate history,
- * avoiding duplicate writes from the agent.
- *
- * Also evaluates threshold alert rules and triggers notifications when breached.
- *
- * Data flow:
- * 1. Agent writes to: sites/{siteId}/machines/{machineId} (metrics data)
- * 2. This function triggers and writes to: sites/{siteId}/machines/{machineId}/metrics_history/{bucket}
- * 3. Evaluates threshold alert rules from sites/{siteId}/settings/alerts
- * 4. If threshold breached + not in cooldown, calls /api/alerts/trigger
- *
- * Rate limiting:
- * - Checks last sample timestamp to avoid duplicate samples within 55 seconds
- * - Uses Firestore FieldValue.arrayUnion for atomic append (no read-modify-write)
- *
- * History bucket schema:
- * - Legacy docs used one daily bucket: metrics_history/{YYYY-MM-DD}
- * - New writes use hourly UTC buckets: metrics_history/{YYYY-MM-DD-HH}
- *
- * The samples/meta shape is unchanged. Splitting the daily array into 24 hourly
- * docs keeps rich 30-second telemetry well below Firestore's 1MiB document
- * limit while leaving existing daily docs available for readers that support
- * both shapes.
+ * Buckets are hourly UTC (`YYYY-MM-DD-HH`); legacy docs were daily
+ * (`YYYY-MM-DD`) and readers still support both. 24 hourly docs keep 30-second
+ * telemetry under Firestore's 1MiB document limit — the samples/meta shape is
+ * unchanged. Appends via arrayUnion (atomic, no read-modify-write), with a 55s
+ * duplicate-sample guard.
  */
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
@@ -34,12 +17,7 @@ import { metricsWriteDisposition } from './lib/metricsAlertLogic';
 import https = require('https');
 import http = require('http');
 
-// Get Firestore instance
 const db = admin.firestore();
-
-/* ------------------------------------------------------------------ */
-/*  Threshold Alert Types & Cache                                      */
-/* ------------------------------------------------------------------ */
 
 interface AlertRule {
   id: string;
@@ -63,11 +41,9 @@ const alertRulesCache = new Map<string, CachedAlertRules>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
- * Resolve scalar fields from either v2 (schemaVersion 2, per-device maps keyed
- * by id + metrics.primary) or v1 (singular cpu/disk/gpu objects) metrics docs.
- * The helpers below pick the primary device for aggregates (sparkline/alerts),
- * falling back to the first entry when `primary` is absent, and finally to the
- * legacy v1 fields so in-flight docs during rollout still produce samples.
+ * Resolve scalars from v2 (per-device maps + metrics.primary) or v1 (singular
+ * cpu/disk/gpu) docs: primary device, else first entry, else the v1 field — so
+ * in-flight docs mid-rollout still produce samples.
  */
 function pickPrimaryEntry<T>(
   map: Record<string, T> | undefined,
@@ -114,9 +90,7 @@ const METRIC_PATHS: Record<string, (m: Record<string, any>) => number | undefine
   network_packet_loss:v2PacketLoss,
 };
 
-/**
- * Historical metrics sample with abbreviated keys for storage efficiency
- */
+/** Keys are abbreviated to keep the samples array under the 1MiB doc limit. */
 interface NicSample {
   i: string;   // interface name
   tx: number;  // TX bytes/sec
@@ -160,30 +134,23 @@ interface MetricsSample {
   np?: number; // network packet loss % (gateway ping, optional)
 }
 
-/**
- * Triggered when a machine document is written (created or updated).
- * Extracts metrics and appends to the hourly history bucket.
- */
+/** Appends a sample to the hourly history bucket on any machine-doc write. */
 export const onMetricsWrite = onDocumentWritten(
   'sites/{siteId}/machines/{machineId}',
   async (event) => {
     const { siteId, machineId } = event.params;
 
-    // Get the after data (new state)
     const afterData = event.data?.after?.data();
     if (!afterData) {
       console.log(`No data after write for ${machineId}, skipping`);
       return;
     }
 
-    // Single ordered liveness gate (see metricsAlertLogic.ts). This function
-    // fires on EVERY machine-doc write, not just agent telemetry. An offline
-    // machine keeps its last metrics frozen, and unrelated server-side writes
-    // (e.g. the health-check cron stamping health.lastCronAlertAt) re-trigger
-    // us. The gate skips writes with no metrics and writes whose telemetry is
-    // stale — returning BEFORE both history sampling and threshold-alert eval —
-    // so we never log phantom samples or re-fire "disk 87% > 85" hourly for a
-    // machine that's been offline all week.
+    // Liveness gate (metricsAlertLogic.ts). This fires on EVERY machine-doc
+    // write, not just telemetry — an offline machine keeps stale metrics frozen
+    // and server-side writes (health-check cron) re-trigger us. Returning here,
+    // before both sampling and alert eval, is what stops phantom samples and
+    // hourly re-fires of "disk 87% > 85" for a machine offline all week.
     const disposition = metricsWriteDisposition(afterData, Date.now());
     if (disposition === 'skip-no-metrics') {
       console.log(`No metrics in write for ${machineId}, skipping`);
@@ -195,16 +162,13 @@ export const onMetricsWrite = onDocumentWritten(
     }
     const metrics = afterData.metrics;
 
-    // Get current timestamp
     const now = Math.floor(Date.now() / 1000);
 
-    // Get current UTC hour for bucket ID
     const sampleDate = new Date(now * 1000);
     const bucketId = hourlyBucketId(sampleDate);
     const previousBucketId = hourlyBucketId(new Date(sampleDate.getTime() - 60 * 60 * 1000));
     const legacyDayBucketId = dailyBucketId(sampleDate);
 
-    // Path to history document
     const historyRef = db
       .collection('sites')
       .doc(siteId)
@@ -213,10 +177,9 @@ export const onMetricsWrite = onDocumentWritten(
       .collection('metrics_history')
       .doc(bucketId);
 
-    // Check if we should rate limit (avoid duplicate samples within 55 seconds).
-    // For the first write into a new hour bucket, also consult the previous hour
-    // and legacy daily bucket metadata so hour-boundary/deploy-boundary writes
-    // don't accidentally bypass the old daily-doc rate limit.
+    // 55s duplicate-sample guard. The first write into a new hour also consults
+    // the previous hour and the legacy daily doc, so an hour or deploy boundary
+    // can't slip a sample past the limit.
     try {
       const lastSampleTime = await readLastSampleTime(
         historyRef,
@@ -237,18 +200,14 @@ export const onMetricsWrite = onDocumentWritten(
       );
 
       if (lastSampleTime && now - lastSampleTime < 55) {
-        // Too soon since last sample, skip
         console.log(`Rate limiting: last sample was ${now - lastSampleTime}s ago for ${machineId}`);
         return;
       }
     } catch (err) {
-      // If we can't check, proceed anyway
+      // Unreadable metadata: sample anyway rather than lose the datapoint.
       console.warn(`Could not check rate limit for ${machineId}:`, err);
     }
 
-    // Build compact sample object. Read v2 (per-device maps + primary) with
-    // fallback to v1 singular fields so in-flight docs still produce samples
-    // during the rollout window.
     const cpuPct = v2CpuPercent(metrics);
     const memPct = metrics.memory?.percent;
     const diskPct = v2DiskPercent(metrics);
@@ -274,8 +233,8 @@ export const onMetricsWrite = onDocumentWritten(
     const packetLoss = v2PacketLoss(metrics);
     if (packetLoss !== undefined && packetLoss !== null) sample.np = round(packetLoss);
 
-    // Per-NIC network metrics. v2 doc: metrics.nics[id] = { txBps, rxBps, txUtil, rxUtil }.
-    // v1 fallback: metrics.network.interfaces[id] = { tx_bps, rx_bps, tx_util, rx_util }.
+    // v2: metrics.nics[id] = { txBps, rxBps, txUtil, rxUtil }.
+    // v1: metrics.network.interfaces[id] = { tx_bps, rx_bps, tx_util, rx_util }.
     const v2Nics = metrics.nics;
     const v1Nics = metrics.network?.interfaces;
     const nicEntries: NicSample[] = [];
@@ -308,7 +267,7 @@ export const onMetricsWrite = onDocumentWritten(
     }
     if (nicEntries.length > 0) sample.n = nicEntries;
 
-    // Per-disk usage. v2 doc: metrics.disks[id] = { percent, usedGb }.
+    // v2: metrics.disks[id] = { percent, usedGb }.
     const v2Disks = metrics.disks;
     const diskEntries: DiskSample[] = [];
     if (v2Disks && typeof v2Disks === 'object') {
@@ -322,8 +281,8 @@ export const onMetricsWrite = onDocumentWritten(
     }
     if (diskEntries.length > 0) sample.ds = diskEntries;
 
-    // Per-GPU usage. v2 doc: metrics.gpus[id] = { name?, usagePercent, temperature?, vramUsedGb }.
-    // Use the human-readable `name` for the sample label, falling back to the UUID key.
+    // v2: metrics.gpus[id] = { name?, usagePercent, temperature?, vramUsedGb }.
+    // Label with `name`; the map key is a UUID.
     const v2Gpus = metrics.gpus;
     const gpuEntries: GpuSample[] = [];
     if (v2Gpus && typeof v2Gpus === 'object') {
@@ -339,7 +298,7 @@ export const onMetricsWrite = onDocumentWritten(
     }
     if (gpuEntries.length > 0) sample.gs = gpuEntries;
 
-    // Per-volume disk IO. v2 doc: metrics.diskio[id] = { readBps, writeBps, readIops, writeIops, busyPct, maxBps }
+    // v2: metrics.diskio[id] = { readBps, writeBps, readIops, writeIops, busyPct, maxBps }.
     const v2DiskIO = metrics.diskio;
     const diskIOEntries: DiskIOSample[] = [];
     if (v2DiskIO && typeof v2DiskIO === 'object' && !Array.isArray(v2DiskIO)) {
@@ -356,7 +315,6 @@ export const onMetricsWrite = onDocumentWritten(
     }
     if (diskIOEntries.length > 0) sample.dios = diskIOEntries;
 
-    // Use arrayUnion for atomic append without read-modify-write
     try {
       await historyRef.set(
         {
@@ -373,10 +331,10 @@ export const onMetricsWrite = onDocumentWritten(
       console.log(`Historical sample recorded for ${machineId} in bucket ${bucketId}`);
     } catch (err) {
       console.error(`Failed to write historical sample for ${machineId}:`, err);
-      throw err; // Re-throw to mark function as failed
+      throw err; // marks the function invocation failed
     }
 
-    // Evaluate threshold alert rules (non-blocking — don't fail the function)
+    // Alert eval must not fail the function — the sample is already durable.
     try {
       await evaluateThresholdAlerts(siteId, machineId, metrics);
     } catch (err) {
@@ -385,9 +343,7 @@ export const onMetricsWrite = onDocumentWritten(
   }
 );
 
-/**
- * Round a number to 1 decimal place
- */
+/** One decimal place. */
 function round(value: number): number {
   return Math.round(value * 10) / 10;
 }
@@ -423,13 +379,7 @@ async function readLastSampleTime(
   return candidates.length > 0 ? Math.max(...candidates) : null;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Threshold Alert Evaluation                                         */
-/* ------------------------------------------------------------------ */
-
-/**
- * Fetch alert rules for a site, using a 5-minute in-memory cache.
- */
+/** Alert rules for a site, via the 5-minute in-memory cache. */
 async function getAlertRules(siteId: string): Promise<AlertRule[]> {
   const cached = alertRulesCache.get(siteId);
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
@@ -454,9 +404,6 @@ async function getAlertRules(siteId: string): Promise<AlertRule[]> {
   return rules;
 }
 
-/**
- * Evaluate whether a metric value breaches a threshold.
- */
 function isBreached(metricValue: number, operator: string, threshold: number): boolean {
   switch (operator) {
     case '>':  return metricValue > threshold;
@@ -467,10 +414,7 @@ function isBreached(metricValue: number, operator: string, threshold: number): b
   }
 }
 
-/**
- * Evaluate all threshold alert rules for the given metrics write.
- * For each breached rule not in cooldown, triggers a notification via the web API.
- */
+/** Triggers a notification for each breached rule that isn't in cooldown. */
 async function evaluateThresholdAlerts(
   siteId: string,
   machineId: string,
@@ -484,17 +428,14 @@ async function evaluateThresholdAlerts(
   for (const rule of rules) {
     if (!rule.enabled) continue;
 
-    // Extract metric value
     const extractor = METRIC_PATHS[rule.metric];
     if (!extractor) continue;
 
     const metricValue = extractor(metrics);
     if (metricValue === undefined || metricValue === null) continue;
 
-    // Check threshold
     if (!isBreached(metricValue, rule.operator, rule.value)) continue;
 
-    // Check cooldown
     const cooldownRef = db.doc(
       `sites/${siteId}/alert_cooldowns/${rule.id}_${machineId}`
     );
@@ -511,14 +452,13 @@ async function evaluateThresholdAlerts(
       console.warn(`Could not check cooldown for rule ${rule.id}:`, err);
     }
 
-    // Write cooldown timestamp
+    // Stamp the cooldown before dispatching: a failed send must not re-fire.
     try {
       await cooldownRef.set({ lastTriggered: now });
     } catch (err) {
       console.warn(`Could not write cooldown for rule ${rule.id}:`, err);
     }
 
-    // Trigger alert via web API
     try {
       await callAlertTriggerApi({
         siteId,
@@ -540,20 +480,14 @@ async function evaluateThresholdAlerts(
   }
 }
 
-/**
- * Derive the web API base URL from the Firebase project ID.
- * This avoids needing separate env vars for dev vs prod.
- */
+/** Web API base URL from the project ID — avoids a dev/prod env var. */
 function getApiBaseUrl(): string {
   const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || '';
   if (projectId.includes('dev')) return 'https://dev.owlette.app';
   return 'https://owlette.app';
 }
 
-/**
- * POST to the /api/alerts/trigger endpoint on the web server.
- * Uses the built-in Node.js http/https modules (no external deps).
- */
+/** POST /api/alerts/trigger, over node http/https to keep functions dep-free. */
 function callAlertTriggerApi(body: Record<string, unknown>): Promise<void> {
   const baseUrl = process.env.API_BASE_URL || getApiBaseUrl();
   const secret = process.env.CORTEX_INTERNAL_SECRET;
@@ -583,8 +517,7 @@ function callAlertTriggerApi(body: Record<string, unknown>): Promise<void> {
         timeout: 10_000,
       },
       (res) => {
-        // Consume the response body to free resources
-        res.resume();
+        res.resume(); // drain, or the socket leaks
         if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
           resolve();
         } else {

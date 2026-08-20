@@ -1,16 +1,13 @@
 /**
  * GET    /api/sites/{siteId}/talons/{talonId} — fetch one talon.
- * PATCH  /api/sites/{siteId}/talons/{talonId} — flip `enabled`, or replace the
- *        caller-owned half of the talon.
- * DELETE /api/sites/{siteId}/talons/{talonId} — delete it and its signing secret.
+ * PATCH  — flip `enabled`, or replace the caller-owned half of the talon.
+ * DELETE — delete it and its signing secret.
  *
- * Thin http shim over `@/lib/talons/store.server` — see the sibling
- * `../route.ts` header for why every rule lives there rather than here.
+ * Thin http shim over `@/lib/talons/store.server`; see the sibling
+ * `../route.ts` header for why every rule lives there.
  *
- * Capability: TALON_MANAGE. GET takes read-class api-key scope; the mutations
- * take the write-class default.
- *
- * talons wave 1.2.
+ * Capability TALON_MANAGE. GET takes read-class api-key scope, mutations the
+ * write-class default.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -40,9 +37,8 @@ import { serializeTalon, talonStoreContext, talonStoreProblem } from '../route';
 export const runtime = 'nodejs';
 
 /**
- * Firestore auto-ids are 20 alphanumeric chars; the bound is deliberately
- * looser and matches the preset routes. Its real job is rejecting ids that
- * would escape the document path.
+ * Firestore auto-ids are 20 alphanumerics; the looser bound matches the preset
+ * routes. Its real job is rejecting ids that would escape the document path.
  */
 const TALON_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -56,10 +52,10 @@ function invalidTalonId(): NextResponse {
 }
 
 /**
- * `{ enabled: boolean }` and nothing else is the toggle; anything else is a
- * full replacement of the caller-owned fields. The exact-shape test matters:
- * a body that also carries `name` must go through `updateTalon`, which
- * revalidates the whole talon, rather than silently dropping the rename.
+ * Exactly `{ enabled: boolean }` is the toggle; anything else is a full
+ * replacement. The exact-shape test matters: a body also carrying `name` must
+ * go through `updateTalon` (which revalidates the whole talon) rather than
+ * silently dropping the rename.
  */
 function isEnabledOnlyPatch(body: unknown): body is { enabled: boolean } {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return false;
@@ -67,9 +63,7 @@ function isEnabledOnlyPatch(body: unknown): body is { enabled: boolean } {
   return keys.length === 1 && typeof (body as { enabled?: unknown }).enabled === 'boolean';
 }
 
-/* -------------------------------------------------------------------------- */
-/*  GET — fetch one talon                                                     */
-/* -------------------------------------------------------------------------- */
+// GET — fetch one talon
 
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'TALON_MANAGE',
@@ -91,9 +85,7 @@ export const GET = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* -------------------------------------------------------------------------- */
-/*  PATCH — toggle or replace                                                 */
-/* -------------------------------------------------------------------------- */
+// PATCH — toggle or replace
 
 export const PATCH = authorizedSiteHandler<RouteParams>({
   capability: 'TALON_MANAGE',
@@ -123,9 +115,7 @@ export const PATCH = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* -------------------------------------------------------------------------- */
-/*  DELETE — remove the talon and its signing secret                          */
-/* -------------------------------------------------------------------------- */
+// DELETE — remove the talon and its signing secret
 
 export const DELETE = authorizedSiteHandler<RouteParams>({
   capability: 'TALON_MANAGE',

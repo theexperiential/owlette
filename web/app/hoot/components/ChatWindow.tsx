@@ -37,11 +37,7 @@ interface ChatWindowProps {
   toolCommands?: Record<string, Record<string, { commandId: string }>>;
   /** Cancel a running tool by its toolCallId (fans out to every machine it dispatched to). */
   onCancelTool?: (toolCallId: string) => void;
-  /**
-   * toolCallIds with a cancel request in flight. Pending state lives in
-   * HootChatView (next to the async cancel handler); this window only
-   * derives a per-card boolean from it.
-   */
+  /** toolCallIds with a cancel in flight; the pending state itself lives in HootChatView. */
   cancelPendingCommandIds?: Set<string>;
   /** The active turn's runner died (server restarted) — show the interrupted notice. */
   turnStale?: boolean;
@@ -93,7 +89,6 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
     }
   }, [messages, isLoading]);
 
-  // Close lightbox on Escape
   useEffect(() => {
     if (!expandedImage) return;
     const handleKey = (e: KeyboardEvent) => {
@@ -227,8 +222,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                       className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-cyan focus-visible:outline-offset-2 rounded-sm transition-opacity"
                     />
                   ) : null;
-                  // Edit pencil — user messages only, hidden while streaming or
-                  // already editing. Branches the conversation on save.
+                  // Edit pencil — user messages only, hidden while streaming or editing.
                   const editBtn = isUser && onEditMessage && !isLoading && !isEditing ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -363,12 +357,10 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                 const approvalId = toolPart.approval?.id;
                 const running = !hasResult && !awaitingApproval && !denied;
 
-                // Cancel is only offered for a running tool that has actually
-                // dispatched at least one agent command (its toolCallId is
-                // present in toolCommands with ≥1 machine entry). Server-side
-                // tools and not-yet-dispatched calls have no cancel affordance.
-                // The cancel fans out to every machine the call targeted, so it
-                // is keyed by the toolCallId (not a single commandId).
+                // Cancel only for a running tool that actually dispatched agent
+                // commands (toolCallId present in toolCommands with ≥1 machine).
+                // It fans out to every machine the call targeted, hence keyed by
+                // toolCallId rather than a single commandId.
                 const toolCallId = running ? toolPart.toolCallId : undefined;
                 const cancellable = Boolean(
                   toolCallId && Object.keys(toolCommands?.[toolCallId] ?? {}).length > 0,

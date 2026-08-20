@@ -1,25 +1,8 @@
 /**
- * Account — passkeys UI shell (C4.3)
- *
- * Per the plan's fallback guidance ("skip if too complex, fall back to
- * assertion that the UI renders"), this spec does NOT exercise the
- * actual WebAuthn ceremony — `navigator.credentials.create()` requires
- * a virtual authenticator installed via CDP, our backend routes want
- * real attestation, and mocking all of that end-to-end is a multi-day
- * lift that doesn't earn its keep until we're actively changing passkey
- * code.
- *
- * What this spec DOES cover (the UX surface that can break regardless
- * of WebAuthn plumbing):
- *   - seeded member (no passkeys — `seed.ts` seeds an empty `mfaFactors`
- *     inventory and no credential documents) sees the empty-state copy
- *     "no passkeys registered yet."
- *   - the "add passkey" button renders
- *   - clicking it reveals the name input AND the button flips to
- *     "register passkey" — proves the two-step toggle contract
- *
- * WebAuthn coverage gap acknowledged in the log; revisit when a
- * passkey change ships.
+ * Account — passkeys UI shell. Deliberately does NOT run the WebAuthn ceremony
+ * (see `e2e/helpers/webauthn.ts` for the harness that does); this covers only
+ * the UX surface that breaks independently of the plumbing: the empty state,
+ * the "add passkey" button, and the two-step toggle to "register passkey".
  */
 
 import { test, expect } from '@playwright/test';
@@ -44,9 +27,8 @@ test('passkey section shows empty state and the "add passkey" toggle expands cor
   const addButton = page.getByRole('button', { name: /^add passkey$/i });
   await expect(addButton).toBeVisible();
 
-  // Click once → reveals the name input and relabels the CTA to
-  // "register passkey" (per PasskeyManager.handleRegister: the first
-  // click with !showNameInput just opens the input).
+  // First click only opens the input and relabels the CTA — see
+  // PasskeyManager.handleRegister's !showNameInput branch.
   await addButton.click();
 
   await expect(page.getByPlaceholder('passkey name (e.g. MacBook, iPhone)')).toBeVisible();

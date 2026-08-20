@@ -1,15 +1,12 @@
 /**
  * assignSiteToUser action core (security-boundary-migration wave 3.9).
  *
- * Adds one or more siteIds to `users/{uid}.sites[]` via `arrayUnion`
- * (idempotent at the field level — duplicates are de-duped by Firestore).
- * Each site id is validated against `sites/{id}` existence first; if any
- * are unknown, the entire request is rejected with `unknown_sites` and no
- * sites are added (partial assignments are confusing for callers).
+ * Adds siteIds to `users/{uid}.sites[]` via `arrayUnion` (Firestore de-dupes). Every id
+ * is checked against `sites/{id}` first; if any are unknown the whole request is rejected
+ * with `unknown_sites` and nothing is added — partial assignments confuse callers.
  *
- * Capability: `SITE_MEMBER_MANAGE` — handler-side authorization decides
- * whether the caller is allowed to invoke this. The action core only
- * knows about validation + the firestore write.
+ * Capability `SITE_MEMBER_MANAGE` is enforced handler-side; this core only validates and
+ * writes.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
@@ -23,7 +20,7 @@ const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 export interface AssignSiteToUserInput {
   uid: string;
   siteIds: string[];
-  /** Inject a Firestore instance — tests pass a mock; production omits. */
+  /** Test seam — production omits. */
   db?: Firestore;
 }
 

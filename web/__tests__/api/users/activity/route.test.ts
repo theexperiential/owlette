@@ -1,13 +1,12 @@
 /** @jest-environment node */
 
 /**
- * Public users-api — http-shape tests for `GET /api/users/activity`
- * (api-sprint wave 3 track 3B).
+ * http-shape tests for `GET /api/users/activity`.
  *
- * Mirrors the harness in `__tests__/api/users.test.ts`: path-keyed `docStore`
- * + `collectionDocs`, mocked `resolveAuth`, real `requirePlatformAuthAndScope`
- * underneath so superadmin gating is exercised end-to-end. Adds a controllable
- * `getUsers` mock to exercise batching, unordered results, and notFound.
+ * Same harness as `__tests__/api/users.test.ts`: path-keyed `docStore` +
+ * `collectionDocs`, mocked `resolveAuth`, real `requirePlatformAuthAndScope` so
+ * superadmin gating runs end-to-end. Adds a controllable `getUsers` mock for
+ * batching, unordered results, and notFound.
  */
 
 import { createMockRequest } from '../../helpers/utils';
@@ -22,10 +21,6 @@ jest.mock('@/lib/auditLogClient', () => ({
   emitMutation: jest.fn(),
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
-
-/* -------------------------------------------------------------------------- */
-/*  Auth mock                                                                 */
-/* -------------------------------------------------------------------------- */
 
 const mockResolveAuth = jest.fn();
 jest.mock('@/lib/apiAuth.server', () => {
@@ -48,10 +43,6 @@ jest.mock('@/lib/securityConfig.server', () => ({
     })),
   },
 }));
-
-/* -------------------------------------------------------------------------- */
-/*  Firestore mock — keyed by collection path                                 */
-/* -------------------------------------------------------------------------- */
 
 interface DocStore {
   data: Record<string, unknown> | null;
@@ -89,9 +80,8 @@ function makeCollectionRef(parts: string[]): unknown {
 
   const ref: Record<string, unknown> = {
     doc: (id: string) => makeDocRef([...parts, id]),
-    // `.select()` with no args projects to doc ids only (route uses this to
-    // collect all uids cheaply). The mock ignores the projection and returns
-    // the seeded docs.
+    // The route uses `.select()` with no args to collect uids cheaply; the mock
+    // ignores the projection and returns the seeded docs.
     select: () => ref,
     get: jest.fn(async () => {
       const docs = (collectionDocs[path] || []).slice();
@@ -107,10 +97,6 @@ function makeCollectionRef(parts: string[]): unknown {
   return ref;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Firebase Auth getUsers mock                                               */
-/* -------------------------------------------------------------------------- */
-
 const mockGetUsers = jest.fn();
 
 jest.mock('@/lib/firebase-admin', () => ({
@@ -124,15 +110,7 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminStorage: () => ({ bucket: () => ({}) }),
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Imports come AFTER mocks                                                  */
-/* -------------------------------------------------------------------------- */
-
 import { GET as activityGET } from '@/app/api/users/activity/route';
-
-/* -------------------------------------------------------------------------- */
-/*  Fixtures                                                                  */
-/* -------------------------------------------------------------------------- */
 
 function authedAsSuperadminWithKey(userId = 'user-superadmin'): void {
   mockResolveAuth.mockResolvedValue({
@@ -191,10 +169,6 @@ beforeEach(() => {
   for (const k of Object.keys(docStore)) delete docStore[k];
   for (const k of Object.keys(collectionDocs)) delete collectionDocs[k];
 });
-
-/* ========================================================================== */
-/*  GET /api/users/activity                                                   */
-/* ========================================================================== */
 
 describe('GET /api/users/activity', () => {
   it('returns 200 + the activity map for a superadmin caller', async () => {
@@ -257,9 +231,8 @@ describe('GET /api/users/activity', () => {
 
   it('returns an empty activity map when there are no users', async () => {
     authedAsSuperadminWithKey();
-    // Empty the `users` collection listing (drives `.select().get()`) while
-    // leaving the caller's doc in `docStore` so the superadmin role gate —
-    // which reads `users/{uid}` via a doc ref — still passes.
+    // Empty the collection listing but keep the caller's doc in `docStore`, or
+    // the superadmin role gate (a `users/{uid}` doc read) fails first.
     collectionDocs['users'] = [];
 
     const req = createMockRequest('http://localhost/api/users/activity');
@@ -295,8 +268,7 @@ describe('GET /api/users/activity', () => {
     seedUser('bob', { role: 'member' });
     seedUser('carol', { role: 'member' });
 
-    // Return records in a different order than requested, and report `bob` as
-    // notFound so it must be absent from the output.
+    // Out-of-order records, with `bob` notFound so he must be absent.
     mockGetUsers.mockResolvedValueOnce({
       users: [
         userRecord('carol', { lastSignInTime: 'C' }),

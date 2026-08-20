@@ -1,14 +1,9 @@
 /** @jest-environment node */
 
 /**
- * Route-layer tests for GET /api/sites/{siteId}/talons/{talonId}/runs — the
- * cursor-paginated run history read from `sites/{siteId}/talon_runs`.
- *
- * The collection is empty until the runner ships in wave 2, so these assert
- * the query shape (filter + order, matching the composite index), the page
- * envelope, and the deliberate decision NOT to 404 when the talon is gone.
- *
- * talons wave 1.2.
+ * Route-layer tests for GET /api/sites/{siteId}/talons/{talonId}/runs. Assert the query shape
+ * (filter + order, matching the composite index), the page envelope, and the deliberate decision
+ * NOT to 404 when the talon is gone.
  */
 
 import { NextResponse } from 'next/server';
@@ -170,7 +165,7 @@ describe('GET /api/sites/{siteId}/talons/{talonId}/runs', () => {
     const res = await runsGET(request('?page_size=2'), routeParams());
 
     expect(res.status).toBe(200);
-    // pageSize + 1 is fetched so the presence of a next page can be detected.
+    // pageSize + 1 is fetched to detect a next page.
     expect(mocks.limit).toHaveBeenCalledWith(3);
     const body = (await res.json()) as {
       runs: Array<{ id: string }>;

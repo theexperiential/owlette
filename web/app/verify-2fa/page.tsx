@@ -17,19 +17,14 @@ import { useInAppBrowser } from '@/hooks/useInAppBrowser';
 import { toast } from '@/lib/toast';
 
 /**
- * `browserSupportsWebAuthn()` reads `window.PublicKeyCredential`, so it can only
- * be answered on the client. Reading it during render would make the passkey
- * button server-absent / client-present — a hydration mismatch React recovers
- * from by discarding the SSR tree and re-rendering, which has swallowed clicks
- * on these auth pages before (see the `canUsePasskey` comment in
- * app/login/page.tsx).
+ * `browserSupportsWebAuthn()` reads `window.PublicKeyCredential`, so answering it during
+ * render makes the passkey button server-absent / client-present. React recovers from that
+ * hydration mismatch by discarding the SSR tree, which has swallowed clicks on these auth
+ * pages before (see `canUsePasskey` in app/login/page.tsx).
  *
- * Resolved through `useSyncExternalStore` rather than a mounted flag set in an
- * effect, matching `useInAppBrowser`: the server snapshot is a first-class value
- * instead of an initial state to be corrected, so ordinary visitors pay no
- * cascading render. The environment cannot change within a document, so there
- * is nothing to subscribe to; the snapshot is a primitive and therefore already
- * referentially stable between renders.
+ * useSyncExternalStore rather than a mounted flag (matching `useInAppBrowser`): the server
+ * snapshot is a real value, not an initial state to correct, so no cascading render. The
+ * environment can't change within a document, so there is nothing to subscribe to.
  */
 const subscribeWebAuthnSupport = () => () => {};
 const getWebAuthnSupport = () => browserSupportsWebAuthn();
@@ -39,10 +34,8 @@ function Verify2FAContent() {
   const { user, loading, signOut } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
-  // Accept both `redirect` (new contract, set by proxy + login page) and
-  // `return` (historical contract from pre-Wave-2 callers). Either way
-  // the value must be a same-origin relative path or we fall back to
-  // /dashboard to avoid open-redirect issues.
+  // Accept `redirect` (proxy + login page) and the historical `return`. Must be a
+  // same-origin relative path, else /dashboard — open-redirect guard.
   const rawReturn = searchParams.get('redirect') ?? searchParams.get('return') ?? '/dashboard';
   const returnUrl = (rawReturn.startsWith('/') && !rawReturn.startsWith('//')) ? rawReturn : '/dashboard';
 
@@ -58,13 +51,9 @@ function Verify2FAContent() {
   );
   const [isPasskeyPending, setIsPasskeyPending] = useState(false);
   const inApp = useInAppBrowser();
-  /**
-   * Passkeys are additionally gated on the host app: inside an embedded webview
-   * the ceremony can only use passkeys for the HOST app's associated domain, so
-   * `browserSupportsWebAuthn()` returns true while the prompt is guaranteed to
-   * fail. Hiding it here is safe because the TOTP and backup-code paths below
-   * are always rendered — this option is never the only way off this page.
-   */
+  /** Also gated on the host app: in an embedded webview the ceremony can only use the HOST
+   * app's passkeys, so browserSupportsWebAuthn() is true but the prompt always fails. Safe
+   * to hide — TOTP and backup codes are always rendered. */
   const showPasskey = canUsePasskey && !inApp.isInApp;
 
   useEffect(() => {
@@ -73,12 +62,8 @@ function Verify2FAContent() {
       return;
     }
 
-    // Check if user has MFA enrolled. The proxy already gates this page
-    // — an unverified, MFA-required session is the only thing it lets
-    // through to /verify-2fa for an authenticated user — but we re-check
-    // client-side to render the right copy and to handle the corner
-    // case where the user landed here without an MFA challenge active
-    // (e.g. clicked a stale bookmark after disabling MFA).
+    // The proxy already gates this page; the client re-check picks the right copy and
+    // handles landing here with no active challenge (stale bookmark after disabling MFA).
     if (user && db) {
       const userDocRef = doc(db, 'users', user.uid);
       getDoc(userDocRef)
@@ -86,7 +71,7 @@ function Verify2FAContent() {
           if (docSnap.exists()) {
             const userData = docSnap.data();
 
-            // If MFA not enrolled, redirect to dashboard
+            // Not enrolled: nothing to verify.
             if (!userData.mfaEnrolled) {
               router.push(returnUrl);
               return;
@@ -94,7 +79,7 @@ function Verify2FAContent() {
 
             setMfaReady(true);
           } else {
-            // No user document, redirect to dashboard
+            // No user document: nothing to verify.
             router.push(returnUrl);
           }
         })
@@ -126,7 +111,7 @@ function Verify2FAContent() {
     setIsSubmitting(true);
 
     try {
-      // Verify code via server-side API (secret never sent to client)
+      // Server-side verify — the TOTP secret never reaches the client.
       const response = await fetch('/api/mfa/verify-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -151,21 +136,15 @@ function Verify2FAContent() {
         return;
       }
 
-      // Show backup code usage message if applicable
       if (data.backupCodeUsed) {
         toast.success('Backup code used', {
           description: 'This backup code has been removed.',
         });
       }
 
-      // Server-side authority: /api/mfa/verify-login already flipped the
-      // session cookie to mfaVerified=true. No client-side flag needed
-      // for the proxy to allow the next navigation.
-
-      // The "trust this device" checkbox is now server-authoritative: when
-      // checked, /api/mfa/verify-login mints an HTTPOnly device-trust cookie
-      // (consumed at session creation) and reports deviceTrusted=true. Only
-      // claim the device was trusted when the server actually did so.
+      // /api/mfa/verify-login already flipped the session cookie to mfaVerified=true and,
+      // when "trust this device" was checked, minted the HTTPOnly device-trust cookie. No
+      // client-side flag; only claim trust when the server reports deviceTrusted.
       if (data.deviceTrusted) {
         toast.success('Verification Successful', {
           description: 'This device has been trusted for 30 days.',
@@ -176,7 +155,6 @@ function Verify2FAContent() {
         });
       }
 
-      // Redirect to return URL
       router.push(returnUrl);
     } catch (error) {
       console.error('Error verifying 2FA:', error);
@@ -186,18 +164,14 @@ function Verify2FAContent() {
   };
 
   /**
-   * Third challenge option: satisfy the gate with a passkey the user already
-   * owns, instead of a TOTP code or a backup code.
+   * Satisfy the gate with an owned passkey instead of a TOTP or backup code.
    *
-   * This runs against `/api/passkeys/step-up/*`, NOT the `/authenticate/*`
-   * routes /login uses. The caller here is already signed in, so the step-up
-   * routes require a session, scope the ceremony to that session's own uid, and
-   * flip the session's MFA gate — they never mint a session or a Firebase
-   * custom token. Nothing needs signing in again afterwards, so unlike the
-   * login flow there is no `signInWithCustomToken` step.
+   * Runs against `/api/passkeys/step-up/*`, NOT the `/authenticate/*` routes /login uses:
+   * the caller is already signed in, so step-up requires a session, scopes the ceremony to
+   * that session's uid, and only flips the MFA gate — no session or custom token is minted,
+   * hence no `signInWithCustomToken` here.
    *
-   * The "trust this device" checkbox belongs to the code form below and is not
-   * read here: only `/api/mfa/verify-login` mints the device-trust cookie.
+   * "trust this device" belongs to the code form; only /api/mfa/verify-login mints that cookie.
    */
   const handlePasskeyStepUp = async () => {
     if (!user) {
@@ -208,7 +182,7 @@ function Verify2FAContent() {
     setIsPasskeyPending(true);
 
     try {
-      // Step 1: options, scoped server-side to this session's own credentials.
+      // Options are scoped server-side to this session's own credentials.
       const optionsRes = await fetch('/api/passkeys/step-up/options', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -230,12 +204,10 @@ function Verify2FAContent() {
         return;
       }
 
-      // Step 2: browser prompt (PIN/biometric — the server demands `uv`).
+      // Browser prompt (PIN/biometric — the server demands `uv`).
       const credential = await startAuthentication({ optionsJSON: optionsData.options });
 
-      // Step 3: verify. On success the session cookie is already
-      // mfaVerified=true by the time this resolves, so the proxy will let the
-      // next navigation through.
+      // On success the session cookie is already mfaVerified=true when this resolves.
       const verifyRes = await fetch('/api/passkeys/step-up/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -255,8 +227,7 @@ function Verify2FAContent() {
       });
       router.push(returnUrl);
     } catch (error) {
-      // A cancelled or timed-out prompt is a user action, not a fault — say so
-      // plainly rather than surfacing the raw DOMException.
+      // Cancel/timeout is a user action, not a fault — don't surface the raw DOMException.
       if (error instanceof Error && error.name === 'NotAllowedError') {
         toast.error('passkey prompt was cancelled');
       } else {

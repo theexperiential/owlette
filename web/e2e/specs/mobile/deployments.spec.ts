@@ -1,20 +1,15 @@
 /**
- * Mobile — /deployments
+ * Mobile — /deployments. Viewport / isMobile / hasTouch come from the
+ * `mobile-chromium` project, which owns every spec under specs/mobile/**.
  *
- * Viewport / isMobile / hasTouch come from the `mobile-chromium` project in
- * playwright.config.ts, which owns every spec under specs/mobile/**.
+ * The row is narrow-viewport shaped: name block takes priority (`min-w-0
+ * flex-1`), the 90px status badge and timestamp drop out below `sm`, and the ⋮
+ * trigger grows to a 40px touch target via `pointer-coarse:`.
+ * responsive-acceptance only measures the collapsed list; this expands a row
+ * (long installer url, per-target rows) and opens the actions menu.
  *
- * Task 4.4 reshaped this row for narrow viewports: the name block takes
- * priority (`min-w-0 flex-1`), the 90px status badge and the timestamp drop
- * out below `sm`, and the ⋮ trigger grows to a 40px touch target via
- * `pointer-coarse:` (deployments/page.tsx:143-165). `responsive-acceptance`
- * only measures the collapsed list; this spec expands a row (long installer
- * url, per-target rows) and opens the actions menu, which is where the
- * remaining width lives.
- *
- * Isolation: the deployment + machine are dedicated to this file and removed
- * in `afterAll`, so the dispatch specs' "exactly one deployment" assertions
- * are unaffected.
+ * Isolation: the deployment + machine are dedicated to this file and removed in
+ * afterAll, so the dispatch specs' "exactly one deployment" assertions hold.
  */
 
 import { test, expect, type Locator, type Page } from '@playwright/test';

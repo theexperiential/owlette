@@ -1,21 +1,13 @@
 /**
- * GET /api/webhooks/{webhookId}/deliveries?siteId=...&limit=&cursor=
- *   output: { deliveries: DeliverySummary[], nextPageToken }
+ * GET /api/webhooks/{webhookId}/deliveries?siteId=&limit=&cursor= →
+ * `{ deliveries, nextPageToken }`. Cursor-paginated, newest first, scoped to the
+ * last 30 days (the dispatcher's retention); requires `site:<id>:read`; 404 when
+ * the subscription is missing or soft-deleted.
  *
- *   - cursor-paginated, most recent first
- *   - scoped to the last 30 days (matches the dispatcher retention
- *     documented in docs/api/webhooks.md)
- *   - caller must have `site:<id>:read`
- *   - 404 if the webhook subscription doesn't exist or is soft-deleted
- *
- * Underlying store is the top-level `webhook_deliveries` collection
- * populated by the scheduled dispatcher (functions/webhookDispatch.ts).
- * We query by `subscriptionId == webhookId`. Firestore will prompt for
- * a composite index (`subscriptionId` + `createdAt desc`) on first run —
- * surface that error to the user unchanged so ops can click through to
- * create it.
- *
- * roost public api wave 6.6.
+ * Reads the top-level `webhook_deliveries` collection written by
+ * functions/webhookDispatch.ts, querying `subscriptionId == webhookId`. The
+ * (subscriptionId + createdAt desc) composite-index error is surfaced unchanged
+ * so ops can click through and create it.
  */
 
 import type { NextRequest } from 'next/server';
@@ -74,9 +66,8 @@ export async function GET(
 
     const db = getAdminDb();
 
-    // Confirm the subscription exists + belongs to this site before
-    // exposing its delivery history. (We don't reveal whether a
-    // subscription id is valid on another site.)
+    // Confirm the subscription belongs to this site before exposing its history —
+    // never reveal that an id is valid on another site.
     const webhookRef = db
       .collection('sites')
       .doc(site.siteId)

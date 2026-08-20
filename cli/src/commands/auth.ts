@@ -1,12 +1,10 @@
 /**
  * `owlette auth login | status | logout`.
  *
- * login: kicks off the cli device-code flow against `/api/cli/device-code`,
- *        prints the pairing phrase + verification URL, polls until
- *        authorised, and stores the returned owk_* key in the active
- *        profile's credential store.
- * status: calls GET /api/whoami with the configured token and prints
- *         the server-resolved identity + scope + quota summary.
+ * login:  cli device-code flow against `/api/cli/device-code` — prints the pairing
+ *         phrase + verification URL, polls until authorised, stores the returned owk_*
+ *         key in the active profile's credential store.
+ * status: GET /api/whoami, printing the server-resolved identity, scope and quota.
  * logout: removes the token from the active profile's credential store.
  */
 
@@ -36,9 +34,8 @@ const DEVICE_CODE_TAG_LENGTH = 16;
 const DEVICE_CODE_KEY_LENGTH = 32;
 
 /**
- * Decrypt the v1 `encryptedCredentials` blob returned by
- * /api/cli/device-code/poll. Must use exactly the same HKDF inputs as
- * web/lib/deviceCodeCrypto.ts — any drift breaks pairing silently.
+ * Decrypt the v1 `encryptedCredentials` blob from /api/cli/device-code/poll. HKDF inputs
+ * must match web/lib/deviceCodeCrypto.ts exactly — any drift breaks pairing silently.
  */
 function decryptCredentials(
   blob: string,

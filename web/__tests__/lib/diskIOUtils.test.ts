@@ -1,10 +1,8 @@
 /** @jest-environment node */
 
 /**
- * Tests for diskIOUtils.ts — per-volume disk IO chart-key helpers + color palette.
- *
- * Verifies: DISK_IO_COLORS shape, formatDiskIO delegation to formatThroughput,
- * isDiskIOKey regex anchoring, parseDiskIOKey id+channel extraction.
+ * Tests for diskIOUtils.ts: DISK_IO_COLORS shape, formatDiskIO delegation to
+ * formatThroughput, isDiskIOKey regex anchoring, parseDiskIOKey id+channel extraction.
  */
 
 import {

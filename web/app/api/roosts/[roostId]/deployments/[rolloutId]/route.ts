@@ -1,10 +1,7 @@
 /**
- * GET /api/roosts/{roostId}/deployments/{rolloutId}?siteId=...
- *     → Rollout detail with per-machine state pulled from target_state
- *       subcollection. canaryStatus / fleetStatus include the reported
- *       status for each machine in the wave (pending if unreported).
- *
- * roost public api wave 3.3.
+ * GET /api/roosts/{roostId}/deployments/{rolloutId}?siteId=... — rollout detail
+ * with per-machine state from the target_state subcollection. canaryStatus /
+ * fleetStatus carry each wave machine's reported status, pending if unreported.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -86,9 +83,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const canary = Array.isArray(rollout.canary) ? (rollout.canary as string[]) : [];
     const fleet = Array.isArray(rollout.fleet) ? (rollout.fleet as string[]) : [];
 
-    // Fetch target_state for every machine in the wave. target_state is
-    // per-machine, per-roost (not per-version), so filter by reported
-    // versionId to scope reports to this specific rollout.
+    // target_state is per-machine, per-roost — NOT per-version — so filter on
+    // the reported versionId to scope reports to this rollout.
     const allMachines = [...new Set([...canary, ...fleet])];
     const targetStateCol = roostRef.collection('target_state');
     const stateSnaps = await Promise.all(
@@ -110,9 +106,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       const data = snap.data() ?? {};
       const reportedVersionId =
         typeof data.reportedVersionId === 'string' ? data.reportedVersionId : null;
-      // If the machine's most-recent report is for a different version,
-      // treat this rollout's wave slot as still pending (the machine might
-      // have already moved on to a newer version since).
+      // A report for a different version means this slot is still pending —
+      // the machine may already have moved on to a newer one.
       const onThisRollout = reportedVersionId === versionId;
       stateByMachine.set(machineId, {
         machineId,

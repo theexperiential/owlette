@@ -1,17 +1,8 @@
 'use client';
 
 /**
- * SparklineChart Component
- *
- * A compact, inline area chart for displaying metric trends.
- * Used in machine cards and table rows to show CPU, Memory, Disk, GPU history.
- *
- * Features:
- * - Default 32px height for visibility
- * - Gradient fill for better visual impact
- * - Color-coded by metric type
- * - Click handler for expanding to detail view
- * - Loading state with skeleton
+ * Compact inline area chart for metric trends (CPU/memory/disk/GPU history) in
+ * machine cards and table rows.
  */
 
 import { AreaChart, Area, ResponsiveContainer, YAxis } from 'recharts';
@@ -33,7 +24,7 @@ interface SparklineChartProps {
   loading?: boolean;
 }
 
-// Unique gradient IDs per color to avoid conflicts
+// Distinct ids so co-rendered sparklines don't share a <linearGradient>.
 const gradientIds: Record<MetricColor, string> = {
   cpu: 'sparkline-gradient-cpu',
   memory: 'sparkline-gradient-memory',
@@ -45,12 +36,11 @@ const gradientIds: Record<MetricColor, string> = {
 export function SparklineChart({
   data,
   color = 'cpu',
-  height = 48,  // Taller default for better visibility
+  height = 48,
   className,
   onClick,
   loading = false,
 }: SparklineChartProps) {
-  // Loading state
   if (loading) {
     return (
       <div
@@ -63,7 +53,7 @@ export function SparklineChart({
     );
   }
 
-  // No data state - render empty placeholder (no text, no background)
+  // Empty placeholder: no text, no background.
   if (!data || data.length === 0) {
     return (
       <div
@@ -90,7 +80,6 @@ export function SparklineChart({
       <ResponsiveContainer width="100%" height={height}>
         <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 2, left: 0 }}>
           <defs>
-            {/* Vertical gradient: neutral grey, fades to transparent at bottom */}
             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="rgb(148, 163, 184)" stopOpacity={0.4} />
               <stop offset="100%" stopColor="rgb(71, 85, 105)" stopOpacity={0.05} />

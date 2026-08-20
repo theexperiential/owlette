@@ -1,10 +1,7 @@
 /**
- * Fetch available models from the LLM provider's API.
- *
- * GET: Returns models list using the user's stored API key
- * POST: Returns models list using a provided API key (for pre-save validation)
- *
- * This ensures the model dropdown stays current without hardcoded lists.
+ * Model list from the LLM provider's API, so the model dropdown stays current
+ * without a hardcoded list. GET uses the user's stored key; POST takes a key
+ * inline for pre-save validation.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -21,11 +18,9 @@ interface ProviderModel {
 }
 
 /**
- * Thrown when the provider rejects the user-supplied API key (HTTP 401/403).
- *
- * This is an expected, user-recoverable condition (revoked, expired, or
- * mistyped key) — not a server fault — so routes map it to a 4xx and skip
- * Sentry capture rather than logging it as a 500 exception.
+ * Provider rejected the user-supplied API key (401/403) — expected and
+ * user-recoverable (revoked, expired, mistyped), so routes map it to a 4xx and
+ * skip Sentry capture instead of logging a 500.
  */
 class InvalidProviderKeyError extends Error {
   constructor(message: string) {
@@ -134,8 +129,7 @@ export const GET = withRateLimit(
 
       return NextResponse.json({ models });
     } catch (error: unknown) {
-      // A rejected user API key is an expected 4xx, not a server fault —
-      // return it plainly so it isn't captured to Sentry as a 500.
+      // Expected 4xx, not a server fault — keep it out of Sentry.
       if (error instanceof InvalidProviderKeyError) {
         return NextResponse.json({ error: error.message }, { status: 400 });
       }
@@ -165,8 +159,7 @@ export const POST = withRateLimit(
       const models = await fetchModels(provider, apiKey);
       return NextResponse.json({ models });
     } catch (error: unknown) {
-      // Pre-save validation: an invalid key is the expected negative result,
-      // so surface it as a 4xx without capturing to Sentry as a 500.
+      // An invalid key is the expected negative result here — 4xx, no Sentry.
       if (error instanceof InvalidProviderKeyError) {
         return NextResponse.json({ error: error.message }, { status: 400 });
       }

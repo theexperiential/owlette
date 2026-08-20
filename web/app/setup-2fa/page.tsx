@@ -24,11 +24,8 @@ import { toast } from '@/lib/toast';
  *   choose ─┬─ totp-setup ─ totp-verify ─┬─ backup
  *           └─ passkey-register ─────────┘
  *
- * `choose` exists because this page used to BE the TOTP flow: a QR code and
- * nothing else, whose only other control was "sign out". A beta tester with no
- * phone to hand could not finish signing up in a browser at all. Both branches
- * terminate at the same `backup` step, so recovery material is issued whichever
- * factor the account enrolled.
+ * `choose` exists because a TOTP-only page locked out testers with no phone to
+ * hand. Both branches end at `backup`, so recovery material is always issued.
  */
 type SetupStep = 'choose' | 'totp-setup' | 'totp-verify' | 'passkey-register' | 'backup';
 
@@ -53,28 +50,21 @@ export default function Setup2FAPage() {
   /** True while either of the passkey branch's two WebAuthn ceremonies runs. */
   const [passkeyBusy, setPasskeyBusy] = useState(false);
   /**
-   * The credential exists on the account. From here the factor is enrolled and
-   * the session is already MFA-satisfied (register/verify promotes the session
-   * for the FIRST factor), so everything left on that step is about recovery
-   * codes — never about whether setup succeeded.
+   * Credential exists; register/verify already promoted the session for the
+   * FIRST factor, so the rest of the step is only about recovery codes.
    */
   const [passkeyCreated, setPasskeyCreated] = useState(false);
   /**
-   * WebAuthn support can only be detected client-side (`browserSupportsWebAuthn`
-   * reads `window.PublicKeyCredential`), so it starts 'unknown' and matches the
-   * server render — the same hydration guard /login documents at length. The
-   * third state is what lets us tell "not checked yet" (say nothing) apart from
-   * "checked, unsupported" (explain why the option is missing).
+   * Client-only detection (`window.PublicKeyCredential`), so it starts
+   * 'unknown' to match the server render. The third state separates "not
+   * checked yet" (say nothing) from "unsupported" (explain the missing option).
    */
   const [passkeySupport, setPasskeySupport] = useState<'unknown' | 'yes' | 'no'>('unknown');
 
   /**
-   * Passkeys are hidden inside an embedded webview even though the API is
-   * present: the ceremony can only use credentials for the HOST app's
-   * associated domain, which will never be owlette.app. Offering a button that
-   * is guaranteed to fail is worse than not offering it — and unlike /login,
-   * setup here is mandatory, so the TOTP branch has to carry the whole flow
-   * when this is false.
+   * Embedded webviews expose the API but can only use credentials for the HOST
+   * app's associated domain, never owlette.app — so hide the button rather than
+   * offer a guaranteed failure. TOTP carries the whole flow when false.
    */
   const showPasskey = passkeySupport === 'yes' && !inApp.isInApp;
 
@@ -83,15 +73,10 @@ export default function Setup2FAPage() {
   }, []);
 
   /**
-   * Surface a refusal from an enrollment route in words the user can act on.
-   *
-   * The one code worth branching on is the Wave-2 enrollment gate. This page is
-   * normally the zero-factor path, where that gate is open by design — but a
-   * session that already holds a factor (a second enrollment started from
-   * account settings, or a cookie whose cached state has drifted) gets a 403
-   * here, and `mfa_challenge_required` on its own is a slug, not an
-   * instruction. Clearing the challenge is the fix, so send them where that
-   * happens instead of printing the slug.
+   * Turn an enrollment refusal into something actionable. Only
+   * `mfa_challenge_required` is branched on: a session that already holds a
+   * factor 403s here, and the fix is clearing the challenge — so route them to
+   * /verify-2fa instead of printing the slug.
    */
   const reportEnrollmentFailure = useCallback(
     (status: number, data: EnrollmentErrorBody, fallback: string) => {
@@ -110,19 +95,15 @@ export default function Setup2FAPage() {
 
   useEffect(() => {
     if (!loading && !user) {
-      // replace, not push: pushing leaves /setup-2fa one back-press away, and
-      // going back to a page that immediately redirects again is a trap. It
-      // also collapses the double history entry when handleCancel signs someone
-      // out and lands them here itself.
+      // replace, not push — pushing leaves /setup-2fa one back-press away, and
+      // it re-redirects immediately. Also collapses handleCancel's double entry.
       router.replace('/login');
       return;
     }
 
-    // Only once the TOTP branch is actually chosen. Minting a secret up front
-    // would provision a half-finished authenticator entry on the account of
-    // every user who goes on to enroll a passkey instead.
+    // Only once the TOTP branch is chosen — minting up front would leave a
+    // half-finished authenticator entry on every passkey user's account.
     if (user && step === 'totp-setup' && !secret) {
-      // Generate TOTP secret and QR code via API
       (async () => {
         try {
           const res = await fetch('/api/mfa/setup', {
@@ -167,10 +148,8 @@ export default function Setup2FAPage() {
     setIsSubmitting(true);
 
     try {
-      // The sheet is NOT generated in the browser any more. `verify-setup`
-      // mints it in-process and returns the plaintext exactly once — the same
-      // seam that lets the passkey branch below get codes at all, and it keeps
-      // the hashing, the count and the ordering on one side of the wire.
+      // `verify-setup` mints the sheet server-side and returns the plaintext
+      // exactly once, keeping hashing/count/ordering on one side of the wire.
       const response = await fetch('/api/mfa/verify-setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -202,10 +181,8 @@ export default function Setup2FAPage() {
         : [];
 
       if (issued.length === 0) {
-        // Shouldn't happen — the route always returns a sheet. If it ever does,
-        // an empty "save these codes" panel is a worse lie than saying nothing
-        // came back: the factor is enrolled either way, so let them through and
-        // point at the surface that can mint a replacement.
+        // Shouldn't happen. An empty "save these codes" panel lies; the factor
+        // is enrolled regardless, so let them through to a replacement surface.
         toast.error('your backup codes did not come through', {
           description: 'generate a new set from account settings.',
         });
@@ -224,18 +201,13 @@ export default function Setup2FAPage() {
   };
 
   /**
-   * The passkey branch runs the WebAuthn ceremonies inline rather than mounting
-   * `PasskeyManager` or calling `usePasskeys().registerPasskey`. That component
-   * is a list-management surface — add/rename/delete for an account that
-   * already holds credentials — and its hook refetches `/api/passkeys/list`
-   * after every write; neither is what a one-shot wizard step needs, and this
-   * page should not be coupled to that component's layout. The requests below
-   * are the same three-step ceremony `usePasskeys` and /login run, so the
-   * shapes stay in step with them.
+   * Ceremony runs inline rather than via `PasskeyManager`/`usePasskeys`: that
+   * hook refetches `/api/passkeys/list` after every write and the component is
+   * a list surface, neither of which suits a one-shot wizard step. Same
+   * three-step ceremony, so the request shapes stay in step.
    *
-   * No name prompt: during MANDATORY setup an extra text field between the user
-   * and a working account is pure friction. The server defaults the credential
-   * to "Passkey" and account settings can rename it afterwards.
+   * No name prompt during mandatory setup — the server defaults to "Passkey"
+   * and account settings can rename it.
    */
   const handleCreatePasskey = async () => {
     if (!user) {
@@ -286,16 +258,10 @@ export default function Setup2FAPage() {
   };
 
   /**
-   * Backup codes for the passkey branch.
-   *
-   * `/api/mfa/backup-codes` demands live proof of possession IN the request — a
-   * warm session is explicitly not enough there, and the route carries no
-   * bypass to reach for. What a user who has just registered their first
-   * passkey can present is that passkey: a step-up assertion is one of the
-   * three proofs the route accepts, precisely so a passkey-only account can
-   * mint its first sheet. So the second system prompt is deliberate, not a
-   * glitch — hence a button that names it before it appears, which also keeps
-   * `navigator.credentials.get` inside a user gesture (Safari requires one).
+   * `/api/mfa/backup-codes` demands live proof of possession in the request (a
+   * warm session is not enough, no bypass), so the just-registered passkey is
+   * re-asserted. The second system prompt is deliberate; the button names it
+   * first, which also keeps `credentials.get` in a user gesture (Safari).
    */
   const handleClaimBackupCodes = async () => {
     setPasskeyBusy(true);
@@ -356,22 +322,12 @@ export default function Setup2FAPage() {
   };
 
   /**
-   * Bailing out of 2FA setup. This used to be `router.back()`, which for a
-   * brand-new signup means /register — the form they had just submitted. An
-   * authenticated user staring at a blank signup form concludes the signup
-   * never took, fills it in again, and gets auth/email-already-in-use with
-   * nowhere to go: that is OWLETTE-WEB-46, reported by a real user.
-   *
-   * History is not a destination. Where "cancel" leads depends on why they are
-   * on this page at all:
-   *
-   *   - Mandatory. `requiresMfaSetup` is set at bootstrap for every new signup
-   *     (lib/actions/bootstrapUser.server.ts), and dashboard/page.tsx pushes
-   *     straight back here while it holds — so /dashboard is a loop, not an
-   *     exit. Ending the session is the only honest way out, and it leaves
-   *     nothing half-onboarded behind: they sign back in and get nagged again.
-   *   - Voluntary — enrolling a second factor from account settings. The
-   *     dashboard is where they came from and will not bounce them back.
+   * OWLETTE-WEB-46: `router.back()` sent new signups to /register, where a
+   * blank form made them re-submit and hit auth/email-already-in-use. History
+   * is not a destination — branch on why they are here instead:
+   *   - mandatory (`requiresMfaSetup` from bootstrapUser.server.ts):
+   *     /dashboard bounces straight back, so sign out is the only exit.
+   *   - voluntary (second factor from settings): /dashboard.
    */
   const handleCancel = async () => {
     if (!requiresMfaSetup) {
@@ -383,19 +339,15 @@ export default function Setup2FAPage() {
     try {
       await signOut();
     } catch {
-      // signOut raises its own toast. Stay put rather than sending a user who
-      // is demonstrably still signed in to /login.
+      // signOut raises its own toast; stay put rather than sending a still
+      // signed-in user to /login.
       setIsCancelling(false);
       return;
     }
     router.replace('/login');
   };
 
-  /**
-   * Say what the button does. When 2FA is mandatory there is nothing to cancel
-   * back to — the action is ending the session, and calling that "cancel"
-   * is how you get a user who did not expect to be signed out.
-   */
+  /** Mandatory setup has nothing to cancel back to — name it "sign out". */
   const cancelLabel = requiresMfaSetup ? 'sign out' : 'cancel';
 
   const copyToClipboard = (text: string) => {
@@ -403,11 +355,7 @@ export default function Setup2FAPage() {
     toast.success('copied to clipboard');
   };
 
-  /**
-   * The bail-out control, identical on every step before the codes are issued —
-   * one definition so the OWLETTE-WEB-46 destination and the `cancelLabel`
-   * cannot drift apart between branches as steps are added.
-   */
+  /** One definition so the OWLETTE-WEB-46 destination and label can't drift per step. */
   const cancelButton = (
     <Button
       type="button"

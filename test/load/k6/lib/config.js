@@ -1,16 +1,12 @@
 /**
  * Shared k6 config for public API launch load tests.
  *
- * BASE_URL and AUTH_TOKEN come from env vars so the same scripts point at dev,
- * prod, or a local server without code changes:
+ * BASE_URL and AUTH_TOKEN come from env vars so the same scripts hit dev, prod or a
+ * local server without code changes:
+ *   K6_BASE_URL=https://dev.owlette.app K6_API_KEY=owk_test_... K6_SITE_ID=... \
+ *     k6 run test/load/k6/chunks-check.js
  *
- *   K6_BASE_URL=https://dev.owlette.app
- *   K6_API_KEY=owk_test_...
- *   K6_SITE_ID=owlette-load-site
- *   k6 run test/load/k6/chunks-check.js
- *
- * Target SLOs are expressed as k6 thresholds. A failing threshold fails the
- * run's exit code, so CI and humans get a direct pass/fail signal.
+ * Target SLOs are k6 thresholds — a failing threshold fails the run's exit code.
  */
 
 const env = (key, fallback) =>
@@ -22,16 +18,12 @@ export const ROOST_ID = env('K6_ROOST_ID', 'roost-load-folder');
 export const MACHINE_ID = env('K6_MACHINE_ID', 'owlette-load-machine');
 export const ID_TOKEN = env('K6_FIREBASE_ID_TOKEN', '');
 
-/**
- * Optional `owk_*` API key. When set, it takes precedence over ID_TOKEN because
- * public launch load tests should mirror SDK/CLI traffic.
- */
+/** Optional `owk_*` API key; beats ID_TOKEN so launch runs mirror SDK/CLI traffic. */
 export const API_KEY = env('K6_API_KEY', '');
 
 /**
- * Per-endpoint SLO targets (p99 latency, ms). Numbers are chosen so common
- * CLI/SDK workflows can chain inventory reads, signed URL issuance, direct
- * uploads, and version publication without visible stalls.
+ * Per-endpoint SLO targets (p99 latency, ms), chosen so common CLI/SDK workflows can
+ * chain inventory reads, signed URLs, direct uploads and publication without stalls.
  */
 export const SLO_P99_MS = {
   'chunks_check': 200,
@@ -48,10 +40,7 @@ export const SLO_P99_MS = {
   'process_create': 400,
 };
 
-/**
- * Standard k6 options object with thresholds set per-endpoint. Each load
- * script spreads this and its own scenarios on top.
- */
+/** Standard k6 options with per-endpoint thresholds; scripts spread this plus scenarios. */
 export function optionsFor(endpointKey) {
   const p99 = SLO_P99_MS[endpointKey];
   if (p99 === undefined) {
@@ -78,9 +67,8 @@ export function headers() {
 }
 
 /**
- * Headers plus a per-VU per-iteration unique `Idempotency-Key`. Use on POST /
- * PUT load scripts so the idempotency cache does not make every VU share one
- * cached response.
+ * Headers plus a per-VU per-iteration unique `Idempotency-Key`. Use on POST / PUT load
+ * scripts so the idempotency cache does not make every VU share one cached response.
  */
 export function mutationHeaders(vu, iter) {
   return {
@@ -89,10 +77,7 @@ export function mutationHeaders(vu, iter) {
   };
 }
 
-/**
- * Generate a deterministic but unique 64-char lowercase hex hash. This is not
- * a real SHA-256 digest; it is only filler with the right shape.
- */
+/** Deterministic unique 64-char lowercase hex filler — not a real SHA-256 digest. */
 export function fakeHash(seed) {
   const hex = (seed >>> 0).toString(16).padStart(16, '0');
   return (hex + hex + hex + hex).slice(0, 64);

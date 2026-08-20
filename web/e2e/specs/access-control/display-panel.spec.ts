@@ -1,25 +1,14 @@
 /**
- * Access-control — DisplayLayoutPanel (site-scoped admin gates)
+ * Access-control — DisplayLayoutPanel hides store/restore/clear from anyone failing
+ * `isSiteAdmin(siteId)`. Automates the "display panel" row of
+ * dev/active/permission-model-split/manual-smoke-checklist.md.
  *
- * The DisplayLayoutPanel hides its three write actions (store / restore /
- * clear) from any viewer who fails `isSiteAdmin(siteId)` — that's the
- * member/admin/superadmin site-scoping contract in action. This spec
- * automates the "display panel" row of the permission-model-split manual
- * smoke checklist (dev/active/permission-model-split/manual-smoke-checklist.md).
+ * Seeds `e2e-display-machine` on site-A with two live monitors so the panel mounts with a
+ * real profile, then per role opens the dashboard in list view (one-click "view displays"
+ * is stabler than card view's expand-then-click) and asserts on the gated buttons.
  *
- * Seeds one machine (`e2e-display-machine`) on site-A with two live
- * monitors so the panel mounts with a real display profile. Then, for each
- * role, opens the dashboard, switches to list view (single-click "view
- * displays" button is stabler than the card view's two-step expand +
- * click), opens the panel, and asserts on the gated buttons.
- *
- * NOTE: The manual checklist also lists an "editor toggle" and an
- * "auto-restore toggle" for this panel. Neither control exists in the
- * current DisplayLayoutPanel or DisplayEditorDialog (verified via grep);
- * those are aspirational rows that haven't shipped yet. This spec covers
- * the three buttons that actually exist in the component today
- * (store / restore / clear). When the editor + auto-restore toggles land,
- * add `canSiteAdmin`-gated + ungated assertions here per the checklist.
+ * The checklist's "editor toggle" and "auto-restore toggle" rows have no matching control
+ * in the component yet; add assertions here when they ship.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -40,26 +29,18 @@ test.beforeAll(async () => {
     .set({ displays: { remoteApplyEnabled: true } }, { merge: true });
 });
 
-/**
- * Common setup — go to /dashboard, switch to list view (one-click display
- * open via aria-labelled button), click "view displays" on the seeded
- * machine's row, and wait for the panel to mount.
- */
+/** /dashboard → list view → "view displays" on the seeded row → wait for the panel. */
 async function openDisplayPanel(page: Page): Promise<void> {
   await page.goto('/dashboard');
 
-  // Flip to list view — the one-click "view displays" button is more stable
-  // than the card view's two-step expand-then-click dance on the display
-  // collapsible section.
+  // List view: one click, versus card view's expand-then-click on the collapsible.
   await page.getByTestId('view-toggle-list').click();
 
-  // Click the seeded machine row's "view displays" button (Monitor icon).
-  // Other specs may leave additional site-A machines in a full serial run.
+  // Target the seeded row explicitly: a full serial run leaves other site-A machines.
   const row = page.getByTestId('machine-row').filter({ hasText: MACHINE_ID });
   await row.getByTestId('open-display-panel').click();
 
-  // Panel slides open via a useLayoutEffect height animation; wait until
-  // the Card itself is in the DOM before asserting on its children.
+  // The panel slides open on a height animation — wait for the Card before its children.
   await expect(page.getByTestId('display-layout-panel')).toBeVisible();
 }
 
@@ -69,13 +50,11 @@ test.describe('display panel — member on site-A', () => {
   test('opens the panel but sees no store/restore/clear buttons', async ({ page }) => {
     await openDisplayPanel(page);
 
-    // Panel renders for read-only viewing — the member gets the live
-    // topology but none of the write controls.
+    // Members get the live topology, none of the write controls.
     const panel = page.getByTestId('display-layout-panel');
     await expect(panel.getByTestId('display-store-button')).toHaveCount(0);
     await expect(panel.getByTestId('display-recall-button')).toHaveCount(0);
-    // Clear is only visible on the assigned tab with a saved layout —
-    // never visible to a member regardless.
+    // Clear needs the assigned tab plus a saved layout; a member never sees it either way.
     await expect(panel.getByTestId('display-clear-button')).toHaveCount(0);
   });
 });
@@ -87,9 +66,8 @@ test.describe('display panel — admin on site-A', () => {
     await openDisplayPanel(page);
 
     const panel = page.getByTestId('display-layout-panel');
-    // Both gated buttons render. They're disabled in our seeded state
-    // (no assigned layout → restore disabled) but visibility is the contract
-    // we're exercising, not enable-state.
+    // Visibility is the contract here, not enable-state: no assigned layout leaves restore
+    // disabled in the seeded state.
     await expect(panel.getByTestId('display-store-button')).toBeVisible();
     await expect(panel.getByTestId('display-recall-button')).toBeVisible();
   });
@@ -98,8 +76,7 @@ test.describe('display panel — admin on site-A', () => {
     await openDisplayPanel(page);
 
     const panel = page.getByTestId('display-layout-panel');
-    // Switch to the assigned tab; our seed has no assigned layout, so the
-    // empty-state panel with the gated "store current" CTA renders.
+    // Assigned tab with no seeded layout renders the empty state and its gated CTA.
     await panel.getByRole('button', { name: 'stored', exact: true }).click();
     await expect(panel.getByTestId('display-store-current-button')).toBeVisible();
   });

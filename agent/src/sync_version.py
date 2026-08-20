@@ -1,27 +1,18 @@
 """
-sync_version — version fetch + cache + diff for roost (project distribution v2).
+sync_version — roost version fetch + cache + diff.
 
-a version is the OCI-derived JSON document that lists every file in a
-roost along with its chunk hashes. agents fetch the version from R2
-(URL given in the firestore pointer doc), cache it locally, and compute
-the chunk-set delta against what's already on disk to know what to download.
+A version is the JSON document (docs/internal/manifest-format.md) listing every
+file in a roost with its chunk hashes. Fetched from R2, cached locally, diffed
+against the previous version to decide what to download.
 
-design:
-- version is JSON conforming to docs/internal/manifest-format.md
-- cached at %PROGRAMDATA%\Owlette\versions\{roostId}\{versionId}.json on
-  windows (XDG-equivalent on POSIX). kept OUT of the user's Documents tree
-  so operators don't see cache data mixed with assembled files.
-- diff against previous local version yields: chunks_to_fetch, chunks_to_keep,
-  files_to_create, files_to_delete, files_to_keep
-- network errors retry via existing requests-library patterns (see installer_utils)
-- fail-loud on schema validation: a version with `schemaVersion != 2`
-  is rejected outright (forward-compat is via mediaType, not version bumps)
+Cache lives under %PROGRAMDATA%\Owlette\versions (XDG equivalent on POSIX),
+deliberately NOT in the user's Documents tree beside assembled files.
 
-NOT this module's job:
-- chunk download (sync_downloader)
-- file reassembly (sync_assembler)
-- HTTP signed URL refresh (caller passes a fresh URL each fetch)
-- writing to firestore (sync_commands does that)
+Fail-loud on `schemaVersion != 2`: forward-compat goes through mediaType, not
+schema bumps.
+
+Not here: chunk download (sync_downloader), reassembly (sync_assembler), signed
+URL refresh (caller's), firestore writes (sync_commands).
 """
 
 from __future__ import annotations
@@ -41,12 +32,10 @@ logger = logging.getLogger(__name__)
 
 def _default_cache_dir() -> str:
     """
-    resolve the default version cache directory.
+    default cache dir: %PROGRAMDATA%\\Owlette\\versions on windows,
+    $XDG_DATA_HOME/owlette/versions (else ~/.local/share/...) on POSIX.
 
-    windows: %PROGRAMDATA%\\Owlette\\versions
-    POSIX:   $XDG_DATA_HOME/owlette/versions, else ~/.local/share/owlette/versions
-
-    see sync_state._default_state_db_path() for why we avoid `~/Documents/`
+    See sync_state._default_state_db_path() for why `~/Documents/` is avoided
     under LocalSystem.
     """
     if os.name == 'nt':
@@ -60,18 +49,16 @@ def _default_cache_dir() -> str:
 
 DEFAULT_CACHE_DIR = _default_cache_dir()
 
-# version mediatype + schema version we know how to consume.
 VERSION_MEDIA_TYPE = 'application/vnd.owlette.version.v1+json'
 VERSION_SCHEMA_VERSION = 2
 
-# HTTP fetch tuning. mirror installer_utils patterns.
+# HTTP fetch tuning, mirroring installer_utils.
 _FETCH_CONNECT_TIMEOUT_S = 30
 _FETCH_READ_TIMEOUT_S = 120
 _FETCH_RETRIES = 3
 _FETCH_BACKOFF_BASE_S = 5
 
-# version size sanity check (refuse fetches >50MB; the largest realistic
-# version is ~20MB at 500GB project / 4MiB chunks).
+# Largest realistic version is ~20MB (500GB project / 4MiB chunks).
 MAX_VERSION_SIZE_BYTES = 50 * 1024 * 1024
 
 
@@ -136,23 +123,16 @@ class VersionDiff:
     files_unchanged: List[VersionFile]
 
 
-# ─── public api ──────────────────────────────────────────────────────
-
-
 def fetch_version(
     url: str,
     expected_version_id: Optional[str] = None,
     cache_dir: Optional[str] = None,
 ) -> Version:
     """
-    fetch a version from an R2 signed URL, validate it, cache it locally,
-    return the parsed in-memory shape.
+    fetch a version from an R2 signed URL, validate, cache, parse.
 
-    expected_version_id: if provided, the cached file is named after this
-    id and a cache-hit short-circuits the HTTP fetch. callers SHOULD pass
-    this so re-fetches of the same version are local hits.
-
-    raises VersionError on any failure (network, parse, schema).
+    expected_version_id names the cache file and lets a hit skip the HTTP
+    fetch — callers SHOULD pass it. Raises VersionError on any failure.
     """
     cache_path: Optional[Path] = None
     if expected_version_id is not None:
@@ -167,7 +147,7 @@ def fetch_version(
                 raw = cache_path.read_bytes()
                 return _parse_and_validate(raw)
             except (OSError, VersionError) as e:
-                # cache corrupt or schema drift — fall through to refetch.
+                # corrupt cache or schema drift — refetch.
                 logger.warning(
                     f"sync_version: cache miss-validate at {cache_path}: {e}; refetching"
                 )
@@ -179,7 +159,7 @@ def fetch_version(
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             cache_path.write_bytes(raw)
         except OSError as e:
-            # caching is best-effort; log but don't fail the fetch.
+            # best-effort cache; never fail the fetch on it.
             logger.warning(f"sync_version: failed to cache at {cache_path}: {e}")
     return version
 
@@ -187,10 +167,7 @@ def fetch_version(
 def diff_versions(
     new: Version, old: Optional[Version]
 ) -> VersionDiff:
-    """
-    compute the delta between a new version and the previously-installed
-    one. if old is None (first install), every chunk + file is "added".
-    """
+    """delta new vs previously-installed; old=None (first install) = all added."""
     new_chunks = new.chunks
     new_files_by_path = {f.path: f for f in new.files}
     if old is None:
@@ -232,15 +209,8 @@ def diff_versions(
     )
 
 
-# ─── internals ───────────────────────────────────────────────────────
-
-
 def _http_fetch(url: str) -> bytes:
-    """
-    fetch the version body with retries + exponential backoff. mirrors
-    installer_utils download patterns but smaller-scoped (no streaming
-    needed — versions are bounded).
-    """
+    """fetch the version body with retries + exponential backoff."""
     last_exc: Optional[Exception] = None
     for attempt in range(1, _FETCH_RETRIES + 1):
         try:
@@ -256,7 +226,7 @@ def _http_fetch(url: str) -> bytes:
                 raise VersionError(
                     f"version too large: {content_length} bytes (max {MAX_VERSION_SIZE_BYTES})"
                 )
-            # read with size cap so a misconfigured server can't OOM us.
+            # Size-capped read: a misconfigured server must not OOM us.
             chunks_buf = []
             received = 0
             for chunk in resp.iter_content(chunk_size=64 * 1024):
@@ -323,12 +293,8 @@ def _parse_and_validate(raw: bytes) -> Version:
         if path in seen_paths:
             raise VersionError(f"version.files[{i}].path duplicated: {path!r}")
         seen_paths.add(path)
-        # path constraints (wave 4b.2): POSIX-style relative path only.
-        # rejects absolute paths, traversal segments, drive-letter prefixes,
-        # embedded NUL bytes, dot / empty segments. realpath enforcement at
-        # write-time is done by destination_allowlist; these checks fail
-        # the version loudly BEFORE any disk work begins so a hostile
-        # version never gets cached or partially applied.
+        # Reject hostile paths BEFORE any disk work, so nothing gets cached or
+        # partially applied. Write-time realpath checks are destination_allowlist's.
         if _invalid_version_path(path):
             raise VersionError(
                 f"version.files[{i}].path violates path constraints: {path!r}"
@@ -358,8 +324,7 @@ def _parse_and_validate(raw: bytes) -> Version:
                 )
             parsed_chunks.append(VersionChunk(hash=chash, size=csize))
             chunk_total += csize
-        # the sum of chunk sizes must equal the file size — catches versions
-        # generated against a different file than what's listed.
+        # Mismatch means the version was generated against a different file.
         if chunk_total != size:
             raise VersionError(
                 f"version.files[{i}] chunk sizes sum to {chunk_total} but file size is {size}"
@@ -377,52 +342,36 @@ def _parse_and_validate(raw: bytes) -> Version:
 
 def _invalid_version_path(path: str) -> bool:
     """
-    true if `path` is NOT safe to use as a version file path (wave 4b.2).
+    true if `path` is NOT safe as a version file path. Requires a canonical
+    POSIX-style relative path: rejects NUL bytes, absolute paths, windows
+    drive-letter prefixes (`C:foo` included), and `..` / `.` / empty segments.
 
-    reject:
-    - NUL byte anywhere (smuggles past string comparisons; truncates on
-      some syscalls; rare enough that legitimate versions never contain it)
-    - absolute paths (`/foo`, `\foo`, `C:/foo`, `C:\foo`, `\\server\share\foo`)
-    - windows drive-letter relative paths (`C:foo` — relative to drive's cwd)
-    - `..` as any normalized segment (path traversal)
-    - `.` as any segment (ambiguous; would be normalized away anyway —
-      reject to keep versions canonical)
-    - empty segments (`a//b` splits to `['a', '', 'b']`; reject so the
-      version stays canonical across generators)
-
-    realpath + reparse-point checks are destination_allowlist's job at
-    write-time; this function filters before any disk touch.
+    Pre-disk filter only; realpath + reparse-point checks are
+    destination_allowlist's job at write-time.
     """
     if not path:
         return True
     if '\x00' in path:
         return True
-    # normalize to forward slashes for segment analysis. after this:
-    #   "a\\b\\c" -> "a/b/c"
-    #   "C:\\foo" -> "C:/foo"
     normalized = path.replace('\\', '/')
     if normalized.startswith('/'):
         return True
-    # windows drive-letter prefix: single letter + colon at position 1.
-    # catches `C:foo` (drive-relative), `C:/foo` (drive-absolute), and also
-    # defeats ADS attempts on the first segment (`foo:bar` in seg 0).
-    # NOTE: '.' in file extensions is fine; we only flag an early colon.
+    # Colon at index 1 = drive-relative/absolute (`C:foo`, `C:/foo`); also kills
+    # an ADS attempt in segment 0.
     if len(normalized) >= 2 and normalized[1] == ':':
         return True
     segments = normalized.split('/')
     for seg in segments:
         if seg in ('', '.', '..'):
             return True
-        # NUL was checked above; colons appearing in non-leading segments
-        # are windows ADS (`file.toe:hidden`). destination_allowlist also
-        # rejects these at validate-time, but fail-loud at version level.
+        # Colon in a later segment is windows ADS (`file.toe:hidden`).
         if ':' in seg:
             return True
     return False
 
 
 def _files_identical(a: VersionFile, b: VersionFile) -> bool:
-    """two VersionFile entries are identical iff they have the same chunk hash sequence."""
+    """identical iff same size and same chunk-hash sequence."""
     if a.size != b.size:
         return False
     if len(a.chunks) != len(b.chunks):

@@ -33,7 +33,7 @@ def _mk_version_file(path: str, chunk_data_list):
     return VersionFile(path=path, size=total, chunks=chunks)
 
 
-# ─── happy path ──────────────────────────────────────────────────────
+# happy path
 
 
 def test_single_file_single_chunk(tmp_path):
@@ -146,7 +146,7 @@ def test_idempotent_skip_when_target_already_present(tmp_path):
         state.close()
 
 
-# ─── security floor ─────────────────────────────────────────────────
+# security floor
 
 
 def test_extract_root_outside_allowlist_raises(tmp_path):
@@ -192,7 +192,7 @@ def test_empty_allowlist_rejects_everything(tmp_path):
         state.close()
 
 
-# ─── failure paths ──────────────────────────────────────────────────
+# failure paths
 
 
 def test_missing_chunk_in_store_fails_assembly(tmp_path):
@@ -253,10 +253,10 @@ def test_partial_file_left_on_failure_for_resume(tmp_path):
         state.close()
 
 
-# ─── cancellation ───────────────────────────────────────────────────
+# cancellation
 
 
-# ─── long-path support (windows-specific) ───────────────────────────
+# long-path support (windows)
 
 
 def test_long_path_helper_pure_function():
@@ -291,9 +291,7 @@ def test_assembles_file_at_long_path(tmp_path):
         extract.mkdir()
         allowlist = DestinationAllowlist([str(extract)])
 
-        # build a path that exceeds MAX_PATH after joining with extract.
-        # tmp_path + 'extract' is already ~85-90 chars on most CI; pad
-        # to push the full target above 260.
+        # tmp_path + 'extract' is ~85-90 chars on CI; pad to push the target past MAX_PATH (260).
         deep_segments = ['x' * 30 for _ in range(8)]  # 8 dirs of 30 chars each = ~240 chars
         deep_relative = '/'.join(deep_segments) + '/file.toe'
         full = str(extract / deep_relative.replace('/', os.sep))
@@ -313,7 +311,7 @@ def test_assembles_file_at_long_path(tmp_path):
             state=state, allowlist=allowlist, content_store=str(content),
         )
         assert result.assembled == 1
-        # verify on disk via the long-path-prefixed string (regular Path may fail to stat)
+        # stat via the long-path-prefixed string; a regular Path may fail
         from sync_assembler import _long_path
         prefixed = _long_path(full)
         assert os.path.exists(prefixed)
@@ -321,7 +319,7 @@ def test_assembles_file_at_long_path(tmp_path):
         state.close()
 
 
-# ─── ACL hardening (windows-specific, best-effort) ──────────────────
+# ACL hardening (windows, best-effort)
 
 
 def test_harden_acl_no_op_on_posix():
@@ -344,7 +342,7 @@ def test_harden_acl_silent_when_pywin32_missing():
         pytest.skip('this test exercises the windows path')
     # simulate pywin32 missing
     with patch.dict(sys.modules, {'win32security': None, 'ntsecuritycon': None}):
-        # ImportError when None is treated as "not a module" → except branch
+        # None is not a module → ImportError → except branch
         _harden_acl('C:\\anywhere\\file.toe')
 
 
@@ -410,7 +408,7 @@ def test_cancel_event_stops_after_current_file(tmp_path):
         state.close()
 
 
-# ─── wave 4b.2: post-rename realpath TOCTOU defense ────────────────
+# post-rename realpath TOCTOU defense
 
 
 def test_post_rename_realpath_catches_escape(tmp_path, monkeypatch):
@@ -433,19 +431,16 @@ def test_post_rename_realpath_catches_escape(tmp_path, monkeypatch):
         _put_chunk(content, data)
         f = _mk_version_file('a.toe', [data])
 
-        # monkeypatch os.path.realpath so the post-rename check sees the
-        # target as resolving to `outside` even though validate() saw
-        # the clean path. the allowlist already consumed its own
-        # realpath() earlier (construction + validate-time), so only
-        # calls from sync_assembler are affected by this patch.
+        # patch realpath so the post-rename check resolves the target to `outside` while validate()
+        # saw a clean path. the allowlist already consumed its own realpath, so only
+        # sync_assembler's calls are affected.
         real_realpath = os.path.realpath
         extract_real = real_realpath(str(extract))
         outside_real = real_realpath(str(outside))
 
         def fake_realpath(p, *args, **kwargs):
             s = str(p)
-            # spoof ONLY the final target resolution; leave extract_root
-            # alone so the comparison actually triggers.
+            # spoof ONLY the final target; leave extract_root alone or the compare never triggers.
             if s.endswith('a.toe'):
                 return os.path.join(outside_real, 'a.toe')
             return real_realpath(s, *args, **kwargs)
@@ -464,8 +459,7 @@ def test_post_rename_realpath_catches_escape(tmp_path, monkeypatch):
         # the suspect file must have been quarantine-deleted.
         assert not (extract / 'a.toe').exists(), \
             "post-rename escape detection failed to quarantine the file"
-        # the per-file state row records the real detection message so the
-        # operator sees WHY it failed, not just the wrapper summary.
+        # the per-file row must carry the real detection message, not just the wrapper summary.
         failed_rows = state.list_files(dist_id, state='failed')
         assert len(failed_rows) == 1
         assert 'post-rename integrity' in (failed_rows[0]['error'] or '')
@@ -577,8 +571,7 @@ def test_chunks_kept_when_only_skips(tmp_path):
         )
         assert result.assembled == 0
         assert result.skipped == 1
-        # chunk NOT deleted — nothing was assembled this run, so there's no
-        # reason to churn the cache.
+        # chunk NOT deleted — nothing assembled this run, so no reason to churn the cache.
         assert chunk_path(content, chunk_hash).exists()
     finally:
         state.close()
@@ -620,7 +613,7 @@ def test_post_rename_allows_sibling_root_substring(tmp_path):
         state.close()
 
 
-# ─── tree reconciliation (the project-level swap) ────────────────────
+# tree reconciliation (the project-level swap)
 
 
 def _snapshot(root: Path) -> dict:

@@ -3,15 +3,10 @@
 import { useCallback, useState } from 'react';
 
 /**
- * Field-targeted form validation state.
+ * Form validation state paired with the offending field id, so the input can be
+ * marked invalid (aria-invalid styling) and focused rather than leaving the user
+ * to hunt for which of six inputs the message means.
  *
- * A message alone ("enter your email address") tells the user WHAT is wrong but
- * not WHERE — on a form with six inputs that is a scavenger hunt. This pairs
- * the message with the offending field id so the input can be marked invalid
- * (red outline via the Input primitive's aria-invalid styling) and focused, and
- * the message rendered near the submit for the summary.
- *
- * Usage:
  *   const { error, fail, clear, fieldProps } = useFieldError();
  *   if (!email.trim()) return fail('email', 'enter your email address');
  *   <Input id="email" {...fieldProps('email')} />
@@ -32,9 +27,8 @@ export function useFieldError(errorElementId?: string) {
 
   const fail = useCallback((field: string, message: string): undefined => {
     setError({ field, message });
-    // Move the caret to the problem. Deferred a tick so it runs after the
-    // re-render that applies aria-invalid, otherwise focus can land before the
-    // field is marked and some browsers skip the announcement.
+    // Deferred a tick so focus lands AFTER the re-render that applies
+    // aria-invalid — some browsers skip the announcement otherwise.
     if (typeof window !== 'undefined') {
       window.setTimeout(() => {
         const el = document.getElementById(field);
@@ -44,11 +38,8 @@ export function useFieldError(errorElementId?: string) {
     return undefined;
   }, []);
 
-  /**
-   * Spread onto the Input. Marks only the offending field invalid, and points
-   * assistive tech at the message so it is announced with the field rather
-   * than read as a floating alert.
-   */
+  /** Spread onto the Input: marks only the offending field invalid and points
+   *  assistive tech at the message so it is announced with the field. */
   const fieldProps = useCallback(
     (field: string) =>
       error?.field === field

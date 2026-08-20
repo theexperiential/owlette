@@ -1,37 +1,24 @@
 /**
- * authorized handler wrappers (security-boundary-migration wave 2.1).
+ * `authorizedSiteHandler` / `authorizedPlatformHandler` — the fixed
+ * authorization pipeline every api route runs before its handler:
  *
- * Two wrappers replace the ad-hoc `requireAdminOrIdToken` + manual
- * `assertUserHasSiteAccess` + manual scope/audit/rate-limit pattern that
- * scattered across legacy api routes:
- *
- *   - `authorizedSiteHandler({ capability, siteIdParam })(handler)`
- *   - `authorizedPlatformHandler({ capability })(handler)`
- *
- * Both run a fixed pipeline before the handler is invoked:
- *
- *   1. resolveAuth — produces a UserActor (api-key or session/id-token)
+ *   1. resolveAuth → UserActor (api-key or session/id-token)
  *   2. site access (site wrapper only) — assertUserHasSiteAccess
- *   3. read kill-switch state — securityConfig.read()
- *   4. api-key scope check — ALWAYS runs; never bypassed by kill switch.
- *      The confused-deputy bug we're guarding against is exactly the one
- *      where a downgraded key would gain elevated effective rights when
- *      capability enforcement is off; api-key scope is the resilient line.
- *   5. capability check — runs unless `capability_enforcement === false`.
- *      Bypass is logged into the audit row metadata so every privileged
- *      action retains a trail even when the kill switch is active.
- *   6. rate-limit check — runs unless `rate_limit_enforcement === false`.
- *      Bypass is logged the same way.
- *   7. allow audit — written *blocking*. If the audit row cannot be
- *      committed we return 503 and DO NOT call the handler. (Deny and
- *      error audits remain best-effort: those don't grant access.)
- *   8. handler invocation with `{ actor, siteId, correlationId }`
- *   9. handler error -> error audit (best-effort) + re-throw
+ *   3. securityConfig.read() for kill-switch state
+ *   4. api-key scope — ALWAYS runs, never bypassed: it is the resilient line
+ *      against a downgraded key gaining rights while capability enforcement
+ *      is off.
+ *   5. capability — skipped when `capability_enforcement === false`; bypass
+ *      recorded in the audit row so the trail survives the kill switch.
+ *   6. rate limit — skipped when `rate_limit_enforcement === false`, logged
+ *      the same way.
+ *   7. allow audit — BLOCKING: an uncommittable row means 503 and no handler
+ *      call. Deny/error audits stay best-effort; they grant nothing.
+ *   8. handler(`{ actor, siteId, correlationId }`)
+ *   9. handler throw → error audit (best-effort) + re-throw
  *
- * `siteIdParam: 'body'` is intentionally NOT supported — the path/query
- * union is a typescript literal-union so attempts to pass `'body'` or any
- * other source are rejected at compile time. siteId-from-body is the
- * confused-deputy attack surface we're closing.
+ * `siteIdParam: 'body'` is a compile error by design — siteId-from-body is
+ * the confused-deputy surface this closes.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -80,14 +67,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import logger from '@/lib/logger';
 import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
 
-/* -------------------------------------------------------------------------- */
-/*  public types                                                              */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Source of `siteId` for site-scoped routes. `'body'` is intentionally
- * absent — including it is a build error.
- */
+/** Source of `siteId`. `'body'` is deliberately absent — using it won't compile. */
 export type SiteIdSource = 'path' | 'query';
 
 export interface SiteHandlerContext {
@@ -108,31 +88,21 @@ export interface PlatformHandlerContext {
 export interface SiteHandlerOptions {
   capability: Capability;
   siteIdParam: SiteIdSource;
-  /**
-   * Audit `target.kind`. Defaults to `'site'`. Routes that operate on a
-   * specific machine / deployment / etc. should pass the matching kind so
-   * the audit row groups correctly.
-   */
+  /** Audit `target.kind`, default `'site'`; pass the nested kind where it applies. */
   targetKind?: AuditTargetKind;
   /**
-   * Dynamic route param to use as the audit target id. Defaults to the
-   * resolved siteId. Machine/process routes should pass their nested resource
-   * param so audit rows point at the mutated resource, not just the site.
+   * Route param for the audit target id, default the resolved siteId. Nested
+   * routes should pass theirs so audit rows name the mutated resource.
    */
   targetIdParam?: string;
   /**
-   * API-key permission required when an api-key is the calling auth.
-   * Sessions and id-tokens bypass scope checks. Defaults to `'write'`,
-   * which is the right answer for every mutation-class capability we
-   * currently support; routes that need read-class scope should pass
-   * `'read'` explicitly.
+   * Permission an api-key caller needs (sessions/id-tokens bypass scope).
+   * Default `'write'`; read-class routes must pass `'read'`.
    */
   apiKeyPermission?: ApiKeyPermission;
   /**
-   * API-key scope to enforce. Defaults to `site={siteId}:<permission>`.
-   * Nested public routes can preserve their pre-migration contract by
-   * checking a route-param-backed resource, for example
-   * `machine={machineId}:write`.
+   * Scope to enforce, default `site={siteId}:<permission>`. Nested public
+   * routes can keep their pre-migration contract, e.g. `machine={id}:write`.
    */
   apiKeyScope?: {
     resource: ApiKeyResource;
@@ -146,17 +116,14 @@ export interface PlatformHandlerOptions {
   capability: Capability;
   targetKind?: AuditTargetKind;
   /**
-   * Dynamic route param to use as the audit target id. Omit for routes that
-   * act on the platform itself — those record `__platform__`. Routes that
-   * mutate one addressable resource (e.g. `/api/users/{uid}`) MUST pass their
-   * param so the audit row names the resource that changed.
+   * Route param for the audit target id. Omit for platform-wide routes (they
+   * record `__platform__`); routes mutating one resource MUST pass theirs so
+   * the audit row names what changed.
    */
   targetIdParam?: string;
   /**
-   * API-key scope that callers must hold to invoke this route. Sessions
-   * and id-token auth bypass scope (consistent with `requireScope`); only
-   * api-key callers are gated. Defaults to `{ resource: 'user', permission: 'admin' }`
-   * which any superadmin-grade key will hold.
+   * Scope an api-key caller must hold (sessions/id-tokens bypass, per
+   * `requireScope`). Default `{ resource: 'user', permission: 'admin' }`.
    */
   apiKeyScope?: { resource: ApiKeyResource; permission: ApiKeyPermission };
 }
@@ -172,10 +139,6 @@ export type PlatformRouteHandler<TParams = Record<string, string | undefined>> =
   ctx: PlatformHandlerContext,
   routeContext?: { params: Promise<TParams> },
 ) => Promise<NextResponse> | NextResponse;
-
-/* -------------------------------------------------------------------------- */
-/*  shared helpers                                                            */
-/* -------------------------------------------------------------------------- */
 
 function authToActor(auth: ResolvedAuth, role: Role, sites: string[]): UserActor {
   return {
@@ -242,17 +205,13 @@ function denyAudit(
   siteId: string,
   entry: AuditEntryInput,
 ): void {
-  // Deny / error audits are best-effort. A failed audit here does not
-  // change the response we already decided to send.
+  // Best-effort: a failed deny/error audit can't change a response already decided.
   writeAuditEntry(siteId, entry);
 }
 
 /**
- * Platform audit writer. Audit rows for platform-scoped routes live at
- * `global/audit_log/{entryId}` rather than under `sites/{siteId}/...`.
- * This is a thin firestore-direct writer because `auditLog.server.ts`
- * currently only knows about the site-scoped path; collapsing the two
- * write surfaces is wave 1.3 follow-up work.
+ * Platform audit rows live at `global/audit_log/{entryId}`, not under a site.
+ * Firestore-direct because `auditLog.server.ts` only knows the site path.
  */
 async function writePlatformAuditBlocking(entry: AuditEntryInput): Promise<void> {
   const db = getAdminDb();
@@ -350,10 +309,8 @@ function platformDenyAudit(entry: AuditEntryInput): void {
 // need a stable bucket for rate-limit counters, so use a non-reserved id.
 const PLATFORM_RATE_LIMIT_SITE_ID = 'platform_global';
 
-// Audit `target.id` for platform routes that act on the platform itself
-// (global settings, kill-switch) rather than a single addressable resource.
-// Routes that DO act on one resource pass `targetIdParam` so the audit row
-// names it — readers (e.g. the account-deletions feed) rely on that id.
+// Audit `target.id` for platform-wide routes. Routes acting on one resource
+// pass `targetIdParam` instead — readers (account-deletions feed) rely on it.
 const PLATFORM_TARGET_ID = '__platform__';
 
 function auditActorRoleLabel(actor: AuditEntryInput['actor']): string {
@@ -364,10 +321,6 @@ function auditActorRoleLabel(actor: AuditEntryInput['actor']): string {
 function headersForRateLimit(result: RateLimitResult): Record<string, string> {
   return typeof rateLimitHeaders === 'function' ? rateLimitHeaders(result) : {};
 }
-
-/* -------------------------------------------------------------------------- */
-/*  site-scoped wrapper                                                       */
-/* -------------------------------------------------------------------------- */
 
 function extractSiteIdFromRequest(
   request: NextRequest,
@@ -413,13 +366,9 @@ function extractRouteParamFromPath(request: NextRequest, paramName: string): str
 }
 
 /**
- * Site-scoped authorized handler. Use for any route that operates on a
- * single site (and any nested resource under it).
- *
- * `siteIdParam` MUST be `'path'` or `'query'`. Passing `'body'` is a
- * compile error: the type-system rejection is the deliberate guard
- * against the confused-deputy bug where a caller supplies a siteId in
- * the body that doesn't match the URL.
+ * For any route scoped to one site (or a resource nested under it).
+ * `siteIdParam` must be `'path'` or `'query'`; `'body'` is a compile error —
+ * that's the guard against a body siteId disagreeing with the URL.
  */
 export function authorizedSiteHandler<TParams extends Record<string, string | undefined> = Record<string, string | undefined>>(
   options: SiteHandlerOptions,
@@ -632,8 +581,7 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         }
         return response;
       } catch (err) {
-        // Best-effort error audit; then re-throw so the framework's
-        // error response path runs.
+        // Best-effort error audit, then re-throw for the framework's handler.
         denyAudit(siteId, {
           correlationId,
           actor,
@@ -649,20 +597,10 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  platform-scoped wrapper                                                   */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Platform-scoped authorized handler. Use for routes that mutate
- * platform-level state (installer, global settings, user roles).
- *
- * Audit rows for these routes are written under
- * `global/audit_log/{entryId}` rather than a site path, since there is
- * no governing site.
- *
- * Requires `actor.role === 'superadmin'`. SystemActor is not accepted —
- * system-actor capability checks go through `systemInvoker` (wave 2.3).
+ * For routes mutating platform state (installer, global settings, user roles).
+ * Audits to `global/audit_log/{entryId}` — there is no governing site.
+ * Requires `actor.role === 'superadmin'`; SystemActor goes via `systemInvoker`.
  */
 export function authorizedPlatformHandler<TParams extends Record<string, string | undefined> = Record<string, string | undefined>>(
   options: PlatformHandlerOptions,
@@ -674,9 +612,8 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
     ): Promise<NextResponse> {
       const correlationId = generateCorrelationId();
       const targetKind: AuditTargetKind = options.targetKind ?? 'site';
-      // Resolved once, up front, so every audit row this wrapper writes
-      // (deny, allow, error) names the same target. Falls back to the
-      // platform sentinel when the route has no addressable resource.
+      // Resolved once so deny/allow/error rows all name the same target;
+      // falls back to the platform sentinel when there is no resource.
       const targetId = options.targetIdParam
         ? (await extractRouteParam(
             (routeContext?.params ?? Promise.resolve({} as TParams)) as Promise<Record<string, string | undefined>>,
@@ -765,8 +702,7 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
       let rateLimitBypassed = false;
       let rateLimitResult: RateLimitResult | null = null;
       if (config.rate_limit_enforcement) {
-        // Platform endpoints have no siteId; use a synthetic identifier
-        // so the firestore counter still partitions per-capability.
+        // No siteId here; a synthetic one keeps the counter partitioned.
         const rl = await checkRateLimit(
           actor as Actor,
           options.capability,

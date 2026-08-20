@@ -1,12 +1,9 @@
 /**
- * Shared helpers for the process control-verb routes (kill / restart / start /
- * stop).
+ * Shared helpers for the process control verbs (kill/restart/start/stop): each
+ * validates the process, then queues a command via `executeMachineCommand`.
  *
- * Each control verb validates the process and queues a canonical machine
- * command via `executeMachineCommand`.
- *
- * The `schedule` verb is intentionally NOT here — it goes through
- * `withProcessLock` (no command queue) and lives in its own route file.
+ * `schedule` is deliberately NOT here — it goes through `withProcessLock` with
+ * no command queue, in its own route file.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -38,10 +35,7 @@ const VERB_TO_COMMAND: Record<ControlVerb, string> = {
   stop: 'stop_process',
 };
 
-/**
- * Generic handler for a process control verb. Validates the process exists,
- * queues the corresponding command, emits audit, returns commandId.
- */
+/** Validate the process, queue its command, emit audit, return the commandId. */
 export function handleControlVerb(
   verb: ControlVerb,
   request: NextRequest,
@@ -81,7 +75,7 @@ function createControlHandler(verb: ControlVerb) {
         },
         rawBody,
         async () => {
-          // Verify the process exists (avoid queuing commands for ghost ids).
+          // Never queue a command for a ghost process id.
           const processes = await readProcessList(siteId, machineId);
           if (!processes) {
             return problem(404, 'process_not_found', 'No machine config found.');

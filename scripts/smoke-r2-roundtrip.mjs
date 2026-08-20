@@ -1,27 +1,15 @@
 #!/usr/bin/env node
 /**
- * R2 round-trip smoke for the deployed web service.
+ * R2 round-trip smoke against a deployed web service. Hashes 1 MiB of random
+ * bytes and drives the public chunk pipeline: check (missing) -> upload-urls ->
+ * PUT -> check (present). Exits non-zero on any step, printing the step and
+ * http status to stderr.
  *
- * Generates 1 MiB of random bytes, hashes them, then drives the public
- * chunk-upload pipeline end-to-end against a deployed Owlette web
- * service:
- *
- *   1. POST /api/chunks/check          → confirm the new hash is missing
- *   2. POST /api/chunks/upload-urls    → mint a signed PUT URL
- *   3. PUT  <signed url> + 1 MiB body  → upload to R2
- *   4. POST /api/chunks/check          → confirm the hash is now present
- *
- * Exits 0 on a clean round-trip, non-zero on any step failure (with the
- * failing step + http status printed to stderr).
- *
- * Closes the punchlist's "R2 1MB live smoke against deployed web service"
- * gap. Use before promoting roost beyond the design-partner cohort.
+ * Run before promoting roost beyond the design-partner cohort.
  *
  * Usage:
  *   node scripts/smoke-r2-roundtrip.mjs \
- *     --base-url https://dev.owlette.app \
- *     --site <siteId> \
- *     --api-key owk_<key>
+ *     --base-url https://dev.owlette.app --site <siteId> --api-key owk_<key>
  *
  * The api key must carry `site=<siteId>:write` scope.
  */
@@ -122,8 +110,7 @@ async function main() {
   console.log(`  api key:   ${apiKey.slice(0, 12)}...`);
   console.log();
 
-  // Random bytes prevent collision with anything already on the server,
-  // so check #1 must report missing and check #2 must report present.
+  // Random, so nothing on the server can collide: check #1 must say missing.
   const bytes = randomBytes(ONE_MIB);
   const hash = createHash('sha256').update(bytes).digest('hex');
   console.log(`  bytes:     ${ONE_MIB} (${(ONE_MIB / 1024 / 1024).toFixed(2)} MiB)`);

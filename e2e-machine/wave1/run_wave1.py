@@ -29,7 +29,7 @@ import sys
 import time
 from pathlib import Path
 
-# --- real agent paths (grounded in agent/src + owlette_installer.iss) --------
+# real agent paths (from agent/src + owlette_installer.iss)
 INSTALL_DIR = Path(r"C:\ProgramData\Owlette")
 SERVICE = "OwletteService"
 STATUS_JSON = INSTALL_DIR / "tmp" / "service_status.json"
@@ -59,8 +59,7 @@ def record(stage, ok, detail=""):
 
 
 def run(cmd, timeout=600):
-    # Decode as UTF-8 explicitly — Windows' locale codepage would mojibake
-    # Node's UTF-8 stdout and sc/reg output.
+    # explicit UTF-8: the locale codepage mojibakes Node/sc/reg output
     return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=timeout)
 
@@ -127,7 +126,7 @@ def unblock(path):
     run(["powershell", "-NoProfile", "-Command", f"Unblock-File -Path '{path}'"], timeout=60)
 
 
-# --- stages ------------------------------------------------------------------
+# stages
 
 def stage0_preflight():
     ok = True
@@ -169,9 +168,9 @@ def stage2_install(installer, phrase, negative):
     proc = run(cmd, timeout=900)
     record("2 install: installer ran", True, f"exit={proc.returncode} (NOT trusted as a pairing oracle)")
 
-    # Compound pairing oracle - installer exit 0 is deliberately NOT sufficient:
-    # a pairing failure is swallowed under /SUPPRESSMSGBOXES and the service is
-    # skipped while the installer still exits 0 (owlette_installer.iss:341-357).
+    # Installer exit 0 is NOT proof of pairing: under /SUPPRESSMSGBOXES a pairing
+    # failure is swallowed and the service skipped, still exiting 0
+    # (owlette_installer.iss:341-357). Hence the compound oracle.
     svc = service_state(SERVICE)
     tok = tokens_present()
     bound = config_bound_to_site()
@@ -188,7 +187,7 @@ def stage2_install(installer, phrase, negative):
     paired = all(checks.values())
 
     if negative:
-        # Success in negative mode = we correctly detected NO pairing.
+        # negative mode: success means we correctly detected NO pairing
         return record("2 install: NEGATIVE - pairing correctly detected as FAILED", not paired,
                       detail + "  (expected all N)")
     return record("2 install: compound pairing oracle", paired, detail)
@@ -196,7 +195,7 @@ def stage2_install(installer, phrase, negative):
 
 def stage3_bootstrap(hostname):
     ok = True
-    # Service auto-starts at install (install.bat runs `owlette-host start`) - poll, don't `net start`.
+    # install.bat already ran `owlette-host start` — poll, don't `net start`
     deadline = time.time() + 60
     svc = service_state(SERVICE)
     while svc != "RUNNING" and time.time() < deadline:
@@ -220,11 +219,9 @@ def stage3_bootstrap(hostname):
     ok &= record("3 bootstrap: service_status.json firebase.connected", connected,
                  f"path={STATUS_JSON}")
 
-    # service.log sanity. Match an INFO-level startup marker the service always
-    # emits: 'agent_started' proper is a Firestore event action logged only at
-    # DEBUG ("Logged agent_started event to Firestore"), suppressed at the
-    # default INFO level (owlette_service.py). 'owlette initialized' fires on
-    # first_start regardless of Firebase state.
+    # Must match an INFO-level marker: 'agent_started' is only logged at DEBUG and
+    # is invisible at the default level. 'owlette initialized' fires on first_start
+    # regardless of Firebase state.
     STARTUP_MARKERS = ("owlette initialized", "Firebase client initialized and started")
     if SERVICE_LOG.exists():
         log_txt = SERVICE_LOG.read_text(encoding="utf-8", errors="ignore")
@@ -266,7 +263,7 @@ def stage7_uninstall():
                  ", ".join(f"{d.name}={'gone' if not d.exists() else 'PRESENT'}" for d in INSTALLED_MARKER_DIRS))
     key_gone = not any(registry_key_exists(k) for k in UNINSTALL_KEYS)
     ok &= record("7 uninstall: registry uninstall key removed", key_gone)
-    # User data is PRESERVED by design on silent uninstall (iss DeinitializeSetup) - informational.
+    # silent uninstall preserves user data by design (iss DeinitializeSetup)
     record("7 uninstall: user data preserved by design (informational)", True,
            f"tokens/config/logs left in {INSTALL_DIR} - snapshot revert is the true reset")
     return ok
@@ -301,8 +298,7 @@ def main():
     except Exception as exc:  # noqa: BLE001
         record("CONTROLLER ERROR", False, repr(exc))
     finally:
-        # Leave the box clean: uninstall if anything was installed and the
-        # uninstaller still exists (a successful stage 7 already removed it).
+        # leave the box clean; a successful stage 7 already removed the uninstaller
         if installed and UNINSTALLER.exists():
             run([str(UNINSTALLER), "/VERYSILENT", "/SUPPRESSMSGBOXES"], timeout=600)
         if not args.keep_cloud:

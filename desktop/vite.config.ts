@@ -39,11 +39,9 @@ export default defineConfig({
     globals: true,
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     setupFiles: ['./src/test/setup.ts'],
-    // Vitest stubs every CSS request to `export default ""` unless the id is
-    // opted in here — which would silently empty the `globals.css?raw` import
-    // the port-integrity assertions read. Opting globals.css in lets Vite's
-    // `?raw` loader hand back the authored stylesheet; nothing else imports
-    // CSS in tests, so no Tailwind compilation happens.
+    // Vitest stubs CSS to `export default ""` unless opted in here, which would
+    // empty the `globals.css?raw` import the port-integrity assertions read.
+    // Nothing else imports CSS in tests, so no Tailwind compilation happens.
     css: { include: [/globals\.css/] },
   },
 })

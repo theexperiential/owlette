@@ -1,12 +1,8 @@
 /**
- * GET /api/sites/{siteId}/machines/{machineId}/deployments
- *      → Per-roost current state for a specific machine.
- *        For every roost in the site whose targets[] include this
- *        machine, returns the intended currentVersionId (from the
- *        roost doc) and the reportedVersionId + status (from the
- *        per-roost target_state/{machineId} subcollection doc).
- *
- * roost public api wave 3.6.
+ * GET /api/sites/{siteId}/machines/{machineId}/deployments — per-roost state
+ * for one machine. For every roost whose targets[] include it: the intended
+ * currentVersionId (roost doc) plus reportedVersionId + status (that roost's
+ * target_state/{machineId} doc).
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -31,14 +27,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const db = getAdminDb();
     const siteRef = db.collection('sites').doc(siteId);
 
-    // Find every roost on this site that targets this machine.
-    // Firestore `array-contains` is native — one query, no full scan.
+    // `array-contains` is native — one query, no full scan.
     const targetingRoostsSnap = await siteRef
       .collection('roosts')
       .where('targets', 'array-contains', machineId)
       .get();
 
-    // For each matching roost, load its target_state/{machineId} doc in parallel.
     const perRoost = await Promise.all(
       targetingRoostsSnap.docs.map(async (roostDoc) => {
         const data = roostDoc.data();

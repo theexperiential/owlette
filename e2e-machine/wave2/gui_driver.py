@@ -1,18 +1,15 @@
 """Wave 2 GUI driver — drive the Owlette CustomTkinter GUI by coordinate.
 
-CustomTkinter renders on a tk canvas, so its controls are invisible to Windows
-UIAutomation (pywinauto can see the top-level window but not the buttons/entries
-inside). The GUI's OWLETTE_E2E introspection shim closes that gap: it publishes
-each control's screen rectangle to a side file. This module reads that file and
-drives the controls with real mouse/keyboard input via pywinauto.
+CustomTkinter draws on a tk canvas, so UIAutomation sees the top-level window
+but none of the controls inside. The GUI's OWLETTE_E2E shim publishes each
+control's screen rectangle to a side file; this reads it and drives real
+mouse/keyboard input through pywinauto.
 
-It reuses the human-paced helpers from the tutorial capture harness
-(dev/video-tutorials/capture-native/recorder.py) — smooth_move / slow_type —
-rather than duplicating them, and adds coordinate-based click + type helpers and
-the "add a monitored process" flow the Wave 2 stage exercises.
+Reuses smooth_move / slow_type from the tutorial capture harness
+(dev/video-tutorials/capture-native/recorder.py).
 
-Runs under the pinned pywinauto venv created by
-scripts/bootstrap-gui-automation.ps1 (pywinauto 0.6.9 / pywin32 306 / psutil).
+Needs the pinned venv from scripts/bootstrap-gui-automation.ps1
+(pywinauto 0.6.9 / pywin32 306 / psutil).
 """
 from __future__ import annotations
 
@@ -20,9 +17,7 @@ import json
 import time
 from pathlib import Path
 
-# Reuse the capture-native driving helpers (smooth cursor glide + per-key typing)
-# instead of reimplementing them. Add that dir to the path so `import recorder`
-# resolves regardless of CWD.
+# On the path so `import recorder` resolves regardless of CWD.
 _REPO = Path(__file__).resolve().parents[2]
 _CAPTURE_NATIVE = _REPO / "dev" / "video-tutorials" / "capture-native"
 import sys
@@ -44,12 +39,11 @@ class ShimError(RuntimeError):
 
 
 def read_rects(required=(), fresh_within_s=10.0, timeout=20.0, poll=0.5):
-    """Read the shim side file, waiting until it is fresh and exposes every
-    widget in `required`. Returns the {widget_name: rect} map (the payload's
-    "rects"), which is what click_widget/set_field/click_row consume.
+    """Read the shim side file once it is fresh and exposes every widget in
+    `required`; returns the {widget_name: rect} map.
 
-    Raises ShimError on timeout — a missing/stale file means the GUI is not
-    running with OWLETTE_E2E=1 (or has not laid out its widgets yet).
+    Raises ShimError on timeout — missing/stale means the GUI is not running
+    with OWLETTE_E2E=1, or has not laid its widgets out yet.
     """
     deadline = time.time() + timeout
     last_reason = "no side file"
@@ -128,35 +122,31 @@ def set_field(rects, name, text, *, commit=True):
 def add_monitored_process(process_name, exe_path):
     """Drive the full add-process flow and return the entered name.
 
-    The GUI persists a COLLAPSED detail-panel state, and _show_detail_fields is
-    a no-op while collapsed — so clicking the row (on_select) cannot reveal the
-    form. The ONLY way to expand is the details toggle (toggle_details_panel),
-    and _expand_right_panel only shows the fields when a row is selected. Hence:
-    "+" (create row) -> toggle (expand) -> click row (select -> fields map) ->
-    fill name + exe.
+    Order is forced: "+" -> toggle -> click row -> fill. The GUI persists a
+    COLLAPSED detail panel, _show_detail_fields is a no-op while collapsed, and
+    _expand_right_panel only maps the fields once a row is selected.
     """
     r = read_rects(required=("new_button", "process_list", "details_toggle_button"))
     raise_window()
 
-    # 1) "+" creates + activates the row (and kicks a background Firestore upload).
+    # 1) "+" creates + activates the row (kicks a background Firestore upload).
     click_widget(r, "new_button")
     recorder.beat(0.8, "row created")
 
-    # 2) Expand the panel via the toggle, unless it is already expanded (the
-    #    form fields being published is the tell — don't toggle a shown panel
-    #    shut).
+    # 2) Expand unless already expanded — published form fields are the tell;
+    #    toggling a shown panel would close it.
     r = read_rects(required=("details_toggle_button", "process_list"))
     if "name_entry" not in r:
         click_widget(r, "details_toggle_button")
         recorder.beat(0.8, "detail panel expanded")
 
-    # 3) Select the new row so on_select binds the form to it; now that the
-    #    panel is expanded _show_detail_fields(True) maps the fields.
+    # 3) Select the row so on_select binds the form; with the panel expanded,
+    #    _show_detail_fields(True) maps the fields.
     r = read_rects(required=("process_list",))
     click_row(r, "process_list")
     recorder.beat(0.8, "row selected -> fields shown")
 
-    # 4) Fields are mapped now; wait for the shim to publish them, then fill.
+    # 4) Wait for the shim to publish the mapped fields, then fill.
     r = read_rects(required=("name_entry", "exe_path_entry"), timeout=15)
     set_field(r, "name_entry", process_name)
     r = read_rects(required=("name_entry", "exe_path_entry"))

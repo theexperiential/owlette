@@ -1,10 +1,8 @@
 /**
  * @jest-environment node
  *
- * tests for web/lib/uploadQueue.ts (roost wave 3.3).
- *
- * Store interface is injected — exercises the runner + retry arithmetic
- * against an in-memory fake. No IndexedDB emulator dep.
+ * web/lib/uploadQueue.ts — runner + retry arithmetic against an injected
+ * in-memory store, so no IndexedDB emulator is needed.
  */
 
 import {
@@ -18,9 +16,7 @@ import {
   type UploadTask,
 } from '@/lib/uploadQueue';
 
-/* --------------------------------------------------------------------- */
-/*  In-memory QueueStore                                                 */
-/* --------------------------------------------------------------------- */
+// In-memory QueueStore
 
 function memoryStore(initial: UploadTask[] = []): QueueStore & {
   snapshot(): UploadTask[];
@@ -51,9 +47,7 @@ function mkTask(id: string, size = 4 * 1024 * 1024): UploadTask {
   };
 }
 
-/* --------------------------------------------------------------------- */
-/*  nextRetryDelayMs                                                     */
-/* --------------------------------------------------------------------- */
+// nextRetryDelayMs
 
 describe('nextRetryDelayMs', () => {
   it('attempt 1 → baseMs (± jitter zero when rng=0.5)', () => {
@@ -110,9 +104,7 @@ describe('shouldGiveUp', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  summariseQueue + selectNextBatch                                     */
-/* --------------------------------------------------------------------- */
+// summariseQueue + selectNextBatch
 
 describe('summariseQueue', () => {
   it('reports settled when nothing is pending or in-flight', () => {
@@ -162,9 +154,7 @@ describe('selectNextBatch', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  runUploadQueue                                                       */
-/* --------------------------------------------------------------------- */
+// runUploadQueue
 
 /** Silent, instant sleep for tests. Honours abort. */
 function fastSleep(_ms: number, signal?: AbortSignal): Promise<void> {
@@ -248,8 +238,7 @@ describe('runUploadQueue', () => {
   });
 
   it('resumes from persistence — already-succeeded tasks are NOT re-uploaded', async () => {
-    // this is the regression that proves tab-close recovery: a succeeded
-    // task in the store means the runner skips it on the next run.
+    // Tab-close recovery: a succeeded task in the store is skipped next run.
     const store = memoryStore([
       { ...mkTask('done-before-tab-close'), state: 'succeeded' },
       mkTask('still-to-upload'),
@@ -266,9 +255,8 @@ describe('runUploadQueue', () => {
   });
 
   it('demotes `in_flight` zombies from a crashed prior tab to `pending`', async () => {
-    // on start, an in-flight task is assumed to be a zombie from a tab
-    // that crashed before the upload completed. it must be re-run, not
-    // left stranded.
+    // An in-flight task at start is a zombie from a crashed tab: re-run it
+    // rather than leave it stranded.
     const zombie: UploadTask = {
       ...mkTask('zombie'),
       state: 'in_flight',

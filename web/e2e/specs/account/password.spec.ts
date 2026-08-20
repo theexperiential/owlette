@@ -1,40 +1,23 @@
 /**
  * Account — change password (C4.2)
  *
- * The password-change flow lives in AccountSettingsDialog's "security"
- * section, behind an "update password" toggle. On save, AuthContext's
- * `updatePassword` re-authenticates via `EmailAuthProvider.credential(...)`
- * then calls Firebase's `updatePassword(user, newPassword)`.
+ * The flow lives in AccountSettingsDialog's "security" section behind an "update
+ * password" toggle; AuthContext's `updatePassword` re-authenticates via
+ * `EmailAuthProvider.credential(...)` then calls Firebase's `updatePassword`.
  *
- * This spec covers:
- *   - happy path — rename current → new → confirm → save → toast
- *     "Password Updated" + emulator REST sign-in with the NEW password
- *     succeeds (load-bearing read-through: firebase-admin.UserRecord
- *     has no password-update timestamp, so we prove the change by
- *     actually signing in)
- *   - wrong-current-password edge — re-auth fails with
- *     'auth/wrong-password' or 'auth/invalid-credential' → AuthContext
- *     surfaces "Current password is incorrect." toast
+ * Covers the happy path (save → "Password Updated" toast + emulator REST sign-in with
+ * the NEW password succeeds — load-bearing, because firebase-admin.UserRecord carries
+ * no password-update timestamp) and the wrong-current-password edge, where re-auth
+ * fails with 'auth/wrong-password' / 'auth/invalid-credential' and AuthContext
+ * surfaces "Current password is incorrect."
  *
- * IMPORTANT — fixture-isolation rule (why we use a dedicated user):
- *
- *   Firebase revokes ALL refresh tokens for a user when their password
- *   changes — not just the session that triggered the change. Using the
- *   shared `TEST_USERS.member` fixture here would leave the
- *   `fixtures/member.json` storageState (captured once in global-setup)
- *   holding dead refresh tokens for every downstream member-scoped
- *   spec in the run. `afterEach` could restore the PASSWORD but not
- *   the revoked tokens — the client-side IDB state is what global-setup
- *   captured, and Firebase won't reissue against a revoked refresh
- *   chain. The result was six cascading failures in
- *   account/preferences.spec.ts, account/profile.spec.ts,
- *   auth/logout.spec.ts, and sites/access-defaults.spec.ts — all
- *   timing out on `user-menu-trigger` / `site-switcher-trigger`
- *   because the dashboard could never render a signed-in shell.
- *
- *   Fix: seed a dedicated `password-test-user` in beforeAll and scope
- *   every mutation to it. The shared member fixture is never touched,
- *   and this spec's tests stay internally idempotent via afterEach.
+ * FIXTURE ISOLATION — use the dedicated `password-test-user`, never TEST_USERS.member.
+ * Firebase revokes ALL refresh tokens on a password change, which would leave
+ * `fixtures/member.json` storageState (captured once in global-setup) holding dead
+ * tokens for every downstream member-scoped spec; afterEach can restore the password
+ * but not the tokens. That caused six cascading failures across account/preferences,
+ * account/profile, auth/logout and sites/access-defaults, all timing out because the
+ * dashboard never rendered a signed-in shell.
  */
 
 import { test, expect } from '@playwright/test';
@@ -61,10 +44,8 @@ test.beforeAll(async () => {
 });
 
 test.afterEach(async () => {
-  // Restore to the seeded password so the second test in this file (and
-  // the happy-path test on warm-emulator reruns) starts from a known
-  // baseline. Scoped to PW_USER — the shared member account is not
-  // touched.
+  // Restore the seeded password so the next test (and warm-emulator reruns) start from
+  // a known baseline. Scoped to PW_USER — the shared member account is untouched.
   await getAdminAuth().updateUser(PW_USER.uid, { password: PW_USER.password });
 });
 
@@ -76,11 +57,7 @@ async function signIn(page: import('@playwright/test').Page, email: string, pass
   await page.waitForURL(/\/dashboard|\/setup-2fa|\/verify-2fa/, { timeout: 15_000 });
 }
 
-/**
- * Sign in against the Auth emulator's REST endpoint with an explicit
- * password. Returns the HTTP status — 200 is a successful sign-in,
- * 400 is the auth-failed case (INVALID_PASSWORD / EMAIL_NOT_FOUND).
- */
+/** Auth-emulator REST sign-in: 200 = success, 400 = INVALID_PASSWORD / EMAIL_NOT_FOUND. */
 async function signInStatus(email: string, password: string): Promise<number> {
   const url =
     `${AUTH_EMULATOR_URL}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword` +

@@ -14,18 +14,8 @@ export interface InstallerVersionInfo {
 }
 
 /**
- * useInstallerVersion Hook
- *
- * Public hook for fetching the latest installer version.
- * Used by the download button in the dashboard header.
- *
- * Features:
- * - Real-time updates when new version is uploaded
- * - Returns latest version metadata
- * - Available to all authenticated users
- *
- * Usage:
- * const { version, downloadUrl, fileSize, isLoading } = useInstallerVersion();
+ * Latest installer version, live via onSnapshot. Backs the dashboard header's
+ * download button; readable by any authenticated user.
  */
 export function useInstallerVersion() {
   const [versionInfo, setVersionInfo] = useState<InstallerVersionInfo | null>(null);
@@ -35,10 +25,9 @@ export function useInstallerVersion() {
   useEffect(() => {
     if (!db) return;
 
-    // `doc()` only throws on invalid path segments (both literal here) and
-    // onSnapshot surfaces runtime listener errors through its error callback —
-    // no sync try/catch needed, and avoids the react-hooks/set-state-in-effect
-    // violation that a sync catch-block setState would trigger.
+    // No try/catch: `doc()` only throws on invalid path segments (both literal
+    // here) and onSnapshot reports runtime errors through its error callback. A
+    // sync catch-block setState would trip react-hooks/set-state-in-effect.
     const latestRef = doc(db, 'installer_metadata', 'latest');
 
     const unsubscribe = onSnapshot(

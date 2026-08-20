@@ -1,13 +1,10 @@
 /**
  * GET /api/sites/{siteId}/quota/history?period=30d
- *      → Daily usage rollup derived from `sites/{siteId}/usage_events`.
- *        Each day bucket includes: date (YYYY-MM-DD UTC),
- *        storageBytesAvg (avg of storage_snapshot events that day),
- *        classAOps, classBOps, egressBytes.
+ *      → daily rollup of `sites/{siteId}/usage_events`. Each bucket: date (YYYY-MM-DD UTC),
+ *        storageBytesAvg (mean of that day's storage_snapshot events), classAOps, classBOps,
+ *        egressBytes.
  *
- * `period` accepts `7d`, `14d`, `30d`, `60d`, `90d`. Default: 30d.
- *
- * roost public api wave 3.7.
+ * `period` accepts `7d`, `14d`, `30d`, `60d`, `90d`; default 30d.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -63,7 +60,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const db = getAdminDb();
     const now = Date.now();
-    // Start of the UTC day (days - 1) ago — inclusive span of `days` buckets.
+    // Start of the UTC day (days - 1) ago, so the span covers exactly `days` buckets.
     const today = new Date(now);
     const startUtcDay = Date.UTC(
       today.getUTCFullYear(),
@@ -79,7 +76,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       .where('timestamp', '<', Timestamp.fromMillis(now))
       .get();
 
-    // Pre-seed the bucket map so days with no events still appear as zeros.
+    // Pre-seed so days with no events appear as zeros.
     const buckets = new Map<string, DailyBucket>();
     for (let i = 0; i < days; i++) {
       const d = new Date(startUtcDay + i * 24 * 60 * 60 * 1000);

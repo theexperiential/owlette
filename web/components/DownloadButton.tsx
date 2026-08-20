@@ -11,18 +11,7 @@ import {
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 import { toast } from '@/lib/toast';
 
-/**
- * DownloadButton Component
- *
- * Public download button for the owlette Agent installer.
- * Displays in the dashboard header for all authenticated users.
- *
- * Features:
- * - Shows latest version in tooltip
- * - Downloads installer when clicked
- * - Loading state while fetching
- * - Error handling with user feedback
- */
+/** Agent-installer download button in the dashboard header. */
 export default function DownloadButton() {
   const { version, downloadUrl, isLoading, error } = useInstallerVersion();
 
@@ -35,7 +24,6 @@ export default function DownloadButton() {
     }
 
     try {
-      // Open download URL in new tab
       window.open(downloadUrl, '_blank');
       toast.success('download started', {
         description: `downloading owlette v${version}`,
@@ -67,7 +55,6 @@ export default function DownloadButton() {
     }
   };
 
-  // Don't show button if there's an error or no version available
   if (error || (!isLoading && !version)) {
     return null;
   }

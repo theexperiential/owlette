@@ -1,21 +1,13 @@
 /**
- * `owlette trigger <event>`.
+ * `owlette trigger <event>` — fire a synthetic webhook for local testing.
  *
- * Fires a synthetic webhook for local testing. Two modes:
+ * Direct (`--to <url>`): build the body, sign with --signing-secret
+ * (stripe-style `t=<unix>,v1=<hmac>`) and POST straight to the url.
+ * Server probe (`--to <url> --via-api`): POST /api/webhooks/probe, which signs
+ * and sends one delivery — no subscription, nothing on /api/events/stream.
  *
- *   1. direct (`--to <url>`)
- *      bypasses the server. builds the event body, signs with
- *      --signing-secret (stripe-style t=<unix>,v1=<hmac>), and POSTs
- *      to the supplied url directly. useful for local receiver loops.
- *
- *   2. server probe (`--to <url> --via-api`)
- *      POSTs to /api/webhooks/probe?siteId=... with { url, event,
- *      payload?, signingSecret? }. The server signs and sends one probe
- *      delivery to that URL. It does not create a subscription or feed
- *      `/api/events/stream`.
- *
- * A small canned library of payload templates gives sensible defaults
- * per event kind; --payload / --payload-file overrides anything.
+ * Canned payload templates supply per-event defaults; --payload /
+ * --payload-file override them.
  */
 
 import { Command } from 'commander';
@@ -161,7 +153,6 @@ export function registerTriggerCommand(program: Command): void {
         return;
       }
 
-      // Resolve the payload.
       let payload: Record<string, unknown>;
       if (opts.payload) {
         try {
@@ -253,9 +244,7 @@ export function registerTriggerCommand(program: Command): void {
     });
 }
 
-/* --------------------------------------------------------------------- */
-/*  direct mode                                                          */
-/* --------------------------------------------------------------------- */
+// direct mode
 
 interface FireDirectOpts {
   to: string;
@@ -309,9 +298,7 @@ async function fireDirect(opts: FireDirectOpts): Promise<void> {
   }
 }
 
-/* --------------------------------------------------------------------- */
-/*  server-probe mode                                                    */
-/* --------------------------------------------------------------------- */
+// server-probe mode
 
 interface FireProbeOpts {
   apiUrl: string;
@@ -387,9 +374,7 @@ async function fireServerProbe(opts: FireProbeOpts): Promise<void> {
   }
 }
 
-/* --------------------------------------------------------------------- */
-/*  util                                                                 */
-/* --------------------------------------------------------------------- */
+// util
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n) + '…';

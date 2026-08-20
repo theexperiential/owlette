@@ -1,20 +1,11 @@
 /**
- * Scene — episode 3, "the dashboard, end to end".
+ * Scene — episode 3, "the dashboard, end to end". All SCREEN beats, no B-ROLL.
+ * VO durations (voiceover/out/03-dashboard-tour/): b01 ≈21.1s, b02 ≈19.1s,
+ * b03 ≈26.2s, b04 ≈15.3s, b05 ≈19.5s, b06 ≈25.7s.
  *
- * Every beat in this episode is a SCREEN beat (web capture). No B-ROLL to skip.
- * Beats and their rendered VO durations (voiceover/out/03-dashboard-tour/):
- *   b01 ≈ 21.1s — orientation (site-switcher breadcrumb + online + processes stat tiles)
- *   b02 ≈ 19.1s — the machines section (slow pan across the seeded fleet)
- *   b03 ≈ 26.2s — reading a single card (frame media-server-stage)
- *   b04 ≈ 15.3s — card vs list view (toggle list, then back)
- *   b05 ≈ 19.5s — expand/collapse-all + the metrics detail panel
- *   b06 ≈ 25.7s — the rest of the app (open the page-selector dropdown)
- *
- * Reuses the screenshots harness verbatim: the `dashboard-mixed-states` fixture
- * (10 seeded machines, one offline, varied usage) + the admin role storageState.
- * Selectors mirror the screenshot specs (machine-card, view-toggle-list,
- * machine-row, site-switcher-trigger, the 'media-server-stage' card, the 'cpu'
- * metric tile).
+ * Runs on the screenshots harness: `dashboard-mixed-states` fixture (10
+ * machines, one offline) + admin storageState, selectors as in the screenshot
+ * specs.
  *
  * Run:  cd web && npm run videos -- --grep "episode 3"
  * Out:  web/e2e/.output/videos/03-dashboard-tour.mp4
@@ -79,30 +70,18 @@ test('episode 3 — the dashboard, end to end', async ({ browser }) => {
         await clickWithCursor(page, page.getByTestId('view-toggle-list'));
         await expect(page.getByTestId('machine-row').first()).toBeVisible();
         await narrate(page, 'b04 list view', 8);
-        // The card-view button is icon-only (LayoutGrid) with its label living
-        // in a Radix Tooltip portal — it has no aria-label, so the role+name
-        // lookup never resolves until the tooltip opens (and Playwright resolves
-        // the locator BEFORE moving the cursor to hover it). Use the established
-        // lucide svg-class pattern (see web/e2e/specs/admin/webhooks.spec.ts:148,
-        // schedules.spec.ts:92, settings/webhooks-manage.spec.ts:109): target
-        // `button:has(svg.lucide-layout-grid)` inside the same toolbar that
-        // hosts the view-toggle-list testid (dashboard page.tsx:961–1008).
+        // Icon-only button whose label lives in a Radix Tooltip portal: no
+        // aria-label, and role+name can't resolve before the cursor hovers. Use
+        // the repo's lucide svg-class pattern instead (cf. admin/webhooks.spec.ts).
         const cardToggle = page.locator('button:has(svg.lucide-layout-grid)').first();
         await clickWithCursor(page, cardToggle);
         await expect(page.getByTestId('machine-card').first()).toBeVisible();
         await narrate(page, 'b04 back to cards', 6);
 
         // [b05] expand/collapse-all + the metrics detail panel (~19.5s).
-        // Tooltip-only accessible name like the card-view toggle above — use the
-        // same lucide svg-class pattern. Default load state is collapsed → icon
-        // is ChevronsUpDown (dashboard page.tsx:970 swaps to ChevronsDownUp once
-        // expanded).
-        // At page load, processesExpanded defaults to true (AuthContext.tsx:185 +
-        // seed.ts:112), so `allExpanded` in dashboard/page.tsx:401 is true and
-        // the toggle is in the "collapse all" position. Click it once → rows
-        // collapse (which hides the cpu tile we're about to click) → click
-        // again → rows re-expand, demonstrating the feature without breaking
-        // the rest of the beat.
+        // Tooltip-only name again, so same svg-class pattern. processesExpanded
+        // defaults true, so the toggle loads in "collapse all" state: click
+        // collapses (hiding the cpu tile), second click restores it.
         const collapseAll = page.locator('button:has(svg.lucide-chevrons-down-up)').first();
         await clickWithCursor(page, collapseAll);
         await page.waitForTimeout(600);

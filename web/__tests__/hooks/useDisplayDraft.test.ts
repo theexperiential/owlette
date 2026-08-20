@@ -1,24 +1,13 @@
 /**
  * @jest-environment jsdom
  *
- * Unit tests for `useDisplayDraft` — the local draft buffer that powers
- * the assigned-tab editor. Exercises the invariants that matter for
- * correctness:
- *
- *   - Draft is null outside edit mode; seeded from assigned when edit
- *     mode opens.
- *   - Edits never mutate the `assigned` input (isolation).
- *   - Single-primary invariant: `updateMonitor({primary: true})` clears
- *     it on every other monitor.
- *   - Primary is pinned at (0, 0) — `updateMonitor` drops position
- *     updates targeting the primary, and `shiftSecondariesBy` only
- *     moves non-primary monitors.
- *   - `isDirty` reflects whether the draft has diverged from baseline.
- *   - `resetToAssigned` / `resetToLive` / `clearDraft` behave as their
- *     names suggest.
- *   - sessionStorage round-trip: edits persist across an unmount/mount
- *     within the same session, but stale drafts (edidHash set no longer
- *     matching assigned) are discarded in favour of a fresh clone.
+ * Unit tests for `useDisplayDraft`, the local draft buffer behind the
+ * assigned-tab editor. Covers: draft is null outside edit mode and seeded when
+ * edit opens; edits never mutate the `assigned` input; single-primary invariant;
+ * primary pinned at (0,0) (position updates dropped, `shiftSecondariesBy` moves
+ * only non-primaries); `isDirty`; the reset/clear helpers; and the
+ * sessionStorage round-trip, where a stale draft (edidHash set no longer
+ * matching assigned) is discarded in favour of a fresh clone.
  */
 
 import { act, renderHook } from '@testing-library/react';
@@ -27,10 +16,8 @@ import { useDisplayDraft } from '@/hooks/useDisplayDraft';
 import type { AssignedLayout, MonitorInfo } from '@/hooks/useDisplayState';
 
 /**
- * Mount the hook the way the panel does: start in view mode, transition
- * to edit. The hook's draft is only seeded on a view -> edit *transition*,
- * not on mount, so tests that want an edited draft must go through this
- * same gateway.
+ * Mount the way the panel does — view mode, then edit. The draft seeds on the
+ * view → edit *transition*, not on mount, so edited-draft tests come through here.
  */
 function renderDraftInEditMode(assigned: AssignedLayout) {
   return renderHook(
@@ -265,9 +252,8 @@ describe('useDisplayDraft — sessionStorage', () => {
 
   it('discards a stored draft whose edidHash set no longer matches assigned', () => {
     const key = `displayDraft:${ARGS_BASE.siteId}:${ARGS_BASE.machineId}`;
-    // Seed storage with a draft describing a monitor set that no longer
-    // matches the current `assigned` — e.g. another admin saved a new layout
-    // while the tab was closed.
+    // A stored draft whose monitor set no longer matches `assigned` — e.g. another
+    // admin saved a new layout while the tab was closed.
     window.sessionStorage.setItem(
       key,
       JSON.stringify([

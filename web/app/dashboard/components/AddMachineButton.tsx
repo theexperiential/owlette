@@ -17,10 +17,9 @@ interface AddMachineButtonProps {
   currentSiteId: string;
   currentSiteName?: string;
   /**
-   * Controlled-modal props. When provided, the parent owns the modal's
-   * open/tab state — used by the zero-machine "getting started" card so its
-   * header "+" and its step-3 "generate code" link can drive the same modal on
-   * different tabs. Omit all of them for the default self-contained button.
+   * Hand the parent the modal's open/tab state. The zero-machine
+   * "getting started" card uses it so its header "+" and its step-3 link open
+   * the same modal on different tabs. Omit for a self-contained button.
    */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -40,14 +39,14 @@ export function AddMachineButton({
   const [internalTab, setInternalTab] = useState<AddMachineTab>('enter');
   const { version, downloadUrl, isLoading: isLoadingVersion } = useInstallerVersion();
 
-  // Support both an uncontrolled button (default) and a parent-controlled modal.
+  // Uncontrolled by default; controlled when the parent passes the props above.
   const open = controlledOpen ?? internalOpen;
   const tab = controlledTab ?? internalTab;
   const setOpen = (next: boolean) => (onOpenChange ?? setInternalOpen)(next);
   const setTab = (next: AddMachineTab) => (onTabChange ?? setInternalTab)(next);
 
-  // Enter Code tab state — shared with the getting-started card's inline field
-  // via the hook so the authorize call has a single implementation.
+  // Shared with the getting-started card's inline field via the hook, so the
+  // authorize call has one implementation.
   const {
     phrase: enterPhrase,
     setPhrase: setEnterPhrase,
@@ -81,7 +80,7 @@ export function AddMachineButton({
 
     setIsGenerating(true);
     try {
-      // Step 1: Request a device code from the server
+      // 1. mint a device code
       const codeResponse = await fetch('/api/agent/auth/device-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -95,7 +94,7 @@ export function AddMachineButton({
       const codeData = await codeResponse.json();
       const phrase = codeData.pairPhrase;
 
-      // Step 2: Immediately authorize it for the current site
+      // 2. authorize it for the current site
       const authResponse = await fetch('/api/agent/auth/device-code/authorize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

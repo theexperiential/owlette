@@ -1,20 +1,15 @@
 /**
  * `config/config.json` as this app touches it, plus the pure transforms behind
- * every write.
+ * every write. Two inherited rules:
  *
- * Two rules shape everything here, both inherited from the service seam:
+ * 1. Never rebuild the document — every transform spreads the parsed one, so
+ *    unknown keys (`firebase`, `displays`, `sentry`, `rebootSchedule`, the web's
+ *    `processId` / `schedulePresetId`) survive. With serde_json `preserve_order`
+ *    on the Rust side a desktop write leaves `firebase` byte-identical.
+ * 2. Spreading preserves key order; only genuinely new keys get appended.
  *
- * 1. **Nothing is ever rebuilt from scratch.** Each transform takes the parsed
- *    document and returns a new one made by spreading, so keys this app has
- *    never heard of — `firebase`, `displays`, `sentry`, `rebootSchedule`, and
- *    the per-process `processId` / `schedulePresetId` the web writes — survive
- *    untouched. Combined with serde_json's `preserve_order` on the Rust side,
- *    a desktop write leaves the `firebase` block byte-identical.
- * 2. **Spreading also preserves key order.** Assigning an existing key on a
- *    spread object updates it in place; only genuinely new keys are appended.
- *
- * Field names are the python service's, snake_case and all: this module is a
- * view over its file format, not a place to invent a nicer one.
+ * Field names are the python service's snake_case — this is a view over its
+ * file format, not a place to invent a nicer one.
  */
 
 /** `off` is unmanaged, `always` is 24/7 with crash recovery, `scheduled` runs windows. */
@@ -29,10 +24,8 @@ export const VISIBILITIES = ['Normal', 'Hidden'] as const
 export type Visibility = (typeof VISIBILITIES)[number]
 
 /**
- * One window of a schedule block, `HH:MM` on a 24-hour clock.
- *
- * A `stop` earlier than its `start` is an overnight window: it opens on each
- * scheduled day and closes the following morning (`shared_utils.is_within_schedule`).
+ * One schedule window, `HH:MM` 24-hour. `stop` < `start` means overnight: opens
+ * on each scheduled day, closes next morning (`shared_utils.is_within_schedule`).
  */
 export interface ScheduleRange {
   start: string
@@ -40,17 +33,11 @@ export interface ScheduleRange {
 }
 
 /**
- * One schedule block: a set of days, and the windows that apply to them.
- *
- * Field for field the web's `ScheduleBlock` (`web/hooks/useFirestore.ts:150-160`),
- * because both apps write this array into the same `config.json` and the same
- * python service reads it. `name` and `colorIndex` are the editor's own
- * bookkeeping — the service ignores them, and neither app may drop one it did
- * not add.
- *
- * `days` and `ranges` are required, as they are on the web: that is the shape
- * every writer produces. Readers here still check before walking one, because
- * the file can also be edited by hand.
+ * Days + the windows that apply to them. Field-for-field the web's
+ * `ScheduleBlock` (`web/hooks/useFirestore.ts:150-160`) — both apps write the
+ * same array. `name`/`colorIndex` are editor bookkeeping the service ignores;
+ * neither app may drop one it did not add. Readers still guard `days`/`ranges`
+ * because the file can be hand-edited.
  */
 export interface ScheduleBlock {
   /** The operator's label for the block, e.g. `morning shift`. */
@@ -62,11 +49,9 @@ export interface ScheduleBlock {
 }
 
 /**
- * One entry of `processes[]`.
- *
- * Everything but `id` is optional because entries in the field predate several
- * of these fields, and the numeric ones are strings the moment a human types
- * them — the service reads both, so we never coerce a value we did not touch.
+ * One entry of `processes[]`. Everything but `id` is optional: field entries
+ * predate several fields, and numeric ones become strings as soon as a human
+ * types them. The service reads both, so never coerce a value we did not touch.
  */
 export interface ProcessEntry {
   id: string
@@ -165,16 +150,11 @@ export function formsEqual(a: ProcessForm, b: ProcessForm): boolean {
 }
 
 /**
- * What a blur/enter save is allowed to write.
- *
- * The legacy GUI calls this a "soft save": a nonsense number is replaced by the
- * default rather than thrown back at the operator mid-edit, because the event
- * fires on every focus change. The rules are `owlette_gui.py:886-945` — delay
- * must parse and be >= 0, time-to-initialize must be >= 10, relaunch attempts
- * must be a whole number >= 0 (0 meaning unlimited).
- *
- * Trimming is ours, not python's: a trailing space in an exe path is a launch
- * failure nobody can see on screen.
+ * "Soft save" (`owlette_gui.py:886-945`): blur fires on every focus change, so a
+ * nonsense number is replaced by the default rather than thrown back mid-edit.
+ * delay >= 0, time-to-init >= 10, relaunch attempts an integer >= 0 (0 =
+ * unlimited). Trimming is ours — a trailing space in an exe path is an
+ * invisible launch failure.
  */
 export function coerceForm(form: ProcessForm): ProcessForm {
   const delay = Number(form.time_delay.trim())
@@ -208,12 +188,7 @@ function withProcesses(config: OwletteConfig, processes: ProcessEntry[]): Owlett
   return { ...config, processes }
 }
 
-/**
- * Apply `update` to one entry.
- *
- * Throws when the id is gone: that means the entry was deleted between the read
- * and this call, and writing it back would resurrect it.
- */
+/** Throws when the id is gone — it was deleted since the read; writing would resurrect it. */
 export function updateProcess(
   config: OwletteConfig,
   id: string,
@@ -243,11 +218,8 @@ export function applyForm(process: ProcessEntry, form: ProcessForm): ProcessEntr
 }
 
 /**
- * Set the launch mode, keeping the legacy `autolaunch` mirror in step.
- *
- * The service still reads `autolaunch` on entries written before launch modes
- * existed, and the web app writes both; letting them disagree would make a
- * process the UI calls "off" launch anyway.
+ * Keeps the legacy `autolaunch` mirror in step — the service still reads it on
+ * pre-launch_mode entries, so a disagreement launches a process the UI calls off.
  */
 export function setLaunchMode(process: ProcessEntry, mode: LaunchMode): ProcessEntry {
   return { ...process, launch_mode: mode, autolaunch: mode !== 'off' }
@@ -262,26 +234,18 @@ export function setVisibility(process: ProcessEntry, visibility: Visibility): Pr
 }
 
 /**
- * Replace the schedule windows.
- *
- * `schedulePresetId` — the web's record of which preset the blocks came from —
- * is deliberately left alone rather than cleared. The presets themselves live in
- * Firestore, so this app cannot tell whether the edited blocks still match the
- * named preset or have diverged from it; the web's own process dialog edits
- * these blocks without touching the field either
- * (`web/app/dashboard/components/ProcessDialog.tsx:241-245`).
+ * `schedulePresetId` is deliberately left alone: presets live in Firestore, so
+ * this app cannot tell whether the edits still match the named preset. The web's
+ * own dialog leaves it too (`ProcessDialog.tsx:241-245`).
  */
 export function setSchedules(process: ProcessEntry, schedules: ScheduleBlock[]): ProcessEntry {
   return { ...process, schedules }
 }
 
 /**
- * Can this entry be switched out of `off`?
- *
- * The legacy GUI also stats the executable (`os.path.isfile`), which the
- * desktop app cannot do — it has no filesystem command and is not getting one
- * for a validation nicety. Presence is checked here; a path that does not
- * resolve is reported by the service as LAUNCH_FAILED, which the list shows.
+ * Can this entry leave `off`? Presence only — unlike the legacy GUI we cannot
+ * stat the exe (no filesystem command); an unresolvable path surfaces as the
+ * service's LAUNCH_FAILED.
  */
 export function launchModeBlockedReason(process: ProcessEntry): string | null {
   if (!text(process.name).trim()) return 'name is required before a launch mode can be set'
@@ -320,10 +284,8 @@ export function removeProcess(config: OwletteConfig, id: string): OwletteConfig 
 }
 
 /**
- * `name (copy)`, `name (copy 2)`, … — the first spelling nothing else uses.
- *
- * The web API rejects duplicate process names with a 409, so a clone that
- * reuses a name would fail to sync the moment the service uploads the config.
+ * `name (copy)`, `name (copy 2)`, … — the web API 409s on duplicate process
+ * names, so a name-reusing clone would fail to sync on the next config upload.
  */
 export function uniqueCopyName(existing: readonly string[], baseName: string): string {
   const taken = new Set(existing)
@@ -337,12 +299,9 @@ export function uniqueCopyName(existing: readonly string[], baseName: string): s
 }
 
 /**
- * Clone an entry, deeply.
- *
- * The clone starts with launch mode off — duplicating an always-on entry and
- * having the service immediately start a second copy of the same executable is
- * never what the operator meant. `processId` (the web's mirror of `id`) is
- * re-pointed too, otherwise the clone syncs as an edit of its original.
+ * Deep clone, launch mode forced off — nobody duplicates an always-on entry
+ * meaning to start a second copy immediately. `processId` (the web's mirror of
+ * `id`) is re-pointed too, else the clone syncs as an edit of its original.
  */
 export function duplicateProcess(config: OwletteConfig, id: string, newId: string): OwletteConfig {
   const original = findProcess(config, id)
@@ -362,13 +321,9 @@ export function duplicateProcess(config: OwletteConfig, id: string, newId: strin
 }
 
 /**
- * Move an entry to `toIndex`.
- *
- * The order of `processes[]` is not cosmetic — the service walks it in order on
- * startup, so it is the launch sequence, which is why the list is drag-ordered
- * rather than sorted. A move that changes nothing, or that names an entry or a
- * position which does not exist, returns the document untouched so it never
- * causes a write.
+ * `processes[]` order is the startup launch sequence, not cosmetic — hence
+ * drag-ordering rather than sorting. A no-op or out-of-range move returns the
+ * document untouched so it never triggers a write.
  */
 export function reorderProcess(config: OwletteConfig, id: string, toIndex: number): OwletteConfig {
   const processes = processesOf(config)
@@ -382,13 +337,9 @@ export function reorderProcess(config: OwletteConfig, id: string, toIndex: numbe
 }
 
 /**
- * One-line summary of a scheduled entry's windows, in the wording the legacy
- * GUI shows beside the launch mode (`owlette_gui.py:784-800`).
- *
- * The empty case is not "nothing runs": the service treats a scheduled entry
- * with no windows as always in window (`shared_utils.is_within_schedule`
- * returns True for an empty schedule), so the note says so rather than leaving
- * the operator to assume the opposite.
+ * One-line window summary, wording from `owlette_gui.py:784-800`. Empty is not
+ * "nothing runs" — `shared_utils.is_within_schedule` returns True for an empty
+ * schedule, so the copy says so.
  */
 export function scheduleSummary(process: ProcessEntry): string {
   const blocks = Array.isArray(process.schedules) ? process.schedules : []
@@ -409,15 +360,10 @@ export function scheduleSummary(process: ProcessEntry): string {
 }
 
 /**
- * The image name to hand `terminate_pid` for its identity check, most specific
- * first.
- *
- * A `.bat` / `.cmd` entry runs as a `cmd.exe`, so the configured path can never
- * match the running image — `shared_utils.pid_matches_exe` special-cases it the
- * same way. For everything else the full path is tried first and the bare file
- * name second, which is the fallback python allows for a process the service
- * adopted rather than launched (a different TouchDesigner build opened by file
- * association, say).
+ * Image names for `terminate_pid`'s identity check, most specific first.
+ * `.bat`/`.cmd` run as `cmd.exe` so the configured path can never match —
+ * `shared_utils.pid_matches_exe` special-cases it identically. Otherwise full
+ * path then bare file name, the fallback python allows for adopted processes.
  */
 export function expectedImagesFor(process: ProcessEntry): string[] {
   const exe = text(process.exe_path).trim()

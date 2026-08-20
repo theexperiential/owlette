@@ -1,12 +1,7 @@
 /**
- * GET    /api/sites/{siteId}/deployments/{deploymentId}
- *        -> fetch full deployment detail.
- *
- * DELETE /api/sites/{siteId}/deployments/{deploymentId}
- *        -> delete a terminal deployment doc.
- *
- * security-boundary-migration wave 3.3: delete logic lives in
- * `web/lib/actions/deleteDeployment.server.ts`.
+ * GET    /api/sites/{siteId}/deployments/{deploymentId} — full deployment detail.
+ * DELETE /api/sites/{siteId}/deployments/{deploymentId} — delete a terminal deployment doc;
+ *        logic lives in `web/lib/actions/deleteDeployment.server.ts`.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -27,9 +22,7 @@ import {
 
 type RouteParams = { siteId: string; deploymentId: string };
 
-/* --------------------------------------------------------------------- */
-/*  GET - deployment detail                                               */
-/* --------------------------------------------------------------------- */
+/* GET - deployment detail */
 
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
@@ -86,9 +79,7 @@ export const GET = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* --------------------------------------------------------------------- */
-/*  DELETE - terminal-only delete                                         */
-/* --------------------------------------------------------------------- */
+/* DELETE - terminal-only delete */
 
 export const DELETE = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
@@ -139,9 +130,7 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* --------------------------------------------------------------------- */
-/*  helpers                                                               */
-/* --------------------------------------------------------------------- */
+/* helpers */
 
 function actorIdentifier(auth: Extract<Awaited<ReturnType<typeof requireSiteAuthAndScope>>, { ok: true }>): string {
   return auth.auth.keyContext

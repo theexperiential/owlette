@@ -1,10 +1,9 @@
 /**
- * Emulator helpers — shared constants + Admin SDK init for E2E tests.
+ * Emulator helpers — shared constants + Admin SDK init for E2E.
  *
- * All paths assume the emulators were started via firebase-tools with our
- * configured ports (firebase.json). Env vars FIREBASE_AUTH_EMULATOR_HOST /
+ * Ports come from firebase.json. FIREBASE_AUTH_EMULATOR_HOST /
  * FIRESTORE_EMULATOR_HOST / FIREBASE_STORAGE_EMULATOR_HOST are set by
- * `firebase emulators:exec` — we rely on the Admin SDK's auto-detection.
+ * `firebase emulators:exec`; we rely on the Admin SDK auto-detecting them.
  */
 
 import admin from 'firebase-admin';
@@ -24,12 +23,9 @@ export const E2E_PORT = Number(process.env.E2E_PORT) || 3100;
 export const E2E_BASE_URL = `http://127.0.0.1:${E2E_PORT}`;
 
 /**
- * Initialize the Admin SDK in emulator mode. Safe to call multiple times —
- * reuses the default app if it already exists.
- *
- * Requires FIREBASE_AUTH_EMULATOR_HOST / FIRESTORE_EMULATOR_HOST / etc. to be
- * set in process.env before this is called (they are, because global-setup
- * runs inside `firebase emulators:exec` which sets them automatically).
+ * Initialize the Admin SDK in emulator mode. Idempotent — reuses the default
+ * app. Requires the *_EMULATOR_HOST env vars, which `firebase emulators:exec`
+ * sets around global-setup.
  */
 export function getAdminApp(): admin.app.App {
   if (admin.apps.length > 0 && admin.apps[0]) {
@@ -49,10 +45,7 @@ export function getAdminDb(): admin.firestore.Firestore {
   return getAdminApp().firestore();
 }
 
-/**
- * Clear every document in the Firestore emulator for a fresh test run.
- * Uses the emulator's special REST endpoint — bypasses security rules.
- */
+/** Wipe Firestore via the emulator's REST endpoint (bypasses security rules). */
 export async function clearFirestoreEmulator(): Promise<void> {
   const res = await fetch(
     `${FIRESTORE_EMULATOR_URL}/emulator/v1/projects/${EMULATOR_PROJECT_ID}/databases/(default)/documents`,
@@ -63,9 +56,7 @@ export async function clearFirestoreEmulator(): Promise<void> {
   }
 }
 
-/**
- * Clear every user in the Auth emulator for a fresh test run.
- */
+/** Wipe every Auth emulator user. */
 export async function clearAuthEmulator(): Promise<void> {
   const res = await fetch(
     `${AUTH_EMULATOR_URL}/emulator/v1/projects/${EMULATOR_PROJECT_ID}/accounts`,
@@ -76,10 +67,7 @@ export async function clearAuthEmulator(): Promise<void> {
   }
 }
 
-/**
- * Full reset: clear all Auth users + all Firestore docs. Called by global-setup
- * at the start of every run so tests don't inherit state from a prior run.
- */
+/** Full reset, run by global-setup so a run can't inherit prior state. */
 export async function resetEmulators(): Promise<void> {
   await Promise.all([clearFirestoreEmulator(), clearAuthEmulator()]);
 }

@@ -19,14 +19,11 @@ def logger():
 def cm(logger):
     """Create a ConnectionManager with real threading (but patched sleep/socket)."""
     manager = ConnectionManager(logger)
-    # Prevent actual reconnection attempts from spawning background threads
+    # Pre-set so connect() doesn't spawn reconnect threads.
     manager._shutdown_event.set()
     return manager
 
 
-# ---------------------------------------------------------------------------
-# TestConnectionState — initial state, connect, disconnect
-# ---------------------------------------------------------------------------
 class TestConnectionState:
     def test_initial_state_is_disconnected(self, cm):
         assert cm.state == ConnectionState.DISCONNECTED
@@ -52,10 +49,8 @@ class TestConnectionState:
         success_cb = MagicMock(return_value=True)
         cm.set_callbacks(connect=success_cb, disconnect=MagicMock())
         cm.connect()
-        # Second call — should still return True without re-calling callback
         result = cm.connect()
         assert result is True
-        # Callback only called once (first connect)
         assert success_cb.call_count == 1
 
     def test_is_connected_property_true_when_connected(self, cm):
@@ -76,9 +71,6 @@ class TestConnectionState:
         assert result is False
 
 
-# ---------------------------------------------------------------------------
-# TestBackoff — failure counting and reset
-# ---------------------------------------------------------------------------
 class TestBackoff:
     def test_report_success_resets_failure_count(self, cm):
         cm._consecutive_failures = 5
@@ -97,7 +89,6 @@ class TestBackoff:
         fail_cb = MagicMock(return_value=False)
         cm.set_callbacks(connect=fail_cb, disconnect=MagicMock())
         cm.connect()
-        # Reset state so we can connect again
         cm._state = ConnectionState.DISCONNECTED
         cm.connect()
         cm._state = ConnectionState.DISCONNECTED
@@ -121,9 +112,6 @@ class TestBackoff:
         assert cm.is_circuit_open is True
 
 
-# ---------------------------------------------------------------------------
-# TestStateListeners — add, remove, error handling
-# ---------------------------------------------------------------------------
 class TestStateListeners:
     def test_listener_called_on_state_change(self, cm):
         cm._shutdown_event.clear()
@@ -141,8 +129,7 @@ class TestStateListeners:
         cm.add_state_listener(bad_listener)
         success_cb = MagicMock(return_value=True)
         cm.set_callbacks(connect=success_cb, disconnect=MagicMock())
-        # Should not raise
-        cm.connect()
+        cm.connect()  # must not raise
 
     def test_remove_listener_stops_notifications(self, cm):
         cm._shutdown_event.clear()
@@ -155,9 +142,6 @@ class TestStateListeners:
         listener.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# TestShutdown — clean teardown from connected state
-# ---------------------------------------------------------------------------
 class TestShutdown:
     def test_shutdown_from_connected_state(self, cm):
         cm._shutdown_event.clear()

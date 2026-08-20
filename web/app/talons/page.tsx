@@ -1,15 +1,9 @@
 'use client';
 
 /**
- * `/talons` — the automation list: trigger → condition → outputs, one dense
- * row per talon in an aligned-column list, with run history behind each row's
- * chevron.
- *
- * Standard page shell (header + site switcher + site dialogs) copied from
- * `/roosts` and `/deployments`, so switching sites here behaves exactly as it
- * does everywhere else and the choice follows the user to the next page.
- *
- * talons wave 4.2.
+ * `/talons` — automation list: trigger → condition → outputs, one row per talon, run history
+ * behind each chevron. Page shell mirrors /roosts and /deployments so the site choice
+ * behaves identically and follows the user to the next page.
  */
 
 import { useEffect, useState } from 'react';
@@ -37,11 +31,7 @@ import { toast } from '@/lib/toast';
 import { TALON_ROW_GRID, TalonCard } from './components/TalonCard';
 import { TalonEditorDialog } from './components/TalonEditorDialog';
 
-/**
- * The talon shape the list hook streams. Derived from the hook rather than
- * imported by name so the page, the card, and the editor all agree on one
- * definition — the hook owns it.
- */
+/** Derived from the list hook, not imported by name, so page/card/editor share one owner. */
 type TalonListEntry = ReturnType<typeof useTalons>['talons'][number];
 
 /** Custom presets sort after every built-in, as in every other preset family. */
@@ -63,8 +53,7 @@ export default function TalonsPage() {
 
   const { machines } = useMachines(currentSiteId);
   const { talons, loading: talonsLoading, error } = useTalons(currentSiteId);
-  // One subscription for the whole list — the rows raise "save as template"
-  // here rather than each opening their own.
+  // One subscription for the whole list; rows raise "save as template" up here.
   const {
     presets: talonPresets,
     createPreset: createTalonPreset,
@@ -97,11 +86,8 @@ export default function TalonsPage() {
     setEditorOpen(true);
   };
 
-  /**
-   * Write a talon out as a reusable template. `replace` is set only after the
-   * operator confirms a name collision — nothing overwrites silently, and name
-   * uniqueness is not enforced server-side in any preset family.
-   */
+  /** `replace` is set only after the operator confirms a name collision — nothing overwrites
+   * silently, and no preset family enforces name uniqueness server-side. */
   const writeTalonTemplate = async (talon: TalonListEntry, replace: TalonPreset | null) => {
     const description = talon.description?.trim();
     const template = talonPresetTemplateFrom(talon);
@@ -129,8 +115,8 @@ export default function TalonsPage() {
   };
 
   const handleSaveAsTemplate = async (talon: TalonListEntry) => {
-    // Checked against the MERGED list, so a collision with a built-in is caught
-    // too — replacing one writes the `builtin-*` override the api expects.
+    // Checked against the MERGED list so built-in collisions count too; replacing one writes
+    // the `builtin-*` override the api expects.
     const existing = findTalonPresetByName(talonPresets, talon.name);
     if (existing) {
       setPendingTemplate({ talon, existing });
@@ -160,10 +146,8 @@ export default function TalonsPage() {
     return null;
   }
 
-  // `sitesLoading` folds into the loading branch, and the branch runs BEFORE
-  // the no-sites card: an empty list before the first response is "unknown",
-  // not "none" — rendering either empty state early flashes the wrong answer
-  // at every user who does have sites and talons.
+  // Loading branch runs BEFORE the no-sites card: an empty list pre-response is "unknown",
+  // not "none", and rendering an empty state early flashes the wrong answer.
   const loading = sitesLoading || talonsLoading;
 
   return (
@@ -250,8 +234,7 @@ export default function TalonsPage() {
             </p>
           </Card>
         ) : talons.length === 0 ? (
-          // Compact on purpose: this card sits where the list would, and must
-          // not reserve height that pushes the rest of the page below the fold.
+          // Compact on purpose: it sits where the list would and must not push the page down.
           <Card className="border-border bg-card/50 p-6 text-center">
             <Zap className="mx-auto h-6 w-6 text-muted-foreground" />
             <p className="mt-2 text-sm text-foreground">no talons yet</p>
@@ -306,8 +289,7 @@ export default function TalonsPage() {
           onOpenChange={setEditorOpen}
           siteId={currentSiteId}
           machines={machines.map((m) => ({
-            // Machine docs are keyed by machineId, which is also the operator-
-            // visible label throughout the app; TalonMachineOption wants id/name.
+            // machineId is both the doc key and the operator-visible label; the option wants both.
             id: m.machineId,
             name: m.machineId,
             online: m.online,

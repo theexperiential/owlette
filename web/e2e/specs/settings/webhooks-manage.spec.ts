@@ -1,17 +1,11 @@
 /**
- * Settings — webhooks management (task 5.5)
+ * Settings — webhooks: pause → resume → rotate-secret → delete against a
+ * seeded subscription, asserting the http call shape and the resulting
+ * firestore + ui state at each step. No outbound delivery is exercised.
  *
- * Exercises the per-row admin actions on /settings/webhooks against a
- * pre-seeded subscription: pause -> resume -> rotate-secret -> delete.
- * Each step asserts the http call (PATCH/POST/DELETE) fires with the
- * documented shape and that the resulting firestore + ui state lands.
- *
- * UI gap: WebhookCard renders the four actions as inline icon buttons
- * inside Tooltips, not a three-dot menu (task spec asked for one). Each
- * button is targeted by its lucide-react svg class — same pattern as
- * web/e2e/specs/admin/webhooks.spec.ts.
- *
- * data plane: none — no outbound webhook delivery is exercised.
+ * WebhookCard renders the four actions as inline tooltip icon buttons, not a
+ * menu, so each is targeted by its lucide-react svg class — same pattern as
+ * specs/admin/webhooks.spec.ts.
  */
 
 import { test, expect } from '@playwright/test';

@@ -1,29 +1,14 @@
 'use client';
 
 /**
- * useSecurityVersion Hook
+ * UX, NOT SAFETY. Watches the proxy's `x-security-version` header on every
+ * `/api/*` response and latches a flag when it disagrees with the bundle's
+ * `CURRENT_SECURITY_VERSION`, driving `SecurityVersionBanner`.
  *
- * !! THIS IS UX, NOT SAFETY !!
- *
- * Watches every `fetch()` response on the client for the
- * `x-security-version` header (stamped by the proxy on every `/api/*`
- * response) and flips a global flag when the server's value disagrees
- * with the bundle's compiled-in `CURRENT_SECURITY_VERSION`. The flag
- * drives a non-dismissible reload banner — see `SecurityVersionBanner`.
- *
- * Implementation notes:
- *   - One-time monkey-patch of `window.fetch` on first hook mount. We
- *     guard with a module-level flag so re-mounts (and the Next.js
- *     dev-server fast-refresh) don't stack interceptors.
- *   - The interceptor only reads the header; it never mutates the
- *     response or its body. Cloning is unnecessary because `Headers`
- *     access does not consume the stream.
- *   - State is exposed via `useSyncExternalStore` so any number of
- *     components can subscribe (banner, telemetry, etc.) without
- *     duplicating fetch wrappers.
- *   - A mismatch is one-way latching: once detected, we never clear it.
- *     The only resolution is a real page reload, which loads the new
- *     bundle and resets the in-memory state.
+ * `window.fetch` is monkey-patched once, guarded by a module flag so remounts
+ * and fast-refresh can't stack interceptors. Reading `Headers` doesn't consume
+ * the body, so no clone is needed. Latching is one-way — only a page reload,
+ * which loads the new bundle, clears it.
  */
 
 import { useSyncExternalStore } from 'react';
@@ -82,20 +67,14 @@ function getServerSnapshot(): boolean {
   return false;
 }
 
-/**
- * Returns `true` once any `/api/*` response reports a security version
- * different from the bundle's compiled-in `CURRENT_SECURITY_VERSION`.
- * Latches on first mismatch — only a real page reload clears it.
- */
+/** True once any `/api/*` response disagrees with the bundle's version. */
 export function useSecurityVersion(): boolean {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
 
 /**
- * Test-only escape hatch for resetting module state between cases. Not
- * exported from any public surface — Jest reaches it via the module
- * import directly. Also clears the interceptor-installed flag so each
- * test's fresh `window.fetch` mock can be re-wrapped.
+ * Test-only module-state reset. Clears the interceptor flag too, so each
+ * test's fresh `window.fetch` mock gets re-wrapped.
  */
 export function __resetSecurityVersionForTests(): void {
   mismatchDetected = false;

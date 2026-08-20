@@ -1,16 +1,11 @@
 /**
- * Playwright global-setup — runs once before any spec.
+ * Playwright global-setup, once before any spec: sanity-ping the emulators and
+ * dev server, reset emulator state, seed the canonical users + sites via the
+ * Admin SDK, then sign each role in through the real web app and write its
+ * storageState to `e2e/fixtures/{role}.json`.
  *
- *   1. Wait until emulators + web dev server are reachable (firebase emulators:exec
- *      + Playwright webServer handle the actual startup; we just sanity-ping).
- *   2. Reset all emulator state (fresh tests every run).
- *   3. Seed three canonical users + two sites via Admin SDK.
- *   4. For each role: launch a chromium context, sign in via the web app,
- *      capture storageState (cookies + localStorage + IndexedDB for Firebase
- *      client auth state), write to e2e/fixtures/{role}.json.
- *
- * Each spec then uses `test.use({ storageState: 'fixtures/{role}.json' })` to
- * boot pre-authenticated — no login traffic during the actual test run.
+ * Specs `test.use({ storageState })` from there, so no login traffic runs
+ * during the suite itself.
  */
 
 import { chromium, type FullConfig } from '@playwright/test';
@@ -52,8 +47,7 @@ async function captureStorageStateForRole(role: TestRole): Promise<void> {
     const context = await browser.newContext({ baseURL: E2E_BASE_URL });
     const page = await context.newPage();
 
-    // Forward all browser-side console + error messages so login failures are
-    // diagnosable from the global-setup log.
+    // Forward browser console/errors so login failures show in this log.
     page.on('console', (msg) => {
       console.log(`[global-setup][${role}][console.${msg.type()}] ${msg.text()}`);
     });
@@ -81,15 +75,13 @@ async function captureStorageStateForRole(role: TestRole): Promise<void> {
 
     await page.goto('/login', { waitUntil: 'domcontentloaded' });
 
-    // Fill + submit the email/password login form.
-    // Selectors chosen to be resilient to minor copy changes.
+    // Selectors deliberately loose so minor copy changes don't break setup.
     await page.getByLabel(/email/i).fill(user.email);
     await page.getByLabel(/password/i).first().fill(user.password);
     await page.getByRole('button', { name: /sign in with email/i }).click();
 
-    // Wait until we're on a post-login surface. Any of: /dashboard, /setup-2fa,
-    // /verify-2fa, or the user-menu chevron becoming visible.
-    // MFA should be pre-bypassed by the seed (mfaEnrolled=false, requiresMfaSetup=false).
+    // Any post-login surface: /dashboard, /setup-2fa, /verify-2fa, or the
+    // user-menu chevron. The seed pre-bypasses MFA.
     try {
       await page.waitForURL(
         (url) => {
@@ -99,7 +91,7 @@ async function captureStorageStateForRole(role: TestRole): Promise<void> {
         { timeout: 20_000 },
       );
     } catch (err) {
-      // On navigation timeout, capture everything we can for post-mortem.
+      // Capture everything for post-mortem on a navigation timeout.
       const debugDir = join(FIXTURES_DIR, '..', 'debug');
       if (!existsSync(debugDir)) mkdirSync(debugDir, { recursive: true });
       const screenshotPath = join(debugDir, `login-failure-${role}.png`);
@@ -114,8 +106,8 @@ async function captureStorageStateForRole(role: TestRole): Promise<void> {
       throw err;
     }
 
-    // If we landed on an MFA page, the seed is misconfigured for this user.
-    // Fail loudly so we don't silently capture a state that redirects on every spec.
+    // An MFA page means the seed is wrong — fail loudly rather than capture a
+    // state that redirects in every spec.
     const currentUrl = page.url();
     if (currentUrl.includes('/setup-2fa') || currentUrl.includes('/verify-2fa')) {
       throw new Error(
@@ -124,11 +116,11 @@ async function captureStorageStateForRole(role: TestRole): Promise<void> {
       );
     }
 
-    // Give the AuthContext listener + session cookie round-trip a moment to settle.
+    // Let the AuthContext listener + session-cookie round-trip settle.
     await page.waitForTimeout(1_000);
 
-    // Capture cookies + localStorage + IndexedDB (the last is where Firebase
-    // client auth state lives — requires Playwright ≥1.51 + indexedDB:true).
+    // IndexedDB holds the Firebase client auth state — needs Playwright ≥1.51
+    // and indexedDB:true.
     await context.storageState({ path: fixturePath, indexedDB: true });
     console.log(`[global-setup] captured storageState for ${role} → ${fixturePath}`);
   } finally {

@@ -1,30 +1,20 @@
-//! owlette-host — the Windows service host for the owlette agent.
+//! owlette-host — the Windows service host for the owlette agent, replacing
+//! NSSM 2.24. Launches the agent, keeps it alive, feeds the same two log files,
+//! and stops it the way the agent is written to be stopped.
 //!
-//! Replaces NSSM 2.24 (released 2014, unmaintained, and the last stable version
-//! there will ever be) as the thing that runs `OwletteService`. It launches the
-//! agent, keeps it alive, hands its output to the same two log files, and stops
-//! it the way the agent is written to be stopped.
-//!
-//! Three NSSM behaviours are gone on purpose, each of them a production
-//! incident:
-//!
-//! * **No process-tree kill.** NSSM stopped a service by walking the child's
-//!   process tree, which is how an operator stopping the service also killed
-//!   the desktop app (and would have taken anything else the agent had launched
-//!   as a descendant with it). The host terminates exactly the process it
-//!   started, and only after the grace window.
-//! * **No best-effort Control-C.** NSSM's graceful stop required attaching to
-//!   the child's console; when that silently failed, nothing flushed
-//!   `online: false` and the machine sat on the dashboard as online with an
-//!   eleven-minute-old heartbeat. The host reports STOP_PENDING to the SCM —
-//!   which the agent polls directly — and then waits.
-//! * **No ignored settings.** `AppKillProcessTree 0` was set in the registry
-//!   and disregarded. Everything here is behaviour in this binary, not a
-//!   registry value NSSM might or might not honour.
+//! Three NSSM behaviours are deliberately gone, each one a production incident:
+//! * **No process-tree kill** — NSSM walked the child's tree, so stopping the
+//!   service also killed the desktop app. This terminates exactly the process
+//!   it started, and only after the grace window.
+//! * **No best-effort Control-C** — NSSM's graceful stop needed the child's
+//!   console; when that silently failed nothing flushed `online: false` and a
+//!   dead machine read as online for eleven minutes. This reports STOP_PENDING
+//!   to the SCM, which the agent polls directly, then waits.
+//! * **No ignored settings** — `AppKillProcessTree 0` was set and disregarded.
+//!   Behaviour lives in this binary, not in registry values.
 //!
 //! Verbs: `run` (what the SCM starts), `install`, `uninstall`, `start`, `stop`,
-//! `status`. `install` is also the NSSM→host migration: it stops and removes
-//! whatever registration exists before creating its own.
+//! `status`. `install` also performs the NSSM→host migration.
 
 mod hostlog;
 mod paths;
@@ -65,8 +55,8 @@ fn main() -> ExitCode {
   }
 }
 
-/// Report the outcome of a CLI verb: a line on stderr and the host log, and an
-/// exit code the calling script can branch on.
+/// Report a CLI verb's outcome: a line on stderr and the host log, plus an exit
+/// code the calling script can branch on.
 fn finish(verb: &str, outcome: Result<(), String>) -> ExitCode {
   match outcome {
     Ok(()) => ExitCode::SUCCESS,

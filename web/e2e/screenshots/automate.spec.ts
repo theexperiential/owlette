@@ -1,14 +1,11 @@
 /**
- * Screenshot — automate capability card preview (api-sprint wave 4.3).
+ * Screenshot — the landing page's automate capability card.
+ * Output: `web/public/landing-screens/preview-automate.png`.
  *
- * Output: `web/public/landing-screens/preview-automate.png`
- * Used by: the landing page automate capability card (wired up by wave 4.5).
- *
- * Drives the schedule editor (`/admin/schedules`) into the
- * `automate-schedule-editor` scenario: a custom "museum hours" preset on
- * top of the built-ins, plus a reboot schedule on the lobby display and an
- * alert rule for the media-server-stage CPU. Captures the preset list view
- * which surfaces the WeekSummaryBar visualization for each preset.
+ * Drives `/admin/schedules` into the `automate-schedule-editor` scenario (a
+ * custom "museum hours" preset over the built-ins, a lobby reboot schedule, a
+ * media-server-stage CPU alert) and captures the preset list, which is where
+ * the WeekSummaryBar renders.
  */
 import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
@@ -16,9 +13,7 @@ import { getAdminDb } from '../helpers/emulator';
 import { TEST_USERS } from '../helpers/seed';
 import { FIXED_NOW_MS, seedScreenshotFixtures } from './fixtures';
 
-// /admin/schedules is wrapped in RequireSuperadmin — the regular admin role
-// is redirected to /dashboard. Run as superadmin so the schedule preset
-// editor actually renders.
+// /admin/schedules is RequireSuperadmin — a plain admin gets redirected.
 test.use(roleState('superadmin'));
 
 test('automate capability card preview', async ({ page }) => {
@@ -30,14 +25,12 @@ test('automate capability card preview', async ({ page }) => {
       .doc(TEST_USERS.superadmin.uid)
       .set({ lastSiteId: ctx.siteId }, { merge: true });
 
-    // Pin the clock BEFORE goto so any "updated Xd ago" / "createdAt"
-    // copy resolves against FIXED_NOW.
+    // Pin the clock BEFORE goto so "updated Xd ago" resolves against FIXED_NOW.
     await page.clock.install({ time: FIXED_NOW_MS });
 
     await page.goto('/admin/schedules');
 
-    // Wait for the seeded custom preset row to render — confirms the
-    // useSchedulePresets hook resolved against the screenshot site.
+    // Proves useSchedulePresets resolved against the screenshot site.
     await expect(page.getByText('museum hours', { exact: false })).toBeVisible();
 
     // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
@@ -56,8 +49,7 @@ test('automate capability card preview', async ({ page }) => {
 
     await page.clock.setFixedTime(FIXED_NOW_MS);
 
-    // The WeekSummaryBar paints SVG blocks after the preset doc resolves;
-    // give it a beat before screenshotting.
+    // WeekSummaryBar paints its SVG after the preset doc resolves.
     await page.waitForTimeout(500);
 
     await page.screenshot({

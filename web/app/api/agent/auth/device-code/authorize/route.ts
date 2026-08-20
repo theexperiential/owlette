@@ -14,23 +14,13 @@ import logger from '@/lib/logger';
 /**
  * POST /api/agent/auth/device-code/authorize
  *
- * User authorizes a device code from the web dashboard or /add page.
- * Generates Firebase tokens and stores them for the agent to poll.
+ * User authorizes a device code from the dashboard or /add; mints Firebase tokens and
+ * stores them for the agent to poll.
  *
- * Request body:
- * - pairPhrase: string - The 3-word pairing phrase (e.g., "silver-compass-drift")
- * - siteId: string - The site to associate the agent with
- *
- * Response (200):
- * - success: true
- * - machineId: string | null
- *
- * Errors:
- * - 400: Missing fields, invalid phrase format
- * - 401: Not authenticated
- * - 403: No access to site
- * - 404: Phrase not found or expired
- * - 409: Already authorized
+ * Body: `{ pairPhrase: string ("silver-compass-drift"), siteId: string }`
+ * 200: `{ success: true, machineId: string | null }`
+ * 400 bad fields/phrase · 401 unauthenticated · 403 no site access · 404 unknown or
+ * expired phrase · 409 already authorized.
  */
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -44,7 +34,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Normalize and validate phrase format
     const pairPhrase = normalizePairPhrase(rawPhrase);
     if (!pairPhrase) {
       return NextResponse.json(
@@ -53,13 +42,11 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Require authenticated user with access to the site
     const userId = await requireSession(request);
     await assertUserHasSiteAccess(userId, siteId);
 
-    // Look up device code and authorize atomically using a transaction
-    // to prevent race conditions where two concurrent requests both read
-    // 'pending' and both authorize the same device code.
+    // Transactional lookup+authorize, so two concurrent requests can't both read 'pending'
+    // and authorize the same device code.
     const adminDb = getAdminDb();
     const docRef = adminDb.collection('device_codes').doc(pairPhrase);
 
@@ -72,14 +59,12 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
       const data = doc.data()!;
 
-      // Check expiry
       const expiresAt = data.expiresAt?.toMillis?.() || data.expiresAt?.getTime?.() || 0;
       if (Date.now() > expiresAt) {
         transaction.delete(docRef);
         return { error: 'Pairing phrase has expired. Please generate a new one on the target machine.', status: 404 } as const;
       }
 
-      // Check status
       if (data.status !== 'pending') {
         return { error: 'This pairing phrase has already been used.', status: 409 } as const;
       }
@@ -112,10 +97,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         return { error: 'Invalid device code state for authorization.', status: 400 } as const;
       }
 
-      // Generate unique agent user ID (same pattern as exchange endpoint)
+      // Unique agent user ID (same pattern as the exchange endpoint)
       const agentUid = `agent_${siteId}_${machineId}`.replace(/[^a-zA-Z0-9_]/g, '_');
 
-      // Generate Firebase Custom Token with agent claims
       const adminAuth = getAdminAuth();
       const customToken = await adminAuth.createCustomToken(agentUid, {
         role: 'agent',
@@ -144,7 +128,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         throw new Error(`Failed to exchange custom token: ${errorData.error?.message || 'Unknown error'}`);
       }
 
-      // Set custom claims (must happen before the second token exchange)
+      // Custom claims must be set before the second token exchange.
       await adminAuth.setCustomUserClaims(agentUid, {
         role: 'agent',
         site_id: siteId,
@@ -152,7 +136,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         version: data.version || 'unknown',
       });
 
-      // Create a new custom token and exchange again to get ID token WITH claims
+      // Re-mint and exchange again so the ID token carries the claims.
       const customTokenWithClaims = await adminAuth.createCustomToken(agentUid, {
         role: 'agent',
         site_id: siteId,
@@ -177,13 +161,12 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       const refreshAuthData = await refreshAuthResponse.json();
       const finalIdToken = refreshAuthData.idToken;
 
-      // Generate refresh token
       const crypto = await import('crypto');
       const refreshToken = crypto.randomBytes(64).toString('base64url');
       const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
 
-      // Store refresh token in Firestore (same schema as exchange endpoint)
-      // Note: writes to other documents within a transaction are atomic
+      // Store the refresh token (same schema as the exchange endpoint); writes to other docs
+      // inside the transaction are atomic.
       const refreshTokenRef = adminDb.collection('agent_refresh_tokens').doc(refreshTokenHash);
       transaction.set(refreshTokenRef, {
         siteId,
@@ -214,8 +197,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         authorizedAt: FieldValue.serverTimestamp(),
         encryptedCredentials,
         wrapVersion: DEVICE_CODE_WRAP_VERSION,
-        // Wipe the deviceCode and any legacy plaintext fields so the
-        // doc at rest cannot leak credentials or key material.
+        // Wipe deviceCode and legacy plaintext fields so the doc at rest holds no credentials.
         deviceCode: FieldValue.delete(),
         accessToken: FieldValue.delete(),
         refreshToken: FieldValue.delete(),

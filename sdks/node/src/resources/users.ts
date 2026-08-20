@@ -1,25 +1,16 @@
 /**
- * `owlette.users` — superadmin-only platform user management (wave 3B).
+ * `owlette.users` — superadmin-only platform user management.
  *
  *   GET    /api/users
  *   GET    /api/users/{uid}
- *   POST   /api/users/{uid}/promote
- *   POST   /api/users/{uid}/demote
- *   POST   /api/users/{uid}/assign-sites
- *   POST   /api/users/{uid}/remove-sites
+ *   POST   /api/users/{uid}/{promote,demote,assign-sites,remove-sites}
  *   DELETE /api/users/{uid}
  *
- * Stable error codes surfaced by these endpoints (`last_superadmin`,
- * `orphan_sites`, `successor_invalid`, `unknown_site`) live on the thrown
- * `OwletteApiError.code` field — callers can `instanceof`-check the
- * error and switch on `.code` rather than parsing prose.
+ * Stable error codes (`last_superadmin`, `orphan_sites`, `successor_invalid`, `unknown_site`)
+ * arrive on `OwletteApiError.code` — switch on that, don't parse prose.
  */
 import { randomUUID } from 'crypto';
 import type { OwletteClient } from '../lib/client';
-
-/* --------------------------------------------------------------------- */
-/*  types                                                                */
-/* --------------------------------------------------------------------- */
 
 export type UserRole = 'member' | 'admin' | 'superadmin';
 
@@ -73,10 +64,6 @@ export interface DeleteUserResult {
   transferredSites?: string[];
   revokedKeyIds?: string[];
 }
-
-/* --------------------------------------------------------------------- */
-/*  resource                                                             */
-/* --------------------------------------------------------------------- */
 
 export class Users {
   constructor(private readonly client: OwletteClient) {}

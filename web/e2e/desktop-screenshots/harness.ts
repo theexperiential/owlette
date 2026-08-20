@@ -1,59 +1,40 @@
 /**
- * Driving the *installed* owlette desktop app (`owlette-desktop.exe`) from
- * Playwright, so the agent documentation can show the UI that actually ships.
+ * Drive the *installed* owlette desktop app (`owlette-desktop.exe`) from
+ * Playwright, so the docs show the UI that actually ships.
  *
- * Three facts shape everything in this file.
+ * - Tauri 2 / WebView2: `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port`
+ *   exposes a plain CDP endpoint. `window.__TAURI_INTERNALS__` is non-configurable
+ *   and non-writable, so `invoke` cannot be stubbed from the page — everything the
+ *   app shows must come from the files it reads.
+ * - Those files come from `%PROGRAMDATA%\Owlette` (`src-tauri/src/paths.rs`), so
+ *   redirecting `PROGRAMDATA` to a scratch tree keeps the real `config.json`
+ *   untouched and keeps demo processes out of the operator's fleet.
+ * - The window title comes from `COMPUTERNAME` (`src-tauri/src/tray.rs`); a generic
+ *   one keeps the build machine's hostname out of the docs.
  *
- * 1. **The app is a Tauri 2 WebView2 shell.** Setting
- *    `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>` in the
- *    child's environment turns its webview into an ordinary CDP endpoint, which
- *    `chromium.connectOverCDP` drives like any other page. Nothing is stubbed in
- *    the webview: `window.__TAURI_INTERNALS__` and every function on it are
- *    non-configurable and non-writable, so `invoke` cannot be wrapped from the
- *    page side even with an init script. What the app shows has to come from the
- *    files it reads.
+ * `%APPDATA%\app.owlette.desktop\layout.json` is the one bit of real state we
+ * touch — read via the known-folder API, so not redirectable. Snapshotted and
+ * restored byte-for-byte.
  *
- * 2. **It reads those files from `%PROGRAMDATA%\Owlette`, resolved from the
- *    environment variable** (`src-tauri/src/paths.rs::data_root`). Launching the
- *    capture instance with `PROGRAMDATA` pointed at a scratch tree gives it a
- *    complete, canonical, demo-only view of the world — and means this pipeline
- *    never opens, let alone rewrites, the real `config.json`. The running
- *    service never sees the fixtures either, so no demo process is ever uploaded
- *    to the operator's fleet.
- *
- * 3. **The window's name comes from `COMPUTERNAME`**
- *    (`src-tauri/src/tray.rs::hostname`), which is likewise read from the
- *    environment. The capture instance is launched with a generic one, so the
- *    machine that builds a release never has its hostname published in the docs.
- *
- * The one piece of real machine state this touches is
- * `%APPDATA%\app.owlette.desktop\layout.json` — the per-user window size, which
- * the host reads through the Windows known-folder API rather than an environment
- * variable and therefore cannot be redirected. It is snapshotted, replaced with a
- * canonical size, and restored byte-for-byte after the capture instance exits.
- *
- * Single-instance is the trap to remember: the tray icon *is* the app, so a
- * second launch is folded into the running one instead of starting a process we
- * could attach to. The tray is killed by verified pid first (never by image
- * name), and the service re-spawns one within about 30 seconds of teardown.
+ * The trap: the app is single-instance, so a second launch folds into the running
+ * one instead of giving us a process to attach to. Kill the tray by verified pid
+ * (never by image name); the service re-spawns one ~30s after teardown.
  */
 
 import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
-/** Image name the pid checks demand before anything is killed. */
 const DESKTOP_IMAGE = 'owlette-desktop.exe'
 
-/** The installed agent's data root — the real one, only ever read from. */
+/** The installed agent's data root — real, read-only. */
 const OWLETTE_ROOT = process.env.OWLETTE_DATA_ROOT || 'C:\\ProgramData\\Owlette'
 
 const DESKTOP_EXE = path.join(OWLETTE_ROOT, 'app', DESKTOP_IMAGE)
 
-/** Marker the desktop app keeps for its whole life; the service reads it too. */
+/** The desktop app's liveness marker; the service reads it too. */
 const TRAY_PID_FILE = path.join(OWLETTE_ROOT, 'tmp', 'tray.pid')
 
-/** The bundled interpreter the app spawns for the pairing helper. */
 const PYTHON_DIR = path.join(OWLETTE_ROOT, 'python')
 
 /** Per-user window geometry. Not redirectable — snapshotted and restored. */
@@ -63,33 +44,27 @@ const LAYOUT_FILE = path.join(
   'layout.json',
 )
 
-/** Everything this pipeline creates lives here. Git-ignored. */
 const SESSION_DIR = path.resolve('e2e/.output/desktop-screenshots')
 const SESSION_FILE = path.join(SESSION_DIR, 'session.json')
 const LAYOUT_BACKUP = path.join(SESSION_DIR, 'layout.backup.json')
-/** Sentinel for "there was no layout file before this run". */
+/** Sentinel: no layout file existed before this run. */
 const LAYOUT_ABSENT = path.join(SESSION_DIR, 'layout.absent')
-/** Where the operator's `tray.pid` is parked while the capture instance owns it. */
+/** Parks the operator's `tray.pid` while the capture instance owns it. */
 const TRAY_PID_BACKUP = path.join(SESSION_DIR, 'tray.pid.backup')
 
-/** The scratch `%PROGRAMDATA%` the capture instance is given. */
 const SCRATCH_PROGRAMDATA = path.join(SESSION_DIR, 'programdata')
 export const SCRATCH_ROOT = path.join(SCRATCH_PROGRAMDATA, 'Owlette')
 
 /**
- * The window every shot is taken at, in logical pixels.
- *
- * Wide enough for the sidebar and a detail form that is not wrapping, short
- * enough that the whole window fits a documentation column without scaling. The
- * sidebar is pinned with it, because its width is remembered in the same file.
+ * Capture window size, logical px: wide enough that the detail form doesn't
+ * wrap, short enough to fit a docs column unscaled. The sidebar width is pinned
+ * alongside it because both live in the same layout file.
  */
 export const CAPTURE_WINDOW = { width: 1060, height: 640 } as const
 export const CAPTURE_SIDEBAR_WIDTH = 288
 
-/** The name the documentation shows for the machine being configured. */
 export const CAPTURE_HOSTNAME = 'STUDIO-01'
 
-/** Debug port for the capture instance. */
 export const CDP_PORT = Number(process.env.OWLETTE_DESKTOP_CDP_PORT) || 9333
 
 export interface DesktopSession {
@@ -98,9 +73,9 @@ export interface DesktopSession {
   root: string
 }
 
-// ─── process control (by pid, always verified) ───────────────────────────────
+// Process control — always by verified pid.
 
-/** Image name of a pid, or null when it is gone or not readable. */
+/** Image name of a pid, or null when gone / unreadable. */
 function imageNameOf(pid: number): string | null {
   try {
     const output = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
@@ -119,11 +94,8 @@ function isDesktopPid(pid: number): boolean {
 }
 
 /**
- * Kill one desktop instance by pid.
- *
- * The image name is checked first and the kill is by pid alone: a name-wide
- * `taskkill /IM` would take out whatever else the operator has open, and pids
- * are recycled.
+ * Kill one desktop instance by pid. Verify the image name first: pids recycle,
+ * and a name-wide `taskkill /IM` would take out the operator's other windows.
  */
 function killDesktopPid(pid: number): boolean {
   if (!isDesktopPid(pid)) return false
@@ -136,16 +108,10 @@ function killDesktopPid(pid: number): boolean {
 }
 
 /**
- * Every running `owlette-desktop.exe`, by pid.
- *
- * `tray.pid` is the app's own marker and the service's, but it can be stale —
- * an instance killed with `/F` never gets to remove it, and one started from the
- * Start menu writes it only once it has booted. The app is single-instance, so
- * *any* live instance holds the lock this pipeline needs; asking the process
- * table is the only way to be sure there is none.
- *
- * Enumeration only. Each pid is still verified and killed individually — a
- * `taskkill /IM` would be a name-wide kill, which is never what we want.
+ * Every running `owlette-desktop.exe`, by pid. `tray.pid` is unreliable here —
+ * a `/F` kill never removes it, and a Start-menu launch writes it only after
+ * boot — and *any* live instance holds the single-instance lock, so the process
+ * table is the only sure answer. Enumeration only; kills stay per-pid.
  */
 function listDesktopPids(): number[] {
   try {
@@ -165,17 +131,11 @@ function listDesktopPids(): number[] {
 /**
  * Claim the real `tmp/tray.pid` for the capture instance.
  *
- * The service checks that file every loop tick and spawns a tray whenever it
- * does not name a live `owlette-desktop.exe` (`owlette_service._is_tray_alive`).
- * Our instance publishes its pid into the *scratch* tree, so without this the
- * service keeps launching trays at us for the whole session — and one of those
- * launches wins the single-instance lock in the moment between the kill and our
- * spawn, which costs a retry and leaves a dead icon in the notification area
- * that the tray-menu capture then tries to right-click.
- *
- * The previous contents are put back verbatim by {@link releaseTrayPid}. They
- * name the process we killed, so the file is exactly as stale as it would have
- * been anyway; the service overwrites it with the tray it spawns next.
+ * `owlette_service._is_tray_alive` spawns a tray every tick that file doesn't
+ * name a live process, and our instance publishes into the *scratch* tree — so
+ * without this the service races us for the single-instance lock all session and
+ * leaves a dead notification-area icon behind. {@link releaseTrayPid} restores
+ * the old contents verbatim.
  */
 function claimTrayPid(pid: number): void {
   fs.mkdirSync(SESSION_DIR, { recursive: true })
@@ -186,8 +146,8 @@ function claimTrayPid(pid: number): void {
     fs.mkdirSync(path.dirname(TRAY_PID_FILE), { recursive: true })
     fs.writeFileSync(TRAY_PID_FILE, String(pid))
   } catch {
-    // Not fatal: the service will simply keep topping the tray up, which the
-    // launch retry already tolerates.
+    // Not fatal — the service keeps topping the tray up and the launch retry
+    // already tolerates that.
   }
 }
 
@@ -197,8 +157,8 @@ export function releaseTrayPid(): void {
   try {
     fs.copyFileSync(TRAY_PID_BACKUP, TRAY_PID_FILE)
   } catch {
-    // The desktop app removes this file on a clean exit; a failure to restore a
-    // marker the service rewrites within 30 seconds is not worth failing on.
+    // The app removes this on a clean exit and the service rewrites it within
+    // 30s, so a failed restore isn't worth failing the run.
   }
   fs.rmSync(TRAY_PID_BACKUP, { force: true })
 }
@@ -215,15 +175,11 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-// ─── layout memory ───────────────────────────────────────────────────────────
-
 /**
  * Put the operator's window size aside and pin a canonical one.
  *
- * The app rewrites this file when its window is put away and again on exit, so
- * the restore has to happen *after* the capture instance is gone —
- * {@link restoreLayout} is called from the global teardown for exactly that
- * reason.
+ * The app rewrites this file on hide and again on exit, so the restore MUST run
+ * after the capture instance is gone — hence {@link restoreLayout} in teardown.
  */
 export function snapshotLayout(): void {
   fs.mkdirSync(SESSION_DIR, { recursive: true })
@@ -247,7 +203,6 @@ export function snapshotLayout(): void {
   )
 }
 
-/** Put the operator's window size back exactly as it was. */
 export function restoreLayout(): void {
   if (fs.existsSync(LAYOUT_BACKUP)) {
     fs.mkdirSync(path.dirname(LAYOUT_FILE), { recursive: true })
@@ -261,16 +216,12 @@ export function restoreLayout(): void {
   }
 }
 
-// ─── the scratch owlette tree ────────────────────────────────────────────────
-
 /**
  * Build the demo `%PROGRAMDATA%\Owlette` the capture instance reads.
  *
- * `python/` is a directory junction onto the real bundled interpreter rather
- * than a copy: the app refuses to start the pairing helper unless
- * `python/python.exe` exists, and 200 MB of embedded runtime is not worth
- * duplicating per run. It is removed with `rmdir`, which deletes the link and
- * never follows it.
+ * `python/` is a junction, not a copy: the app refuses to start the pairing
+ * helper without `python/python.exe`, and the embedded runtime is ~200 MB.
+ * Torn down with `rmdir`, which removes the link without following it.
  */
 export function buildScratchRoot(): string {
   removeScratchRoot()
@@ -286,12 +237,12 @@ export function buildScratchRoot(): string {
   return SCRATCH_ROOT
 }
 
-/** Tear the scratch tree down, link first so the junction target is untouched. */
+/** Tear down the scratch tree, link first so the junction target survives. */
 export function removeScratchRoot(): void {
   const junction = path.join(SCRATCH_ROOT, 'python')
   if (fs.existsSync(junction)) {
-    // `rmdir` on a reparse point removes the link itself. Never `rm -r` here:
-    // that would be pointed at the installed interpreter.
+    // `rmdir` on a reparse point removes the link. NEVER `rm -r` here — it
+    // would delete the installed interpreter.
     try {
       fs.rmdirSync(junction)
     } catch {
@@ -302,10 +253,8 @@ export function removeScratchRoot(): void {
 }
 
 /**
- * Write one of the seam files the app watches.
- *
- * Written the way the service writes them — scratch file, then rename — so the
- * host's watcher reports exactly one change and never reads half a document.
+ * Write a seam file the app watches, the way the service does (scratch +
+ * rename), so the watcher fires once and never reads half a document.
  */
 export function writeSeamFile(root: string, relative: string, body: unknown): void {
   const target = path.join(root, ...relative.split('/'))
@@ -315,14 +264,11 @@ export function writeSeamFile(root: string, relative: string, body: unknown): vo
   fs.renameSync(scratch, target)
 }
 
-/** Write a plain text file into the scratch tree (`agent/VERSION`). */
 export function writeTextFile(root: string, relative: string, body: string): void {
   const target = path.join(root, ...relative.split('/'))
   fs.mkdirSync(path.dirname(target), { recursive: true })
   fs.writeFileSync(target, body)
 }
-
-// ─── launching the capture instance ──────────────────────────────────────────
 
 /** Is a CDP endpoint serving a page target yet? */
 async function cdpPageReady(port: number): Promise<boolean> {
@@ -339,11 +285,9 @@ async function cdpPageReady(port: number): Promise<boolean> {
 /**
  * Kill the tray and start a capture instance in its place.
  *
- * The service tops the tray up on a 30-second cooldown, so it can win the race
- * for the single-instance lock in the moment between the kill and our launch —
- * in which case our process exits immediately, having forwarded its argv to the
- * service's. That is what the retry is for; each attempt kills whatever holds
- * the lock and tries again.
+ * The service tops the tray up on a 30s cooldown and can win the single-instance
+ * lock between our kill and our launch — our process then exits immediately,
+ * having forwarded argv. Hence the retry: each attempt re-kills the holder.
  */
 export async function startDesktop(root: string, port: number): Promise<DesktopSession> {
   const attempts = 3
@@ -359,7 +303,6 @@ export async function startDesktop(root: string, port: number): Promise<DesktopS
       windowsHide: false,
       env: {
         ...process.env,
-        // Everything the app reads about this machine comes from here.
         PROGRAMDATA: SCRATCH_PROGRAMDATA,
         COMPUTERNAME: CAPTURE_HOSTNAME,
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
@@ -387,19 +330,15 @@ export async function startDesktop(root: string, port: number): Promise<DesktopS
   )
 }
 
-/** Stop the capture instance and wait for it to write its layout out. */
 export async function stopDesktop(session: DesktopSession): Promise<void> {
   killDesktopPid(session.pid)
   await waitForExit(session.pid)
 }
 
 /**
- * Kill any pairing stand-in still sleeping in the scratch tree.
- *
- * The dialog cancels its helper when it closes, and the app kills every run on
- * exit — but the capture instance is stopped with `taskkill /F`, which runs
- * neither. Matching on the command line rather than the image name is what keeps
- * this from touching an unrelated python the operator has open.
+ * Kill any pairing stand-in left in the scratch tree. The app's own cleanup
+ * never runs because we stop it with `taskkill /F`. Match on the command line,
+ * not the image name, so an unrelated python the operator has open survives.
  */
 export function killScratchHelpers(): void {
   let output = ''

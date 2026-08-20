@@ -1,23 +1,17 @@
 /**
  * Canonical identity-only hashing for display monitors.
  *
- * The agent hashes (manufacturerId, productCode, serialNumber) as SHA-1 and
- * truncates to 16 hex chars to produce `edidHash`. Older agents also folded
- * the monitor friendly name into the payload, which made the hash drift on
- * the same physical monitor whenever Windows reported a different name
- * during a driver state transition (RDP attach/detach, monitor sleep, etc.).
- *
- * Hashes stored in Firestore before the agent dropped friendly-name still
- * appear with the old format. We re-derive on read so a layout captured
- * under the old scheme matches live identity hashes from a current agent —
- * no Firestore migration needed.
- *
- * This helper must produce the exact same bytes the Python side produces:
+ * MUST produce byte-identical output to the Python side:
  *   payload = `${manufacturer}|${product_code}|${serial}`
  *   hash    = sha1(payload).hex[:16]
- * `product_code` is the *integer* from the EDID. Monitor docs persist it
- * as a zero-padded hex string ("000A"); we parse it back to int before
- * stringifying to match Python's `'{0}'.format(int)` representation.
+ * `product_code` is the EDID *integer*; monitor docs persist it as zero-padded
+ * hex ("000A"), so parse back to int before stringifying to match Python's
+ * `'{0}'.format(int)`.
+ *
+ * Old agents folded the friendly name into the payload, which drifted whenever
+ * Windows renamed a monitor during a driver state transition (RDP attach,
+ * sleep). Re-deriving on read lets legacy-scheme layouts match current live
+ * hashes with no Firestore migration.
  */
 
 import type { MonitorInfo } from '@/hooks/useDisplayState';
@@ -53,8 +47,8 @@ async function sha1Hex16(payload: string): Promise<string> {
 export async function canonicalEdidHash(
   m: WithIdentity & { edidHash?: string },
 ): Promise<string> {
-  // Preserve the original hash when no identity is available — recomputing
-  // from empty fields would collapse every unknown monitor to one hash.
+  // Keep the original when identity is missing — hashing empty fields would
+  // collapse every unknown monitor onto one hash.
   if (!hasIdentity(m)) return m.edidHash || '';
   const mfg = m.manufacturerId || '';
   const pc = productCodeToInt(m.productCode);

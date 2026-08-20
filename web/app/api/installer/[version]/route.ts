@@ -1,22 +1,13 @@
 /**
- * DELETE /api/installer/{version}
+ * DELETE /api/installer/{version} — soft-delete: only `deletedAt` is set, the
+ * doc and storage object stay. Hard delete is a separate admin sweep.
  *
- * Soft-delete an installer version. The doc + storage object remain; only
- * the `deletedAt` field is set. Hard delete is a separate admin sweep.
+ * Refuses to drop active versions below 2, checked inside a transaction so
+ * concurrent deletes can't both see "3 active"; 409 `min_versions_violated`
+ * otherwise.
  *
- * Refuses to drop the active version count below 2 — enforced inside a
- * Firestore transaction so concurrent deletes can't both see "3 active"
- * and both succeed. Returns 409 `min_versions_violated` if the delete
- * would breach the floor.
- *
- * Auth:
- *   - api key with `installer=*:admin` scope (superadmin-only at minting)
- *   - session / id-token from a superadmin user
- *
- * Idempotent by design — deleting an already-deleted version is a no-op
- * 200 (the second call returns the same shape, deletedAt unchanged).
- *
- * api-sprint wave 1 track 1B (installer-api).
+ * Auth: api key with `installer=*:admin`, or a superadmin session/id-token.
+ * Idempotent — re-deleting returns the same 200 shape, deletedAt unchanged.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -64,8 +55,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       }
       const targetData = targetSnap.data() ?? {};
 
-      // Already soft-deleted: idempotent — return current state without
-      // re-emitting an audit event or touching the doc.
+      // Idempotent: return current state, no audit event, no write.
       if (typeof targetData.deletedAt === 'number') {
         return {
           kind: 'already_deleted' as const,
@@ -79,8 +69,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         return { kind: 'latest_protected' as const };
       }
 
-      // Count active (non-deleted) versions inside the transaction so a
-      // concurrent delete can't race past this check.
+      // Counted inside the transaction so a concurrent delete can't race it.
       const allSnap = await tx.get(versionsCol);
       const activeCount = allSnap.docs.reduce((n, doc) => {
         const d = doc.data();

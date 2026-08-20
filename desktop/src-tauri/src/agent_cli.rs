@@ -1,26 +1,22 @@
 //! Running the agent's python CLI and streaming its progress.
 //!
-//! Three things the desktop app must be able to do — pair with a site, leave
-//! one, and file a bug report — need the agent's cloud client and its encrypted
-//! token store. Neither is reimplemented here. The token crypto stays in
-//! `agent/src/secure_storage.py`, the Firestore REST client stays in
-//! `agent/src/firestore_rest_client.py`, and this module spawns the bundled
-//! interpreter against `agent/src/configure_site.py` instead:
+//! Pairing with a site, leaving one, and filing a bug report all need the agent's
+//! cloud client and encrypted token store. Neither is reimplemented here: token
+//! crypto stays in `agent/src/secure_storage.py`, the Firestore REST client in
+//! `agent/src/firestore_rest_client.py`. This module spawns the bundled
+//! interpreter against `agent/src/configure_site.py`:
 //!
 //! ```text
 //! %PROGRAMDATA%\Owlette\python\python.exe
 //!   %PROGRAMDATA%\Owlette\agent\src\configure_site.py --json-progress
 //! ```
 //!
-//! That script writes one JSON object per line to stdout (see its "Headless
-//! modes" section). Every line is forwarded to the frontend as an
-//! [`EVENT_AGENT_CLI`] event, tagged with the run it belongs to, followed by
-//! exactly one `exit` event carrying the process's exit code. Parsing is the
-//! frontend's job — the host stays a pipe.
+//! That script writes one JSON object per line to stdout. Every line is forwarded
+//! as an [`EVENT_AGENT_CLI`] event tagged with its run, then exactly one `exit`
+//! event carrying the exit code. Parsing is the frontend's job — the host is a pipe.
 //!
-//! The mode is not a command line. The frontend names one of [`MODES`] and this
-//! module builds the argv, so nothing the webview can say becomes an argument to
-//! the interpreter.
+//! The frontend names one of [`MODES`] and this module builds the argv, so
+//! nothing the webview can say becomes an argument to the interpreter.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
@@ -59,21 +55,17 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// How often a running child is checked for having exited.
 const REAP_INTERVAL: Duration = Duration::from_millis(150);
 
-/// Longest line forwarded from the child. A pairing phrase is 30 characters and
-/// an error message a few hundred; anything approaching this is a runaway
-/// traceback, and truncating it keeps one bad run from filling the webview.
+/// Longest line forwarded from the child. Anything approaching this is a runaway
+/// traceback; truncating keeps one bad run from filling the webview.
 const MAX_LINE_BYTES: usize = 64 * 1024;
 
-/// Modes the frontend may run, and the argv each one becomes.
-///
-/// The second element is what `configure_site.py` is actually given. Adding a
-/// mode here is the only way to add one to the frontend's reach.
+/// Modes the frontend may run, and the argv each becomes. Adding a mode here is
+/// the only way to add one to the frontend's reach.
 const MODES: &[(&str, &str)] = &[
-  // Pair this machine with a site: emits `phrase`, then `status` while polling,
-  // then `authorized`.
+  // Pair with a site: emits `phrase`, then `status` while polling, then `authorized`.
   ("join", "--json-progress"),
-  // Leave the current site: disable cloud sync, drop the cached config, stop the
-  // service, delete the machine document, start the service.
+  // Leave: disable cloud sync, drop cached config, stop service, delete the
+  // machine document, start the service.
   ("leave", "--leave"),
   // File a feedback report. Requires a payload.
   ("report-issue", "--report-issue"),
@@ -119,9 +111,8 @@ fn flag_for(mode: &str) -> Result<&'static str, String> {
 
 /// Write a feedback payload into the owlette tree and return its path.
 ///
-/// The file is created with a per-run name so two reports cannot share one, and
-/// the script deletes it after reading — the operator's description is not left
-/// on disk.
+/// Per-run filename so two reports cannot collide, and the script deletes it
+/// after reading — the operator's description is not left on disk.
 fn stage_payload(root: &Path, run: &str, payload: &Value) -> Result<PathBuf, String> {
   let dir = root.join(REPORT_DIR_REL);
   std::fs::create_dir_all(&dir)
@@ -208,9 +199,8 @@ pub fn start(
 
 /// Kill a running child. `false` when the run had already finished.
 ///
-/// Cancelling a pairing run is the operator closing the dialog: the device code
-/// is simply abandoned and expires server-side ten minutes later, which is why
-/// there is nothing to tell the server here.
+/// Cancelling a pairing run just abandons the device code; it expires
+/// server-side ten minutes later, so there is nothing to tell the server.
 pub fn cancel(runs: &Runs, run: &str) -> Result<bool, String> {
   let child = runs
     .children

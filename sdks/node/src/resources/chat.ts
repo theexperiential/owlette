@@ -13,19 +13,15 @@
  *   `d:{...}\n`                  → end-of-stream marker
  *   `3:"<error>"\n`              → upstream error frame
  *
- * It exposes both pull (async iterable of text deltas) and push (an
- * `onDelta` callback) styles so callers can pick whichever fits. The
- * function returns an object exposing the iterable plus a final
- * `complete()` promise that resolves with the full assembled assistant
- * reply once the stream ends.
+ * Both pull (async iterable of text deltas) and push (`onDelta` callback)
+ * styles are exposed, plus a `complete()` promise resolving to the full
+ * assembled reply once the stream ends.
  */
 import { randomUUID } from 'crypto';
 import type { OwletteClient } from '../lib/client';
 import { SDK_VERSION } from '../version';
 
-/* --------------------------------------------------------------------- */
-/*  types                                                                */
-/* --------------------------------------------------------------------- */
+// types
 
 export type ChatRole = 'user' | 'assistant' | 'system';
 
@@ -92,9 +88,7 @@ export interface SendMessageStream {
   complete: Promise<string>;
 }
 
-/* --------------------------------------------------------------------- */
-/*  resource                                                             */
-/* --------------------------------------------------------------------- */
+// resource
 
 export class Chat {
   constructor(private readonly client: OwletteClient) {}
@@ -170,11 +164,9 @@ export class Chat {
   /**
    * Send a message and stream the assistant's reply.
    *
-   * Skips the SDK's normal `client.request` wrapper because it always
-   * `await`s the full response body — incompatible with line-prefixed
-   * streaming. Instead we go straight to `client._fetch`, attach the
-   * standard auth/version headers ourselves, and decode the line-prefixed
-   * AI-SDK protocol incrementally.
+   * Bypasses `client.request`, which always awaits the full body — incompatible
+   * with line-prefixed streaming. Goes straight to `client._fetch`, attaches
+   * the auth/version headers itself, and decodes incrementally.
    */
   async send(
     conversationId: string,
@@ -234,9 +226,7 @@ export class Chat {
   }
 }
 
-/* --------------------------------------------------------------------- */
-/*  stream parser                                                        */
-/* --------------------------------------------------------------------- */
+// stream parser
 
 function parseAiSdkStream(
   source: AsyncIterable<Uint8Array>,

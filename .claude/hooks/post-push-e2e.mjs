@@ -1,21 +1,16 @@
 /**
- * PostToolUse Hook — Watch the Playwright E2E run after a push
+ * PostToolUse hook: after a successful `git push` to dev/main touching the
+ * e2e.yml path filter, inject a recipe telling Claude to watch the triggered
+ * "playwright e2e" run and, on failure, diagnose and PROPOSE a fix (never
+ * auto-repush — dev auto-deploys, main is protected).
  *
- * After a successful `git push` to dev/main that touches files in the
- * .github/workflows/e2e.yml path filter (web/**, firestore.rules,
- * firebase.json, the workflow itself), injects an instruction telling Claude
- * to find the triggered "playwright e2e" run, watch it to completion via the
- * gh CLI, and — on failure — pull the failing logs, diagnose the root cause,
- * and PROPOSE a fix (no auto-repush; dev auto-deploys and main is protected).
- *
- * The hook does NOT poll CI itself — a 6–30 min `gh run watch` would hang the
- * harness. It only detects the push and hands Claude a recipe, matching the
- * sibling post-push-installer.mjs pattern.
+ * Detects only; it does NOT poll CI, because a 6-30 min `gh run watch` would
+ * hang the harness. Mirrors post-push-installer.mjs.
  */
 
 import { execSync } from 'child_process'
 
-// The e2e workflow's path filter. Keep in sync with .github/workflows/e2e.yml.
+// Keep in sync with .github/workflows/e2e.yml.
 const PATH_FILTER = [
   (f) => f.startsWith('web/'),
   (f) => f === 'firestore.rules',
@@ -34,27 +29,24 @@ try {
   const data = JSON.parse(input)
   const command = data.tool_input?.command || ''
 
-  // Only real pushes — skip non-push, dry-run, and ref deletions.
+  // Skip non-push, dry-run and ref deletions.
   if (!/\bgit\s+push\b/.test(command)) process.exit(0)
   if (/--dry-run\b/.test(command) || /--delete\b/.test(command) || /\s:\S/.test(command)) {
     process.exit(0)
   }
 
-  // Push must have succeeded for CI to have been triggered.
+  // A failed push triggered no CI.
   if (typeof data.tool_result?.exit_code === 'number' && data.tool_result.exit_code !== 0) {
     process.exit(0)
   }
 
-  // e2e's `push:` trigger only fires on dev/main. (PR branches trigger via
-  // pull_request — out of scope here; the dev/main path is the documented flow.)
+  // The `push:` trigger only fires on dev/main; PR branches go via pull_request.
   const branch = getCurrentBranch()
   if (branch !== 'dev' && branch !== 'main') process.exit(0)
 
-  // Best-effort: did this push touch the e2e path filter? If we can't tell,
-  // fail open (inject anyway) — better to over-verify than miss a red run.
+  // Fail open when the diff is unknowable — over-verifying beats missing a red run.
   const { files, known } = getPushedFiles(branch)
   if (known && !files.some(matchesFilter)) {
-    // Push had changes but none in the e2e scope — CI won't run the suite.
     process.exit(0)
   }
 
@@ -105,9 +97,8 @@ function getHeadSha() {
 }
 
 /**
- * Diff the just-pushed range using the remote-tracking ref's reflog
- * (origin/<branch>@{1} = its value before this push). Returns { files, known }
- * where known=false means we couldn't determine it and the caller should fail open.
+ * Diff the pushed range via the remote-tracking reflog (origin/<branch>@{1} is
+ * its pre-push value). `known: false` means undetermined — caller fails open.
  */
 function getPushedFiles(branch) {
   try {

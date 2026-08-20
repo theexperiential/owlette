@@ -35,14 +35,9 @@ export type ProcessAction = 'restart' | 'kill' | 'duplicate' | 'delete'
 const DRAG_THRESHOLD_PX = 4
 
 /**
- * How much room the rows must leave before the drop hint is offered at all.
- *
- * The sentence and its glyph stack ~70px (a 16px icon, an 8px gap, two 22.75px
- * lines of text-sm/leading-relaxed); the other 90px is air, 45px a side. Sitting
- * where it does — see the `mt-14` below — that reads as ~73px of clear space
- * above the sentence and the same below it down to the sidebar's floor. Under
- * this it stops being a hint and becomes a line squeezed above the toggle, so
- * nothing is drawn at all: an empty corner is the tidier of the two answers.
+ * Minimum room the rows must leave before the drop hint is drawn at all: the
+ * sentence + glyph stack ~70px, the rest is breathing space. Below this it
+ * reads as a line squeezed above the toggle, so nothing is drawn.
  */
 const HINT_MIN_ROOM_PX = 160
 
@@ -80,25 +75,15 @@ interface DragState {
 }
 
 /**
- * The process list: what this machine is supposed to be running, whether it is,
- * and in what order it starts.
+ * The process list: what this machine should be running, whether it is, and in
+ * what order it starts. Each row is a config entry joined to the service's live
+ * table, so the dot is the service's opinion, not one inferred here.
  *
- * Every row is a config entry joined to the service's live table, so the dot is
- * the service's own opinion — not something this app inferred by looking at the
- * process table itself. Beside it is the icon Windows draws for the entry's
- * executable, which is how an operator picks `touch` out of four TouchDesigner
- * entries faster than by reading four names.
+ * Reordering is a drag because `processes[]` order IS the launch sequence.
+ * Hand-rolled on pointer events: html5 DnD is unreliable in a webview with
+ * `dragDropEnabled` claiming OS drops, and a flat list needs no library.
  *
- * Rows are dragged to reorder because `processes[]` order *is* the launch
- * sequence. The drag is hand-rolled on pointer events for two reasons: html5
- * drag-and-drop is unreliable in a webview that has `dragDropEnabled` claiming
- * OS drops, and a flat vertical list needs neither a library nor the bundle
- * weight of one.
- *
- * **Collapsed**, the same list becomes an icon rail: the add button, one icon
- * per entry with its status dot in the corner, and the name in a tooltip. It is
- * the same markup and the same handlers — selection, reordering and the context
- * menu all work exactly as they do expanded — because a rail that quietly
+ * Collapsed, the same markup and handlers become an icon rail — a rail that
  * dropped a gesture would be a second list to keep in step with this one.
  */
 export function ProcessList({
@@ -113,9 +98,8 @@ export function ProcessList({
   collapsed = false,
   onCollapsedChange,
 }: ProcessListProps) {
-  // Right-click opens a menu at the pointer. Radix positions against a trigger,
-  // so the trigger is a zero-size element parked at the click — the same shape
-  // as a native context menu without pulling in another primitive.
+  // Radix positions against a trigger, so the trigger is a zero-size element
+  // parked at the click — native context-menu behaviour, no extra primitive.
   const [anchor, setAnchor] = useState<MenuAnchor | null>(null)
 
   const isEmpty = processes.length === 0
@@ -127,8 +111,8 @@ export function ProcessList({
   const hintRoomRef = useRef<HTMLDivElement>(null)
   const [hintRoom, setHintRoom] = useState<number | null>(null)
   const dragRef = useRef<DragState | null>(null)
-  // Mirrors the ref so the indicator re-renders; the ref is what the pointer
-  // handlers read, because they run between renders.
+  // Mirrors the ref so the indicator re-renders; the pointer handlers read the
+  // ref, since they run between renders.
   const [dropGap, setDropGap] = useState<number | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
 
@@ -203,13 +187,13 @@ export function ProcessList({
     endDrag()
     if (!active) return
 
-    // The gap counts positions in the list as it stands, including the row
-    // being dragged; dropping below its own position closes that hole by one.
+    // The gap counts positions including the dragged row, so dropping below its
+    // own position closes that hole by one.
     const target = from < gap ? gap - 1 : gap
     if (target !== from) onReorder(id, target)
   }
 
-  // Escape abandons a drag, as it does in every list that has one.
+  // Escape abandons a drag.
   useEffect(() => {
     if (!draggingId) return
     const cancel = (event: KeyboardEvent) => {
@@ -219,18 +203,16 @@ export function ProcessList({
     return () => window.removeEventListener('keydown', cancel)
   }, [draggingId, endDrag])
 
-  // A drag that outlives its component would leave the flag set for the file
-  // drop overlay, which would then ignore real drops.
+  // A drag outliving its component leaves the file-drop overlay's flag set, and
+  // it would then ignore real drops.
   useEffect(() => endDrag, [endDrag])
 
-  // The room the rows leave is the height of the box they leave it in. That box
-  // is `flex-1 min-h-0`, so its height is the leftover and does not change when
-  // the sentence moves in or out of it — which is what keeps the rule from
-  // oscillating. Measured in a layout effect so the answer is in before the
-  // first paint, and the hint never flashes in and back out.
+  // The box is `flex-1 min-h-0`, so its height is the leftover and does not
+  // change when the sentence moves in or out — that is what stops the rule
+  // oscillating. Layout effect so the hint never flashes in and back out.
   useLayoutEffect(() => {
     const room = hintRoomRef.current
-    // Guarded for the test environment, which has no layout to observe anyway.
+    // jsdom has no layout to observe.
     if (!room || typeof ResizeObserver === 'undefined') return
     const measure = () => setHintRoom(room.clientHeight)
     measure()
@@ -239,8 +221,7 @@ export function ProcessList({
     return () => observer.disconnect()
   }, [collapsed, isEmpty])
 
-  // `null` until something measures: with no layout to read, the sentence is
-  // the honest default.
+  // `null` until measured — with no layout to read, show the sentence.
   const showHint = hintRoom === null || hintRoom >= HINT_MIN_ROOM_PX
 
   return (
@@ -249,10 +230,7 @@ export function ProcessList({
       data-testid="process-list"
       data-collapsed={collapsed || undefined}
     >
-      {/*
-        The rail keeps the add button and drops everything else: at 48 px the
-        heading has nowhere to go, and the icons below are the list.
-      */}
+      {/* The rail keeps only the add button: at 48px the heading has nowhere to go. */}
       <header
         className={cn(
           'flex items-center pt-4 pb-3',
@@ -287,9 +265,7 @@ export function ProcessList({
             leave; past that the column grows with the list. */}
         <div className="flex min-h-full flex-col">
           {isEmpty ? (
-            // Nothing to say in 48 px that the expanded list does not say
-            // better; the add button above is the whole instruction the rail
-            // can carry.
+            // Nothing fits in 48px that the expanded list doesn't say better.
             collapsed ? null : (
               <ProcessListEmpty dragOver={dragOver} />
             )
@@ -300,7 +276,7 @@ export function ProcessList({
                 const selected = process.id === selectedId
                 const dragged = draggingId === process.id
                 const name = process.name || 'untitled process'
-                // No indicator for a drop that would change nothing.
+                // No indicator for a no-op drop.
                 const showGap =
                   dropGap !== null && dragRef.current !== null
                     ? dropGap !== dragRef.current.from && dropGap !== dragRef.current.from + 1
@@ -339,16 +315,15 @@ export function ProcessList({
                           data-status={status}
                           data-dragging={dragged || undefined}
                           aria-current={selected}
-                          // The rail has no name to read, so the button carries
-                          // one — the tooltip is not an accessible name.
+                          // A tooltip is not an accessible name, and the rail
+                          // shows no text.
                           aria-label={collapsed ? name : undefined}
                           className={cn(
                             'group flex w-full touch-none items-center rounded-md text-left text-sm transition-colors select-none',
                             collapsed ? 'justify-center px-0 py-1' : 'gap-2 px-1.5 py-2',
-                            // The grab hand lives on the grip alone; the row is a
-                            // click-to-select surface. A drag can still start
-                            // anywhere on the row — once it does, the whole row
-                            // reads as grabbed.
+                            // Grab cursor on the grip only — the row is a
+                            // click-to-select surface, though a drag may start
+                            // anywhere on it.
                             draggingId ? 'cursor-grabbing' : 'cursor-pointer',
                             selected
                               ? 'bg-accent text-accent-foreground'
@@ -367,10 +342,8 @@ export function ProcessList({
                           }}
                         >
                           {collapsed ? (
-                            // One target, with the dot tucked into its corner
-                            // the way a badge sits on a taskbar icon: at this
-                            // size a dot in the row would cost a third of the
-                            // width the icon needs.
+                            // Dot badged onto the icon's corner: a separate dot
+                            // would cost a third of the icon's width here.
                             <span className="relative flex size-8 shrink-0 items-center justify-center">
                               <ProcessIcon exePath={process.exe_path} className="size-5" />
                               <span
@@ -413,23 +386,16 @@ export function ProcessList({
           )}
 
           {/*
-            Once there are rows, the empty state's lesson — that a file dropped on
-            this window becomes a process — has nowhere left to be said. This is
-            that sentence, at a whisper, floating in whatever room the list
-            leaves, and withheld once the rows leave too little of it: pressed up
-            against the toggle it read as a stray line rather than an invitation.
-            The rail has no room for it and no line breaks that would help, so it
-            is not offered there either.
+            Carries the empty state's lesson (a dropped file becomes a process)
+            once rows exist. Withheld when the rows leave too little room, and in
+            the rail, where it reads as a stray line rather than an invitation.
 
-            The box is measured whether or not the sentence is in it — `flex-1`
-            with `min-h-0`, so its height is the room the rows leave and nothing
-            it holds can change that. That is also what keeps the hint out of the
-            scrollable extent: once the rows overflow this collapses to nothing,
-            and the scrollbar answers for the list alone.
+            The box is `flex-1 min-h-0` and measured whether or not the sentence
+            is in it, so its height is the room the rows leave — that also keeps
+            the hint out of the scrollable extent once rows overflow.
 
-            It is inert (`pointer-events-none`) and outside the `ul`, so it
-            cannot take a drag away from a row, an OS drop from the window, or
-            a right-click from the context menu.
+            `pointer-events-none` and outside the `ul`, so it cannot steal a
+            drag, an OS drop, or a right-click.
           */}
           {!collapsed && !isEmpty && (
             <div
@@ -438,13 +404,10 @@ export function ProcessList({
               className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-3"
             >
               {showHint && (
-                // mt-14 is the toggle strip's own height, and on a centred flex
-                // item a top margin moves the box down by half of it. The
-                // sentence is therefore centred against the floor of the
-                // sidebar rather than against the toggle sitting on it, which
-                // is where the eye reads the empty space as ending. It is a
-                // margin and not padding so the box above still measures the
-                // room and nothing else.
+                // mt-14 = the toggle strip's height; on a centred flex item a
+                // top margin shifts the box by half of it, centring the sentence
+                // against the sidebar floor rather than the toggle. Margin, not
+                // padding, so the box above still measures room and nothing else.
                 <p
                   data-testid="process-list-drop-hint"
                   className="pointer-events-none mt-14 flex flex-col items-center gap-2 text-center text-sm leading-relaxed text-muted-foreground"
@@ -459,28 +422,19 @@ export function ProcessList({
           )}
 
           {/*
-            The toggle, pinned where an activity bar keeps its own controls: the
-            bottom of the column, below everything the list has to say. Right-
-            aligned while expanded and centred in the rail — which at 48 px is the
-            same corner. The divider collapses and expands too; this is the
-            affordance for operators who never discover that a border can be
-            dragged.
+            Collapse toggle, at the bottom of the column. The draggable divider
+            does the same thing; this is the affordance for operators who never
+            discover that.
 
-            It rides inside the scroller, stuck to its floor, rather than in a
-            row beneath it: a row beneath cut the scrollbar's track short of the
-            sidebar's bottom edge, and an overlay would have painted over the
-            track instead. `mt-auto` puts it on the floor in the two layouts with
-            no hint box to push it there: the rail, and the empty state.
+            Inside the scroller stuck to its floor, not in a row beneath it: a
+            row cut the scrollbar's track short of the sidebar's bottom edge, and
+            an overlay painted over the track. `mt-auto` floors it in the two
+            layouts with no hint box to push it there (rail, empty state).
 
-            The row veils rather than cuts. Its ground fades in from nothing
-            over the first 60% of its height, so a row travelling into it
-            dissolves the way the top of the list dissolves under the header —
-            a flat band of the same colour chopped rows clean in half 56px clear
-            of the floor, which reads as a clipping fault rather than as
-            scrolling. It also means nothing is left showing beneath the button:
-            the veil is solid from there to the floor, which at 48px, where an
-            icon is the same size as the toggle, is the difference between a
-            control and a thirteenth list item.
+            The gradient veils rather than cuts — a flat band chopped rows clean
+            in half 56px clear of the floor, which read as a clipping fault. It
+            is solid from the button down, so at 48px the toggle can't be
+            mistaken for one more list item.
           */}
           {onCollapsedChange && (
             <div
@@ -499,9 +453,8 @@ export function ProcessList({
                     <Button
                       size="icon-sm"
                       variant="ghost"
-                      // Quiet chrome, not content: the muted blue-tinted
-                      // foreground the other passive icons wear, brightening on
-                      // hover.
+                      // Chrome, not content: same muted foreground as the other
+                      // passive icons.
                       className="text-muted-foreground hover:text-foreground"
                       onClick={() => onCollapsedChange(!collapsed)}
                       aria-label={collapsed ? 'expand the process list' : 'collapse the process list'}

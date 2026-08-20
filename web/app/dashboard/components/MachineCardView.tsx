@@ -1,18 +1,6 @@
 /**
- * MachineCardView Component
- *
- * Grid display of machines as cards showing metrics and processes.
- * Always shown on mobile, toggleable with list view on desktop.
- *
- * Features:
- * - Machine status (online/offline)
- * - System metrics (CPU, Memory, Disk, GPU) with sparkline charts
- * - Expandable process list
- * - Process controls (autolaunch, edit, restart, kill)
- * - Create add process button
- * - Click sparklines to open detail panel
- *
- * Used by: Dashboard page for card view display
+ * Grid of machine cards — status, sparkline metrics, expandable process list
+ * with controls. Always used on mobile; toggleable with list view on desktop.
  */
 
 import { useMinuteTick } from '@/hooks/useMinuteTick';
@@ -69,10 +57,7 @@ interface MachineCardViewProps {
   onLiveView?: (machineId: string) => void;
 }
 
-/**
- * Individual machine card with sparkline support
- * Separated to allow hooks inside the map
- */
+/** Split out of the map so it can use hooks. */
 interface MachineCardProps {
   machine: Machine;
   statsExpanded: boolean;
@@ -142,13 +127,10 @@ function MachineCard({
   const { userPreferences: fullPrefs } = useAuth();
   const isMuted = fullPrefs.mutedMachines.includes(machine.machineId);
 
-  // Fetch sparkline data for this machine
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
-  // Live display topology (monitors + mosaic). Always subscribed so the
-  // collapsed card summary can show the resolution list — otherwise it'd
-  // render "no data" until the user expanded the section. We skip the
-  // assigned-layout sub here because the drift dot now reads from the
+  // Always subscribed so the COLLAPSED summary can show resolutions instead
+  // of "no data". No assigned-layout sub — the drift dot reads the
   // heartbeat-published `metrics.displayDriftCount`, not a client-side diff.
   const { profile: displayProfile } = useDisplayState(
     currentSiteId,
@@ -160,8 +142,7 @@ function MachineCard({
   // Parent preference is the source of truth; default collapsed on first render.
   const effectiveDisplaysExpanded = displaysExpanded ?? false;
 
-  // Format heartbeat time. The display tz is resolved per-machine according
-  // to the user's chosen `timeDisplayMode` (preferences) — see getDisplayTimezone.
+  // Display tz is per-machine, from the user's `timeDisplayMode` preference.
   const displayTz = getDisplayTimezone(
     fullPrefs.timeDisplayMode || 'machine',
     fullPrefs.timezone,
@@ -170,10 +151,8 @@ function MachineCard({
   );
   const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, displayTz, siteTimeFormat);
 
-  // Live-updating local clock for this machine's own timezone (under hostname).
-  // Subscribing to the shared wall-clock minute tick re-renders this card
-  // once per minute (in lockstep with every other machine card) so the
-  // formatted clock string below stays current. One interval, app-wide.
+  // Shared wall-clock minute tick: one app-wide interval re-renders every
+  // card in lockstep so the clock string stays current.
   useMinuteTick();
   const localClock = formatMachineLocalClock(machine.machineTimezone, siteTimeFormat);
   const localTzShort = formatTimezoneShortName(machine.machineTimezone);
@@ -190,17 +169,14 @@ function MachineCard({
   const showGpuDropdown = shouldShowDeviceDropdown(machine.devices?.gpus);
   const showNicDropdown = shouldShowDeviceDropdown(machine.devices?.nics);
 
-  // Derive memory total from usedGb / (percent/100) when percent > 0. v2 agents
-  // no longer send total_gb — the ratio is recoverable from the two fields we do
-  // have. Guard against divide-by-zero / missing fields.
+  // v2 agents no longer send total_gb; recover it from usedGb / (percent/100).
   const memory = machine.metrics?.memory;
   const memoryTotalGb =
     memory && memory.usedGb != null && memory.percent != null && memory.percent > 0
       ? memory.usedGb / (memory.percent / 100)
       : null;
 
-  // Tiny shadcn Select helpers for the per-card device selectors.
-  // Kept inline so they can close over machine + resolved device state.
+  // Inline so they close over machine + resolved device state.
   const renderDeviceSelect = (
     kind: DeviceKind,
     devices: { id: string }[],
@@ -747,9 +723,8 @@ function MachineCard({
                 </div>
                 <div className="h-[160px] border border-border/30 bg-card rounded-b-lg sm:rounded-bl-none sm:rounded-tr-lg overflow-hidden flex flex-col justify-center gap-1.5 px-3 text-xs text-muted-foreground">
                   {displayMonitors.map((m, i) => {
-                    // Post-rotation dimensions match what Windows treats the
-                    // panel as (and what the canvas rect renders): a 4K panel
-                    // rotated 270° reads as 2160×3840, not 3840×2160.
+                    // Post-rotation dims, matching Windows and the canvas
+                    // rect: a 4K panel at 270° reads 2160×3840.
                     const isPortrait = m.rotation === 90 || m.rotation === 270;
                     const effW = isPortrait ? m.resolution.height : m.resolution.width;
                     const effH = isPortrait ? m.resolution.width : m.resolution.height;
@@ -835,8 +810,7 @@ function MachineCard({
                           {(() => {
                             const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
                             const modeLabels = { off: 'off', always: 'always on', scheduled: 'scheduled' } as const;
-                            // Non-admins are read-only: show the current launch mode as a
-                            // static pill instead of the interactive toggle (which would 403).
+                            // Non-admins: static pill, since the toggle would 403.
                             if (!isSiteAdmin) {
                               const readOnlyColor = currentMode === 'always'
                                 ? 'text-emerald-400 border-emerald-600/40'
@@ -1046,17 +1020,13 @@ export function MachineCardView({
   const showLocalClock = uniqueTimezones.size > 1;
 
   return (
-    // `machines-grid` is a hook for the slide-animation perf rule in
-    // globals.css — when the dashboard marks the ancestor with
-    // data-slide-pausing="true" during the detail panel's transition,
-    // each card here gets `content-visibility: auto` so offscreen cards
-    // skip layout/paint and don't compete with the slide for frame budget.
+    // `machines-grid` hooks the globals.css slide-perf rule: under
+    // data-slide-pausing="true" each card gets `content-visibility: auto` so
+    // offscreen cards don't compete with the slide for frame budget.
     //
-    // `grid-cols-1` is load-bearing below md: without an explicit template the
-    // single implicit column is an `auto` track, so its base size is the card's
-    // min-content — any intrinsically-wide descendant (a nowrap label, a nested
-    // fr split) drags the track past the viewport and the whole page scrolls
-    // sideways. `minmax(0, 1fr)` pins the track to the container instead.
+    // `grid-cols-1` is load-bearing below md: an implicit `auto` track sizes to
+    // min-content, so any nowrap label or nested fr split drags it past the
+    // viewport and scrolls the page sideways. minmax(0, 1fr) pins it.
     <div className="machines-grid grid grid-cols-1 gap-4 md:grid-cols-2">
       {machines.map((machine) => (
         <MachineCard

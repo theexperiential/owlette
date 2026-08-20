@@ -1,27 +1,20 @@
 /**
- * Shared API Helpers
- *
- * Provides canonical shared reads that do not belong to a specific route
- * wrapper. Privileged admin authorization now flows through
- * `authorizedSiteHandler` / `authorizedPlatformHandler`.
+ * Canonical shared reads that belong to no single route wrapper. Privileged
+ * authorization lives in `authorizedSiteHandler` / `authorizedPlatformHandler`.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
 
 /**
- * Canonical site-membership read.
+ * Canonical site-membership read. Membership lives only on `users/{uid}.sites[]`
+ * — there is no inverse `sites/{siteId}.members[]` (see
+ * `dev/active/api-sprint/reference/membership-decision.md`) — so every caller
+ * goes through here and firestore.rules stays the only other place pinned to the
+ * field.
  *
- * Owlette stores site membership exclusively on `users/{uid}.sites[]`. There
- * is no inverse `sites/{siteId}.members[]` collection - this was audited in
- * `dev/active/api-sprint/reference/membership-decision.md`. Every caller that
- * needs "what sites does this user belong to?" should go through this helper
- * so the read shape is identical across api-sprint waves and Firestore-rules
- * stays the only place that pins to the underlying field.
- *
- * Returns `[]` for users with no `sites` field (e.g. brand-new accounts) and
- * for users whose doc doesn't exist. Superadmins still have access to every
- * site via the role check elsewhere - this returns the explicit assignment
- * list, not the effective access list.
+ * `[]` when the user has no `sites` field or no doc at all. This is the explicit
+ * assignment list, not the effective one: superadmin access comes from the role
+ * check elsewhere.
  */
 export async function getUserSiteIds(userId: string): Promise<string[]> {
   const db = getAdminDb();

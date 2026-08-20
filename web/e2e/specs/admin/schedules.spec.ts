@@ -1,24 +1,11 @@
 /**
- * Admin — schedule presets page (C3.3)
+ * Admin — schedule presets (`config/{siteId}/schedule_presets/{presetId}`).
+ * `useSchedulePresets` merges the Firestore listener with `BUILT_IN_PRESETS`,
+ * so the four built-ins render even against an empty collection.
  *
- * Schedule presets live at `config/{siteId}/schedule_presets/{presetId}`.
- * The `useSchedulePresets` hook merges a Firestore listener with the
- * hardcoded `BUILT_IN_PRESETS` constant — so built-in presets always
- * appear in the list even with an empty Firestore collection.
- *
- * Covered:
- *   - list rendering — the 4 hardcoded built-ins (business hours,
- *     extended hours, weekday 24h, 24/7) all appear with the "built-in"
- *     badge, and their rows lack the trash button (delete guard)
- *   - create flow — "create preset" → fill name → submit → toast + new
- *     row appears + Admin SDK verifies the Firestore doc exists under
- *     `config/{siteId}/schedule_presets/sched-*` with valid blocks
- *   - delete flow — trash on a seeded custom preset → confirmation
- *     dialog → delete → toast + Admin SDK verifies doc gone
- *
- * The time-block editor itself is not exercised — the form falls back
- * to DEFAULT_SCHEDULE (mon-fri 9-5) when no preset is being edited, so
- * "just fill name and save" produces a valid doc.
+ * Covers list rendering (built-in badge, no trash button), create, and delete,
+ * each verified through the Admin SDK. The time-block editor is not exercised:
+ * the form defaults to DEFAULT_SCHEDULE, so name-and-save yields a valid doc.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -66,9 +53,8 @@ test.beforeEach(async () => {
 
 async function gotoSchedulesForSeededSite(page: Page) {
   await page.goto('/admin/schedules');
-  // Bumped to 10s because RequireSuperadmin renders a "verifying permissions..."
-  // gate while AuthContext hydrates against the auth emulator; the default 5s
-  // expect timeout occasionally races that hydration on cold-emulator runs.
+  // 10s: RequireSuperadmin shows a "verifying permissions..." gate while
+  // AuthContext hydrates, which races the default 5s on cold-emulator runs.
   await expect(
     page.getByRole('heading', { name: 'schedules', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
@@ -81,7 +67,7 @@ async function gotoSchedulesForSeededSite(page: Page) {
 test('lists all four built-in presets with the built-in badge and no trash', async ({ page }) => {
   await gotoSchedulesForSeededSite(page);
 
-  // The four hardcoded built-ins from web/lib/scheduleDefaults.ts
+  // Built-ins from web/lib/scheduleDefaults.ts.
   const builtIns = ['business hours', 'extended hours', 'weekday 24h', '24/7'];
 
   for (const name of builtIns) {
@@ -100,25 +86,21 @@ test('creating a preset writes a Firestore doc with valid blocks', async ({ page
   const presetName = `E2E Custom Preset ${Date.now()}`;
   await page.getByRole('button', { name: /create preset/i }).click();
 
-  // The create dialog uses "Create Schedule Preset" as the title (capitalized).
+  // Dialog title is capitalized, unlike the rest of the UI copy.
   const dialog = page.getByRole('dialog', { name: /create schedule preset/i });
   await expect(dialog).toBeVisible();
 
   await dialog.getByLabel('Name').fill(presetName);
-  // DEFAULT_SCHEDULE (mon-fri 9-5) is pre-populated, so we skip the blocks
-  // editor — clicking Create Preset directly submits a valid schedule.
+  // DEFAULT_SCHEDULE is pre-populated, so submitting straight away is valid.
   await dialog.getByRole('button', { name: /^create preset$/i }).click();
 
-  // Success toast.
   await expect(page.getByText(new RegExp(`"${presetName}" created`, 'i'))).toBeVisible();
 
-  // Row appears in the list.
   const row = page.locator('div.rounded-lg.border').filter({ hasText: presetName });
   await expect(row).toBeVisible();
-  // Custom preset — no built-in badge.
   await expect(row.getByText('built-in', { exact: true })).toHaveCount(0);
 
-  // Admin SDK read-through — find the one doc whose name matches.
+  // Admin SDK read-through.
   const db = getAdminDb();
   const snap = await db
     .collection('config')
@@ -131,8 +113,8 @@ test('creating a preset writes a Firestore doc with valid blocks', async ({ page
   expect(data.isBuiltIn).toBe(false);
   expect(Array.isArray(data.blocks)).toBe(true);
   expect(data.blocks.length).toBeGreaterThan(0);
-  // Each seeded block must have at least one day and one range (matches
-  // the handleSave filter in SchedulePresetDialog).
+  // Mirrors SchedulePresetDialog's handleSave filter: every block needs at
+  // least one day and one range.
   for (const block of data.blocks) {
     expect(block.days.length).toBeGreaterThan(0);
     expect(block.ranges.length).toBeGreaterThan(0);
@@ -146,7 +128,6 @@ test('deleting a custom preset removes the Firestore doc', async ({ page }) => {
 
   const row = page.locator('div.rounded-lg.border').filter({ hasText: presetName });
   await expect(row).toBeVisible();
-  // Custom preset has a trash button (built-ins don't).
   await row.locator('button:has(svg.lucide-trash-2)').click();
 
   const confirmDialog = page.getByRole('dialog', { name: /^delete schedule preset$/i });
@@ -157,7 +138,6 @@ test('deleting a custom preset removes the Firestore doc', async ({ page }) => {
 
   await expect(page.getByText(new RegExp(`Preset "${presetName}" deleted`, 'i'))).toBeVisible();
 
-  // Admin SDK — doc is gone.
   const db = getAdminDb();
   const snap = await db
     .collection('config')

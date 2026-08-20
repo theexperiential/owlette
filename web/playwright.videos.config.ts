@@ -4,15 +4,12 @@ import { defineConfig } from '@playwright/test';
  * Playwright config for the tutorial VIDEO-capture pipeline.
  *
  * Sibling of `playwright.screenshots.config.ts` — same emulator boot, global-setup,
- * webServer block, and seeded demo fleet (so machine names / metrics read like a real
- * operation). The differences:
- *   - testDir is `./e2e/videos`, matching only `*.video.ts` files
- *   - 1920×1080 viewport so footage drops straight into a 1080p timeline
- *   - serial, retries:0 (deterministic capture, loud failures)
+ * webServer block and seeded demo fleet. Differences: testDir `./e2e/videos` matching
+ * `*.video.ts`, a 1920×1080 viewport for a 1080p timeline, and serial with retries:0.
  *
- * Each scene file creates its OWN browser context with `recordVideo` (via
- * `recordScene()` in `e2e/videos/video-helpers.ts`) so it can name the output file
- * after the episode/scene. The clean .webm files land in `e2e/.output/videos/`.
+ * Each scene file creates its own context with `recordVideo` (`recordScene()` in
+ * `e2e/videos/video-helpers.ts`) and names the .webm after the episode/scene; clean
+ * files land in `e2e/.output/videos/`.
  *
  * Triggered explicitly by `npm run videos`; never in CI.
  */
@@ -60,28 +57,22 @@ export default defineConfig({
     {
       name: 'chromium',
       use: {
-        // Explicit viewport: Playwright resizes the chrome window so the page's
-        // inner content area is EXACTLY 1920×1080 — irrespective of how tall the
-        // chrome UI (tabs + address bar) ends up. recordScene then measures the
-        // chrome UI offset at runtime and feeds it to ffmpeg's ddagrab capture
-        // region, so the captured frame contains the page content only — no
-        // address bar, no tab strip. (We can't reliably go chromeless via flags:
-        // --kiosk lands in an exclusive-presentation path that DXGI can't capture,
-        // --start-fullscreen gets overridden by --window-size, and --app= doesn't
-        // compose with Playwright's newContext().newPage() window-spawning model.)
+        // Explicit viewport: Playwright resizes the window so the page's inner content
+        // is EXACTLY 1920×1080 whatever the chrome UI height; recordScene measures the
+        // chrome offset at runtime for ffmpeg's ddagrab region, so frames contain page
+        // content only. Chromeless via flags isn't reliable — --kiosk lands in an
+        // exclusive-presentation path DXGI can't capture, --start-fullscreen is
+        // overridden by --window-size, and --app= doesn't compose with newContext().
         viewport: { width: 1920, height: 1080 },
         deviceScaleFactor: 1,
         launchOptions: {
           headless: false,
-          // Drop the `--enable-automation` default arg so Chromium doesn't paint
-          // the yellow "Chrome is being controlled by automation" banner across
-          // the top of every frame.
+          // Drop `--enable-automation` so Chromium doesn't paint the "controlled by
+          // automation" banner across every frame.
           ignoreDefaultArgs: ['--enable-automation'],
           args: [
-            // Leave room for the chrome UI on top of the 1080p content; Playwright
-            // will resize to make inner === 1920×1080, but the outer window won't
-            // exceed this initial allowance, so we know the chrome UI stays
-            // within the first ~120 vertical pixels.
+            // Room for the chrome UI above the 1080p content; Playwright resizes so
+            // inner === 1920×1080, keeping the chrome within the first ~120px.
             '--window-position=0,0',
             '--window-size=1920,1200',
             '--force-device-scale-factor=1',

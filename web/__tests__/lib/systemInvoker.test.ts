@@ -1,32 +1,13 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/systemInvoker.server.ts` (security-boundary-migration
- * wave 2.3).
+ * Unit tests for `web/lib/systemInvoker.server.ts`: happy path, capability
+ * deny, rate limit, error propagation, audit-unavailable fail-closed, both
+ * kill switches, system-bucket isolation, invalid actor, and the caller
+ * fingerprint / `UNEXPECTED_SYSTEM_INVOKER_CALLER` alert.
  *
- * Coverage:
- *   - happy path: allowed system actor + capability runs the action and
- *     produces an `allow` audit entry with `actor.type === 'system'`,
- *     `metadata.callerModule`, and the generated `correlationId`.
- *   - capability denied: capability not in `SystemCapabilityMatrix[name]`
- *     produces a `deny` audit entry, throws `SystemInvokerCapabilityDenied`,
- *     and never invokes `action`.
- *   - rate limited: `checkRateLimit` returns reject -> `deny` audit +
- *     `SystemInvokerRateLimited` thrown, action not invoked.
- *   - error propagation: action throws -> error audit (best-effort) +
- *     original error re-thrown unchanged.
- *   - audit-unavailable: blocking allow audit fails -> action NOT
- *     invoked, throws `SystemInvokerAuditUnavailable`.
- *   - kill switch: capability_enforcement off -> proceeds with
- *     enforcementBypassed flag; rate_limit_enforcement off ditto.
- *   - bucket isolation spot-check: confirms `checkRateLimit` is called
- *     with a system-typed actor (the rateLimit wave 1.4 tests own the
- *     full bucket-isolation matrix).
- *   - invalid actor: throws `SystemInvokerInvalidActor` synchronously,
- *     no audit row.
- *   - caller fingerprint: `metadata.callerModule` is a stable
- *     repo-relative string; an unexpected caller path emits a
- *     `UNEXPECTED_SYSTEM_INVOKER_CALLER` error log without throwing.
+ * The rateLimit wave 1.4 suite owns the full bucket-isolation matrix; this is
+ * only a spot-check that `checkRateLimit` sees a system-typed actor.
  */
 
 import {
@@ -39,10 +20,6 @@ import {
   __testables,
 } from '@/lib/systemInvoker.server';
 import { Capability, type SystemActor } from '@/lib/capabilities';
-
-/* -------------------------------------------------------------------------- */
-/*  mocks                                                                     */
-/* -------------------------------------------------------------------------- */
 
 const blockingAuditCalls: Array<{ siteId: string; entry: Record<string, unknown> }> = [];
 const fireAuditCalls: Array<{ siteId: string; entry: Record<string, unknown> }> = [];
@@ -90,10 +67,6 @@ jest.mock('@/lib/logger', () => ({
   },
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  helpers                                                                   */
-/* -------------------------------------------------------------------------- */
-
 const SITE = 'site-a';
 
 function buildActor(overrides: Partial<SystemActor> = {}): SystemActor {
@@ -124,10 +97,6 @@ beforeEach(() => {
   loggerErrorSpy.mockClear();
   loggerWarnSpy.mockClear();
 });
-
-/* -------------------------------------------------------------------------- */
-/*  fingerprint helpers                                                       */
-/* -------------------------------------------------------------------------- */
 
 describe('captureCallerFingerprint', () => {
   it('skips frames pointing back at systemInvoker.server itself', () => {
@@ -184,10 +153,6 @@ describe('isAllowedCaller', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  invokeAsSystem — happy path                                               */
-/* -------------------------------------------------------------------------- */
-
 describe('invokeAsSystem — allow path', () => {
   it('runs action and writes an allow audit when capability is allowed', async () => {
     const action = jest.fn().mockResolvedValue('result');
@@ -215,8 +180,7 @@ describe('invokeAsSystem — allow path', () => {
       capability: Capability.MACHINE_EXEC_COMMAND,
       outcome: 'allow',
     });
-    // siteId must NOT leak into the audit-actor shape (audit AuditActor
-    // is the slim {type,name} variant).
+    // siteId must not leak into AuditActor — it is the slim {type,name} shape.
     expect((auditEntry.actor as Record<string, unknown>).siteId).toBeUndefined();
     expect(((auditEntry as { metadata?: Record<string, unknown> }).metadata)?.callerModule).toBeDefined();
   });
@@ -277,10 +241,6 @@ describe('invokeAsSystem — allow path', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  invokeAsSystem — capability deny                                          */
-/* -------------------------------------------------------------------------- */
-
 describe('invokeAsSystem — capability deny', () => {
   it('writes deny audit and throws when capability not in matrix', async () => {
     const action = jest.fn();
@@ -329,10 +289,6 @@ describe('invokeAsSystem — capability deny', () => {
     expect(((allowEntry as { metadata: Record<string, unknown> }).metadata).enforcement_bypassed).toBe('capability');
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  invokeAsSystem — rate limited                                             */
-/* -------------------------------------------------------------------------- */
 
 describe('invokeAsSystem — rate limit', () => {
   it('writes deny audit and throws SystemInvokerRateLimited when limited', async () => {
@@ -397,10 +353,6 @@ describe('invokeAsSystem — rate limit', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  invokeAsSystem — error propagation                                        */
-/* -------------------------------------------------------------------------- */
-
 describe('invokeAsSystem — error propagation', () => {
   it('writes error audit and re-throws when action throws', async () => {
     const boom = new Error('boom');
@@ -425,10 +377,6 @@ describe('invokeAsSystem — error propagation', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  invokeAsSystem — audit unavailable                                        */
-/* -------------------------------------------------------------------------- */
-
 describe('invokeAsSystem — audit unavailable', () => {
   it('refuses to invoke action when allow-audit write fails', async () => {
     blockingAuditShouldReject = new Error('firestore down');
@@ -448,10 +396,6 @@ describe('invokeAsSystem — audit unavailable', () => {
     expect(blockingAuditCallCount).toBe(1);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  invokeAsSystem — invalid actor                                            */
-/* -------------------------------------------------------------------------- */
 
 describe('invokeAsSystem — invalid actor', () => {
   it('throws synchronously when actor.type is wrong', async () => {
@@ -491,14 +435,9 @@ describe('invokeAsSystem — invalid actor', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  invokeAsSystem — unexpected caller alert                                  */
-/* -------------------------------------------------------------------------- */
-
 describe('invokeAsSystem — unexpected caller alert', () => {
   it('does not log error when caller is in allowed pattern', async () => {
-    // The test file itself matches `__tests__/` pattern, so the natural
-    // call here should NOT trigger the alert.
+    // This file matches the `__tests__/` pattern, so no alert should fire.
     await invokeAsSystem({
       actor: buildActor(),
       capability: Capability.MACHINE_EXEC_COMMAND,

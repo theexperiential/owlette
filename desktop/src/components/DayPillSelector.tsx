@@ -21,8 +21,7 @@ const SHORT_LABELS: Record<DayKey, string> = {
   sat: 'sat',
   sun: 'sun',
 }
-// Single-letter labels — Tuesday/Thursday and Saturday/Sunday share initials,
-// but the title attribute disambiguates and matches the convention used in
+// Tue/Thu and Sat/Sun share an initial; the title attribute disambiguates, as in
 // ScheduleEditor's pill variant.
 const SINGLE_LABELS: Record<DayKey, string> = {
   mon: 'M',
@@ -37,16 +36,13 @@ const SINGLE_LABELS: Record<DayKey, string> = {
 interface DayPillSelectorProps {
   value: string[]
   onChange: (days: string[]) => void
-  /**
-   * 'rect' = three-letter labels in rounded rectangles
-   * 'pill' = single-letter labels in circles (used in ScheduleEditor blocks)
-   */
+  /** 'rect' = three-letter labels in rectangles; 'pill' = single letters in circles. */
   variant?: 'rect' | 'pill'
-  /** Tailwind classes applied when a day is active. Defaults to a cyan style. */
+  /** Active-day classes; defaults to cyan. */
   activeClassName?: string
-  /** Tailwind classes applied when a day is inactive. Has a sensible default. */
+  /** Inactive-day classes. */
   inactiveClassName?: string
-  /** Smaller pills (used by ScheduleEditor's compact mode). */
+  /** Smaller pills, for ScheduleEditor's compact mode. */
   compact?: boolean
   /** Disable click-drag (defaults to true on fine-pointer devices). */
   enableDragSelect?: boolean
@@ -54,9 +50,8 @@ interface DayPillSelectorProps {
 
 /**
  * Day-of-week toggle row, ported verbatim from `web/components/DayPillSelector.tsx`.
- *
- * Supports click-drag selection on desktop (mouseDown captures the new mode,
- * mouseEnter applies it across pills, window mouseUp ends the drag).
+ * Desktop click-drag: mouseDown captures the mode, mouseEnter paints it, window
+ * mouseUp ends it.
  */
 export function DayPillSelector({
   value,
@@ -67,13 +62,12 @@ export function DayPillSelector({
   compact = false,
   enableDragSelect = true,
 }: DayPillSelectorProps) {
-  // Drag-select state. dragModeRef avoids re-render churn during drag.
+  // dragModeRef avoids re-render churn mid-drag
   const [isDragging, setIsDragging] = useState(false)
   const dragModeRef = useRef<'add' | 'remove' | null>(null)
 
-  // Detect coarse pointers (touch) to skip drag wiring entirely. Lazy
-  // initializer so we don't sync the pointer check via setState-in-effect;
-  // pointer fineness doesn't change at runtime in any browser we care about.
+  // Coarse pointers skip drag wiring. Lazy initializer, not an effect: fineness
+  // never changes at runtime and setState-in-effect is lint-flagged.
   const [supportsDrag] = useState(
     () =>
       enableDragSelect &&
@@ -81,7 +75,7 @@ export function DayPillSelector({
       window.matchMedia('(pointer: fine)').matches,
   )
 
-  // End drag on any mouseup, even outside the component.
+  // mouseup anywhere ends the drag
   useEffect(() => {
     if (!isDragging) return
     const handleUp = () => {
@@ -104,7 +98,6 @@ export function DayPillSelector({
 
   const handleMouseDown = (day: DayKey, e: React.MouseEvent) => {
     if (!supportsDrag) {
-      // Coarse pointer — just toggle on click via the onClick handler.
       return
     }
     e.preventDefault() // suppress focus + drag-select of text
@@ -120,13 +113,12 @@ export function DayPillSelector({
     setDay(day, dragModeRef.current)
   }
 
-  // For coarse pointers, we still need basic click toggling.
+  // coarse pointers still need plain click toggling
   const handleClick = (day: DayKey) => {
     if (supportsDrag) return // mouseDown already handled it
     toggleDay(day)
   }
 
-  // Variant styling
   const baseClasses =
     variant === 'pill'
       ? `${compact ? 'w-7 h-7 text-[10px]' : 'w-8 h-8 text-xs'} rounded-full font-medium transition-colors cursor-pointer flex items-center justify-center select-none`

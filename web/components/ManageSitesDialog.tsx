@@ -20,8 +20,7 @@ interface Site {
   owner?: string;
 }
 
-// Wrap each occurrence of `query` (case-insensitive) in `text` with a cyan
-// highlight so filtered results visibly show WHY they matched.
+// Highlight matches so filtered rows show WHY they matched.
 function highlightMatch(text: string, query: string): React.ReactNode {
   const q = query.trim();
   if (!q) return text;
@@ -52,9 +51,8 @@ interface ManageSitesDialogProps {
   onOpenChange: (open: boolean) => void;
   sites: Site[];
   currentSiteId: string;
-  /** Machine count for the current site only (the one the page has loaded).
-   * When provided, a "machines" column is shown; other sites' cells are blank
-   * since their counts aren't loaded here. Omit it to hide the column. */
+  /** Count for the CURRENT site only. Present => the "machines" column shows,
+   * with other sites' cells blank until expanded. Omit to hide the column. */
   machineCount?: number;
   currentUserId?: string;
   isSuperadmin?: boolean;
@@ -78,8 +76,7 @@ export function ManageSitesDialog({
   // The list dissolves under the dialog header rather than being cut by it.
   const listRef = useScrollFade<HTMLDivElement>();
 
-  // When superadmin, fetch all users so we can display the owner of foreign sites.
-  // Lazily resolve owner UIDs to emails for sites not owned by the current admin.
+  // Superadmin only: resolve owner UIDs to emails for foreign sites.
   const { users: allUsers } = useUserManagement(Boolean(isSuperadmin));
   const ownerEmailByUid = useMemo(() => {
     if (!isSuperadmin) return new Map<string, string>();
@@ -99,14 +96,12 @@ export function ManageSitesDialog({
   const filterInputRef = useRef<HTMLInputElement>(null);
   // One expanded machines panel at a time, accordion-style like editing.
   const [expandedSiteId, setExpandedSiteId] = useState<string | null>(null);
-  // Counts reported back by expanded panels, so non-current sites show a
-  // machine count once their list has been fetched.
+  // Reported by expanded panels, so non-current sites gain a count once fetched.
   const [machineCounts, setMachineCounts] = useState<Record<string, number>>({});
   const handleMachineCountLoaded = useCallback((siteId: string, count: number) => {
     setMachineCounts((prev) => (prev[siteId] === count ? prev : { ...prev, [siteId]: count }));
   }, []);
 
-  // Reset editing + filter state when dialog closes
   useEffect(() => {
     if (!open) {
       setEditingSiteId(null);
@@ -118,8 +113,7 @@ export function ManageSitesDialog({
     }
   }, [open]);
 
-  // Filter sites by name, id, timezone, or owner email (case-insensitive) so
-  // operators with dozens/hundreds of sites can jump to one by any keyword.
+  // name / id / timezone / owner email, case-insensitive.
   const filteredSites = useMemo(() => {
     const q = filter.trim().toLowerCase();
     const matched = !q
@@ -133,8 +127,7 @@ export function ManageSitesDialog({
             ownerEmail.toLowerCase().includes(q)
           );
         });
-    // Pin the current site to the top, then sort the rest alphabetically so a
-    // long list stays predictable to scan.
+    // Current site pinned to the top, rest alphabetical.
     return [...matched].sort((a, b) => {
       if (a.id === currentSiteId) return -1;
       if (b.id === currentSiteId) return 1;
@@ -163,7 +156,6 @@ export function ManageSitesDialog({
     const site = sites.find(s => s.id === siteId);
     if (!site) return;
 
-    // Check if anything changed
     const nameChanged = editingName.trim() !== site.name;
     const timezoneChanged = editingTimezone !== (site.timezone || 'UTC');
 
@@ -215,13 +207,10 @@ export function ManageSitesDialog({
     }
   };
 
-  // Shared column template so the header and every row align into the same
-  // columns. Superadmins get an extra "owner" column. Actions is a fixed 96px
-  // (machines chevron + edit + delete) so the fr columns resolve identically
-  // across the header and the rows.
-  // Build the column template dynamically: the "machines" column only appears
-  // when the caller supplies a count (the dashboard), and the "owner" column
-  // only for superadmins. Order: name | id | timezone | machines | owner | actions.
+  // One template shared by header and rows so they align. Actions is a fixed
+  // 96px so the fr columns resolve identically in both. Order:
+  // name | id | timezone | machines? | owner? | actions — machines only when
+  // the caller supplies a count, owner only for superadmins.
   const showMachines = machineCount !== undefined;
   const columns = ['minmax(0,2.2fr)', 'minmax(0,1.6fr)', 'minmax(0,1.2fr)']; // name, id, timezone
   if (showMachines) columns.push('minmax(0,0.9fr)'); // machines
@@ -229,9 +218,7 @@ export function ManageSitesDialog({
   columns.push('96px'); // actions
   const gridTemplate = columns.join(' ');
 
-  // Machine count label per row: the current site's count comes from the
-  // dashboard prop; other sites' counts appear once their row has been
-  // expanded (SiteMachinesList reports what it fetched).
+  // Current site's count comes from the prop; others appear once expanded.
   const machineCountLabel = (siteId: string): string => {
     const count = siteId === currentSiteId ? machineCount ?? 0 : machineCounts[siteId];
     if (count === undefined) return '';
@@ -245,15 +232,14 @@ export function ManageSitesDialog({
           showCloseButton={false}
           className="border-border bg-secondary text-white sm:max-w-5xl"
           onOpenAutoFocus={(e) => {
-            // Search-first: focus the filter on open instead of the first button.
+            // Search-first: focus the filter, not the first button.
             if (filterInputRef.current) {
               e.preventDefault();
               filterInputRef.current.focus();
             }
           }}
           onEscapeKeyDown={(e) => {
-            // Esc steps back: cancel an in-progress edit, else clear the filter,
-            // else fall through and let the dialog close.
+            // Esc steps back: cancel edit, else clear filter, else close.
             if (editingSiteId) {
               e.preventDefault();
               cancelEditingSite();

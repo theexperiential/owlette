@@ -1,19 +1,14 @@
 /**
- * hoot's internal shared secret — the credential every server-to-server caller
- * of the internal endpoints presents (`/api/hoot/autonomous`,
- * `/api/hoot/escalation`, `/api/alerts/trigger`, `/api/talons/internal/match`,
- * and the audit-emit hop in `lib/auditLogClient.ts`).
+ * hoot's internal shared secret — presented by every server-to-server caller of the internal
+ * endpoints (`/api/hoot/autonomous`, `/api/hoot/escalation`, `/api/alerts/trigger`,
+ * `/api/talons/internal/match`, and the audit-emit hop in `lib/auditLogClient.ts`).
  *
- * The deployed environment variable is still named `CORTEX_INTERNAL_SECRET`. It
- * is provisioned on Railway (dev + prod), on Vercel, and in the Firebase
- * Functions runtime config, and `functions/src/lib/requireInternalSecret`
- * compares against the same value. Renaming it would mean rotating the same
- * secret across four deploy targets inside one release window, so the env name
- * stays put and this module is the only place in `web/` that spells it.
+ * The env var is still `CORTEX_INTERNAL_SECRET`: it is provisioned on Railway (dev + prod), Vercel
+ * and the Firebase Functions runtime config, and `functions/src/lib/requireInternalSecret` compares
+ * the same value. Renaming means rotating one secret across four deploy targets in a single release
+ * window, so the name stays and this module is the only place in `web/` that spells it.
  *
- * Read at call time rather than at module scope so a test (or a lazily-loaded
- * server module) that assigns the variable after import still observes it.
- *
+ * Read at call time, not module scope, so a test that assigns the var after import still sees it.
  * See `web/lib/hoot/WIRE_NAMES.md` for the full survivor inventory.
  */
 

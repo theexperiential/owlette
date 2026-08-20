@@ -1,27 +1,18 @@
 /**
- * Video-capture helpers for the tutorial pipeline.
+ * Video-capture helpers for the tutorial pipeline. Output: `<sceneName>.mp4` in
+ * `e2e/.output/videos/`.
  *
- * Recording layer: Playwright orchestrates a HEADED chromeless Chromium window
- * (--kiosk + viewport: null + DPR 1, set in `playwright.videos.config.ts`).
- * An external ffmpeg subprocess (`FfmpegRecorder`) captures the actual desktop
- * via DXGI Desktop Duplication (`ddagrab`) and encodes through `h264_nvenc` —
- * verified end-to-end by `scripts/probe-capture.mjs`. Playwright's built-in
- * `recordVideo` is no longer used: it's locked to ~25fps VP8 with opportunistic
- * frame-grabbing (right for test debugging, wrong for production tutorial video).
+ * Playwright drives a HEADED chromeless window (`playwright.videos.config.ts`);
+ * an external ffmpeg (`FfmpegRecorder`) captures the desktop via ddagrab +
+ * h264_nvenc. Playwright's `recordVideo` is deliberately unused — ~25fps VP8
+ * with opportunistic frame grabs is fine for debugging, not for tutorials.
  *
- * Motion: scenes drive a fake on-screen cursor (headed chromium captures show no
- * OS pointer because ffmpeg's `draw_mouse=0` strips it — we keep one cursor in
- * the frame, not two), human-paced movement/typing, and `narrate()` dwells sized
- * to each rendered VO MP3 so the audio drops underneath in the editor.
+ * Scenes draw a fake cursor (ffmpeg runs `draw_mouse=0`, so there is exactly one
+ * pointer in frame) and `narrate()` dwells are sized to the rendered VO MP3s.
  *
- * Determinism: a fixed clock is set via `page.clock.setFixedTime` BEFORE
- * navigation (Date.now stabilises so the seeded "X minutes ago" labels render
- * deterministically) — we explicitly do NOT call `clock.install`, because that
- * also fakes `setTimeout`/`setInterval`/`requestAnimationFrame` and would freeze
- * our rAF-driven scroll. The `openForCapture` helper rAF-smokes the chosen clock
- * setup so a regression that breaks rAF surfaces immediately, not 60 seconds in.
- *
- * Outputs: clean `<sceneName>.mp4` lands in `e2e/.output/videos/`.
+ * Determinism: the clock is frozen BEFORE navigation. Never use `clock.install`
+ * — it fakes rAF and freezes the scroll animation; `openForCapture` rAF-smokes
+ * the setup so such a regression surfaces immediately, not 60s into a scene.
  */
 
 import { mkdir } from 'node:fs/promises';
@@ -37,7 +28,7 @@ export const VIDEO_OUT_DIR = path.resolve(__dirname, '..', '.output', 'videos');
 const VIEWPORT_WIDTH = 1920;
 const VIEWPORT_HEIGHT = 1080;
 
-/** Pre- and post-roll held on the start/end frame so every clip begins/ends cleanly. */
+/** Held on the start/end frame so every clip has stable bookends. */
 const PRE_ROLL_MS = 150;
 const POST_ROLL_MS = 150;
 
@@ -49,15 +40,10 @@ export interface RecordSceneOptions {
 }
 
 /**
- * Run `scene` inside a fresh context with ffmpeg desktop capture running, and save
- * the result to `e2e/.output/videos/{sceneName}.mp4`. The recorder is started
- * BEFORE the scene callback (with a small pre-roll) and stopped after (with a
- * small post-roll) so the captured clip has stable bookends regardless of how
- * fast the scene's first/last action fires.
- *
- * If the scene throws, the recorder is still stopped cleanly in a finally — no
- * orphaned ffmpeg subprocess, no half-written file masquerading as a valid clip
- * (the temp→final rename in `FfmpegRecorder.stop` only happens on a clean exit).
+ * Run `scene` in a fresh context with ffmpeg desktop capture, saving to
+ * `e2e/.output/videos/{sceneName}.mp4`. A throwing scene still stops the recorder
+ * in `finally` — no orphaned ffmpeg, and the temp->final rename in
+ * `FfmpegRecorder.stop` means a half-written file never poses as a valid clip.
  */
 export async function recordScene(
   browser: Browser,
@@ -71,16 +57,12 @@ export async function recordScene(
   const context = await browser.newContext({
     baseURL: opts.baseURL,
     storageState: opts.storageState,
-    // Viewport + DPR inherited from the project use block in playwright.videos.config.ts.
-    // Playwright resizes the chrome window so inner === VIEWPORT_WIDTH×VIEWPORT_HEIGHT.
+    // viewport + DPR come from the project use block in playwright.videos.config.ts
   });
   const page = await context.newPage();
-  // Fake Date.now / new Date() in the page so the seeded "X minutes ago" labels
-  // render against FIXED_NOW_MS deterministically — WITHOUT going through
-  // `page.clock.setFixedTime`, which despite its docs routes rAF through
-  // Playwright's ClockController on the installed version and freezes our
-  // in-page scroll animation. requestAnimationFrame + performance.now are
-  // untouched here, since neither uses Date internally.
+  // Freeze Date only, so seeded "X minutes ago" labels are deterministic. NOT
+  // `page.clock.setFixedTime`: on the installed version it routes rAF through
+  // Playwright's ClockController and freezes the in-page scroll animation.
   await page.addInitScript((fixedTime: number) => {
     const RealDate = Date;
     const FakeDate = class extends RealDate {
@@ -96,21 +78,12 @@ export async function recordScene(
   }, FIXED_NOW_MS);
   await installFakeCursor(page);
 
-  // Chrome ships chrome UI (tabs + address bar) on top of the content viewport.
-  // ddagrab captures from desktop coordinates, so we need to know where the page
-  // content actually lives on the desktop before starting ffmpeg.
-  //
-  // Strategy: measure chrome UI height, then ATTEMPT to slide the window upward
-  // by that many pixels via CDP `Browser.setWindowBounds` so its chrome UI sits
-  // off-display (above desktop y=0). Re-measure to see what Windows actually
-  // allowed:
-  //   - If the window's screenY is negative, the chrome UI is off-display and
-  //     we capture from desktop (0, 0) — full 1920×1080.
-  //   - If Windows clipped the negative position to 0, the chrome UI is still
-  //     on-display; we capture starting at offset_y = chromeUI height, with
-  //     height clamped to whatever fits between there and the bottom of the
-  //     display. Output will be 1920×(1080 − chromeUI) — about 992 — which is
-  //     a real fidelity hit but never silently truncates content.
+  // ddagrab captures desktop coordinates, so locate the content area first.
+  // Measure the chrome UI height, then try to slide the window up by that much
+  // (CDP setWindowBounds) so the UI sits above desktop y=0. Re-measure: negative
+  // screenY means we capture the full 1920x1080 from (0,0); if Windows clamped
+  // the move to 0 we capture from offset_y = chromeUI with the height clipped to
+  // the display — lower fidelity, but never a silent content truncation.
   await page.goto('about:blank', { waitUntil: 'domcontentloaded' });
   const initialGeom = await page.evaluate(() => ({
     offsetY: window.outerHeight - window.innerHeight,
@@ -185,9 +158,8 @@ export async function recordScene(
 }
 
 /**
- * Inject a visible cursor that follows Playwright's mouse events, plus a click
- * ripple. Runs on every navigation (addInitScript) so it survives page transitions.
- * ffmpeg captures with `draw_mouse=0` so the OS pointer doesn't double up.
+ * Visible cursor following Playwright's mouse events, plus a click ripple.
+ * Re-injected on every navigation. ffmpeg runs `draw_mouse=0` so it can't double up.
  */
 export async function installFakeCursor(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -243,23 +215,13 @@ export async function installFakeCursor(page: Page): Promise<void> {
 }
 
 /**
- * Open the dashboard (or any path) and quiet the page for capture.
- *
- * IMPORTANT ordering:
- *   1. `clock.setFixedTime` is called BEFORE navigation so the page's very first
- *      `Date.now()` (fixture hydration, "X minutes ago" labels) sees the frozen
- *      time. We use `setFixedTime` and NOT `clock.install` because `install`
- *      also fakes `requestAnimationFrame`, which would freeze our rAF scroll.
- *   2. After the page loads, we run a rAF smoke (3 frames in 500ms) so a future
- *      regression that re-introduces frozen rAF surfaces here, not 60 seconds
- *      into the first scene.
- *   3. Viewport + DPR are asserted: if Chromium didn't honor the launch args
- *      we capture at the wrong region and the editor sees blurry footage.
+ * Open a path and quiet the page for capture. Asserts viewport + DPR (wrong
+ * launch args = wrong capture region and blurry footage) and rAF-smokes 3 frames
+ * in 500ms so a re-frozen rAF fails here, not 60s into the first scene.
  */
 export async function openForCapture(page: Page, urlPath: string): Promise<void> {
-  // NOTE: no `page.clock.*` call here — the fake clock is applied via
-  // `addInitScript` in `recordScene` (Date.now / new Date() only), which is
-  // safe for rAF. Calling page.clock here would re-introduce the freeze.
+  // No `page.clock.*` here — the fake clock is Date-only via addInitScript in
+  // recordScene; page.clock would re-freeze rAF.
   await page.goto(urlPath, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1200);
   await disableAnimations(page);
@@ -297,17 +259,13 @@ export async function openForCapture(page: Page, urlPath: string): Promise<void>
   }));
 }
 
-/**
- * Dwell on the current frame for `seconds`, long enough to lay this beat's
- * narration MP3 underneath in the editor. The label is logged so you can match
- * capture to beat.
- */
+/** Dwell long enough to lay this beat's narration MP3 underneath in the editor. */
 export async function narrate(page: Page, beat: string, seconds: number): Promise<void> {
   console.log(`  [vo] ${beat} (~${seconds}s)`);
   await page.waitForTimeout(Math.round(seconds * 1000));
 }
 
-/** Glide the cursor to an element's center (visible movement, not a teleport). */
+/** Glide, not teleport — the movement has to read on screen. */
 export async function moveCursorTo(page: Page, locator: Locator): Promise<void> {
   await locator.scrollIntoViewIfNeeded();
   const box = await locator.boundingBox();
@@ -349,15 +307,10 @@ export async function highlight(page: Page, locator: Locator, ms = 1400): Promis
 }
 
 /**
- * Slowly pan the window from its current scroll position to the bottom over
- * `seconds`, driven by ONE in-page `requestAnimationFrame` loop with ease-in-out
- * cubic easing. The browser's native 60Hz refresh paces every frame — no CDP
- * round-trips per step, no staircase. No-op-safe: if the content already fits
- * the viewport it just dwells for `seconds`.
- *
- * (Replaces the prior 80-step CDP `window.scrollBy` staircase. The screenshots
- * harness globally disables CSS animations/transitions, so we drive `scrollTo`
- * imperatively rather than via `scrollTo({ behavior: 'smooth' })`.)
+ * Pan to the bottom over `seconds` from ONE in-page rAF loop, so the browser's
+ * 60Hz paces every frame — a per-step CDP scrollBy staircases. Imperative
+ * `scrollTo` because the harness globally disables CSS animation, which kills
+ * `behavior: 'smooth'`. Dwells for `seconds` if the content already fits.
  */
 export async function slowScrollToBottom(page: Page, seconds: number): Promise<void> {
   await page.evaluate(

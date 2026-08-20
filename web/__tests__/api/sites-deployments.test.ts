@@ -1,22 +1,10 @@
 /** @jest-environment node */
 
 /**
- * api-sprint wave 1 — track 1A (installer-deploys-api).
- *
- * Http-shape coverage for the public site-scoped deployment endpoints:
- *
- *   GET    /api/sites/{siteId}/deployments
- *   POST   /api/sites/{siteId}/deployments
- *   GET    /api/sites/{siteId}/deployments/{deploymentId}
- *   DELETE /api/sites/{siteId}/deployments/{deploymentId}
- *   POST   /api/sites/{siteId}/deployments/{deploymentId}/retry
- *   POST   /api/sites/{siteId}/deployments/{deploymentId}/cancel
- *   POST   /api/sites/{siteId}/deployments/{deploymentId}/uninstall
- *
- * Each verb is covered for scope-pass + scope-fail + the verb-specific
- * happy / error paths (validation, 413 over_quota, idempotency replay).
- * Retired compatibility admin routes are intentionally absent; the
- * site-scoped endpoints are the deployment API.
+ * HTTP-shape coverage for the site-scoped deployment endpoints (list, create,
+ * detail, delete, retry, cancel, uninstall): scope-pass, scope-fail, and each
+ * verb's happy / error paths (validation, 413 over_quota, idempotency replay).
+ * Retired compatibility admin routes are deliberately absent.
  */
 
 import { createMockRequest } from './helpers/utils';
@@ -73,10 +61,9 @@ const mockResolveAuth = jest.fn();
 const mockAssertSite = jest.fn();
 const mockComputeChecksum = jest.fn();
 
-// The retry route self-heals legacy deployments (no stored checksum) by
-// streaming + hashing the installer. Mock the compute core so tests never
-// perform a network fetch; requireActual keeps InstallerChecksumError's
-// class identity for the route's instanceof mapping.
+// Retry self-heals checksum-less legacy deployments by streaming + hashing the
+// installer; mocked so tests never hit the network. requireActual preserves
+// InstallerChecksumError's identity for the route's instanceof mapping.
 jest.mock('@/lib/actions/computeInstallerChecksum.server', () => {
   const actual = jest.requireActual('@/lib/actions/computeInstallerChecksum.server');
   return {
@@ -161,9 +148,6 @@ function queueIdempotencyMiss(): void {
   mocks.get.mockResolvedValueOnce(docSnapshot('idempotency-cache', null));
 }
 
-/* ========================================================================== */
-/*  GET /api/sites/{siteId}/deployments — list                                */
-/* ========================================================================== */
 describe('GET /api/sites/{siteId}/deployments', () => {
   it('200 with cursor-paginated list', async () => {
     mocks.collectionGet.mockResolvedValueOnce(
@@ -192,7 +176,7 @@ describe('GET /api/sites/{siteId}/deployments', () => {
   });
 
   it('200 + emits next_page_token when over a page', async () => {
-    // Return pageSize+1 docs so the route emits a non-empty next_page_token.
+    // pageSize+1 docs → the route emits a next_page_token.
     mocks.collectionGet.mockResolvedValueOnce(
       querySnapshot(
         Array.from({ length: 26 }, (_, i) => ({
@@ -254,9 +238,6 @@ describe('GET /api/sites/{siteId}/deployments', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/sites/{siteId}/deployments — create                             */
-/* ========================================================================== */
 describe('POST /api/sites/{siteId}/deployments', () => {
   it('201 happy path: writes deployment doc + fans out commands', async () => {
     mocks.get.mockResolvedValue(docSnapshot(SITE, {})); // site doc, no quota override
@@ -468,9 +449,6 @@ describe('POST /api/sites/{siteId}/deployments', () => {
   });
 });
 
-/* ========================================================================== */
-/*  GET /api/sites/{siteId}/deployments/{deploymentId} — detail               */
-/* ========================================================================== */
 describe('GET /api/sites/{siteId}/deployments/{deploymentId}', () => {
   it('200 with full deployment detail', async () => {
     mocks.get.mockResolvedValueOnce(
@@ -524,9 +502,6 @@ describe('GET /api/sites/{siteId}/deployments/{deploymentId}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  DELETE /api/sites/{siteId}/deployments/{deploymentId}                     */
-/* ========================================================================== */
 describe('DELETE /api/sites/{siteId}/deployments/{deploymentId}', () => {
   it('200 - deletes terminal deployment', async () => {
     queueIdempotencyMiss();
@@ -644,9 +619,6 @@ describe('DELETE /api/sites/{siteId}/deployments/{deploymentId}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST .../retry                                                            */
-/* ========================================================================== */
 describe('POST /api/sites/{siteId}/deployments/{deploymentId}/retry', () => {
   it('200 — re-queues install for failed targets only', async () => {
     queueIdempotencyMiss();
@@ -699,8 +671,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/retry', () => {
       }),
     );
 
-    // Doc had no checksum — self-heal computed one, pinned it on the doc,
-    // and stamped it into every re-issued command.
+    // No stored checksum — self-heal pins one and stamps every re-issued command.
     expect(mockComputeChecksum).toHaveBeenCalledWith(
       'https://example.com/vlc.exe',
       expect.anything(),
@@ -900,13 +871,10 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/retry', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST .../cancel                                                           */
-/* ========================================================================== */
 describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
   it('200 — cancels pending targets, leaves installing/completed alone', async () => {
-    // 1st get: deployment doc. Subsequent gets: pending command docs per
-    // cancellable target. We have one cancellable (`pending`) target.
+    // 1st get: deployment doc; then one pending command doc per cancellable
+    // target (there is one).
     queueIdempotencyMiss();
     mocks.get
       .mockResolvedValueOnce(
@@ -948,8 +916,7 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
     );
     expect(pendingUpdate).toBeDefined();
 
-    // Deployment update: m1/m3 untouched, m2 → cancelled. Status NOT
-    // terminal (m1 is still installing).
+    // m1/m3 untouched, m2 cancelled; status stays non-terminal (m1 installing).
     const deploymentUpdate = mocks.update.mock.calls.find(
       (c: unknown[]) => (c[0] as { targets?: unknown }).targets !== undefined,
     );
@@ -1050,9 +1017,6 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST .../uninstall                                                        */
-/* ========================================================================== */
 describe('POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall', () => {
   it('200 — queues uninstall_software per target + flips status', async () => {
     mockResolveAuth.mockResolvedValue(

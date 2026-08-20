@@ -1,25 +1,17 @@
 /** @jest-environment node */
 
 /**
- * Conversational talon tools (talons wave 3, task 3.1).
- *
- * `create_talon` / `list_talons` / `set_talon_enabled` are server-side tools:
- * they never reach an agent, they go straight to `@/lib/talons/store.server`.
- * The store owns every rule (validation, the per-site cap, the SSRF check, the
- * pro gate) and has its own suite, so it is mocked here and the assertions are
- * about what the tool layer is responsible for:
- *
- *   - the tools are tier 2, so a member can never see them
- *     (`resolveHootMaxTier` caps members at tier 1);
- *   - the store context names the HUMAN driving the chat, carries
- *     `via: 'cortex'`, and carries the chat id the talon was authored in;
- *   - `command` outputs are refused at the tool boundary for a non-admin;
- *   - a store rejection — the pro gate especially — comes back as a tool
- *     RESULT, never as a throw that would take the whole turn down;
- *   - result copy is lowercase and calls the assistant "hoot", never "cortex".
+ * Conversational talon tools. `create_talon` / `list_talons` /
+ * `set_talon_enabled` never reach an agent — they call
+ * `@/lib/talons/store.server`, which owns every rule and has its own suite, so
+ * it is mocked here. What the tool layer owns: tier 2 only (members are capped
+ * at tier 1 by `resolveHootMaxTier`); a store context naming the HUMAN driving
+ * the chat with `via: 'cortex'` and the authoring chat id; `command` outputs
+ * refused for non-admins; store rejections (notably the pro gate) returned as a
+ * tool RESULT, never thrown; lowercase copy that says "hoot", never "cortex".
  */
 
-// ─── Mocks ──────────────────────────────────────────────────────────────────
+// Mocks
 
 jest.mock('ai', () => ({
   tool: jest.fn((opts: unknown) => opts),
@@ -30,8 +22,8 @@ jest.mock('@/lib/llm-encryption.server', () => ({
   decryptApiKey: jest.fn((v: string) => v),
 }));
 
-// `@/lib/firestoreTime.server` reads `Timestamp` at module load and the talon
-// results run every date through it. A stub is enough — the fixtures use Date.
+// firestoreTime.server reads `Timestamp` at module load; a stub suffices since
+// the fixtures use Date.
 jest.mock('firebase-admin/firestore', () => ({
   Timestamp: class Timestamp {},
   FieldValue: { delete: jest.fn(() => '__FIELD_DELETE__') },
@@ -55,8 +47,7 @@ const mockListTalons = jest.fn();
 const mockSetTalonEnabled = jest.fn();
 
 jest.mock('@/lib/talons/store.server', () => {
-  // Mirrors the real class closely enough for the `instanceof` branch in
-  // `talonErrorResult` — same name, same three fields.
+  // Same name and three fields, so `talonErrorResult`'s instanceof branch hits.
   class TalonStoreError extends Error {
     readonly status: number;
     readonly code: string;
@@ -88,14 +79,14 @@ import { buildExecutableTools, type BuildExecutableToolsOptions } from '@/lib/ho
 import { getToolByName, getToolsByTier } from '@/lib/mcp-tools';
 import { TalonStoreError } from '@/lib/talons/store.server';
 
-// ─── Fixtures ───────────────────────────────────────────────────────────────
+// Fixtures
 
 const TALON_TOOL_NAMES = ['create_talon', 'list_talons', 'set_talon_enabled'] as const;
 
 const SITE = 'site-a';
 const CHAT = 'chat-77';
 
-/** Sentinel — the executors hand the db straight to the (mocked) store. */
+/** Sentinel — executors hand the db straight to the mocked store. */
 const db = { __db: 'sentinel' } as unknown as FirebaseFirestore.Firestore;
 
 const ADMIN: BuildExecutableToolsOptions = { userId: 'uid_alice', userRole: 'admin' };
@@ -148,14 +139,14 @@ beforeEach(() => {
   mockSetTalonEnabled.mockReset();
 });
 
-// ─── Tool definitions ───────────────────────────────────────────────────────
+// Tool definitions
 
 describe('talon tool definitions', () => {
   it.each(TALON_TOOL_NAMES)('%s is tier 2 — visible to site admins, not members', (name) => {
     expect(getToolByName(name)?.tier).toBe(2);
     expect(getToolsByTier(2).map((t) => t.name)).toContain(name);
-    // Members are capped at tier 1 by resolveHootMaxTier, so a talon tool
-    // leaking into tier 1 would hand every member the site's automations.
+    // Members cap at tier 1, so a talon tool leaking into tier 1 would hand every
+    // member the site's automations.
     expect(getToolsByTier(1).map((t) => t.name)).not.toContain(name);
   });
 
@@ -192,7 +183,7 @@ describe('talon tool definitions', () => {
   });
 });
 
-// ─── create_talon ───────────────────────────────────────────────────────────
+// create_talon
 
 describe('create_talon', () => {
   it('writes through the store as the human, via hoot, with the chat id', async () => {
@@ -271,8 +262,7 @@ describe('create_talon', () => {
       new TalonStoreError(403, 'pro_required', 'this feature requires the pro tier.'),
     );
 
-    // A throw here would abort the turn; the model must get a result it can
-    // explain to the operator instead.
+    // A throw would abort the turn; the model needs an explainable result.
     await expect(talonTools().create_talon.execute(talonInput())).resolves.toEqual({
       ok: false,
       error: 'pro_required',
@@ -317,7 +307,7 @@ describe('create_talon', () => {
   });
 });
 
-// ─── list_talons ────────────────────────────────────────────────────────────
+// list_talons
 
 describe('list_talons', () => {
   it('summarizes the site talons', async () => {
@@ -377,7 +367,7 @@ describe('list_talons', () => {
   });
 });
 
-// ─── set_talon_enabled ──────────────────────────────────────────────────────
+// set_talon_enabled
 
 describe('set_talon_enabled', () => {
   it('flips the talon through the store with the human actor', async () => {

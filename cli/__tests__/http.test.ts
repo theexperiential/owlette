@@ -1,14 +1,11 @@
 /**
  * Trial-countdown advisory surfacing (billing-system wave 3.3).
  *
- * The api sets `X-Owlette-Billing-Warning` on every response while the
- * account's free trial is running. The CLI prints it to stderr **once per
- * process invocation** — a command that pages through ten requests must not
- * repeat the same line ten times.
+ * The api sets `X-Owlette-Billing-Warning` on every response while the free trial runs;
+ * the CLI prints it to stderr ONCE per process invocation, so a command paging through
+ * ten requests must not repeat the same line ten times.
  *
- * The once-per-process latch is module state, so every test re-imports the
- * module through `jest.isolateModulesAsync` to get a fresh process's worth of
- * behaviour.
+ * The latch is module state, so each test re-imports via `jest.isolateModulesAsync`.
  */
 
 const WARNING = 'trial ends 2026-08-15T00:00:00.000Z; choose a plan to keep API access';

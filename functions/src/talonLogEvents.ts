@@ -1,28 +1,19 @@
 /**
- * Talon Log-Event Bridge
+ * Talon log-event bridge (talons wave 2, task 2.3).
  *
- * Firestore trigger on `sites/{siteId}/logs/{logId}` that forwards the fleet
- * events talons can subscribe to but no web route ever sees.
+ * Firestore trigger on `sites/{siteId}/logs/{logId}` forwarding the fleet events
+ * talons can subscribe to but no web route ever sees. Most agent events reach the
+ * dashboard through an http endpoint that taps the talon matcher in-process;
+ * `process_restarted` and the `display_*` events are written STRAIGHT into the
+ * site's log collection, so without this trigger those talons could never fire.
  *
- * Why this exists: most agent events reach the dashboard through an http
- * endpoint (`/api/agent/alert`, `/api/alerts/trigger`) which can tap the talon
- * matcher in-process. `process_restarted` and the `display_*` events do not —
- * the agent writes them STRAIGHT into the site's log collection. Without this
- * trigger, a talon subscribed to `display_drift` or `process_restarted` could
- * never fire.
+ * SINGLE source for display talons — `/api/agent/alert` deliberately skips its
+ * talon tap for display types. Every agent writes the log but only new enough
+ * agents post the alert, so firing from both would double-run every display
+ * talon on an up-to-date fleet.
  *
- * This trigger is the SINGLE source for display talons, and stays that way
- * even though the agent now also posts display events to `/api/agent/alert`
- * (for email + webhook delivery). Every agent writes the log; only new enough
- * agents post the alert. So `/api/agent/alert` deliberately skips its talon
- * tap for display event types — see the comment on that tap. Firing from both
- * would double-run every display talon on an up-to-date fleet.
- *
- * Matching events are forwarded to `POST /api/talons/internal/match`, which
- * runs the matcher exactly as the in-process taps do. Failures are logged, never
+ * Matches are POSTed to `/api/talons/internal/match`. Failures are logged, never
  * thrown: a log write must not be retried because a talon run had a bad day.
- *
- * talons wave 2, task 2.3.
  */
 
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
@@ -30,25 +21,17 @@ import https = require('https');
 import http = require('http');
 
 /**
- * The `action` values worth forwarding.
+ * The `action` values worth forwarding. MUST stay a subset of `TALON_EVENT_TYPES`
+ * (`web/lib/talons/types.ts`) and mirror `DISPLAY_EVENT_ROUTING`
+ * (`web/lib/alerts/displayEventRouting.ts`) plus `process_restarted`. Duplicated
+ * rather than imported because functions/ and web/ build separately; the match
+ * route re-validates, so drift degrades to "never forwarded", not a bad write.
  *
- * MUST stay a subset of `TALON_EVENT_TYPES` in `web/lib/talons/types.ts`, and
- * mirrors the ten keys of `DISPLAY_EVENT_ROUTING` in
- * `web/lib/alerts/displayEventRouting.ts` plus `process_restarted`. Duplicated
- * rather than imported because functions/ and web/ are separate packages with
- * separate builds; the internal match route re-validates against the real
- * catalog, so drift here degrades to "the event is never forwarded", not to a
- * bad write.
- *
- * Deliberately EXCLUDED — the display audit actions that exist for the event
- * feed and have no routing entry, so no talon can subscribe to them:
- * `display_auto_restore_fired`, `display_apply_acked`, `display_revert_deferred`,
+ * Excluded on purpose: display audit actions with no routing entry
+ * (`display_auto_restore_fired`, `display_apply_acked`, `display_revert_deferred`,
  * `display_auto_restore_skipped_unfixable`,
- * `display_auto_restore_circuit_breaker_tripped`.
- *
- * Also excluded by construction: the engine's own `talon_triggered` /
- * `talon_succeeded` / `talon_failed` / `talon_skipped` companion logs, which is
- * what keeps a talon run from re-triggering itself through this bridge.
+ * `display_auto_restore_circuit_breaker_tripped`), and the engine's own `talon_*`
+ * companion logs — the latter is what stops a run re-triggering itself here.
  */
 const TALON_LOG_ACTIONS: ReadonlySet<string> = new Set([
   'process_restarted',
@@ -72,20 +55,14 @@ const SITE_LOG_SENTINEL = 'site';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
-/**
- * Derive the web API base URL from the Firebase project ID — the same heuristic
- * `metricsHistory.ts` uses, so both bridges follow one deployment convention.
- */
+/** Web API base URL from the project id — same heuristic as `metricsHistory.ts`. */
 function getApiBaseUrl(): string {
   const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || '';
   if (projectId.includes('dev')) return 'https://dev.owlette.app';
   return 'https://owlette.app';
 }
 
-/**
- * POST to `/api/talons/internal/match` on the web server, using the built-in
- * node http/https modules (no external deps), mirroring `callAlertTriggerApi`.
- */
+/** POST to `/api/talons/internal/match` using node http/https (no external deps). */
 function callTalonMatchApi(body: Record<string, unknown>): Promise<void> {
   const baseUrl = process.env.API_BASE_URL || getApiBaseUrl();
   const secret = process.env.CORTEX_INTERNAL_SECRET;
@@ -137,12 +114,9 @@ function callTalonMatchApi(body: Record<string, unknown>): Promise<void> {
 }
 
 /**
- * Forward talon-relevant log entries to the matcher.
- *
- * Cheap by construction: one read of the created document, a set lookup on
- * `action`, and an immediate return for everything else. The site log stream
- * carries every command, deployment and audit line in the fleet, so the
- * overwhelming majority of invocations do no work and touch Firestore not at all.
+ * Forward talon-relevant log entries to the matcher. Cheap by construction: a set
+ * lookup on `action` then an immediate return — the site log stream carries every
+ * command, deployment and audit line in the fleet, so most invocations do no work.
  */
 export const onTalonLogEventCreated = onDocumentCreated(
   'sites/{siteId}/logs/{logId}',
@@ -155,9 +129,8 @@ export const onTalonLogEventCreated = onDocumentCreated(
 
     const { siteId } = event.params;
     const rawMachineId = typeof data.machineId === 'string' ? data.machineId : '';
-    // The sentinel means "no machine", and forwarding it would let a
-    // machine-scoped talon match a site that happens to own a machine called
-    // `site`. Omitted instead, which the matcher reads as a site-level event.
+    // The sentinel means "no machine"; forwarding it would let a machine-scoped
+    // talon match a site that happens to own a machine literally named `site`.
     const machineId = rawMachineId && rawMachineId !== SITE_LOG_SENTINEL ? rawMachineId : '';
 
     try {

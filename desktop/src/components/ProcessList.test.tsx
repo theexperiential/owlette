@@ -67,10 +67,7 @@ function rows() {
   return screen.getAllByTestId('process-row')
 }
 
-/**
- * jsdom lays nothing out and has no pointer capture, so the drag needs both
- * faked: 40 px rows stacked from the top, and a capture call that no-ops.
- */
+/** jsdom lays nothing out and has no pointer capture — fake 40px stacked rows. */
 const ROW_HEIGHT = 40
 function stubGeometry() {
   rows().forEach((row, index) => {
@@ -92,10 +89,8 @@ function stubGeometry() {
 }
 
 /**
- * jsdom has no `PointerEvent`, so testing-library builds a bare `Event` whose
- * `button` and `clientY` are undefined — useless for a drag. A `MouseEvent`
- * carries both, and the pointer id is the one property that has to be pinned on
- * by hand.
+ * jsdom has no `PointerEvent`, so testing-library builds a bare `Event` with
+ * undefined `button`/`clientY`. `MouseEvent` carries both; pointerId is pinned on.
  */
 function pointer(
   element: Element,
@@ -182,16 +177,12 @@ describe('process list', () => {
   it('keeps whispering the drop gesture once there are rows to list', () => {
     setup()
 
-    // The empty state is where an operator learns that a dropped file becomes a
-    // process; with rows on screen that lesson has nowhere else to live.
     const hint = screen.getByTestId('process-list-drop-hint')
     expect(hint.textContent).toMatch(/drop an app or script here to add it/)
-    // Inert on purpose: a drop target, a reorder drag and a context menu all
-    // live in this column already.
+    // Inert: a drop target, reorder drag and context menu share this column.
     expect(hint.className).toContain('pointer-events-none')
     expect(hint.className).toContain('text-sm')
-    // It floats in the room the rows leave: outside the `ul` (so it is not part
-    // of the reorder surface) in a region that takes the leftover height.
+    // Outside the `ul`, so it is not part of the reorder surface.
     expect(hint.closest('ul')).toBeNull()
     const region = hint.parentElement
     expect(region?.className).toContain('flex-1')
@@ -230,8 +221,7 @@ describe('exe icons', () => {
     const fallbacks = screen.getAllByTestId('process-icon-fallback')
     // node.exe answered null, and the nameless entry has no exe at all.
     expect(fallbacks).toHaveLength(2)
-    // Same box as the image it stands in for, so an icon arriving late moves
-    // nothing beside it.
+    // Same box as the image, so a late icon moves nothing beside it.
     expect(fallbacks[0].getAttribute('class')).toContain('size-4')
     expect(screen.getAllByTestId('process-icon')[0].getAttribute('class')).toContain('size-4')
   })
@@ -330,10 +320,8 @@ describe('the collapsed rail', () => {
 
 describe('the collapse toggle', () => {
   /**
-   * The row the toggle lives in. It is the last child of the scrolling column
-   * rather than a row below the scroller, so it is found through the button:
-   * `TooltipTrigger asChild` renders no wrapper, so the button's parent is its
-   * opaque ground and the row is the one above that.
+   * The toggle's row. Found through the button because `TooltipTrigger asChild`
+   * renders no wrapper: button → opaque ground → this row.
    */
   function footer() {
     return ground().parentElement as HTMLElement
@@ -354,15 +342,12 @@ describe('the collapse toggle', () => {
     // Below the list, not in the header beside `+`.
     expect(footer().contains(collapse)).toBe(true)
     expect(footer().className).toContain('justify-end')
-    // Inside the scroller and stuck to its floor, last in the column. A row
-    // *below* the scroller cut the scrollbar's track short of the sidebar's
-    // bottom edge, which read as a rendering fault.
+    // Inside the scroller, stuck to its floor. A row BELOW the scroller cut the
+    // scrollbar track short of the sidebar's edge and read as a render fault.
     expect(footer().className).toContain('sticky')
     expect(footer().nextElementSibling).toBeNull()
-    // The row veils rather than cuts — its ground fades in from transparent,
-    // so a row travelling into it dissolves instead of being chopped 56px clear
-    // of the floor. The button keeps a solid patch of its own, so it stays
-    // legible where the veil is still thin.
+    // Veils rather than cuts: the ground fades in from transparent so a row
+    // dissolves into it. The button keeps its own solid patch to stay legible.
     expect(footer().className).toContain('linear-gradient(to_bottom,transparent,var(--background)_60%)')
     expect(ground().className).toContain('bg-background')
     expect(ground().className).toContain('p-1')

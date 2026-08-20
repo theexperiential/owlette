@@ -1,44 +1,24 @@
 /**
- * Talon run engine — trigger → condition → outputs (talons wave 2, task 2.1).
+ * Talon run engine — trigger → condition → outputs. The single execution path:
+ * scheduler sweep, event router, and "run now" all land here so cooldown, the
+ * in-flight guard, run recording, and auto-disable exist in exactly one place.
  *
- * The one place a talon is actually executed. The scheduler sweep, the event
- * router, and the dashboard's "run now" button all land here, so cooldown, the
- * in-flight guard, run recording, condition evaluation, output ordering, and
- * the auto-disable backoff can't be reimplemented three slightly different ways.
+ * One `talon_runs/{runId}` doc per execution, written `running` up front and
+ * finalized in place. A `visual_check` condition is inherently per-machine, so
+ * those talons produce one run PER TARGET MACHINE; everything else produces a
+ * single site-level run.
  *
- * ## What a run is
+ * Skips are recorded, not swallowed: the reason goes in the run's `error`
+ * (`already_running`, `machine_offline`, `no_interactive_session`) — operators
+ * read it off the run list, and it is not the same fact as "failed". Two skips
+ * write no run at all: a disabled talon, and one inside its cooldown (a hot
+ * threshold would bury the real runs under hundreds of cooldown records).
  *
- * One `sites/{siteId}/talon_runs/{runId}` document per execution, written
- * `running` up front and finalized in place. A `visual_check` condition is
- * inherently per-machine — a screenshot of "the site" is not a thing — so those
- * talons produce one run PER TARGET MACHINE. Everything else produces a single
- * site-level run, which may still name the machine its trigger fired for.
- *
- * ## Skips are recorded, not swallowed
- *
- * `TalonRunDoc` has one free-text field (`error`), so a skipped run carries its
- * reason there: `already_running`, `machine_offline`, `no_interactive_session`.
- * That is deliberate — "this talon did nothing because the machine has no
- * logged-in user" is an operational fact somebody needs to be able to read off
- * the run list, and it is not the same fact as "this talon failed".
- *
- * Two skips are silent by design and write no run at all: a disabled talon and
- * a talon still inside its cooldown. A hot threshold would otherwise bury the
- * real runs under hundreds of cooldown records.
- *
- * ## Failure accounting
- *
- * `consecutiveFailures` counts failed *executions*, not failed outputs, and
- * resets on any success. At {@link AUTO_DISABLE_AFTER_FAILURES} the talon is
- * disabled and the disable is audited — a talon pointed at a decommissioned
- * machine stops paging people rather than failing forever.
- *
- * The counter is for TRANSIENT faults only: a machine that happened to be
- * offline, a rate limit, a provider 500. A run that comes back carrying a
- * `disabledReason` has hit something no retry can fix — the author left the
- * site, was deleted, or has no ai key — and the talon is disabled on that
- * single run, with the reason stored on both the talon and the run so an
- * operator is told WHY rather than finding it silently off ten firings later.
+ * `consecutiveFailures` counts failed *executions*, not outputs, resets on any
+ * success, and disables the talon at {@link AUTO_DISABLE_AFTER_FAILURES}. It
+ * covers TRANSIENT faults only — a run carrying a `disabledReason` hit
+ * something no retry fixes (author gone, no ai key) and disables the talon on
+ * that single run, reason stored on both docs so the operator is told why.
  */
 import type { DocumentReference, Firestore } from 'firebase-admin/firestore';
 import { emitMutation } from '@/lib/auditLogClient';
@@ -66,10 +46,9 @@ import { evaluateVisualCheck, TalonVisualCheckError } from './visualCheck.server
 export const AUTO_DISABLE_AFTER_FAILURES = 10;
 
 /**
- * How long a `running` run may sit before the next execution takes it over.
- * Longer than any single run can legitimately take (a visual check is a 45s
- * capture plus a model call), short enough that a process killed mid-run
- * doesn't wedge the talon until someone notices.
+ * How long a `running` run may sit before the next execution takes it over —
+ * longer than any legitimate run (visual check = 45s capture + model call),
+ * short enough that a process killed mid-run doesn't wedge the talon.
  */
 export const STALE_RUN_MS = 10 * 60_000;
 
@@ -134,10 +113,6 @@ interface RunEnvironment extends RunRecordEnv {
   targetMachineIds: string[];
 }
 
-/* -------------------------------------------------------------------------- */
-/*  collections                                                               */
-/* -------------------------------------------------------------------------- */
-
 function talonRef(db: Firestore, siteId: string, talonId: string) {
   return db.collection('sites').doc(siteId).collection('talons').doc(talonId);
 }
@@ -149,10 +124,6 @@ function talonRunsCollection(db: Firestore, siteId: string) {
 function machinesCollection(db: Firestore, siteId: string) {
   return db.collection('sites').doc(siteId).collection('machines');
 }
-
-/* -------------------------------------------------------------------------- */
-/*  descriptions                                                              */
-/* -------------------------------------------------------------------------- */
 
 /** Lowercase one-liner describing why the talon fired, stored on every run. */
 export function describeTrigger(trigger: TalonTrigger): string {
@@ -171,17 +142,11 @@ export function describeTrigger(trigger: TalonTrigger): string {
       return `${trigger.metric} ${trigger.operator} ${trigger.value}`;
     case 'event': {
       const events = `on ${trigger.eventTypes.join(', ')}`;
-      // The wait is half of what this talon does — "on process_restarted" and
-      // "on process_restarted · after 3 min" are different automations, and a
-      // run record that hid the difference would misreport why it fired late.
+      // The delay is part of the identity: hiding it misreports why it fired late.
       return trigger.delayMinutes ? `${events} · after ${trigger.delayMinutes} min` : events;
     }
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/*  entry points                                                              */
-/* -------------------------------------------------------------------------- */
 
 /**
  * Execute a talon.
@@ -197,8 +162,8 @@ export async function runTalon(
   const { siteId } = context;
   const now = context.now ?? new Date();
 
-  // A disabled talon never runs, not even on demand: "run now" on a talon the
-  // operator just switched off would be a surprising thing for a button to do.
+  // Disabled never runs, not even on demand — "run now" on a talon just
+  // switched off would surprise the operator.
   if (!talon.enabled) return [];
 
   if (!context.manual && isCoolingDown(talon, now)) return [];
@@ -228,8 +193,7 @@ export async function runTalon(
 
   if (talon.condition.type === 'visual_check') {
     for (const target of targets) {
-      // Sequential: the agent throttles `capture_screenshot` to one per 5s per
-      // machine, and one person's llm key is happier not being hit N-wide.
+      // Sequential: the agent throttles `capture_screenshot` to 1/5s per machine.
       summaries.push(
         target.online
           ? await executeRun(env, talon, target)
@@ -248,9 +212,8 @@ export async function runTalon(
 }
 
 /**
- * Run a talon on demand. Bypasses the cooldown — an operator pressing "run now"
- * has decided the cooldown does not apply — and stamps `manual` on the run so
- * the run list distinguishes it from a scheduled fire.
+ * Run a talon on demand: bypasses the cooldown (the operator overrode it) and
+ * stamps `manual` so the run list distinguishes it from a scheduled fire.
  *
  * @throws {TalonStoreError} 404 when the site has no talon with that id.
  */
@@ -276,15 +239,10 @@ function describeActor(actor: Actor): string {
   return actor.type === 'user' ? `user:${actor.userId}` : `system:${actor.name}`;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  guards                                                                    */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Cooldown applies to threshold and event triggers only. A schedule trigger
- * already carries its own spacing in `nextRunAt`, and applying the cooldown to
- * it too would silently drop fires from a schedule whose interval is shorter
- * than the (independently configured) cooldown.
+ * Threshold and event triggers only: a schedule already carries its spacing in
+ * `nextRunAt`, and cooling it too would silently drop fires whose interval is
+ * shorter than the independently configured cooldown.
  */
 function isCoolingDown(talon: StoredTalon, now: Date): boolean {
   if (talon.trigger.type === 'schedule') return false;
@@ -295,13 +253,10 @@ function isCoolingDown(talon: StoredTalon, now: Date): boolean {
 }
 
 /**
- * Enforce one in-flight run per talon.
- *
- * A run still inside {@link STALE_RUN_MS} wins: this execution records a
- * `skipped` run and stops. An older one is presumed dead (the process that
- * owned it was killed or redeployed mid-run), so it is closed out as
- * `failed`/`stale` and this execution proceeds — otherwise a single crash would
- * wedge the talon permanently.
+ * Enforce one in-flight run per talon. A run inside {@link STALE_RUN_MS} wins
+ * and this execution records a `skipped` run; an older one is presumed dead
+ * (process killed or redeployed mid-run), closed out `failed`/`stale`, and this
+ * execution proceeds — otherwise one crash wedges the talon permanently.
  *
  * @returns the recorded skip when another run holds the slot, else `null`.
  */
@@ -338,8 +293,8 @@ async function claimInFlight(
 
   if (!blocked) return null;
 
-  // The talon bookkeeping is deliberately NOT touched here: the run holding
-  // the slot is still going and will stamp `lastRunAt` itself when it lands.
+  // Talon bookkeeping deliberately untouched: the run holding the slot is still
+  // going and stamps `lastRunAt` itself when it lands.
   return recordTerminalRun(
     { db, siteId, triggerSummary: describeTrigger(talon.trigger), manual: false, now },
     talon,
@@ -347,10 +302,6 @@ async function claimInFlight(
     'already_running',
   );
 }
-
-/* -------------------------------------------------------------------------- */
-/*  reads                                                                     */
-/* -------------------------------------------------------------------------- */
 
 /** Site name + the `"name (siteId)"` label alert emails show, in one read. */
 async function readSite(db: Firestore, siteId: string): Promise<{ name: string; label: string }> {
@@ -410,10 +361,6 @@ async function resolveTargets(
     };
   });
 }
-
-/* -------------------------------------------------------------------------- */
-/*  run recording                                                             */
-/* -------------------------------------------------------------------------- */
 
 function baseRunDoc(
   env: RunRecordEnv,
@@ -491,9 +438,8 @@ async function executeRun(
         verdict: result.verdict,
         confidence: result.confidence,
         reason: result.reason,
-        // PATH only. Signed capture urls expire in ~1h and the bucket lifecycle
-        // deletes the object at 30 days, so persisting the url would leave a
-        // dead link on a run record that outlives both.
+        // PATH only: signed urls expire in ~1h and the object at 30 days, so a
+        // persisted url would be a dead link on a longer-lived run record.
         ...(result.screenshotPath ? { screenshotPath: result.screenshotPath } : {}),
       };
       conditionForOutputs = result.screenshotUrl
@@ -506,9 +452,8 @@ async function executeRun(
 
   let outputs: TalonRunOutput[];
   if (condition && condition.verdict === 'pass') {
-    // The expectation held, so there is nothing to react to. Recorded per
-    // output rather than as an empty list so the run reads the same shape
-    // whether the outputs ran or not.
+    // Expectation held — nothing to react to. Recorded per output rather than
+    // as an empty list so the run has the same shape either way.
     outputs = talon.outputs.map((output) => ({
       type: output.type,
       status: 'skipped' as const,
@@ -527,8 +472,7 @@ async function executeRun(
       runId: ref.id,
       correlationId,
       ...(machine ? { machineId: machine.id, machineName: machine.name } : {}),
-      // A machine-scoped run drives its command outputs at its own machine;
-      // a site-level run fans them out across the talon's scope.
+      // Machine-scoped run targets its own machine; site-level fans out.
       targetMachineIds: machine ? [machine.id] : env.targetMachineIds,
       ...(conditionForOutputs ? { condition: conditionForOutputs } : {}),
       baseUrl: env.baseUrl,
@@ -537,8 +481,7 @@ async function executeRun(
 
     outputs = [];
     for (const output of talon.outputs) {
-      // Sequential and individually recorded: one output failing must never
-      // stop the rest, and the run has to say which one failed.
+      // Sequential + individually recorded: one failure must not stop the rest.
       outputs.push(await executeTalonOutput(outputCtx, output));
     }
   }
@@ -547,14 +490,11 @@ async function executeRun(
     ? 'failed'
     : 'succeeded';
 
-  // A hoot output opens a fresh chat per run and reports it as its `detail`.
-  // That conversation is what an operator wants to open FROM this run, so it
-  // takes the run's `chatId` over the talon's authoring chat, which is a
-  // property of the talon and is already on the talon document.
+  // A hoot output opens a fresh chat per run; that beats the talon's authoring
+  // chat as the run's `chatId` (the latter already lives on the talon doc).
   const hootChatId = findHootChatId(outputs);
 
-  // First-wins: several outputs can hit the same dead author, and the talon can
-  // only be switched off for one stated reason.
+  // First-wins: several outputs can hit the same dead author, one stated reason.
   const disabledReason = outputs.find((output) => output.disabledReason)?.disabledReason;
 
   await ref.update({
@@ -579,14 +519,11 @@ async function executeRun(
 }
 
 /**
- * Close out a run whose condition could not produce a verdict.
- *
- * `machine_offline` and `no_interactive_session` describe a machine that was
- * not in a state to be checked — nothing is wrong with the talon, so those are
- * `skipped` and do not count toward auto-disable. `capture_failed` and
- * `verdict_error` are genuine faults and fail the run. `author_unavailable`
- * fails it too AND carries the reason that switches the talon off, because the
- * person whose key backs the check is not coming back on the next firing.
+ * Close out a run whose condition produced no verdict. `machine_offline` and
+ * `no_interactive_session` are `skipped` (machine wasn't checkable — not the
+ * talon's fault, so no auto-disable credit); `capture_failed`/`verdict_error`
+ * fail the run; `author_unavailable` fails it AND disables the talon, since the
+ * key behind the check won't be back next firing.
  */
 async function finalizeConditionError(
   env: RunEnvironment,
@@ -625,14 +562,10 @@ async function finalizeConditionError(
 }
 
 /**
- * The chat a `cortex` output dispatched its turn into, if one landed. Only a
- * `sent` entry carries a chat id — a failed hoot output's `detail` is a failure
- * reason, and stamping that on the run as a chat id would produce a dead link.
- *
- * `outputs` may legitimately hold more than one hoot entry (nothing makes
- * output types unique), and each one opens its own chat. The run doc has a
- * single `chatId`, so the first dispatched chat is the one it points at; the
- * rest are still fully recorded in `outputs[].detail`.
+ * The chat a `cortex` output dispatched into. Only a `sent` entry carries a chat
+ * id — a failed output's `detail` is a failure reason and would be a dead link.
+ * Multiple hoot outputs are legal; the run doc has one `chatId`, so first wins
+ * (the rest stay in `outputs[].detail`).
  */
 function findHootChatId(outputs: TalonRunOutput[]): string | undefined {
   const hoot = outputs.find((output) => output.type === 'cortex' && output.status === 'sent');
@@ -646,10 +579,6 @@ function summarizeOutputs(outputs: TalonRunOutput[]): string {
     .join('; ');
 }
 
-/* -------------------------------------------------------------------------- */
-/*  companion logs                                                            */
-/* -------------------------------------------------------------------------- */
-
 const LOG_ACTION_BY_STATUS: Readonly<
   Record<TalonRunStatus, { action: string; level: 'info' | 'warning' | 'error' }>
 > = {
@@ -658,23 +587,20 @@ const LOG_ACTION_BY_STATUS: Readonly<
   failed: { action: 'talon_failed', level: 'error' },
   skipped: { action: 'talon_skipped', level: 'warning' },
   missed: { action: 'talon_skipped', level: 'warning' },
-  // Deferral statuses. The engine never writes one — the matcher creates a
-  // deferral and the sweep resolves it, neither through this module — but the
-  // map stays total over `TalonRunStatus` so adding a status is a compile
-  // error here rather than an `undefined` destructure at runtime.
+  // Deferral statuses the engine never writes (matcher creates, sweep resolves).
+  // Kept so the map stays total: a new status is a compile error, not an
+  // `undefined` destructure at runtime.
   pending: { action: 'talon_triggered', level: 'info' },
   fired: { action: 'talon_triggered', level: 'info' },
 };
 
 /**
- * Mirror the run into `sites/{siteId}/logs`, the feed operators actually watch.
+ * Mirror the run into `sites/{siteId}/logs`, the feed operators watch.
  *
- * `timestamp`, `action`, `level`, and `machineId` are ALL required by
- * firestore.rules (`hasRequiredFields`, line 471) — a write missing any one of
- * them is rejected outright. A site-level run has no machine, so it writes the
- * `'site'` sentinel rather than omitting the field.
- *
- * Best-effort: a log write that fails must not fail the run it describes.
+ * `timestamp`, `action`, `level`, `machineId` are all required by
+ * firestore.rules (`hasRequiredFields`) — omitting any one is rejected, so a
+ * site-level run writes the `'site'` sentinel. Best-effort: a failed log write
+ * must not fail the run it describes.
  */
 async function writeRunLog(
   env: RunRecordEnv,
@@ -707,17 +633,10 @@ async function writeRunLog(
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  bookkeeping                                                               */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Denormalize the execution onto the talon document and apply the auto-disable
- * backoff. One write per execution, not per run: a machine-scoped talon over
- * twelve machines is still one thing that happened once.
- *
- * The execution's status is the worst of its runs — a talon that failed on one
- * of four machines has a problem, and a card that reads "succeeded" would hide it.
+ * Denormalize the execution onto the talon doc and apply the auto-disable
+ * backoff. One write per execution, not per run. Status is the worst of its
+ * runs — failing on one of four machines must not read as "succeeded".
  */
 async function settleTalon(
   db: Firestore,
@@ -737,12 +656,10 @@ async function settleTalon(
   let consecutiveFailures = talon.consecutiveFailures ?? 0;
   if (status === 'failed') consecutiveFailures += 1;
   else if (status === 'succeeded') consecutiveFailures = 0;
-  // A skipped execution leaves the counter alone: it neither proved the talon
-  // works nor proved it doesn't.
+  // Skipped leaves the counter alone: proves nothing either way.
 
-  // An unrecoverable reason short-circuits the counter entirely. Ten runs spent
-  // rediscovering that the author left the site is ten firings during which
-  // nobody was told why the talon stopped working.
+  // Unrecoverable reasons short-circuit the counter — no point spending ten
+  // firings rediscovering that the author left the site.
   const fatalReason = summaries.find((summary) => summary.disabledReason)?.disabledReason;
   const disabledReason: TalonDisabledReason | undefined =
     fatalReason ?? (consecutiveFailures >= AUTO_DISABLE_AFTER_FAILURES ? 'repeated_failures' : undefined);

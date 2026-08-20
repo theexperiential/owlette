@@ -1,35 +1,17 @@
 /**
- * The factor-enrollment gate shared by every factor-enrollment route (TOTP and WebAuthn).
+ * Enrollment gate shared by every factor-enrollment route (TOTP and WebAuthn).
  *
- * WHY THIS EXISTS
+ * `/api/*` is not MFA-gated (proxy.ts returns early; `requireSessionUser` checks
+ * uid only), so without this a stolen `__session` cookie could enroll its own
+ * factor and clear the gate — a full MFA bypass plus a permanent attacker-owned
+ * factor.
  *
- * `/api/*` is not MFA-gated. `proxy.ts` returns early for any `/api` path
- * (it only stamps the security-version header), and `requireSessionUser`
- * checks uid equality — never `mfaVerified`. Up to now that was survivable
- * because enrolling a factor could not satisfy the gate: `mfaEnrolled` was
- * TOTP-only, and verify-setup refused re-enrollment outright.
+ * The rule: zero factors -> enrollment OPEN (mandatory-setup path; gating would
+ * deadlock a user who can never hold `mfaVerified`). One or more factors -> the
+ * session must have cleared a challenge, else 403 `mfa_challenge_required`.
  *
- * Universal 2FA changes that. A newly enrolled factor DOES satisfy the gate,
- * which turns every enrollment route into an MFA bypass:
- *
- *   ACTOR      someone holding the victim's `__session` cookie, or a few
- *              minutes at an unattended browser parked on /verify-2fa.
- *   MECHANISM  POST /api/mfa/setup, then /api/mfa/verify-setup with a code
- *              from the attacker's own authenticator app.
- *   OUTCOME    full MFA bypass from a session cookie alone, plus a permanent
- *              attacker-controlled factor on the victim's account.
- *
- * THE RULE (identical for every factor-enrollment route):
- *
- *   - zero factors currently enrolled -> enrollment is OPEN. This is the
- *     mandatory-setup path: a user who has never enrolled cannot possibly
- *     hold `mfaVerified`, so gating here would be an unresolvable deadlock.
- *   - one or more factors already     -> the session must have cleared a
- *     challenge (`mfaVerified === true`), else 403 `mfa_challenge_required`.
- *
- * The caller gets the inventory back so it can make per-factor decisions
- * (verify-setup still refuses to overwrite an existing TOTP secret) without
- * paying for a second read of the user document.
+ * The inventory is returned so callers can make per-factor decisions without a
+ * second read of the user document.
  */
 
 import { NextResponse } from 'next/server';
@@ -47,29 +29,23 @@ export interface MfaEnrollmentGateResult {
   /** The account's current factor inventory, already read by the gate. */
   factors: MfaFactorInventory;
   /**
-   * The response to return immediately, or `null` when enrollment may
-   * proceed. Callers must `if (gate.denied) return gate.denied;` before any
-   * side effect — the gate itself writes nothing.
+   * Response to return immediately, or `null` to proceed. Callers must
+   * `if (gate.denied) return gate.denied;` before any side effect.
    */
   denied: NextResponse | null;
 }
 
 /**
- * Evaluate the enrollment gate for `userId`.
- *
- * Deliberately reads the inventory through `readMfaFactors` rather than the
- * raw `mfaEnrolled` boolean: legacy documents predate `mfaFactors`, and the
- * healing path there is what stops a passkey-holding account from reading as
- * zero-factor (i.e. the gate failing OPEN) before the backfill has run.
+ * Evaluate the enrollment gate for `userId`. Reads via `readMfaFactors`, not the
+ * raw `mfaEnrolled` boolean: its healing path stops a legacy passkey-holding
+ * account from reading zero-factor (the gate failing OPEN) pre-backfill.
  */
 export async function checkMfaEnrollmentGate(
   userId: string,
   precomputedFactors?: MfaFactorInventory,
 ): Promise<MfaEnrollmentGateResult> {
-  // Callers that have ALREADY read the user document and the credential list
-  // (the WebAuthn register routes do both before they can build
-  // `excludeCredentials`) pass the inventory in, so the gate costs them no
-  // extra Firestore round-trip. Everyone else gets the healing read below.
+  // WebAuthn register routes already read both docs to build
+  // `excludeCredentials`, so they pass the inventory in and pay no extra read.
   const factors = precomputedFactors ?? (await readMfaFactors(userId));
 
   // No factor yet — mandatory setup. Enrollment must stay open.

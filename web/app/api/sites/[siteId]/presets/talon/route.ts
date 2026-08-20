@@ -1,12 +1,8 @@
 /**
- * GET  /api/sites/{siteId}/presets/talon
- * POST /api/sites/{siteId}/presets/talon
+ * GET / POST /api/sites/{siteId}/presets/talon — `config/{siteId}/talon_presets/{presetId}`.
  *
- * Capability: PRESET_MANAGE — the same capability as every other preset
- * family, and deliberately NOT `TALON_MANAGE`. Presets edit stored config and
- * never reach a machine, which is exactly true of a talon template.
- *
- * Firestore path: `config/{siteId}/talon_presets/{presetId}`.
+ * Capability is PRESET_MANAGE, deliberately NOT `TALON_MANAGE`: presets edit
+ * stored config and never reach a machine, a talon template included.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -63,8 +59,8 @@ export const POST = authorizedSiteHandler({
       template: body.template,
       isBuiltIn: body.isBuiltIn ?? false,
       order: typeof body.order === 'number' ? body.order : 0,
-      // Accepted for shape compatibility with the other families; the action
-      // core overrides it with the authenticated actor either way.
+      // Accepted for shape parity with the other families; the action core
+      // overrides it with the authenticated actor.
       createdBy: typeof body.createdBy === 'string' ? body.createdBy : ctx.actor.userId,
     };
 
@@ -80,10 +76,9 @@ export const POST = authorizedSiteHandler({
 });
 
 /**
- * Render a preset rejection. A failure from the delegated talon validator
- * carries the whole `template.*` field-error list in both shapes — `errors` for
- * generic RFC 7807 consumers, `fieldErrors` for the editor's inline routing —
- * matching what `POST /api/sites/{siteId}/talons` returns.
+ * Render a preset rejection. Validator failures carry the whole `template.*`
+ * field-error list in both shapes — `errors` for RFC 7807 consumers,
+ * `fieldErrors` for the editor's inline routing — as `POST .../talons` does.
  */
 export function talonPresetProblem(err: TalonPresetValidationError): NextResponse {
   if (!err.fieldErrors) {

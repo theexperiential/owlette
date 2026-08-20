@@ -29,10 +29,9 @@ interface RestartScheduleDialogProps {
   siteId: string;
   machineId: string;
   machineName: string;
-  /** IANA timezone (e.g. "America/Los_Angeles") for THIS machine. Used by
-   * the chip and the "next at" preview. Undefined if the agent has not yet
-   * deployed the IANA-aware build, in which case the preview falls back
-   * to the browser's local time and the chip shows "unknown". */
+  /** IANA timezone (e.g. "America/Los_Angeles") for THIS machine, used by the chip
+   * and the "next at" preview. Undefined on agents predating the IANA-aware build —
+   * the preview then falls back to browser local time and the chip shows "unknown". */
   machineTimezone?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -46,19 +45,14 @@ function newEntryId(): string {
 }
 
 /**
- * Compute the next scheduled restart across all entries for the preview line.
+ * Next scheduled restart across all entries, for the preview line.
  *
- * The returned text is from the perspective of the MACHINE'S local timezone —
- * a "14:00" entry on a Tokyo kiosk reads "today at 14:00" (or "tomorrow at
- * 14:00") regardless of where in the world the user editing the schedule
- * happens to be sitting. This matches what the agent actually does at
- * fire-time (resolves entries against machine local tz).
+ * Rendered in the MACHINE'S local timezone — a "14:00" entry on a Tokyo kiosk reads
+ * "today at 14:00" wherever the editor is sitting, matching what the agent does at
+ * fire time.
  *
- * If `machineTimezone` is undefined (older agent that hasn't reported its IANA
- * timezone yet), falls back to the browser's local time so the dialog still
- * works — but the per-machine label rendered next to this dialog will say
- * "unknown" so the user knows the preview may not match what the agent will
- * actually do.
+ * With `machineTimezone` undefined (older agent), falls back to browser local time;
+ * the per-machine label next to the dialog then reads "unknown".
  */
 function getNextScheduledRestart(
   enabled: boolean,
@@ -68,10 +62,9 @@ function getNextScheduledRestart(
 ): string {
   if (!enabled || entries.length === 0) return 'none';
 
-  // Get the current wall-clock components in the machine's timezone.
-  // Intl.DateTimeFormat with timeZone is the only browser-native way to ask
-  // "what is the date/time in IANA zone X right now?" — Date.setHours() etc.
-  // operate in the BROWSER's local zone, which is exactly the bug we're fixing.
+  // Intl.DateTimeFormat with timeZone is the only browser-native way to ask "what is
+  // the time in IANA zone X right now?" — Date.setHours() operates in the BROWSER's
+  // zone, which is exactly the bug this avoids.
   const tz = machineTimezone || undefined; // undefined → browser local
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
@@ -89,9 +82,8 @@ function getNextScheduledRestart(
   const dayNameOrder = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
   const machineNowDayIdx = dayNameOrder.indexOf(weekdayShort);
 
-  // Walk forward day-by-day in the machine's local calendar, checking each
-  // entry. We work entirely in (year, month, day, hour, minute) tuples to
-  // avoid any browser-tz ambiguity.
+  // Walk forward day-by-day in the machine's local calendar, in (year, month, day,
+  // hour, minute) tuples, to avoid browser-tz ambiguity.
   type Slot = { dayOffset: number; hour: number; minute: number; dayName: string };
   const upcoming: Slot[] = [];
   for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
@@ -120,9 +112,8 @@ function getNextScheduledRestart(
   });
   const next = upcoming[0];
 
-  // Format the time in the user's preferred 12h/24h. The TZ doesn't change
-  // the rendered HH:MM here because we already extracted it as raw integers
-  // in the machine's timezone above.
+  // Format in the user's 12h/24h preference; the TZ can't shift the rendered HH:MM,
+  // already extracted as raw integers in the machine's zone above.
   const timeStr = (() => {
     if (timeFormat === '24h') {
       return `${next.hour.toString().padStart(2, '0')}:${next.minute.toString().padStart(2, '0')}`;
@@ -172,16 +163,12 @@ export default function RestartScheduleDialog({
   const [showApplyToMachines, setShowApplyToMachines] = useState(false);
   const [updatingPreset, setUpdatingPreset] = useState(false);
 
-  // Initialize from currentSchedule and detect matching preset in a SINGLE
-  // effect that runs once per opening. Two separate effects both depending on
-  // `open` raced: the auto-detect ran with the previous session's `entries`
-  // closure and stamped a wrong activePresetId before init's setEntries
-  // materialized, which then locked the dialog into the wrong preset on every
-  // reopen.
-  //
-  // Initialization happens only on the open→true transition; after that,
-  // activePresetId is mutated only by user actions (applyPreset, etc.) so
-  // editing entries no longer auto-clears or auto-snaps the selection.
+  // Init from currentSchedule and preset-detect in a SINGLE effect per opening. Two
+  // effects both keyed on `open` raced: auto-detect ran with the previous session's
+  // `entries` closure and stamped a wrong activePresetId before init's setEntries
+  // landed, locking the dialog into the wrong preset on every reopen.
+  // Init runs only on the open→true transition; afterwards activePresetId changes
+  // only from user actions, so editing entries no longer auto-snaps the selection.
   const initOnceRef = useRef(false);
   useEffect(() => {
     if (!open) {
@@ -218,9 +205,8 @@ export default function RestartScheduleDialog({
     [enabled, entries, userPreferences.timeFormat, machineTimezone]
   );
 
-  // Short timezone abbreviation (e.g. "PDT") used as an inline label next to
-  // every time field and the next-restart line. Empty when we don't know the
-  // machine's IANA timezone — we just omit the suffix in that case.
+  // Short tz abbreviation (e.g. "PDT") shown beside each time field and the
+  // next-restart line. Empty when the machine's IANA timezone is unknown.
   const tzShort = useMemo(
     () => (machineTimezone ? tzAbbreviation(machineTimezone) : ''),
     [machineTimezone]
@@ -250,8 +236,7 @@ export default function RestartScheduleDialog({
         time: e.time,
       }))
     );
-    // Adopt the preset's enabled state when defined — keeps the toggle in sync
-    // with the schedule the user just picked. Legacy presets without this field
+    // Adopt the preset's enabled state when defined; legacy presets without the field
     // leave the current toggle alone.
     if (preset.enabled !== undefined) setEnabled(preset.enabled);
     setActivePresetId(preset.id);
@@ -334,10 +319,8 @@ export default function RestartScheduleDialog({
       }
     }
 
-    // If a preset name is pending in the inline form but the user hasn't
-    // explicitly submitted it, persist it now so it isn't silently dropped
-    // when the dialog closes. Name collision short-circuits to the existing
-    // replace-confirm flow.
+    // Persist a pending inline preset name the user never submitted, so it isn't
+    // silently dropped on close. Collisions fall into the replace-confirm flow.
     if (pendingReplacePreset) {
       toast.error('resolve the preset name conflict before saving');
       return;
@@ -376,9 +359,8 @@ export default function RestartScheduleDialog({
 
     setSaving(true);
     try {
-      // If a custom preset is selected and entries have drifted, persist the
-      // edits back to the preset so the user doesn't have to click both
-      // "update preset" and "save" separately.
+      // Persist drifted edits back to the selected custom preset so the user doesn't
+      // have to click both "update preset" and "save".
       let didUpdatePreset = false;
       if (selectedPreset && !selectedPreset.isBuiltIn && presetIsModified) {
         const validEntries = entries.filter(e => e.days.length > 0);
@@ -419,14 +401,10 @@ export default function RestartScheduleDialog({
           </DialogHeader>
 
           <div className="space-y-5 py-2">
-            {/* Preset bar.
-                Each pill sits in a `relative` wrapper; the per-pill action
-                row (update/rename/delete) or inline rename/delete-confirm is
-                absolutely positioned under it and centered horizontally, so
-                the actions read as belonging to that specific chip without
-                stretching the pill's flex slot. The row reserves `pb-10`
-                when a panel is attached so the next section doesn't collide
-                with the overlay. */}
+            {/* Preset bar. Each pill sits in a `relative` wrapper; the per-pill action
+                row (or inline rename/delete-confirm) is absolutely positioned under it
+                and centered, so it reads as belonging to that chip without stretching
+                the pill's flex slot. The row reserves `pb-10` when a panel is attached. */}
             <div className="space-y-1.5">
               <Label className="text-sm text-muted-foreground">presets</Label>
               <div
@@ -609,9 +587,8 @@ export default function RestartScheduleDialog({
                 </form>
               )}
 
-              {/* Inline replace-confirm — preset with this name already exists.
-                  Sits below the row; not scoped to the selected pill because the
-                  conflict is with a different preset (same name). */}
+              {/* Inline replace-confirm — a preset with this name already exists. Not
+                  scoped to the selected pill; the conflict is with a different preset. */}
               {pendingReplacePreset && (
                 <div className="flex flex-wrap items-center gap-2 text-[11px] leading-5">
                   <span className="text-muted-foreground">
@@ -635,7 +612,6 @@ export default function RestartScheduleDialog({
               )}
             </div>
 
-            {/* Enable toggle */}
             <div className="flex items-center justify-between">
               <Label htmlFor="restart-enabled" className="text-sm">
                 enable scheduled restarts
@@ -647,7 +623,6 @@ export default function RestartScheduleDialog({
               />
             </div>
 
-            {/* Entry list */}
             <div className={`space-y-2 ${enabled ? '' : 'opacity-50 pointer-events-none'}`}>
               {entries.length === 0 && (
                 <div className="text-xs text-muted-foreground italic px-1 py-3 text-center">
@@ -698,7 +673,6 @@ export default function RestartScheduleDialog({
               </Button>
             </div>
 
-            {/* Next restart preview */}
             {enabled && entries.length > 0 && (
               <div className="text-sm text-muted-foreground">
                 next scheduled restart:{' '}

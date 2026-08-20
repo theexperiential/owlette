@@ -1,25 +1,13 @@
 /**
- * k6 load test: GET /api/sites/{siteId}/deployments.
+ * k6: GET /api/sites/{siteId}/deployments — a 25-doc page plus `page_token`
+ * pagination, the endpoint behind the dashboard list and every paginating
+ * CLI/SDK. SLO p99 < 250 ms (rationale in lib/config.js).
  *
- * The dashboard's deployment list view + every CLI/SDK that paginates
- * deployments hits this endpoint. Reads a 25-doc page from Firestore and
- * paginates via `page_token`. Read-mostly: cursor reads + cheap doc fetches.
+ * Scenarios: `smoke` (1 VU/10s, CI regression floor), `sustained` (ramp to 50
+ * over 5 min, typical dashboard load), `spike` (200 VUs/30s, a CI fleet polling
+ * at once). Select with `--env SCENARIO=smoke`.
  *
- * SLO: p99 < 250 ms. See lib/config.js for rationale.
- *
- * Scenarios:
- *   `smoke`     — 1 VU, 10 s: regression floor, run every CI build.
- *   `sustained` — ramping 10 → 50 VUs over 5 min: typical dashboard load.
- *   `spike`     — 200 VUs for 30 s: burst when a fleet of CIs all poll
- *                 deployment status concurrently.
- *
- * Run a single scenario with:
- *   K6_BASE_URL=https://dev.owlette.app \
- *     K6_API_KEY=$(<api-key.txt) \
- *     K6_SITE_ID=load-test-site \
- *     k6 run --env SCENARIO=smoke sites-deployments-list.js
- *
- * No mutations — this script is safe to re-run without cleanup.
+ * No mutations — safe to re-run without cleanup.
  */
 import http from 'k6/http';
 import { check, sleep } from 'k6';
@@ -76,6 +64,6 @@ export default function () {
     },
   });
 
-  // Light think-time so we don't pin a single VU at 100% CPU on the client.
+  // think-time so a VU doesn't pin the client CPU
   sleep(0.1);
 }

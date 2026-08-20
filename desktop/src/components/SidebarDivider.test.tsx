@@ -10,10 +10,9 @@ import {
 } from '@/lib/sidebarWidth'
 
 /**
- * jsdom has no `PointerEvent`, so testing-library builds a bare `Event` whose
- * `button` and `clientX` are undefined — useless for a drag. A `MouseEvent`
- * carries both; the pointer id is pinned on by hand. Same helper the process
- * list's reorder tests use.
+ * jsdom has no `PointerEvent`, so testing-library builds a bare `Event` with
+ * undefined `button`/`clientX` — useless for a drag. `MouseEvent` carries both;
+ * the pointer id is attached by hand. Same helper the reorder tests use.
  */
 function pointer(
   element: Element,

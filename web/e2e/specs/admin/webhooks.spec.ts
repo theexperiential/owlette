@@ -1,26 +1,12 @@
 /**
- * Admin — webhooks page (C3.2)
+ * Admin — webhooks page. Reads `sites/{siteId}/webhooks` via onSnapshot (`useWebhooks` in
+ * WebhookSettingsDialog.tsx). Seeds a dedicated `site-webhook-tests` site so reruns are
+ * deterministic and shared baseline state is untouched.
  *
- * The webhooks page reads from `sites/{siteId}/webhooks` via an onSnapshot
- * listener (see `useWebhooks` in WebhookSettingsDialog.tsx). Each test
- * seeds data under a dedicated `site-webhook-tests` site so the tests
- * don't mutate shared baseline state and so reruns are deterministic.
+ * Covers list rendering, create (→ secret dialog + Admin SDK doc-shape check), edit (→ updated
+ * URL), and delete (→ soft-deleted doc).
  *
- * Covered:
- *   - list rendering — a seeded webhook appears with name, URL, and the
- *     "never triggered" status badge
- *   - create flow — "add webhook" → fills name/URL/events → "create
- *     webhook" → secret dialog shown + Admin SDK verifies Firestore
- *     doc exists with the expected shape (https URL, paused=false,
- *     non-empty signing secret, events array)
- *   - edit flow — pencil → dialog → new URL → "save changes" → toast +
- *     Admin SDK verifies the updated URL
- *   - delete flow — trash → inline "confirm"/"cancel" → confirm → toast
- *     + row gone + Admin SDK confirms doc is soft-deleted
- *
- * Not covered: test-send (hits real HTTP — flaky in E2E) and webhook
- * disable/enable toggle (lower-value UI toggle — defer if time permits
- * in a future pass).
+ * Not covered: test-send (hits real HTTP, flaky) and the disable/enable toggle.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -74,18 +60,15 @@ async function seedWebhook(name = SEEDED_WEBHOOK.name, url = SEEDED_WEBHOOK.url)
 
 async function gotoWebhooksForSeededSite(page: Page) {
   await page.goto('/admin/webhooks');
-  // Superadmin sees many sites, so the selector is always rendered. Click it
-  // and pick our seeded site by its deterministic name.
-  // Bumped to 10s because RequireSuperadmin renders a "verifying permissions..."
-  // gate while AuthContext hydrates against the auth emulator; the default 5s
-  // expect timeout occasionally races that hydration on cold-emulator runs.
+  // Superadmin always gets the site selector; pick the seeded site by name. 10s because
+  // RequireSuperadmin gates on AuthContext hydrating against the auth emulator, which races the
+  // default 5s timeout on cold-emulator runs.
   await expect(
     page.getByRole('heading', { name: 'webhooks', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
   const siteSelect = page.getByRole('combobox');
   await siteSelect.click();
   await page.getByRole('option', { name: SITE_NAME, exact: true }).click();
-  // Wait for the dropdown to close before asserting on the list.
   await expect(page.getByRole('combobox')).toContainText(SITE_NAME);
 }
 
@@ -96,7 +79,6 @@ test('lists seeded webhooks with name, URL, and status badge', async ({ page }) 
   const row = page.locator('div.rounded-lg.border').filter({ hasText: SEEDED_WEBHOOK.name });
   await expect(row).toBeVisible();
   await expect(row).toContainText(SEEDED_WEBHOOK.url);
-  // Never-triggered status: the yet-unused webhook shows "never triggered".
   await expect(row.getByText('never triggered', { exact: true })).toBeVisible();
 });
 
@@ -113,20 +95,17 @@ test('creating a webhook writes Firestore doc and shows the signing secret', asy
 
   await addDialog.getByLabel('name').fill(newName);
   await addDialog.getByLabel(/URL/).fill(newUrl);
-  // Pre-seeded events (machine.offline + deployment.failed) are already checked
-  // per the default state — leave as-is.
+  // machine.offline + deployment.failed are checked by default — leave as-is.
 
   await addDialog.getByRole('button', { name: /^create webhook$/i }).click();
 
-  // Toast fires + the generated-secret dialog opens.
   await expect(page.getByText(/webhook created/i).first()).toBeVisible();
   const secretDialog = page.getByRole('dialog', { name: /^webhook created$/i });
   await expect(secretDialog).toBeVisible();
-  // The secret follows the whsec_ + 64-char hex format.
+  // whsec_ + 64-char hex.
   await expect(secretDialog.locator('code')).toHaveText(/^whsec_[0-9a-f]{64}$/);
   await secretDialog.getByRole('button', { name: /^done$/i }).click();
 
-  // Admin SDK read-through — verify the doc shape.
   const db = getAdminDb();
   const snap = await db.collection('sites').doc(SITE_ID).collection('webhooks').get();
   const matching = snap.docs.find((d) => d.data().description === newName);
@@ -143,8 +122,7 @@ test('editing a webhook updates the Firestore URL', async ({ page }) => {
   await gotoWebhooksForSeededSite(page);
 
   const row = page.locator('div.rounded-lg.border').filter({ hasText: SEEDED_WEBHOOK.name });
-  // The pencil button has no accessible name; target it by its lucide-react
-  // SVG class (`.lucide-pencil`). Same approach for trash below.
+  // No accessible name on the pencil button; target the lucide SVG class. Same for trash below.
   await row.locator('button:has(svg.lucide-pencil)').click();
 
   const editDialog = page.getByRole('dialog', { name: /^edit webhook$/i });
@@ -157,7 +135,6 @@ test('editing a webhook updates the Firestore URL', async ({ page }) => {
   await editDialog.getByRole('button', { name: /save changes/i }).click();
   await expect(page.getByText(/webhook updated/i)).toBeVisible();
 
-  // Admin SDK read-through.
   const db = getAdminDb();
   const snap = await db.collection('sites').doc(SITE_ID).collection('webhooks').doc(webhookId).get();
   expect(snap.data()!.url).toBe(newUrl);
@@ -170,13 +147,11 @@ test('deleting a webhook removes the Firestore doc', async ({ page }) => {
   const row = page.locator('div.rounded-lg.border').filter({ hasText: 'to-be-deleted' });
   await expect(row).toBeVisible();
 
-  // Trash icon → inline "confirm" / "cancel" replaces the trash.
   await row.locator('button:has(svg.lucide-trash-2)').click();
   await row.getByRole('button', { name: /^confirm$/i }).click();
 
   await expect(page.getByText(/webhook deleted/i)).toBeVisible();
 
-  // Admin SDK verifies the doc is soft-deleted.
   const db = getAdminDb();
   const snap = await db.collection('sites').doc(SITE_ID).collection('webhooks').doc(webhookId).get();
   expect(snap.exists).toBe(true);

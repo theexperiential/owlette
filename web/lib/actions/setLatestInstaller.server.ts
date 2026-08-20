@@ -1,24 +1,12 @@
 /**
- * setLatestInstaller action core (security-boundary-migration wave 3.11).
+ * setLatestInstaller action core: atomically promotes a non-deleted installer
+ * version to the `installer_metadata/latest` pointer, refusing a missing or
+ * soft-deleted source doc. Platform-level paths, NOT site-scoped.
  *
- * Mirrors `useInstallerManagement:setAsLatest`
- * (web/hooks/useInstallerManagement.ts:198-232) and the existing
- * `POST /api/installer/{version}/set-latest` route
- * (web/app/api/installer/[version]/set-latest/route.ts).
- *
- * Atomically promotes a non-deleted installer version to the
- * `installer_metadata/latest` pointer. Refuses if the source version doc
- * doesn't exist or has been soft-deleted.
- *
- * The existing API route already implements this exact flow with idempotency
- * + audit-log emission + scope checks. This action core lifts the
- * transactional core out so the `authorizedPlatformHandler` shim can call it
- * directly. The existing `requirePlatformAuthAndScope`-wrapped route stays
- * untouched as the public surface (preserving idempotency keys + RFC 7807
- * shape); the `/api/installer/[version]/set-latest` route created in
- * this wave is the new admin-namespace entry point.
- *
- * firestore paths: platform-level (NOT site-scoped).
+ * The transactional core is lifted out of
+ * `POST /api/installer/{version}/set-latest` so the `authorizedPlatformHandler`
+ * shim can call it directly; that route stays as the public surface, keeping
+ * its idempotency keys and RFC 7807 shape.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';

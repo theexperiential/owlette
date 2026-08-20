@@ -7,12 +7,10 @@ import {
 import { SCOPE_PRESETS, type ApiKeyScope } from '@/lib/apiKeyTypes';
 
 /**
- * The pure half of the shared scope builder.
- *
- * presetForScopes is the piece with a real failure mode: the editor calls it to
- * decide whether a key reopens on the preset it was minted from or falls into
- * the sixteen-checkbox custom builder. Getting it wrong silently converts every
- * edited preset key into a custom one.
+ * The pure half of the shared scope builder. `presetForScopes` is the piece
+ * with a real failure mode: it decides whether a key reopens on its minting
+ * preset or drops into the sixteen-checkbox custom builder, and getting it
+ * wrong silently converts every edited preset key into a custom one.
  */
 
 describe('presetForScopes', () => {
@@ -109,12 +107,9 @@ describe('customScopesForSelection', () => {
   });
 
   /**
-   * NEGATIVE CONTROL — this is the behaviour shipping today.
-   *
-   * The builder opened on a hardcoded literal regardless of the preset in
-   * effect, so the switch dropped 3 of 4 resources and 14 of 16 grants. It
-   * passed validateScopeSelection, validateScopes and assertScopesGrantable,
-   * and POST /api/keys returned 200 with scopeCount 1.
+   * NEGATIVE CONTROL — the behaviour that shipped. The builder opened on a
+   * hardcoded literal regardless of preset, dropping 3 of 4 resources and 14
+   * of 16 grants, and every validator plus POST /api/keys accepted it.
    */
   it('the old behaviour opened on one unrelated row, losing 14 of 16 grants', () => {
     const OLD_SEED: ApiKeyScope[] = [
@@ -140,15 +135,14 @@ describe('customScopesForSelection', () => {
   it('copies the preset rather than handing over the shared singleton', () => {
     const seeded = customScopesForSelection('custom', 'publisher', [])!;
     seeded[0].permissions.push('admin');
-    // wildcardScopes assigns ONE permissions array to all four rows of a
-    // preset, so a shallow hand-off would corrupt the constant for the tab.
+    // wildcardScopes gives all four rows ONE permissions array, so a shallow
+    // hand-off corrupts the constant for the whole tab.
     expect(SCOPE_PRESETS.publisher[0].permissions).toEqual(['read', 'write']);
   });
 
   it('seeds the editor from the preset just picked, not the key it opened on', () => {
-    // The editor's own version of the bug: a publisher key, user picks
-    // operator, then custom — and was shown the original publisher rows,
-    // silently reverting the choice they had just made.
+    // The editor's version of the bug: publisher key -> operator -> custom
+    // showed the original publisher rows, reverting the choice just made.
     const keyScopes = SCOPE_PRESETS.publisher;
     expect(customScopesForSelection('custom', 'operator', keyScopes)).toEqual(
       SCOPE_PRESETS.operator,

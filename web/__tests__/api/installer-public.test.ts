@@ -1,11 +1,8 @@
 /** @jest-environment node */
 
 /**
- * Public installer api — tests for /api/installer/* (api-sprint wave 1
- * track 1B). Mirrors the call-shape style used by the admin installer
- * tests but exercises the new auth path (resolveAuth + requireScope +
- * superadmin role check), idempotency, audit emission, and the
- * min-versions-2 transactional guard.
+ * /api/installer/* — auth path (resolveAuth + requireScope + superadmin check),
+ * idempotency, audit emission, and the min-versions-2 transactional guard.
  */
 
 import { createMockRequest } from './helpers/utils';
@@ -26,9 +23,7 @@ jest.mock('@/lib/auditLogClient', () => ({
 const STORAGE_BYTES = Buffer.from('fake-installer-content');
 const STORAGE_SHA256 = createHash('sha256').update(STORAGE_BYTES).digest('hex');
 
-/* -------------------------------------------------------------------------- */
-/*  Auth mock                                                                 */
-/* -------------------------------------------------------------------------- */
+// Auth mock
 
 const mockResolveAuth = jest.fn();
 jest.mock('@/lib/apiAuth.server', () => {
@@ -39,10 +34,8 @@ jest.mock('@/lib/apiAuth.server', () => {
   };
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Firestore mock — keyed by collection path so tests can pre-populate       */
-/*  user role docs, version docs, upload docs, and the idempotency cache.    */
-/* -------------------------------------------------------------------------- */
+// Firestore mock — keyed by collection path so tests can pre-populate
+// user role docs, version docs, upload docs, and the idempotency cache.
 
 interface DocStore {
   data: Record<string, unknown> | null;
@@ -165,9 +158,7 @@ jest.mock('@/lib/firebase-admin', () => ({
   }),
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Imports come AFTER mocks                                                  */
-/* -------------------------------------------------------------------------- */
+// Imports come AFTER mocks
 
 import { GET as listGET } from '@/app/api/installer/route';
 import { GET as latestGET } from '@/app/api/installer/latest/route';
@@ -175,9 +166,7 @@ import { POST as uploadPOST, PUT as uploadPUT } from '@/app/api/installer/upload
 import { DELETE as versionDELETE } from '@/app/api/installer/[version]/route';
 import { POST as setLatestPOST } from '@/app/api/installer/[version]/set-latest/route';
 
-/* -------------------------------------------------------------------------- */
-/*  Fixtures                                                                  */
-/* -------------------------------------------------------------------------- */
+// Fixtures
 
 function authedAsSuperadminWithKey(perm: 'read' | 'write' | 'admin', userId = 'user-superadmin'): void {
   mockResolveAuth.mockResolvedValue({
@@ -294,9 +283,7 @@ beforeEach(() => {
   for (const k of Object.keys(collectionDocs)) delete collectionDocs[k];
 });
 
-/* ========================================================================== */
-/*  GET /api/installer                                                        */
-/* ========================================================================== */
+// GET /api/installer
 
 describe('GET /api/installer', () => {
   it('lists versions newest-first, paginated, filtering soft-deleted', async () => {
@@ -397,9 +384,7 @@ describe('GET /api/installer', () => {
   });
 });
 
-/* ========================================================================== */
-/*  GET /api/installer/latest                                                 */
-/* ========================================================================== */
+// GET /api/installer/latest
 
 describe('GET /api/installer/latest', () => {
   it('returns current latest installer metadata from the active version record', async () => {
@@ -479,9 +464,7 @@ describe('GET /api/installer/latest', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/installer/upload (signed-url request)                           */
-/* ========================================================================== */
+// POST /api/installer/upload (signed-url request)
 
 describe('POST /api/installer/upload', () => {
   it('returns signed url and emits installer_mutated audit', async () => {
@@ -562,8 +545,7 @@ describe('POST /api/installer/upload', () => {
     const res1 = await uploadPOST(req1);
     expect(res1.status).toBe(200);
 
-    // Second request with same key + body should be a cache replay (no new
-    // audit event, marker header set by the idempotency wrapper).
+    // Same key + body replays from cache: no new audit event, marker header set.
     mockEmitMutation.mockClear();
     const req2 = createMockRequest('http://localhost/api/installer/upload', {
       method: 'POST',
@@ -577,9 +559,7 @@ describe('POST /api/installer/upload', () => {
   });
 });
 
-/* ========================================================================== */
-/*  PUT /api/installer/upload (finalize)                                      */
-/* ========================================================================== */
+// PUT /api/installer/upload (finalize)
 
 describe('PUT /api/installer/upload', () => {
   it('finalizes upload and writes installer_metadata version doc', async () => {
@@ -668,9 +648,7 @@ describe('PUT /api/installer/upload', () => {
   });
 });
 
-/* ========================================================================== */
-/*  DELETE /api/installer/{version}                                            */
-/* ========================================================================== */
+// DELETE /api/installer/{version}
 
 describe('DELETE /api/installer/{version}', () => {
   it('soft-deletes when more than 2 active versions exist', async () => {
@@ -822,9 +800,7 @@ describe('DELETE /api/installer/{version}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/installer/{version}/set-latest                                   */
-/* ========================================================================== */
+// POST /api/installer/{version}/set-latest
 
 describe('POST /api/installer/{version}/set-latest', () => {
   it('promotes existing version to latest atomically', async () => {

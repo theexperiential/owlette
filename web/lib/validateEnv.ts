@@ -1,12 +1,6 @@
 /**
- * Environment Variable Validation Utility
- *
- * Validates that all required Firebase configuration is present and properly set.
- * Provides clear error messages for misconfiguration.
- *
- * Modes:
- * - Development: Logs warnings to console, allows app to continue
- * - Production: Throws errors and blocks app startup if misconfigured
+ * Firebase env-var validation. Development warns and continues; production
+ * throws and blocks startup.
  */
 
 export interface EnvValidationResult {
@@ -15,9 +9,6 @@ export interface EnvValidationResult {
   warnings: string[];
 }
 
-/**
- * List of required Firebase environment variables
- */
 const REQUIRED_FIREBASE_ENV_VARS = [
   'NEXT_PUBLIC_FIREBASE_API_KEY',
   'NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN',
@@ -27,9 +18,7 @@ const REQUIRED_FIREBASE_ENV_VARS = [
   'NEXT_PUBLIC_FIREBASE_APP_ID',
 ] as const;
 
-/**
- * Invalid placeholder values that indicate misconfiguration
- */
+/** Substrings that mark a value as an unfilled placeholder. */
 const INVALID_VALUES = [
   'placeholder',
   'your-',
@@ -39,9 +28,6 @@ const INVALID_VALUES = [
   '',
 ];
 
-/**
- * Check if a value is invalid (missing or placeholder)
- */
 function isInvalidValue(value: string | undefined): boolean {
   if (!value) return true;
 
@@ -50,14 +36,10 @@ function isInvalidValue(value: string | undefined): boolean {
   );
 }
 
-/**
- * Validate all required environment variables
- */
 export function validateEnvironment(): EnvValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // Check each required environment variable
   REQUIRED_FIREBASE_ENV_VARS.forEach((envVar) => {
     const value = process.env[envVar];
 
@@ -70,7 +52,6 @@ export function validateEnvironment(): EnvValidationResult {
     }
   });
 
-  // Add helpful context if errors found
   if (errors.length > 0) {
     errors.push('');
     errors.push('To fix this:');
@@ -90,12 +71,7 @@ export function validateEnvironment(): EnvValidationResult {
   };
 }
 
-/**
- * Validate environment and handle based on mode (dev vs production)
- *
- * In development: Logs warnings but allows app to continue
- * In production: Throws error and blocks app startup
- */
+/** Warns in development, throws in production. */
 export function validateEnvironmentOrThrow(): void {
   const result = validateEnvironment();
 
@@ -109,7 +85,6 @@ export function validateEnvironmentOrThrow(): void {
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
     ].join('\n');
 
-    // In development, log warning and continue
     if (process.env.NODE_ENV === 'development') {
       console.warn(errorMessage);
       console.warn('⚠️  Running with invalid Firebase configuration');
@@ -117,19 +92,15 @@ export function validateEnvironmentOrThrow(): void {
       return;
     }
 
-    // In production, throw error and block startup
     throw new Error(errorMessage);
   }
 
-  // Log success in development
   if (process.env.NODE_ENV === 'development') {
     console.log('✅ Firebase environment variables validated successfully');
   }
 }
 
-/**
- * Get a user-friendly error message for display in UI
- */
+/** Message safe to render in the UI. */
 export function getFirebaseConfigErrorMessage(): string {
   const result = validateEnvironment();
 
@@ -140,25 +111,16 @@ export function getFirebaseConfigErrorMessage(): string {
   return `Firebase is not configured properly. Please check your environment variables and restart the application.`;
 }
 
-/**
- * Check if Firebase is properly configured (for conditional rendering)
- */
 export function isFirebaseConfigured(): boolean {
   const result = validateEnvironment();
   return result.isValid;
 }
 
-/**
- * Get detailed error information for debugging
- */
 export function getFirebaseConfigErrors(): string[] {
   const result = validateEnvironment();
   return result.errors;
 }
 
-/**
- * Validate a specific Firebase config value
- */
 export function validateFirebaseConfigValue(
   key: string,
   value: string | undefined

@@ -1,37 +1,25 @@
 /**
- * MFA factor inventory — the SINGLE WRITER of `mfaEnrolled` and `requiresMfaSetup`.
+ * MFA factor inventory — the SINGLE WRITER of `mfaEnrolled` and
+ * `requiresMfaSetup`.
  *
- * `users/{uid}.mfaEnrolled` means "this account has at least one second
- * factor", not "this account has TOTP". Passkeys count. Because the MFA gate
- * (`resolveMfaStateForUser` in `lib/sessionManager.server.ts`) reads that one
- * boolean from one document on a hot path — AuthContext re-POSTs
- * `/api/auth/session` on every page load — we do NOT query the
- * `users/{uid}/passkeys` subcollection at session time. Instead writers
- * maintain a denormalized inventory here:
+ * `mfaEnrolled` means "has at least one second factor" — passkeys count. The
+ * session gate reads that one boolean on a hot path (AuthContext re-POSTs
+ * `/api/auth/session` every page load), so writers keep a denormalized tally
+ * instead of querying `users/{uid}/passkeys` at session time:
  *
  *   users/{uid}.mfaFactors  = { totp: boolean, passkeys: number }
  *   users/{uid}.mfaEnrolled = mfaFactors.totp || mfaFactors.passkeys > 0
  *
- * RULES OF THE ROAD:
- *
- * - **This module is the only place permitted to write `mfaEnrolled` or
- *   `requiresMfaSetup`.** Every enrollment/removal route funnels through
- *   `applyMfaFactorChange`. A second writer re-opens the drift this
- *   denormalization exists to contain.
- * - **It owns `requiresMfaSetup` in BOTH directions.** Every call writes
- *   `requiresMfaSetup = !deriveMfaEnrolled(next)`. Re-arming it on zero factors
- *   is deliberate — removing the last factor is allowed, and puts the account
- *   straight back into mandatory setup. Clearing it to `false` when a factor
- *   exists is equally mandatory: without it a passkey-only signup finishes
- *   enrollment with the nag still set and the dashboard bounces the user to
- *   `/setup-2fa` forever.
- * - **When a caller passes `ctx.tx`, this must be called BEFORE any write on
- *   that transaction.** Firestore forbids reads after writes inside a
- *   transaction, and this module reads the user doc (and, on
- *   `recountPasskeys`, the subcollection) before it writes.
- * - **This module deliberately emits no audit event.** Callers own their own
- *   `emitMutation` so the audit verb reflects the user-visible action
- *   ("enrolled a passkey", "disabled 2FA") rather than the bookkeeping.
+ * Rules:
+ * - Only `applyMfaFactorChange` may write these fields; a second writer
+ *   re-opens the drift this denormalization contains.
+ * - It owns `requiresMfaSetup` in BOTH directions. Re-arming on zero factors
+ *   puts an account back into mandatory setup; clearing it is equally
+ *   mandatory, or a passkey-only signup is bounced to `/setup-2fa` forever.
+ * - With `ctx.tx`, call this BEFORE any write on that transaction — Firestore
+ *   forbids reads after writes, and this reads the user doc first.
+ * - Emits no audit event: callers own `emitMutation` so the verb names the
+ *   user-visible action, not the bookkeeping.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
@@ -102,10 +90,8 @@ function resolveDb(ctx?: MfaFactorContext): FirebaseFirestore.Firestore {
 }
 
 /**
- * True when BOTH legs of a stored `mfaFactors` are well-formed — i.e. the
- * inventory can be trusted without consulting the passkeys subcollection.
- * This predicate is what keeps `readMfaFactors` to a single document read on
- * the session hot path; see the header.
+ * BOTH legs well-formed = trust the inventory without reading the passkeys
+ * subcollection. This is what keeps `readMfaFactors` to one document read.
  */
 function hasWellFormedFactors(
   userData: FirebaseFirestore.DocumentData | undefined,
@@ -117,18 +103,13 @@ function hasWellFormedFactors(
 }
 
 /**
- * Read the inventory out of a user document, healing each leg independently.
+ * Read the inventory, healing each leg independently so a half-written doc
+ * self-heals. Pre-`mfaFactors` accounts have neither leg: `totp` falls back to
+ * `mfaEnrolled === true` (only TOTP ever set it), `passkeys` to the caller's
+ * resolved subcollection size.
  *
- * Legacy tolerance: accounts written before `mfaFactors` existed have neither
- * leg. `totp` falls back to `mfaEnrolled === true`, because TOTP is the only
- * factor that has ever set that flag. `passkeys` falls back to `passkeyCount`,
- * the real subcollection size the caller resolved. Each leg is validated on its
- * own, so a half-written document self-heals rather than being discarded
- * wholesale.
- *
- * Deliberately NOT consulted: `mfaSecret`. An in-flight TOTP setup parks its
- * secret in `mfa_pending/{uid}`, so a secret on the user doc is not proof of
- * completed enrollment.
+ * `mfaSecret` is deliberately ignored — an in-flight TOTP setup parks its
+ * secret on the user doc, so its presence is not proof of enrollment.
  */
 export function normalizeMfaFactors(
   userData: FirebaseFirestore.DocumentData | undefined,
@@ -151,14 +132,10 @@ export function normalizeMfaFactors(
 }
 
 /**
- * Current inventory for a user, healing legacy/malformed documents.
- *
- * HOT PATH: when the stored `mfaFactors` is well-formed this performs exactly
- * ONE document read. Only a missing or malformed leg falls through to counting
- * the passkeys subcollection.
- *
- * A missing user doc yields the empty inventory rather than throwing — a
- * first-login user with no document cannot have enrolled anything.
+ * Current inventory, healing legacy/malformed docs. HOT PATH: exactly one
+ * document read when the stored `mfaFactors` is well-formed; only a bad leg
+ * falls through to counting the subcollection. A missing user doc yields the
+ * empty inventory rather than throwing.
  */
 export async function readMfaFactors(
   userId: string,
@@ -182,8 +159,7 @@ export async function readMfaFactors(
 }
 
 /**
- * The shared transaction body. Both the `ctx.tx` path and the standalone
- * `db.runTransaction(...)` path run exactly this, so there is one ordering to
+ * Shared transaction body for both entry paths, so there is one ordering to
  * reason about: every read happens before the single write.
  */
 async function applyInTx(
@@ -192,23 +168,18 @@ async function applyInTx(
   change: MfaFactorChange,
   extraUpdate?: Record<string, unknown>,
 ): Promise<MfaFactorResult> {
-  // (1) Read the user doc. This module never creates one — a caller that has
-  // not bootstrapped the user has a bug we must not paper over.
+  // (1) Read the user doc. Never created here — an unbootstrapped user is a
+  // caller bug we must not paper over.
   const snap = await tx.get(userRef);
   if (!snap.exists) {
     throw new Error(`mfaFactors: user ${userRef.id} not found`);
   }
 
-  // (2) Recount when the caller asks — and ALSO whenever the stored leg cannot
-  // be trusted and the caller supplied no explicit total.
-  //
-  // That second condition is load-bearing, not defensive padding. A legacy
-  // document has no `mfaFactors` at all, which describes EVERY account until
-  // the backfill runs. Without the recount, `normalizeMfaFactors` would heal
-  // that leg from `passkeyCount = 0` and a TOTP-only change would write
-  // `passkeys: 0` over an account that really does hold credentials. The
-  // account then reads as zero-factor once TOTP is removed — `mfaEnrolled`
-  // false for a user with working passkeys, i.e. the gate fails OPEN.
+  // (2) Recount on request, and also whenever the stored leg is untrustworthy
+  // and no explicit total was given. The second condition is load-bearing: a
+  // legacy doc (every account until the backfill runs) would heal from
+  // passkeyCount=0, so a TOTP-only change writes `passkeys: 0` over real
+  // credentials and the gate fails OPEN once TOTP is removed.
   const data = snap.data();
   const storedPasskeysTrustworthy = isValidPasskeyCount(
     (data?.mfaFactors as Record<string, unknown> | undefined)?.passkeys,
@@ -226,8 +197,7 @@ async function applyInTx(
   // (3) Current state, healed.
   const current = normalizeMfaFactors(data, passkeyCount);
 
-  // (4) Apply the delta. A recount overrides a stale stored copy; an explicit
-  // count overrides the stored copy too; an omitted leg carries forward.
+  // (4) Recount or explicit count overrides the stored copy; omitted legs carry.
   const nextPasskeys = change.recountPasskeys
     ? passkeyCount
     : change.passkeys !== undefined
@@ -239,9 +209,8 @@ async function applyInTx(
     passkeys: clampPasskeys(nextPasskeys),
   };
 
-  // (5) One payload. `extraUpdate` is spread last so a caller can pair an
-  // atomic cleanup (clearing `mfaSecret`, `backupCodes`, …) with the recompute;
-  // it must never carry the three fields this module owns.
+  // (5) `extraUpdate` is spread last so a caller can pair an atomic cleanup
+  // (`mfaSecret`, `backupCodes`, …) — it must never carry the fields we own.
   const mfaEnrolled = deriveMfaEnrolled(next);
   const requiresMfaSetup = !mfaEnrolled;
   const payload: Record<string, unknown> = {
@@ -259,9 +228,7 @@ async function applyInTx(
 
 /**
  * Recompute and persist the inventory, `mfaEnrolled` and `requiresMfaSetup`.
- *
- * Pass `ctx.tx` to fold this into a caller's transaction (before any write on
- * it); omit it and the module opens its own.
+ * Pass `ctx.tx` to fold into a caller's transaction (before any write on it).
  */
 export async function applyMfaFactorChange(
   userId: string,

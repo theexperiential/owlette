@@ -1,28 +1,24 @@
 /** @jest-environment node */
 
 /**
- * `POST /api/users/{uid}/mfa-reset` — the superadmin recovery path for an
- * account that has lost every second factor AND its backup codes.
+ * `POST /api/users/{uid}/mfa-reset` — superadmin recovery for an account that
+ * has lost every second factor AND its backup codes.
  *
- * Harness style follows `__tests__/api/users/deletions/route.test.ts`: a
- * path-keyed in-memory Firestore, a mocked `resolveAuth`, and the REAL
+ * Harness follows `__tests__/api/users/deletions/route.test.ts`: path-keyed
+ * in-memory Firestore, mocked `resolveAuth`, but the REAL
  * `authorizedPlatformHandler` / `capabilities` / `mfaFactors.server` /
- * `deviceTrust.server` underneath — so the superadmin gate, the factor
- * recompute and the trusted-device sweep are all exercised for real rather
- * than asserted against stubs that always agree.
+ * `deviceTrust.server`, so the gate, factor recompute and trusted-device sweep
+ * run for real rather than against always-agreeing stubs.
  *
- * The four properties worth pinning down are the four that would hurt:
- *
- *   1. A reset really empties the account: no TOTP secret, no backup codes, no
- *      passkey documents, no trusted devices — and the derived flags land as
- *      "not enrolled, setup required" so the target is put straight back into
- *      mandatory setup instead of being left open.
- *   2. A non-superadmin is refused and NOTHING is written. A route that 403s
- *      after mutating is worse than one that never existed.
- *   3. The audit trail names both parties. A silent factor reset is
- *      indistinguishable from an attacker with a superadmin session.
- *   4. Resetting a user who already holds no factors is a safe no-op, because
- *      that is the state an operator retries into after a partial failure.
+ * The four properties that would hurt if broken:
+ *   1. Reset really empties the account (no TOTP, backup codes, passkeys, or
+ *      trusted devices) and re-arms mandatory setup rather than leaving it open.
+ *   2. A non-superadmin is refused with NOTHING written — a route that 403s
+ *      after mutating is worse than no route.
+ *   3. The audit trail names both parties; a silent reset is indistinguishable
+ *      from an attacker holding a superadmin session.
+ *   4. Resetting a factor-less user is a safe no-op — that's the state an
+ *      operator retries into after a partial failure.
  */
 
 import { createMockRequest } from '../helpers/utils';
@@ -38,10 +34,6 @@ jest.mock('@/lib/auditLogClient', () => ({
   emitMutation: (...a: unknown[]) => mockEmitMutation(...a),
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
-
-/* -------------------------------------------------------------------------- */
-/*  Auth / kill-switch / rate-limit mocks                                     */
-/* -------------------------------------------------------------------------- */
 
 const mockResolveAuth = jest.fn();
 jest.mock('@/lib/apiAuth.server', () => {
@@ -66,10 +58,6 @@ jest.mock('@/lib/securityConfig.server', () => ({
   },
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Firestore field sentinels                                                 */
-/* -------------------------------------------------------------------------- */
-
 const DELETE_SENTINEL = { __sentinel: 'delete' };
 const SERVER_TIMESTAMP = { __sentinel: 'serverTimestamp' };
 
@@ -80,22 +68,16 @@ jest.mock('firebase-admin/firestore', () => ({
   },
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Firestore mock — a flat path -> data map                                  */
-/* -------------------------------------------------------------------------- */
-
+// Firestore mock — a flat path -> data map.
 type Data = Record<string, unknown>;
 
-/** Every document in the fake database, keyed by full slash-joined path. */
+/** Every doc, keyed by full slash-joined path. */
 const store = new Map<string, Data>();
 
 /** Auto-ids for `collection(...).doc()` with no id (the audit-row writer). */
 let autoIdCounter = 0;
 
-/**
- * Apply a `set`/`update` payload, honoring the two FieldValue sentinels and
- * the `{ merge: true }` flag the inventory module writes with.
- */
+/** Apply a set/update, honoring both FieldValue sentinels and `{ merge: true }`. */
 function applyWrite(path: string, payload: Data, merge: boolean): void {
   const base = merge ? { ...(store.get(path) ?? {}) } : {};
   for (const [key, value] of Object.entries(payload)) {
@@ -137,7 +119,7 @@ function snapshotOf(path: string) {
   };
 }
 
-/** Direct children of a collection path — one more segment, no deeper. */
+/** Direct children only — one more path segment. */
 function childPaths(collectionPath: string): string[] {
   const prefix = `${collectionPath}/`;
   return [...store.keys()].filter(
@@ -183,7 +165,7 @@ function makeCollectionRef(path: string): FakeCollectionRef {
   };
 }
 
-/** Ops queued on a batch; committed together the way Firestore does. */
+/** Ops queued on a batch, committed together as Firestore does. */
 type BatchOp = () => void;
 
 const fakeDb = {
@@ -201,9 +183,9 @@ const fakeDb = {
       },
     };
   },
-  // Reads resolve immediately and writes land on commit of the callback, which
-  // is enough for the inventory module: it performs every read before its
-  // single write, so there is no read-after-write ordering to emulate.
+  // Reads resolve immediately, writes land on callback commit. Enough for the
+  // inventory module — it reads everything before its single write, so there's
+  // no read-after-write ordering to emulate.
   runTransaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
     const pending: BatchOp[] = [];
     const tx = {
@@ -229,15 +211,8 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminStorage: () => ({ bucket: () => ({}) }),
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Imports come AFTER mocks                                                  */
-/* -------------------------------------------------------------------------- */
-
+// Imports come AFTER mocks.
 import { POST } from '@/app/api/users/[uid]/mfa-reset/route';
-
-/* -------------------------------------------------------------------------- */
-/*  Fixtures                                                                  */
-/* -------------------------------------------------------------------------- */
 
 const SUPERADMIN_UID = 'user-superadmin';
 const TARGET_UID = 'user-target';
@@ -247,15 +222,12 @@ function seedUser(uid: string, data: Data): void {
   store.set(`users/${uid}`, data);
 }
 
-/** Authenticate as a session-backed user (no api key -> scope check bypassed). */
+/** Session-backed auth (no api key, so the scope check is bypassed). */
 function authedAs(userId: string): void {
   mockResolveAuth.mockResolvedValue({ userId, keyContext: null });
 }
 
-/**
- * A target holding both factor kinds plus a live trusted device — the account
- * shape a real reset has to dismantle.
- */
+/** Both factor kinds plus a live trusted device — what a real reset dismantles. */
 function seedFullyEnrolledTarget(): void {
   seedUser(TARGET_UID, {
     email: 'locked-out@example.com',
@@ -285,7 +257,7 @@ function reset(uid = TARGET_UID) {
   );
 }
 
-/** The mutation audit events this route emitted, newest call last. */
+/** Mutation audit events, newest last. */
 function mutationEvents(): Array<Record<string, unknown>> {
   return mockEmitMutation.mock.calls.map((call) => call[0] as Record<string, unknown>);
 }
@@ -297,8 +269,6 @@ beforeEach(() => {
   seedUser(SUPERADMIN_UID, { role: 'superadmin', email: 'sa@example.com' });
   authedAs(SUPERADMIN_UID);
 });
-
-/* ========================================================================== */
 
 describe('POST /api/users/{uid}/mfa-reset', () => {
   it('leaves the target with zero factors, setup re-armed, and no trusted devices', async () => {
@@ -318,13 +288,13 @@ describe('POST /api/users/{uid}/mfa-reset', () => {
     });
 
     const target = store.get(`users/${TARGET_UID}`) as Data;
-    // The inventory module owns these three; assert the OUTCOME, not the
-    // mechanism — the route is forbidden from writing them itself.
+    // The inventory module owns these three — the route may not write them
+    // itself, so assert the outcome, not the mechanism.
     expect(target.mfaFactors).toEqual({ totp: false, passkeys: 0 });
     expect(target.mfaEnrolled).toBe(false);
     expect(target.requiresMfaSetup).toBe(true);
 
-    // Nothing usable as a second factor may survive the reset.
+    // Nothing usable as a second factor may survive.
     expect(target.mfaSecret).toBeUndefined();
     expect(target.mfaEnrolledAt).toBeUndefined();
     expect(target.backupCodes).toEqual([]);
@@ -332,7 +302,7 @@ describe('POST /api/users/{uid}/mfa-reset', () => {
     expect(target.mfaResetBy).toBe(SUPERADMIN_UID);
     expect(target.mfaResetAt).toBe('__SERVER_TIMESTAMP__');
 
-    // Credential documents and trust records are gone, not just untallied.
+    // Credentials and trust records deleted, not merely untallied.
     expect(childPaths(`users/${TARGET_UID}/passkeys`)).toEqual([]);
     expect(childPaths(`users/${TARGET_UID}/trustedDevices`)).toEqual([]);
   });
@@ -347,8 +317,8 @@ describe('POST /api/users/{uid}/mfa-reset', () => {
 
     expect(res.status).toBe(403);
 
-    // Every seeded document survives byte-for-byte, and the only new rows are
-    // the wrapper's deny audit — no user-doc write, no credential delete.
+    // Every seeded doc survives byte-for-byte; the only new rows are the
+    // wrapper's deny audit.
     const target = store.get(`users/${TARGET_UID}`) as Data;
     expect(target).toEqual(before.get(`users/${TARGET_UID}`));
     expect(childPaths(`users/${TARGET_UID}/passkeys`)).toHaveLength(2);
@@ -361,7 +331,7 @@ describe('POST /api/users/{uid}/mfa-reset', () => {
 
     await reset();
 
-    // The loud, human-readable row: who did it, to whom, and what was taken.
+    // The human-readable row: who, to whom, what was taken.
     const events = mutationEvents();
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
@@ -381,8 +351,8 @@ describe('POST /api/users/{uid}/mfa-reset', () => {
       setupReArmed: true,
     });
 
-    // …and the capability row the platform wrapper writes, which is what an
-    // auditor queries by capability rather than by verb.
+    // …and the wrapper's capability row, which auditors query by capability
+    // rather than by verb.
     const capabilityRows = childPaths(AUDIT_ENTRIES).map(
       (p) => store.get(p) as Data,
     );
@@ -423,8 +393,7 @@ describe('POST /api/users/{uid}/mfa-reset', () => {
   });
 
   it('refuses a superadmin resetting their own factors', async () => {
-    // Reachable only from a live session, for which `/api/mfa/disable` (live
-    // proof of possession) is the supported path — see the route header.
+    // Live sessions must use `/api/mfa/disable` (proof of possession) instead.
     const res = await reset(SUPERADMIN_UID);
 
     expect(res.status).toBe(403);
@@ -439,9 +408,8 @@ describe('POST /api/users/{uid}/mfa-reset', () => {
   });
 
   it('refuses a soft-deleted target so the delete cascade is not undone', async () => {
-    // `userDeleteCascade` deliberately leaves `requiresMfaSetup` false on a
-    // deleted account; running it through the inventory module would re-arm
-    // the nag on someone who no longer has an account.
+    // `userDeleteCascade` deliberately leaves `requiresMfaSetup` false — the
+    // inventory module would re-arm the nag on a deleted account.
     seedUser(TARGET_UID, {
       email: 'gone@example.com',
       role: 'member',

@@ -118,10 +118,9 @@ class TestSiteName:
     def test_a_rename_is_published_on_the_next_write_not_the_refresh_floor(
         self, tmp_path, monkeypatch
     ):
-        # Writes are throttled by a content signature, so anything left out of
-        # it is invisible for up to MIN_STATUS_WRITE_INTERVAL. A site renamed on
-        # the dashboard reaches this machine on its next reconnect; it should
-        # not then sit in the client for another half-minute.
+        # Writes are throttled by a content signature, so anything left out of it is invisible
+        # for up to MIN_STATUS_WRITE_INTERVAL. A site renamed on the dashboard arrives on the
+        # next reconnect and must not then sit in the client for another half-minute.
         client = FakeFirebaseClient(site_name='TEC')
         service, path = make_service(tmp_path, monkeypatch, client)
         service._write_service_status()
@@ -183,9 +182,9 @@ class TestHealthClearsOnConnect:
     def test_wiring_against_an_already_connected_manager_clears_the_stale_error(
         self, tmp_path, monkeypatch
     ):
-        # The constructor connects before anything is listening — by the time
-        # the listener is wired, the CONNECTED transition has already happened.
-        # This is exactly how the cold-boot probe error used to survive.
+        # The constructor connects before anything is listening, so the CONNECTED transition has
+        # already happened by the time the listener is wired — how the cold-boot probe error
+        # used to survive.
         service, _, path = make_wired_service(
             tmp_path, monkeypatch, ConnectionState.CONNECTED)
 

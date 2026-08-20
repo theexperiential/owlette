@@ -1,36 +1,22 @@
 /**
- * `owlette key list | create`.
+ * `owlette key list | create` — drives GET/POST /api/account/api-keys.
  *
- * Drives:
- *   GET  /api/account/api-keys
- *   POST /api/account/api-keys
+ * Deliberately NOT /api/keys (which the docs used to claim): that route accepts only a
+ * session or Firebase ID token (`requireSessionOrIdToken`), so a CLI holding an `owk_*`
+ * key gets a flat 401. `/api/account/api-keys` is the api-key-compatible surface.
  *
- * Deliberately NOT /api/keys, which the docs used to claim. That route takes a
- * session or Firebase ID token only (`requireSessionOrIdToken`), so a CLI
- * holding an `owk_*` key gets a flat 401 from it. `/api/account/api-keys` is
- * the api-key-compatible surface.
+ * Consequences worth stating plainly:
+ *   - No custom scopes. POST clones the calling key's scopes verbatim
+ *     (`cloneScopes(ctx.auth.keyContext?.scopes)`) — anti-escalation, so the CLI can't
+ *     mint a platform-scoped (`user`, `installer`) key unless the caller already has it.
+ *   - No rotate or revoke: those verbs live on session-authenticated /api/keys/{keyId}.
+ *   - Superadmin only: the route is wrapped in `authorizedPlatformHandler({ capability:
+ *     'GLOBAL_SETTINGS_WRITE' })`, so the calling key needs `user=*:admin`; anything less
+ *     gets 403 `scope_insufficient`.
  *
- * Two consequences the docs must state plainly rather than imply away:
- *
- *   - **No custom scopes.** POST clones the calling key's scopes verbatim
- *     (`cloneScopes(ctx.auth.keyContext?.scopes)`), so a key can never widen
- *     its own privileges. That is an anti-escalation rule, not an oversight —
- *     it also means the CLI cannot mint a platform-scoped (`user`,
- *     `installer`) key unless the calling key already carries that scope.
- *     Use the dashboard for anything broader than what you already hold.
- *   - **No rotate or revoke.** The route implements GET and POST only; those
- *     verbs live on the session-authenticated `/api/keys/{keyId}` routes.
- *   - **Superadmin only.** The route is wrapped in
- *     `authorizedPlatformHandler({ capability: 'GLOBAL_SETTINGS_WRITE' })`, so
- *     the calling key needs `user=*:admin`. Anything less gets
- *     403 `scope_insufficient`. That makes this command a platform-operator
- *     tool, not a general-purpose one — most users manage keys in the
- *     dashboard.
- *
- * `create` prints the raw `owk_*` value exactly once — the server never
- * returns it again. In table mode it is the final line, so
- * `owlette key create --name ci | tail -1` is a usable idiom; `--json`
- * round-trips the whole response for scripting.
+ * `create` prints the raw `owk_*` value exactly once — the server never returns it again.
+ * In table mode it is the last line (`owlette key create --name ci | tail -1`); `--json`
+ * round-trips the whole response.
  */
 
 import { Command } from 'commander';
@@ -69,7 +55,7 @@ export function registerKeyCommand(program: Command): void {
     .command('key')
     .description('manage your own api keys (inherits the calling key\'s scopes)');
 
-  /* -------------------- list -------------------- */
+  /* list */
 
   key
     .command('list')
@@ -118,7 +104,7 @@ export function registerKeyCommand(program: Command): void {
       );
     });
 
-  /* -------------------- create -------------------- */
+  /* create */
 
   key
     .command('create')

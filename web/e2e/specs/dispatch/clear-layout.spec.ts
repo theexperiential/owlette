@@ -1,20 +1,11 @@
 /**
- * Dispatch — clear assigned display layout (D3.2)
+ * Dispatch — clear assigned display layout. Inverse of D3.1 (store).
  *
- * Inverse of D3.1 (store). Pre-seeds an assigned layout on the config
- * doc, then exercises the clear flow:
- *
- *   1. Seed machine + pre-populate
- *      `config/{siteId}/machines/{id}.displays.assigned` with a stub
- *      monitors array so the clear button renders (it's gated on
- *      `hasAssignedLayout`).
- *   2. UI: list view → "view displays" → switch to assigned tab →
- *      click "clear" → confirm dialog "clear assigned layout?" →
- *      confirm.
- *   3. Firestore: useDisplayActions.clearLayout calls deleteField()
- *      on `displays.assigned` — sibling `displays` keys survive.
- *   4. Assert: success toast + assigned tab returns to its empty-state
- *      "store current" CTA + Admin SDK confirms the field is gone.
+ * Pre-seeds `config/{siteId}/machines/{id}.displays.assigned` with a stub
+ * monitors array so the clear button renders (gated on `hasAssignedLayout`),
+ * then drives list view → view displays → assigned tab → clear → confirm.
+ * `useDisplayActions.clearLayout` deleteField()s `displays.assigned` only;
+ * sibling `displays` keys must survive.
  *
  * No agent stub — clearLayout is a pure client-SDK Firestore write.
  */
@@ -32,10 +23,10 @@ const MACHINE_ID = 'e2e-clear-layout-target';
 
 async function seedAssignedLayout() {
   const db = getAdminDb();
-  // Mirror the monitor shape that seedMachine writes to hardware/display
-  // (position {x,y}, resolution {width,height}, primary, etc.). Using the
-  // wrong shape — e.g. positionX/widthPx/isPrimary — made the panel throw
-  // a render error and triggered the global "something went wrong" boundary.
+  // Must mirror the monitor shape seedMachine writes to hardware/display
+  // (position {x,y}, resolution {width,height}, primary). The wrong shape —
+  // positionX/widthPx/isPrimary — makes the panel throw into the global
+  // "something went wrong" boundary.
   await db.collection('config').doc(SITE_ID).collection('machines').doc(MACHINE_ID).set(
     {
       displays: {
@@ -102,8 +93,8 @@ test('admin clears the assigned display layout — deleteField removes it + assi
   // displays may still exist (sibling fields survive), but assigned must be gone.
   expect(data?.displays?.assigned).toBeUndefined();
 
-  // UI: assigned tab now shows the empty-state CTA again — same testid B3.1
-  // covers from the other direction (admin sees it; member doesn't).
+  // Same testid B3.1 covers from the other direction (admin sees it; member
+  // doesn't).
   await expect(panel.getByTestId('display-store-current-button')).toBeVisible();
   // Clear button itself disappears once hasAssignedLayout is false.
   await expect(panel.getByTestId('display-clear-button')).toHaveCount(0);

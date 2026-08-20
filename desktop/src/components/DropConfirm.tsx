@@ -31,20 +31,14 @@ interface DropConfirmProps {
 }
 
 /**
- * What a dropped file is about to become.
+ * What a dropped file is about to become — shown before it is written, because
+ * every field is a derivation (name from the file, executable from whichever
+ * TouchDesigner/python this machine has, cwd from the containing folder). Each
+ * is usually right, and an entry that appears fully-formed gives the operator
+ * no clue which one to check. Nothing reaches disk until this card is accepted.
  *
- * Shown rather than written, because every field on it is a *derivation*: the
- * name came from the file name, the executable from whichever TouchDesigner or
- * python install this machine happens to have, the working directory from the
- * folder the file sits in. Each one is usually right and occasionally not, and
- * an operator who watches an entry appear fully-formed has no idea which of
- * them to check. So the card is the checkpoint — read it, fix the name, add the
- * interpreter it could not find, and only then does anything reach the disk.
- *
- * Editable is exactly the set that can be wrong in a way the operator can fix
- * here: the name always, plus whatever the classifier admits it could not
- * derive. The rest is shown as evidence and edited afterwards in the detail
- * panel, which is a form built for it.
+ * Editable = the name, plus whatever the classifier admits it couldn't derive.
+ * The rest is evidence, edited afterwards in the detail panel.
  */
 export function DropConfirm({
   card,
@@ -169,11 +163,9 @@ export function DropConfirm({
 }
 
 /**
- * A field the classifier worked out.
- *
- * Read-only, so it is labelled with a span rather than a `<label>`: a label
- * with nothing to focus is a promise to assistive tech that this app cannot
- * keep. These are edited in the detail panel once the entry exists.
+ * A classifier-derived field. Read-only, so it uses a span not a `<label>` —
+ * a label with nothing to focus misleads assistive tech. Edited later in the
+ * detail panel.
  */
 function Derived({ value }: { value: string }) {
   return (

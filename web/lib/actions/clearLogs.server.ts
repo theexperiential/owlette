@@ -1,18 +1,10 @@
 /**
- * clearLogs action core (security-boundary-migration wave 3.11).
+ * clearLogs action core — deletes `sites/{siteId}/logs/*` in batches of 500
+ * (Firestore's per-batch limit). Filters mirror the UI dropdowns (action /
+ * machine / level) so clearing a filtered view deletes only what it shows.
  *
- * Mirrors `handleClearLogs` (web/app/logs/page.tsx:529-594): deletes log
- * entries from `sites/{siteId}/logs` in batches of 500 (Firestore's per-
- * batch limit). Optional filters mirror the UI's filter dropdowns
- * (action / machine / level) so a user clearing a *filtered view*
- * deletes only the matching entries, not the whole collection.
- *
- * Public API Wave 2.8:
- *   Destructive log clearing is gated by the site-scoped `SITE_LOGS_MANAGE`
- *   capability, requires an idempotency key at the route boundary, and
- *   requires `all: true` for unfiltered whole-site clears.
- *
- * firestore path: `sites/{siteId}/logs/*`
+ * Gated by the site-scoped `SITE_LOGS_MANAGE` capability; the route boundary
+ * requires an idempotency key, and `all: true` for an unfiltered whole-site clear.
  */
 
 import { Timestamp } from 'firebase-admin/firestore';
@@ -66,8 +58,7 @@ export class ClearLogsValidationError extends Error {
   }
 }
 
-// Hard cap iterations defensively — a site shouldn't have unbounded logs, but a
-// runaway query is the kind of thing we'd rather surface than hang on.
+// Defensive cap — a runaway query should surface, not hang.
 const MAX_ITERATIONS = 1000; // 1000 * 500 = 500k entries — well above any realistic site
 
 export async function clearLogs(
@@ -112,11 +103,10 @@ export async function clearLogs(
 
   // Two index-free strategies:
   //  - No date window: equality filters server-side + batch-delete loop (every
-  //    fetched doc matches, so re-querying from the front terminates). This is
-  //    the unchanged legacy path.
-  //  - Date window: constrain by timestamp range only (single-field index, same
-  //    as the GET handler) and cursor-paginate, applying action/machine/level in
-  //    memory. Avoids the composite indexes an equality+range query would need.
+  //    fetched doc matches, so re-querying from the front terminates).
+  //  - Date window: timestamp range only (single-field index, as the GET handler)
+  //    with cursor pagination and in-memory action/machine/level matching, which
+  //    avoids the composite index an equality+range query would need.
   const deletedCount =
     input.sinceMs !== undefined || input.untilMs !== undefined
       ? await clearByTimestampWindow(db, logsCol, input)
@@ -151,9 +141,8 @@ export async function clearLogs(
 }
 
 /**
- * No date window: equality filters applied server-side, deleted in batches of
- * 500. Every fetched doc matches all filters, so deleting and re-querying from
- * the front always makes progress and terminates.
+ * No date window: equality filters server-side, deleted in batches of 500. Every
+ * fetched doc matches, so re-querying from the front always makes progress.
  */
 async function clearByEqualityFilters(
   db: Firestore,
@@ -181,10 +170,9 @@ async function clearByEqualityFilters(
 }
 
 /**
- * Date window: order by timestamp + apply the range server-side (single-field
- * index), cursor-paginate, and match action/machine/level in memory so we never
- * need composite indexes. The cursor advances past non-matching docs, so the
- * loop terminates even when most rows in the window don't match the filters.
+ * Date window: range applied server-side (single-field index) with cursor
+ * pagination and in-memory filter matching, so no composite index is needed. The
+ * cursor advances past non-matching docs, so the loop terminates regardless.
  */
 async function clearByTimestampWindow(
   db: Firestore,

@@ -1,21 +1,11 @@
 /**
- * Higher-Order Function for Rate Limiting API Routes
+ * Wraps a Next.js route handler with IP- or user-based rate limiting.
  *
- * Wraps Next.js API route handlers with rate limiting logic.
- * Supports both IP-based and user-based rate limiting.
- *
- * Usage:
- * ```typescript
- * export const POST = withRateLimit(
- *   async (request: NextRequest) => {
- *     // Your handler logic
- *     return NextResponse.json({ success: true });
- *   },
- *   {
- *     strategy: 'auth', // or 'tokenExchange', 'tokenRefresh', 'user'
- *     identifier: 'ip', // or 'user' for authenticated endpoints
- *   }
- * );
+ * ```ts
+ * export const POST = withRateLimit(handler, {
+ *   strategy: 'auth',  // 'tokenExchange' | 'tokenRefresh' | 'user'
+ *   identifier: 'ip',  // 'user' for authenticated endpoints
+ * });
  * ```
  */
 
@@ -89,22 +79,14 @@ async function getApiKeyRateLimitIdentifier(request: NextRequest): Promise<strin
 }
 
 /**
- * Rate limit middleware wrapper.
- *
- * Generic over any extra arguments Next.js passes to the route (e.g. the
- * App-Router `context` object containing dynamic-route params). Extra
- * args are forwarded to the handler unchanged.
- *
- * @param handler - The API route handler function
- * @param options - Rate limiting configuration
- * @returns Wrapped handler with rate limiting
+ * Generic over the extra args Next.js passes the route (e.g. the App-Router
+ * `context` with dynamic params); they are forwarded to the handler unchanged.
  */
 export function withRateLimit<TArgs extends unknown[]>(
   handler: (request: NextRequest, ...rest: TArgs) => Promise<NextResponse>,
   options: RateLimitOptions
 ) {
   return async (request: NextRequest, ...rest: TArgs): Promise<NextResponse> => {
-    // Select rate limiter based on strategy
     const ratelimiter =
       options.strategy === 'auth' ? authRateLimit :
       options.strategy === 'signup' ? signupRateLimit :
@@ -116,7 +98,6 @@ export function withRateLimit<TArgs extends unknown[]>(
       options.strategy === 'api' ? apiRateLimit :
       null;
 
-    // Determine identifier (IP or user ID)
     let identifier: string;
     let usedApiKeyIdentifier = false;
 
@@ -138,11 +119,9 @@ export function withRateLimit<TArgs extends unknown[]>(
       identifier = getClientIp(request);
     }
 
-    // Check rate limit
     const result = await checkRateLimit(ratelimiter, identifier);
     const reason = options.reason ?? (usedApiKeyIdentifier ? 'key-rate' : reasonFor(options.strategy, options.identifier));
 
-    // If rate limit exceeded, return 429 response
     if (!result.success) {
       console.warn(`[RateLimit] Rate limit exceeded for ${options.strategy}:`, identifier);
 
@@ -165,11 +144,9 @@ export function withRateLimit<TArgs extends unknown[]>(
       );
     }
 
-    // Rate limit passed, call the handler
     const response = await handler(request, ...rest);
 
-    // Add rate limit headers to successful response (counters only — no
-    // Retry-After or reason on 200s).
+    // Counters only on success — no Retry-After or reason on 200s.
     const headers = getRateLimitHeaders({
       limit: result.limit,
       remaining: result.remaining,
@@ -183,17 +160,14 @@ export function withRateLimit<TArgs extends unknown[]>(
   };
 }
 
-/**
- * Extract user ID from session cookie
- * Use this as the getUserId function for user-based rate limiting
- */
+/** getUserId implementation for user-based rate limiting. */
 export async function getUserIdFromSession(request: NextRequest): Promise<string | null> {
   try {
     const { getSessionFromRequest } = await import('@/lib/sessionManager.server');
     const session = await getSessionFromRequest(request);
     return session.userId || null;
   } catch {
-    // Session reading failed — fall back to IP-based rate limiting
+    // Fall back to IP-based limiting.
     return null;
   }
 }

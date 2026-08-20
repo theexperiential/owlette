@@ -1,50 +1,26 @@
 #!/usr/bin/env node
 /**
- * mfaFactors Inventory Backfill
- *
- * Installs the denormalized second-factor inventory that the universal-2FA
- * work introduces:
+ * mfaFactors Inventory Backfill — installs the denormalized second-factor inventory:
  *
  *   users/{uid}.mfaFactors  = { totp: boolean, passkeys: number }
  *   users/{uid}.mfaEnrolled = mfaFactors.totp || mfaFactors.passkeys > 0
  *
- * `mfaEnrolled` has always meant "has TOTP" — it is the only factor that has
- * ever set it — so the legacy boolean IS the `totp` leg, and the `passkeys`
- * leg is recovered by counting the `users/{uid}/passkeys` subcollection.
- * Without this backfill, every pre-existing passkey user stays outside the
- * inventory and the headline behavior (a passkey counts as a second factor)
- * never activates for them.
+ * Legacy `mfaEnrolled` only ever meant "has TOTP", so it IS the `totp` leg; the `passkeys` leg is
+ * recovered by counting `users/{uid}/passkeys`. Without this, pre-existing passkey users never get
+ * their passkey counted as a second factor.
  *
- * Two modes, because the two writes carry very different risk:
+ *   --mode=inventory-only  DEFAULT. Writes `mfaFactors` only — cannot change who is challenged.
+ *   --mode=full            Also derives `mfaEnrolled`. ONLY after the /verify-2fa passkey challenge
+ *                          ships to the target env; earlier = "MFA required" with nothing to
+ *                          present, i.e. lockout.
  *
- *   --mode=inventory-only   DEFAULT. Writes `mfaFactors` only. Never touches
- *                           `mfaEnrolled` or `requiresMfaSetup`, so it cannot
- *                           change who is challenged at login. Safe to run at
- *                           any point in the rollout.
- *   --mode=full             Also derives `mfaEnrolled` from the inventory,
- *                           which flips a passkey-only user from false to
- *                           true. ONLY run this once the /verify-2fa passkey
- *                           challenge has shipped to the target environment —
- *                           flipping it earlier means "MFA required" with
- *                           nothing the user can present. That is a lockout.
- *
- * `--mode=full` is deliberately promote-only and recovery-gated:
- *
- *   - It never demotes. A user whose stored `mfaEnrolled` is true but whose
- *     inventory derives false is an anomaly, not a downgrade candidate: the
- *     script skips them and reports so an operator can look, rather than
- *     silently removing an MFA requirement.
- *   - It SKIPS any user it would flip to true whose `backupCodes` array is
- *     empty. Marking an account "has 2FA" before it has any recovery path is
- *     the single biggest operational risk in this plan — one lost device and
- *     the account is gone. Those uids are listed in the log with the reason.
- *   - When it does promote, it clears `requiresMfaSetup` in the same write.
- *     `web/lib/mfaFactors.server.ts` owns that field in both directions for
- *     exactly this reason: leaving the nag set on an account that provably
- *     has a factor bounces the user to /setup-2fa forever
- *     (web/app/dashboard/page.tsx:836-841). It never SETS the nag — re-arming
- *     mandatory setup is a user-visible decision that belongs to the runtime
- *     module, not to a bulk migration.
+ * `--mode=full` is promote-only and recovery-gated:
+ *   - Never demotes. stored true + derived false is an anomaly to report, not a downgrade.
+ *   - Skips any promotion where `backupCodes` is empty (no recovery path = one lost device from a
+ *     dead account). Skipped uids land in the log with a reason.
+ *   - Clears `requiresMfaSetup` on promote — leaving the nag set bounces the user to /setup-2fa
+ *     forever (web/app/dashboard/page.tsx:836-841). Never SETS it; that belongs to
+ *     web/lib/mfaFactors.server.ts, not a bulk migration.
  *
  * Usage:
  *   node scripts/backfill-mfa-factors.mjs --project owlette-dev-3838a
@@ -52,30 +28,18 @@
  *   node scripts/backfill-mfa-factors.mjs --project owlette-prod-90a12 --mode=full --commit \
  *        --confirm-project=owlette-prod-90a12
  *
- * DRY RUN IS THE DEFAULT — nothing is written without an explicit `--commit`.
+ * DRY RUN IS THE DEFAULT — nothing is written without `--commit`.
  *
- * Every run (dry or live) writes a machine-readable log to
- * `scripts/backfill-mfa-factors.<projectId>.log.json` recording per-outcome
- * counts, every skipped uid with its reason, and the prior value of each
- * field this script would change. That last part is what makes a manual
- * reversal possible: unlike the arrayUnion in
- * `backfill-site-owner-membership.mjs`, these are scalar overwrites, so the
- * pre-image is the only record of what was there before.
+ * Every run logs to `scripts/backfill-mfa-factors.<projectId>.log.json`: per-outcome counts,
+ * skipped uids with reasons, and the pre-image of every field changed. These are scalar
+ * overwrites, so that pre-image is the only route to a manual reversal.
  *
- * Credentials:
- *   Reads FIREBASE_PROJECT_ID_{DEV|PROD}, FIREBASE_CLIENT_EMAIL_{DEV|PROD},
- *   FIREBASE_PRIVATE_KEY_{DEV|PROD} from the environment, falling back to the
- *   unsuffixed web/.env.local vars. dev and prod are SEPARATE Firebase
- *   projects; unlike the env-flag scripts, this one is handed the exact
- *   project id, so a resolved project that does not match --project is a hard
- *   error rather than a warning.
+ * Credentials: FIREBASE_{PROJECT_ID,CLIENT_EMAIL,PRIVATE_KEY}_{DEV|PROD}, falling back to the
+ * unsuffixed web/.env.local vars. dev and prod are SEPARATE Firebase projects and this script is
+ * handed the exact project id, so a resolved project ≠ --project is a hard error.
+ * web/.env.local, .claude/.env.local and scripts/.env.local are auto-loaded if present.
  *
- *   web/.env.local, .claude/.env.local, and scripts/.env.local are auto-loaded
- *   if present.
- *
- * Firestore rules: no rule change is required for this backfill — see the
- * `rulesReview` block near the bottom of this file, which is also embedded in
- * every log.
+ * No Firestore rule change required — see the `rulesReview` block below, embedded in every log.
  */
 
 import { createRequire } from 'module';
@@ -87,12 +51,9 @@ import readline from 'readline';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-// firebase-admin lives in web/node_modules — resolve it from there so the
-// script runs without a root-level dependency on it.
+// firebase-admin lives in web/node_modules — no root-level dependency on it.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 const admin = require('firebase-admin');
-
-// ---- CLI parsing ------------------------------------------------------------
 
 const args = process.argv.slice(2);
 
@@ -102,9 +63,8 @@ const VALUE_FLAGS = new Set(['project', 'mode', 'log-file', 'confirm-project']);
 const BOOLEAN_FLAGS = new Set(['commit', 'dry-run']);
 
 /**
- * Parse argv into a flag map, rejecting anything unrecognised. A typo like
- * `--dryrun` or `--comit` must never parse as "flag not requested" and fall
- * through to the other branch — for `--commit` that branch writes.
+ * Parse argv, rejecting anything unrecognised: a typo like `--comit` must not parse as "flag not
+ * requested" and fall through to the other branch — for `--commit` that branch writes.
  */
 function parseArgs() {
   const parsed = new Map();
@@ -122,8 +82,7 @@ function parseArgs() {
     if (VALUE_FLAGS.has(name)) {
       let value = inlineValue;
       if (value === undefined) {
-        // Space-separated form. The next token is the value only if it is not
-        // itself a flag; `--mode --commit` must not swallow `--commit`.
+        // Space-separated form: `--mode --commit` must not swallow `--commit`.
         const next = args[i + 1];
         if (next !== undefined && !next.startsWith('--')) {
           value = next;
@@ -140,9 +99,7 @@ function parseArgs() {
     }
 
     if (BOOLEAN_FLAGS.has(name)) {
-      // `getFlag`-style parsing returns the string after `=`, so a bare
-      // `=== true` check silently treats the natural `--commit=true` as OFF.
-      // Accept the bare form, accept explicit true/false, refuse the rest.
+      // A bare `=== true` check would treat the natural `--commit=true` as OFF.
       if (inlineValue === undefined || inlineValue === 'true' || inlineValue === '1') {
         parsed.set(name, true);
       } else if (inlineValue === 'false' || inlineValue === '0') {
@@ -175,10 +132,8 @@ function usage() {
 }
 
 /**
- * The only project ids this script will target, mapped to the credential
- * suffix that addresses them. An allowlist rather than a free-form string:
- * a mistyped project id must fail loudly, not authenticate somewhere
- * unexpected via the unsuffixed fallback credentials.
+ * Targetable project ids → credential suffix. An allowlist, not a free-form string: a mistyped id
+ * must fail loudly, not authenticate somewhere unexpected via the unsuffixed fallback creds.
  */
 const PROJECT_ENVS = new Map([
   ['owlette-dev-3838a', 'dev'],
@@ -203,9 +158,8 @@ if (!PROJECT_ENVS.has(requestedProject)) {
 }
 const env = PROJECT_ENVS.get(requestedProject);
 
-// An absent --mode means the safe default. A PRESENT but unrecognised one is
-// rejected: `--mode=inventory` or `--mode=Full` must not silently fall back to
-// the default and produce a run the operator did not ask for.
+// Absent --mode = safe default; present-but-unrecognised is rejected rather than silently
+// defaulted, so `--mode=Full` can't produce a run the operator did not ask for.
 const mode = flags.has('mode') ? flags.get('mode') : 'inventory-only';
 if (!MODES.has(mode)) {
   console.error(`❌ unknown --mode: ${mode}`);
@@ -223,8 +177,6 @@ const dryRun = !commit;
 
 const logFileArg = flags.get('log-file');
 const confirmProject = flags.get('confirm-project');
-
-// ---- .env loading -----------------------------------------------------------
 
 function loadEnvFile(path) {
   if (!existsSync(path)) return;
@@ -250,8 +202,6 @@ loadEnvFile(join(ROOT, 'web', '.env.local'));
 loadEnvFile(join(ROOT, '.claude', '.env.local'));
 loadEnvFile(join(ROOT, 'scripts', '.env.local'));
 
-// ---- Credentials ------------------------------------------------------------
-
 const suffix = env === 'prod' ? '_PROD' : '_DEV';
 const projectId =
   process.env[`FIREBASE_PROJECT_ID${suffix}`] || process.env.FIREBASE_PROJECT_ID;
@@ -267,9 +217,8 @@ if (!projectId || !clientEmail || !rawPrivateKey) {
   process.exit(1);
 }
 
-// The caller named the project explicitly, so a mismatch between what they
-// asked for and what the resolved credentials actually address is a hard
-// error. The env-flag scripts can only warn here; this one can be certain.
+// The caller named the project explicitly, so resolved-creds ≠ --project is a hard error (the
+// env-flag scripts can only warn).
 if (projectId !== requestedProject) {
   console.error(
     `❌ credential mismatch: --project ${requestedProject} but the resolved credentials ` +
@@ -284,8 +233,6 @@ if (projectId !== requestedProject) {
 
 const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
 
-// ---- Backfill ---------------------------------------------------------------
-
 /** Firestore caps a write batch at 500 operations. */
 const BATCH_LIMIT = 400;
 
@@ -295,18 +242,10 @@ const SCAN_PAGE_SIZE = 500;
 /** How many passkey subcollection counts to run at once. */
 const COUNT_CONCURRENCY = 25;
 
-/**
- * Projects that require a typed confirmation regardless of the --project
- * flag. Gating on the flag alone trusts an argument; this gates on the
- * project the credentials actually resolved to.
- */
+/** Projects needing typed confirmation — gated on the RESOLVED project, not the --project flag. */
 const PROTECTED_PROJECT_IDS = new Set(['owlette-prod-90a12']);
 
-/**
- * The Firestore rules review this task owes, embedded in every log so the
- * finding travels with the run rather than living only in a chat transcript.
- * Checked against firestore.rules at commit 07243fe.
- */
+/** Rules review embedded in every log so it travels with the run. Checked against 07243fe. */
 const rulesReview = {
   ruleChangeRequired: false,
   checked: [
@@ -344,9 +283,7 @@ const rulesReview = {
 
 function promptYesNo(question) {
   return new Promise((resolve) => {
-    // Non-interactive confirmation: the operator must name the exact project
-    // being written to. Deliberate enough that it cannot be typed by accident
-    // or inherited from a stale shell history against the wrong environment.
+    // Non-interactive confirmation: the operator must name the exact project being written to.
     if (confirmProject !== undefined) {
       if (confirmProject === projectId) {
         console.log(`${question}y  (--confirm-project=${confirmProject})`);
@@ -360,8 +297,8 @@ function promptYesNo(question) {
       return;
     }
     if (!process.stdin.isTTY) {
-      // readline's callback never fires on a non-TTY stdin, which would hang
-      // or exit 0 having done nothing. Refuse explicitly instead.
+      // readline's callback never fires on non-TTY stdin — it would hang, or exit 0 having done
+      // nothing. Refuse explicitly.
       console.error(
         '\n❌ confirmation required but stdin is not a TTY.' +
           `\n   re-run interactively, or pass --confirm-project=${projectId}`
@@ -379,16 +316,13 @@ function promptYesNo(question) {
 }
 
 /**
- * Mirror of `normalizeMfaFactors` in web/lib/mfaFactors.server.ts: validate
- * each leg independently, falling back per-leg rather than discarding the
- * whole map. Kept in sync by hand — a .mjs script cannot import the TS module.
+ * Hand-kept mirror of `normalizeMfaFactors` in web/lib/mfaFactors.server.ts (a .mjs script cannot
+ * import the TS module): each leg falls back independently rather than discarding the whole map.
  *
- * - `totp` falls back to the legacy `mfaEnrolled === true`, because TOTP is
- *   the only factor that has ever set that field. The presence of `mfaSecret`
- *   is deliberately NOT treated as enrollment: an in-flight setup keeps its
- *   secret in mfa_pending/{uid}.
- * - `passkeys` is always the real subcollection count here. A stored count is
- *   a cache; the backfill exists to install the truth, so it never trusts it.
+ * - `totp` falls back to legacy `mfaEnrolled === true` — the only factor that ever set it.
+ *   `mfaSecret` is NOT enrollment; an in-flight setup keeps its secret in mfa_pending/{uid}.
+ * - `passkeys` is always the real subcollection count — a stored count is a cache, and this
+ *   backfill exists to install the truth.
  */
 function desiredInventory(userData, passkeyCount) {
   const stored = userData?.mfaFactors;
@@ -427,10 +361,8 @@ async function countPasskeys(db, uid) {
 }
 
 /**
- * Projection of a pending change for the log. Email is printed to the console
- * for the operator's review but kept OUT of the log file: these logs get
- * committed (see the site-owner backfill), and a committed migration log is
- * not the place for a list of user addresses.
+ * Pending change as logged. Email goes to the console but NOT the log file — these logs get
+ * committed, and a committed migration log is no place for a list of user addresses.
  */
 function forLog({ uid, update, before }) {
   return { uid, update, before };
@@ -451,10 +383,8 @@ async function mapWithConcurrency(items, limit, worker) {
 }
 
 /**
- * Page through `users/*`, projecting only the fields this script reads. The
- * projection keeps the scan cheap on a large collection and guarantees the
- * script never pulls a secret it has no business holding (mfaSecret, in
- * particular, is not selected).
+ * Page through `users/*`, projecting only the fields read — keeps the scan cheap and guarantees
+ * the script never pulls a secret it has no business holding (notably mfaSecret).
  */
 async function scanUsers(db) {
   const users = [];
@@ -518,8 +448,7 @@ async function main() {
       continue;
     }
 
-    // The delete cascade tears these accounts down deliberately; re-stamping
-    // MFA state onto them would partially reverse that.
+    // The delete cascade tore these down deliberately; re-stamping MFA state partially undoes it.
     if (typeof data.deletedAt === 'number') {
       skipped.push({ uid, reason: 'soft-deleted' });
       continue;
@@ -540,8 +469,8 @@ async function main() {
     if (mode === 'full') {
       if (derived && !storedEnrolled) {
         if (!hasBackupCodes) {
-          // The mandatory safety gate. Flipping the switch before the account
-          // has any recovery path turns one lost device into a lost account.
+          // Mandatory gate: promoting before any recovery path exists turns one lost device into
+          // a lost account.
           skipped.push({
             uid,
             reason: 'no-backup-codes',
@@ -556,9 +485,8 @@ async function main() {
         before.mfaEnrolled = data.mfaEnrolled ?? null;
         promotionPreview.push({ uid, factors: desired });
       } else if (!derived && storedEnrolled) {
-        // Promote-only: an account claiming enrollment with nothing in the
-        // inventory is an anomaly for a human to look at, not something a
-        // bulk migration should quietly downgrade.
+        // Promote-only: claimed enrollment with an empty inventory is an anomaly for a human, not
+        // something a bulk migration should quietly downgrade.
         skipped.push({
           uid,
           reason: 'would-demote',
@@ -568,8 +496,7 @@ async function main() {
         continue;
       }
     } else if (derived && !storedEnrolled) {
-      // inventory-only never writes mfaEnrolled, but the operator needs to
-      // know the size of the --mode=full step before they take it.
+      // inventory-only never writes mfaEnrolled, but the operator needs the size of the full step.
       promotionPreview.push({ uid, factors: desired, hasBackupCodes });
     }
 
@@ -665,26 +592,23 @@ async function main() {
   };
 
   /**
-   * Never silently clobber the record of a live run. These are scalar
-   * overwrites, so a committed log holds the only pre-image of what the
-   * fields used to be; a later dry run landing on the same canonical path
-   * would otherwise destroy it.
+   * Never clobber a live run's log: these are scalar overwrites, so the committed log holds the
+   * only pre-image, and a later dry run on the same path would destroy it.
    */
   function writeLog() {
     if (existsSync(logPath)) {
       try {
         const existing = JSON.parse(readFileSync(logPath, 'utf8'));
         if (existing?.dryRun === false && Array.isArray(existing.applied) && existing.applied.length > 0) {
-          // A custom --log-file need not end in `.log.json`, in which case the
-          // substitution is a no-op and the rename would silently self-cancel.
+          // A custom --log-file need not end in `.log.json`; then the substitution is a no-op and
+          // the rename would silently self-cancel.
           const substituted = logPath.replace(/\.log\.json$/, '.prev.log.json');
           const backup = substituted === logPath ? `${logPath}.prev` : substituted;
           renameSync(logPath, backup);
           console.log(`preserved previous committed log as ${backup}`);
         }
       } catch {
-        // An unparseable log is not a reason to abort the run; the fresh log
-        // is about to replace it either way.
+        // An unparseable log isn't worth aborting for; the fresh log replaces it either way.
       }
     }
     writeFileSync(logPath, JSON.stringify(logDoc, null, 2));
@@ -718,9 +642,8 @@ async function main() {
     }
   }
 
-  // Write the log BEFORE committing: if the process dies mid-run, this file
-  // is the only record of what was intended and of the pre-images. Entries
-  // move into `applied` as batches land.
+  // Write the log BEFORE committing — if the process dies mid-run it is the only record of intent
+  // and pre-images. Entries move into `applied` as batches land.
   writeLog();
   console.log(`log: ${logPath}\n`);
 

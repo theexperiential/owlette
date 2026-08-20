@@ -4,12 +4,10 @@
  *
  * TalonEditorDialog — the trigger | condition | outputs pipeline.
  *
- * A render smoke rather than a full behavioural suite: the rules this editor
- * enforces belong to `@/lib/talons/validation`, which has its own tests. What
- * is asserted here is the wiring the validator can't cover — that the three
- * stages mount, that switching trigger type swaps the stage's contents, that
- * the outputs list stops at `TALON_MAX_OUTPUTS`, and that a validator error
- * lands on the input that earned it instead of a toast.
+ * Wiring only; the rules live in `@/lib/talons/validation` with its own tests.
+ * Asserts what the validator can't: the three stages mount, switching trigger
+ * type swaps stage contents, the outputs list stops at `TALON_MAX_OUTPUTS`, and
+ * a validator error lands on the input that earned it rather than a toast.
  */
 import React from 'react';
 import { render, screen, within } from '@testing-library/react';
@@ -25,8 +23,8 @@ global.ResizeObserver = class {
   disconnect() {}
 };
 
-// jsdom has no matchMedia. `matches: false` reports a coarse pointer, which
-// puts DayPillSelector on its plain click-to-toggle path.
+// jsdom has no matchMedia; `matches: false` = coarse pointer, which puts
+// DayPillSelector on its plain click-to-toggle path.
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
   value: jest.fn().mockImplementation((query: string) => ({
@@ -57,9 +55,8 @@ jest.mock('@/lib/toast', () => ({
 }));
 
 /**
- * The preset hook is mocked wholesale: its Firestore listener and the shipped
- * built-in catalog belong to their own units, and what this file is testing is
- * what the picker DOES with a template — hydration and the payload it cuts.
+ * Preset hook mocked wholesale — its Firestore listener and built-in catalog
+ * are their own units. Under test here: what the picker DOES with a template.
  */
 const mockCreatePreset = jest.fn(async () => 'talon-saved-1');
 const mockUpdatePreset = jest.fn(async () => undefined);
@@ -82,9 +79,8 @@ const MACHINES = [
 ];
 
 /**
- * A template carries no `scope` and no `enabled` — that is the whole point of
- * the shape, and the hydration test below proves the editor does not invent
- * either from the preset.
+ * A template carries no `scope` and no `enabled` — the point of the shape. The
+ * hydration test below proves the editor invents neither.
  */
 const OVERNIGHT_TEMPLATE = {
   id: 'builtin-overnight-restart',
@@ -106,20 +102,16 @@ const OVERNIGHT_TEMPLATE = {
 };
 
 /**
- * Every error message on screen, in dom order. Both surfaces use role="alert" —
- * the inline paragraphs each card renders, and the footer summary — so this
- * catches a message printed twice no matter which two places print it.
+ * Every error message in dom order. Both surfaces use role="alert" (inline card
+ * paragraphs + footer summary), so a message printed twice is caught either way.
  */
 function errorTexts(): string[] {
   return screen.queryAllByRole('alert').map((el) => el.textContent?.trim() ?? '');
 }
 
 /**
- * The SAVE requests a fetch spy saw, ignoring the editor's read-only probes.
- *
- * Opening the editor in create mode reads whether the current user has an llm
- * key (to annotate the template picker), so "nothing was submitted" can no
- * longer be expressed as "fetch was never called" — only writes count.
+ * SAVE requests only, ignoring read-only probes: create mode reads the user's
+ * llm-key state, so "nothing was submitted" can't mean "fetch never called".
  */
 function saveCalls(fetchSpy: jest.Mock): unknown[][] {
   return fetchSpy.mock.calls.filter(([url]) => String(url).includes('/talons'));
@@ -229,8 +221,8 @@ describe('TalonEditorDialog', () => {
     await selectHootOutput(user);
     await user.click(screen.getByTestId('talon-editor-save'));
 
-    // The regression: the directive message printed under the textarea AND
-    // again under "add output", because the outputs list matched by prefix.
+    // Regression: prefix matching on the outputs list printed the directive
+    // message under the textarea AND again under "add output".
     const texts = errorTexts();
     expect(texts.filter((text) => text === 'tell hoot what to do when this talon fires')).toHaveLength(1);
     expect(new Set(texts).size).toBe(texts.length);
@@ -252,11 +244,9 @@ describe('TalonEditorDialog', () => {
     expect(errorTexts()).toContain('give this talon a name');
     expect(errorTexts()).toContain('tell hoot what to do when this talon fires');
 
-    // Paste rather than type: what's under test is that correcting a field
-    // clears its error, not per-keystroke behaviour, and 33 keystrokes across a
-    // now-heavier editor (preset picker + cooldown control) pushed this past
-    // jest's default timeout under full-suite worker contention. Same reason
-    // the delay test pastes its name.
+    // Paste, don't type: 33 keystrokes on this editor blew jest's default
+    // timeout under full-suite worker contention, and per-keystroke behaviour
+    // isn't what's under test here.
     await user.click(screen.getByRole('textbox', { name: 'name' }));
     await user.paste('overnight restart');
     expect(errorTexts()).not.toContain('give this talon a name');
@@ -309,9 +299,8 @@ describe('TalonEditorDialog', () => {
     const user = userEvent.setup();
     renderEditor();
 
-    // Paste the name (one input event) — per-keystroke typing here pushed the
-    // test past jest's default timeout under full-suite worker contention.
-    // Keystroke realism stays where it's under test: the delay field.
+    // Paste (one input event) — typing blew jest's default timeout under
+    // full-suite contention. Keystroke realism stays on the delay field.
     await user.click(screen.getByRole('textbox', { name: 'name' }));
     await user.paste('check the wall after a restart');
     await user.click(screen.getByTestId('trigger-type'));
@@ -406,12 +395,10 @@ describe('TalonEditorDialog', () => {
     expect(screen.queryByTestId('talon-template-save')).not.toBeInTheDocument();
   });
 
-  /* --- a met requirement is not a requirement -----------------------------
-   *
-   * The picker used to print "needs an ai key" on every ai template whatever
-   * the operator had configured — the copy only varied when the key was known
-   * to be MISSING, so having one and having none read identically, and every ai
-   * template sat under "needs a detail" for the people best equipped to run it.
+  /*
+   * A met requirement is not a requirement. The picker used to print "needs an
+   * ai key" on every ai template regardless of config, so having a key and
+   * having none read identically.
    */
 
   const AI_TEMPLATE = { ...OVERNIGHT_TEMPLATE, requires: ['llm_key'] as const };
@@ -456,8 +443,8 @@ describe('TalonEditorDialog', () => {
     const user = userEvent.setup();
     renderEditor();
 
-    // Narrow the scope first, so "all machines" afterwards is the template
-    // resetting it rather than the create-mode default never having moved.
+    // Narrow the scope first, so a later "all machines" proves the template
+    // reset it rather than the default never having moved.
     await user.click(screen.getByRole('checkbox', { name: 'all machines' }));
     await user.click(screen.getByRole('checkbox', { name: /lobby wall/ }));
     expect(screen.getByRole('checkbox', { name: 'all machines' })).not.toBeChecked();
@@ -496,8 +483,8 @@ describe('TalonEditorDialog', () => {
     await user.click(screen.getByRole('textbox', { name: 'name' }));
     await user.paste('restart the lobby loop');
 
-    // A command output bound to a real process id — the per-machine identifier
-    // a template must not carry.
+    // Bound to a real process id — the per-machine identifier a template must
+    // never carry.
     await user.click(screen.getByLabelText('output 1 type'));
     await user.click(await screen.findByRole('option', { name: 'command' }));
     await user.click(screen.getByLabelText('output 1 process'));
@@ -517,8 +504,8 @@ describe('TalonEditorDialog', () => {
     expect(template.outputs).toEqual([{ type: 'command', commandType: 'restart_process' }]);
     expect(template.cooldownMinutes).toBe(60);
 
-    // Nothing site-specific and nothing armed survives the round trip, at any
-    // depth — a nested `scope` would be just as wrong as a top-level one.
+    // Nothing site-specific or armed survives, at any depth — a nested `scope`
+    // is as wrong as a top-level one.
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain('scope');
     expect(serialized).not.toContain('enabled');
@@ -547,8 +534,7 @@ describe('TalonEditorDialog', () => {
     await user.click(screen.getByTestId('talon-template-save'));
     await user.click(screen.getByTestId('talon-template-submit'));
 
-    // Case-insensitive, and checked against the merged list so a built-in
-    // counts — nothing is created until the operator says so.
+    // Case-insensitive against the merged list, so a built-in counts.
     expect(mockCreatePreset).not.toHaveBeenCalled();
     expect(
       screen.getByText(/template “overnight restart” already exists\. replace it\?/),

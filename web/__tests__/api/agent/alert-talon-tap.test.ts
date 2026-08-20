@@ -1,22 +1,15 @@
 /** @jest-environment node */
 
 /**
- * Talon-tap placement tests for `POST /api/agent/alert`.
- *
- * The route taps the talon matcher for every authorized event it accepts —
- * EXCEPT display events. Display talons are fired by the firestore trigger in
- * `functions/src/talonLogEvents.ts` off the agent's `sites/{siteId}/logs`
- * write, which every agent performs whether or not it also posts here. Tapping
- * in both places would double-run every display talon on an agent new enough
- * to send the alert (3.0.0+, when `send_display_alert` regained its call
- * sites).
- *
- * These tests pin that asymmetry: display in, no tap; process in, tap.
+ * Talon-tap placement for `POST /api/agent/alert`: the route taps the matcher for every authorized
+ * event EXCEPT display events, which `functions/src/talonLogEvents.ts` already fires off the
+ * agent's `sites/{siteId}/logs` write. Tapping both would double-run every display talon on a
+ * 3.0.0+ agent. These tests pin the asymmetry — display in, no tap; process in, tap.
  */
 
 import { createMockRequest } from '../helpers/utils';
 
-// --- Mocks (declared before importing the route) -----------------------------
+// Mocks — declared before importing the route.
 
 const tapTalonMatcherMock = jest.fn();
 const fireWebhooksMock = jest.fn().mockResolvedValue(undefined);
@@ -29,7 +22,7 @@ const siteDocRef = {
   get: async () => ({ data: () => ({ name: 'test site' }) }),
   collection: (name: string) => {
     if (name === 'logs') return { add: siteLogsAdd };
-    // `machines` — read by the local-Hoot probe on the process branch.
+    // Read by the local-Hoot probe on the process branch.
     if (name === 'machines') {
       return { doc: () => ({ get: async () => ({ exists: false, data: () => undefined }) }) };
     }
@@ -59,9 +52,8 @@ jest.mock('@/lib/withRateLimit', () => ({
   withRateLimit: (h: unknown) => h,
 }));
 
-// No Upstash in unit tests: both limiters resolve to null upstream, which the
-// route reads as "limiter unavailable, let it through". Mirrored explicitly so
-// the test doesn't depend on the ambient env.
+// No Upstash in unit tests: both limiters resolve null, which the route reads as "let it
+// through". Mirrored explicitly so the test doesn't depend on ambient env.
 jest.mock('@/lib/rateLimit', () => ({
   checkRateLimit: jest.fn(async () => ({ success: true })),
   processAlertRateLimit: null,
@@ -88,8 +80,7 @@ jest.mock('@/app/api/unsubscribe/route', () => ({
   generateUnsubscribeToken: () => 'unsub-token',
 }));
 
-// The matcher itself is covered by `__tests__/lib/talons/matcher.test.ts`;
-// here only whether the route reaches it matters.
+// The matcher itself is covered by `__tests__/lib/talons/matcher.test.ts`.
 jest.mock('@/lib/talons/matcher.server', () => ({
   tapTalonMatcher: (...args: unknown[]) => tapTalonMatcherMock(...args),
 }));
@@ -100,8 +91,6 @@ jest.mock('@sentry/nextjs', () => ({
 }));
 
 import { POST as alertPOST } from '@/app/api/agent/alert/route';
-
-// --- Helpers -----------------------------------------------------------------
 
 const SITE = 'site-a';
 const MACHINE = 'machine-1';
@@ -126,11 +115,8 @@ beforeEach(() => {
   delete process.env.CORTEX_INTERNAL_SECRET;
 });
 
-// --- Tests -------------------------------------------------------------------
-
 describe('POST /api/agent/alert — talon tap', () => {
   it.each([
-    // one from each routing tier: email+webhook, webhook-only, dashboard-only
     ['display_monitor_removed'],
     ['display_drift'],
     ['display_apply_succeeded'],
@@ -185,11 +171,9 @@ describe('POST /api/agent/alert — talon tap', () => {
   });
 
   it('taps the matcher for an unregistered display_* event (generic branch)', async () => {
-    // `display_apply_acked` has no `DISPLAY_EVENT_ROUTING` entry, so it is not
-    // a display event by the route's definition and no talon can subscribe to
-    // it. The tap is harmless (the matcher short-circuits an event outside the
-    // catalog) — asserted here so the skip stays scoped to the ten routed
-    // types rather than the `display_` prefix.
+    // `display_apply_acked` has no `DISPLAY_EVENT_ROUTING` entry, so it isn't a display event by
+    // the route's definition and nothing can subscribe to it. Asserted so the skip stays scoped to
+    // the ten routed types rather than the `display_` prefix.
     const res = await post({ eventType: 'display_apply_acked', data: { applyId: 'a1' } });
 
     expect(res.status).toBe(200);

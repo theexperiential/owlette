@@ -1,22 +1,14 @@
 /** @jest-environment node */
 
 /**
- * `/api/mfa/factors` — the read-only inventory the account-settings security
- * panel renders.
- *
- * Three properties are worth pinning down, and they are the three that would
- * hurt if they regressed:
- *
- *   1. **The uid comes from the session.** The route takes no parameters at
- *      all, so no `?userId=` (or body field) can point it at another account.
- *   2. **No secret ever reaches the response.** `mfaSecret`, the hashed
- *      `backupCodes` and the stored credential public keys all live on the
- *      documents this route reads; a careless spread would ship them to the
- *      browser.
- *   3. **A legacy user document still reports TOTP.** Accounts written before
- *      `mfaFactors` existed only have `mfaEnrolled: true`. `normalizeMfaFactors`
- *      is deliberately NOT mocked here so that fallback is exercised for real
- *      rather than asserted against a stub that always agrees.
+ * `/api/mfa/factors` — the read-only inventory the security panel renders.
+ * Three properties worth pinning:
+ *   1. The uid comes from the session — no `?userId=` can retarget it.
+ *   2. No secret reaches the response: `mfaSecret`, hashed `backupCodes`, and
+ *      credential public keys all live on the docs this route reads.
+ *   3. A legacy doc (only `mfaEnrolled: true`) still reports TOTP.
+ *      `normalizeMfaFactors` is deliberately NOT mocked so that fallback runs
+ *      for real instead of against a stub that always agrees.
  */
 
 const mockRequireSession = jest.fn();
@@ -34,8 +26,8 @@ jest.mock('@/lib/withRateLimit', () => ({
 }));
 
 jest.mock('@/lib/apiAuth.server', () => {
-  // Defined inline because the factory is hoisted ABOVE module-scope code
-  // by jest — top-level classes aren't yet initialised here.
+  // Inline: jest hoists the factory above module scope, so top-level classes
+  // aren't initialised yet.
   class ApiAuthError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -58,8 +50,8 @@ jest.mock('@/lib/webauthn.server', () => ({
   getPasskeyListInfo: (...a: unknown[]) => mockGetPasskeyListInfo(...a),
 }));
 
-// `lib/mfaFactors.server.ts` is left real (see the header) — it only needs the
-// admin handle to exist at import time, never to be called on this path.
+// mfaFactors.server.ts stays real; it only needs the admin handle to exist at
+// import time, never to be called here.
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => {
     throw new Error('mfa/factors must not touch Firestore directly');
@@ -97,7 +89,7 @@ describe('GET /api/mfa/factors', () => {
     });
     mockGetPasskeyListInfo.mockResolvedValue([PASSKEY]);
 
-    // A hostile `userId` in the query string must be ignored outright.
+    // A hostile `?userId=` must be ignored outright.
     const res = await GET(
       createMockRequest('/api/mfa/factors?userId=someone-else'),
     );

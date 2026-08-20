@@ -25,13 +25,9 @@ import {
 } from '@/lib/apiKeyTypes';
 
 /**
- * The preset picker and custom-scope builder, shared by create and edit.
- *
- * Extracted from ApiKeyCreateForm when scope editing landed. Both surfaces
- * must offer exactly the same expressive range: the server validates a PATCH
- * with the same code it validates a POST with, so a builder that could only
- * express a subset on edit would strand keys in states the UI could create but
- * not correct. The markup is the create form's, moved unchanged.
+ * Preset picker and custom-scope builder, shared by create and edit. Both surfaces must offer the
+ * same expressive range — the server validates PATCH with the same code as POST, so a narrower
+ * edit builder would strand keys in states the UI can create but not correct.
  */
 
 export type ScopeSelection = ApiKeyScopePreset | 'custom';
@@ -51,18 +47,14 @@ export function resolveScopes(preset: ScopeSelection, customScopes: ApiKeyScope[
 }
 
 /**
- * What the custom builder should be seeded with when the selection changes.
- * Returns null when nothing needs re-seeding.
+ * Seed for the custom builder when the selection changes; null when no re-seed is needed.
  *
- * Entering `custom` from a named preset carries that preset's scopes in, so
- * the switch refines the current selection instead of resetting it. Without
- * this, choosing `operator` and then `custom` silently replaced 4 scopes and
- * 16 grants with one unrelated `site` row — and the word "operator" left the
- * screen at the same instant, so nothing contradicted the belief that you were
- * adding to it. It passed every validator and the server returned 200.
+ * Entering `custom` from a named preset carries that preset's scopes in, so the switch refines
+ * rather than resets. Without it, operator → custom silently replaced 4 scopes and 16 grants with
+ * one unrelated `site` row, passed every validator, and returned 200.
  *
- * Re-seeding only happens on the way IN to custom. Picking a named preset while
- * already in custom is an explicit "replace my selection", and is left alone.
+ * Only on the way IN to custom — picking a named preset while already in custom is an explicit
+ * "replace my selection".
  */
 export function customScopesForSelection(
   next: ScopeSelection,
@@ -72,9 +64,8 @@ export function customScopesForSelection(
   if (next !== 'custom' || current === 'custom') return null;
   return resolveScopes(current, customScopes).map((s) => ({
     ...s,
-    // SCOPE_PRESETS entries are module-level singletons and wildcardScopes
-    // hands one permissions array to all four rows of a preset — the builder
-    // mutates what it is given, so this must be a copy.
+    // SCOPE_PRESETS entries are module-level singletons and wildcardScopes shares one permissions
+    // array across all four rows; the builder mutates what it is given, so copy.
     permissions: [...s.permissions],
   }));
 }
@@ -104,11 +95,8 @@ function sameScopes(a: ApiKeyScope[], b: ApiKeyScope[]): boolean {
 }
 
 /**
- * Which selection an existing key's scopes correspond to.
- *
- * A key minted from a preset should reopen showing that preset, not its
- * expanded form as sixteen custom checkboxes — otherwise every edit silently
- * converts a preset key into a custom one.
+ * Which selection an existing key's scopes correspond to. A preset-minted key must reopen as that
+ * preset, not sixteen custom checkboxes — otherwise every edit converts it to a custom key.
  */
 export function presetForScopes(scopes: ApiKeyScope[] | null): ScopeSelection {
   if (!scopes || scopes.length === 0) return 'custom';
@@ -209,8 +197,7 @@ export function ApiKeyScopeFields({
           {customScopes.map((s, i) => (
             <div
               key={i}
-              /* Stacks below sm: at 390px a fixed 110px select beside the id
-                 input leaves ~180px, which is not enough for a scope id. */
+              /* Stacks below sm: at 390px a 110px select leaves ~180px for the id — too narrow. */
               className="grid grid-cols-1 sm:grid-cols-[110px_1fr_auto] gap-2 items-start rounded border border-border/50 bg-card/40 p-2"
             >
               <Select

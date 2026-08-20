@@ -1,19 +1,12 @@
 /**
- * Refresh tokens rotate on every successful refresh — but ONLY for
- * agents >= 2.12.0 that know how to persist the rotated token from the
- * response. Older agents discard the rotated token and keep using the
- * old one, which would lose auth ~5 min after the first rotation (when
- * the supersession grace window expires).
- *
- * To stage the rollout safely we gate on `X-Owlette-Agent-Version`:
- *   - 2.12.0+ → rotate (current behaviour); response includes refreshToken
- *   - older   → legacy behaviour; just bump lastUsed on the existing token;
- *               response omits refreshToken (matches pre-rotation contract)
- *   - missing/malformed → legacy (fail-safe — assume old agent)
- *
- * Superseded token docs remain readable for a 5-minute grace window so
- * 2.12.0+ clients can retry after a lost response without losing their
- * session.
+ * Refresh-token rotation is gated on `X-Owlette-Agent-Version` because agents
+ * < 2.12.0 discard the rotated token and would lose auth ~5 min later, when the
+ * supersession grace expires.
+ *   2.12.0+            → rotate; response carries refreshToken
+ *   older / malformed  → legacy: bump lastUsed only, no refreshToken in the
+ *                        response (fail-safe: assume old agent)
+ * Superseded docs stay readable for a 5-minute grace so 2.12.0+ clients can
+ * retry a lost response without losing their session.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
@@ -52,23 +45,17 @@ function timestampToMillis(value: unknown): number | undefined {
 }
 
 /**
- * Parse a dotted-numeric semver prefix into a [major, minor, patch] tuple.
- * Strips suffixes like "-rc.1" or "+build.123" — only the leading
- * numeric segments are compared.
- *
- * Returns null when the input is missing/malformed (treated as "old agent"
- * by callers — fail-safe to no-rotation behaviour).
+ * Dotted-numeric semver prefix → [major, minor, patch]; suffixes like "-rc.1"
+ * or "+build.123" are stripped. null when missing/malformed (callers treat that
+ * as an old agent — fail-safe to no rotation).
  */
 export function parseAgentVersion(
   version: string | null | undefined,
 ): [number, number, number] | null {
   if (!version || typeof version !== 'string') return null;
   const stripped = version.split(/[-+]/)[0];
-  // Each segment MUST be a non-empty pure-digit string. Number.parseInt
-  // is too permissive — parseInt('0junk', 10) returns 0, which would let
-  // strings like '2.12.0junk' or '2.12beta' parse as [2,12,0] and enable
-  // rotation on an unsupported agent. The whole point of this gate is to
-  // be conservative; reject anything that isn't strictly digits-and-dots.
+  // Segments must be pure digits: Number.parseInt('0junk', 10) === 0 would let
+  // '2.12.0junk' parse as [2,12,0] and enable rotation on an unsupported agent.
   const parts = stripped
     .split('.')
     .map((p) => (/^\d+$/.test(p) ? Number.parseInt(p, 10) : NaN));
@@ -77,10 +64,7 @@ export function parseAgentVersion(
   return [parts[0], parts[1], parts[2] ?? 0];
 }
 
-/**
- * Decide whether to rotate the refresh token for the supplied agent
- * version header. See file-level docstring for the rollout rationale.
- */
+/** Rotation gate for the supplied agent-version header; see file docstring. */
 export function shouldRotateRefreshToken(
   agentVersion: string | null | undefined,
 ): boolean {
@@ -94,38 +78,19 @@ export function shouldRotateRefreshToken(
 }
 
 /**
- * POST /api/agent/auth/refresh
+ * POST /api/agent/auth/refresh — exchange a refresh token for a fresh access
+ * token (custom tokens expire after 1 hour).
  *
- * Refresh an expired access token using a refresh token.
- * Custom tokens expire after 1 hour, so agents must refresh periodically.
+ * Body: { refreshToken, machineId }. Header `X-Owlette-Agent-Version` gates
+ * rotation (see file docstring).
+ * 200: { accessToken, expiresIn: 3600, refreshToken? (>= 2.12.0 only) }
+ * 400 missing fields | 401 invalid/expired | 403 machineId mismatch |
+ * 429 rate limited (20/hr/IP) | 500 server error.
  *
- * Request body:
- * - refreshToken: string - Long-lived refresh token from initial exchange
- * - machineId: string - Machine identifier (for validation)
- *
- * Request headers:
- * - X-Owlette-Agent-Version: string - Agent semver (gates refresh-token rotation;
- *   see file-level docstring). Missing/malformed → legacy non-rotation path.
- *
- * Response (200 OK):
- * - accessToken: string - New OAuth 2.0 access token for Firestore API (1 hour expiry)
- * - refreshToken: string - New rotated refresh token (only present when agent >= 2.12.0)
- * - expiresIn: number - Access token expiry in seconds (3600)
- *
- * Errors:
- * - 400: Missing required fields
- * - 401: Invalid refresh token, or expired (if token has expiresAt set)
- * - 403: Machine ID mismatch (security check)
- * - 429: Rate limit exceeded (20 requests per hour per IP)
- * - 500: Server error
- *
- * Note: Tokens without expiresAt field never expire (for long-duration installations)
- *
- * SECURITY: Rate limited to prevent token refresh spam
+ * Tokens without `expiresAt` never expire — deliberate, for long-lived installs.
  */
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
-    // Parse request body
     const body = await request.json();
     const { refreshToken, machineId } = body;
 
@@ -136,29 +101,26 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Decide rotation behaviour from the agent-version header. Old agents
-    // (< 2.12.0) don't persist a rotated token and would die ~5 min after
-    // their first refresh, so they stay on the legacy non-rotation path
-    // until they auto-update via the installer.
+    // Old agents (< 2.12.0) don't persist a rotated token and would die ~5 min
+    // after their first refresh, so they stay on the legacy path until they
+    // auto-update.
     const agentVersionHeader = request.headers.get('x-owlette-agent-version');
     const willRotate = shouldRotateRefreshToken(agentVersionHeader);
 
-    // Hash the refresh token (stored hashed for security)
+    // Tokens are stored hashed.
     const crypto = await import('crypto');
     const refreshTokenHash = crypto.createHash('sha256')
       .update(refreshToken)
       .digest('hex');
-    // Pre-generate the rotated token even when we won't use it — keeps the
-    // transaction body branch-free for the inner critical section and the
-    // crypto cost is negligible.
+    // Pre-generated even when unused: keeps the transaction's critical section
+    // branch-free, and the crypto cost is negligible.
     const newRefreshToken = crypto.randomBytes(64).toString('base64url');
     const newRefreshTokenHash = crypto.createHash('sha256')
       .update(newRefreshToken)
       .digest('hex');
 
-    // Validate refresh token and (when willRotate) rotate it atomically
-    // via transaction. This prevents concurrent refresh requests from
-    // creating inconsistent state.
+    // Validate and (when willRotate) rotate atomically — concurrent refreshes
+    // must not produce inconsistent state.
     const adminDb = getAdminDb();
     const tokenRef = adminDb.collection('agent_refresh_tokens').doc(refreshTokenHash);
     const newTokenRef = adminDb.collection('agent_refresh_tokens').doc(newRefreshTokenHash);
@@ -179,10 +141,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         const now = Date.now();
 
         // Firestore requires ALL reads before ANY write in a transaction, so
-        // read the rotation-related docs up front (before the conditional
-        // deletes/updates below). predecessorHash is the back-pointer written
-        // when THIS token was minted (see the rotation branch) — the hash of
-        // the doc this token superseded, our garbage-collection candidate.
+        // read the rotation docs up front. `predecessorHash` is the back-pointer
+        // written when THIS token was minted — the GC candidate.
         const predecessorHash = tokenData?.predecessorHash;
         const gcCandidateRef =
           willRotate &&
@@ -192,8 +152,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
           predecessorHash !== newRefreshTokenHash
             ? adminDb.collection('agent_refresh_tokens').doc(predecessorHash)
             : null;
-        // Only read the new-token slot when rotating — saves a read for
-        // legacy refresh-no-rotate calls.
+        // Only read the new-token slot when rotating.
         const newTokenDoc = willRotate ? await transaction.get(newTokenRef) : null;
         const gcCandidateDoc = gcCandidateRef ? await transaction.get(gcCandidateRef) : null;
 
@@ -201,7 +160,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
           throw new Error('Refresh token hash collision');
         }
 
-        // Check expiry (tokens without expiresAt never expire — by design for long-duration installations)
+        // No expiresAt → never expires (long-duration installs).
         const expiresAt = timestampToMillis(tokenData?.expiresAt);
 
         if (expiresAt && expiresAt < now) {
@@ -215,7 +174,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
           return { error: 'Invalid refresh token', status: 401 } as const;
         }
 
-        // Verify machine ID matches (prevent token theft)
+        // Machine-ID check: a stolen token is useless on another machine.
         if (tokenData?.machineId !== machineId) {
           console.warn(
             `Machine ID mismatch for refresh token: ` +
@@ -250,30 +209,22 @@ export const POST = withRateLimit(async (request: NextRequest) => {
             createdAt: FieldValue.serverTimestamp(),
             lastUsed: FieldValue.serverTimestamp(),
             agentUid: txAgentUid,
-            // Back-pointer to the token this one supersedes. On the NEXT
-            // rotation this lets us delete this (by then retired) doc,
-            // bounding the collection to ~2 docs per machine instead of
-            // leaking one dead doc per hourly refresh forever.
+            // Back-pointer for the NEXT rotation's GC, bounding the collection
+            // to ~2 docs per machine instead of leaking one per hourly refresh.
             predecessorHash: refreshTokenHash,
           });
 
-          // Garbage-collect the predecessor doc that the current token
-          // superseded when it was minted — but ONLY if it is provably dead
-          // (superseded past its 5-minute grace, or expired). Rotation
-          // cadence is NOT enforced: agent restarts, or a service + GUI
-          // sharing one stored credential, can rotate twice within the grace
-          // window, so we must VERIFY the predecessor is retired rather than
-          // assume a full cycle elapsed. Using the same isTokenDead predicate
-          // as the admin prune path guarantees we can never delete a token an
-          // agent could still legitimately present (which would 401 it into
-          // wiping its local credentials). Idempotent if already gone.
+          // GC the predecessor, but ONLY if provably dead. Rotation cadence is
+          // NOT assumed: agent restarts, or service + GUI sharing one
+          // credential, can rotate twice inside the grace window. Reusing
+          // isTokenDead (same predicate as the admin prune) guarantees we never
+          // delete a token an agent could still present — that would 401 it into
+          // wiping its local credentials. Idempotent if already gone.
           if (gcCandidateDoc && gcCandidateDoc.exists && isTokenDead(gcCandidateDoc.data(), now)) {
             transaction.delete(gcCandidateDoc.ref);
           }
         } else {
-          // Legacy agent — keep the same token alive by bumping lastUsed.
-          // No supersession, no new doc; the agent's stored refresh token
-          // continues to work indefinitely as before 2.12.0.
+          // Legacy agent: keep the same token alive, no supersession.
           transaction.update(tokenRef, {
             lastUsed: FieldValue.serverTimestamp(),
           });
@@ -298,11 +249,10 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Generate new Firebase Custom Token for agent (outside transaction — safe, idempotent)
+    // Outside the transaction — idempotent.
     const adminAuth = getAdminAuth();
 
-    // CRITICAL: Ensure custom claims are set on the user account
-    // This guarantees the claims persist across token refreshes
+    // Re-set claims each refresh so they survive on the user account.
     await adminAuth.setCustomUserClaims(agentUid, {
       role: 'agent',
       site_id: siteId,
@@ -317,8 +267,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       version,
     });
 
-    // Exchange custom token for ID token (required for Firestore REST API)
-    // This uses Firebase Auth REST API to convert the custom token
+    // Firestore REST needs an ID token, so exchange the custom token for one.
     const firebaseApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
     if (!firebaseApiKey) {
       throw new Error('Firebase API key not configured');
@@ -339,10 +288,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     const authData = await authResponse.json();
-    const idToken = authData.idToken; // This token now has the custom claims
-
-    // Refresh token rotation (when willRotate) was already completed
-    // atomically inside the transaction above.
+    const idToken = authData.idToken;
 
     logger.info(
       `Token refreshed: site=${siteId}, machine=${machineId}, ` +
@@ -353,8 +299,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       {
         accessToken: idToken,
         expiresIn: 3600, // 1 hour in seconds
-        // Only include the rotated refresh token for agents that asked for it
-        // (>= 2.12.0). Legacy agents keep using their original token.
+        // Only >= 2.12.0 agents persist it; legacy keeps its original token.
         ...(willRotate ? { refreshToken: newRefreshToken } : {}),
       },
       { status: 200 }

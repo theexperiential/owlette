@@ -22,9 +22,9 @@ interface ManageUserSitesDialogProps {
   userRole: UserRole;
   userSites: string[];
   /**
-   * Everyone on the platform, so the removal flow can offer a successor for
-   * the talons this user wrote. Already loaded by the users page; passing it
-   * down avoids a second listener on a superadmin-only collection.
+   * Everyone on the platform, so removal can offer a successor for this user's
+   * talons. Passed down from the users page to avoid a second listener on a
+   * superadmin-only collection.
    */
   allUsers?: readonly TalonSuccessorUser[];
   onAssignSite: (userId: string, siteId: string) => Promise<void>;
@@ -58,15 +58,14 @@ export function ManageUserSitesDialog({
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null);
   const [successorUid, setSuccessorUid] = useState<string>(NO_SUCCESSOR);
 
-  // Local state for optimistic UI updates
   const [localUserSites, setLocalUserSites] = useState<string[]>(userSites);
 
-  // Sync local state with prop changes (when dialog reopens with fresh data)
+  // Re-sync when the dialog reopens with fresh data.
   useEffect(() => {
     setLocalUserSites(userSites);
   }, [userSites]);
 
-  // Reset search when dialog closes
+  // Reset search when the dialog closes.
   useEffect(() => {
     if (!open) {
       setSearchQuery('');
@@ -87,7 +86,6 @@ export function ManageUserSitesDialog({
   const handleAssignSite = async (siteId: string) => {
     setAssigningTo(siteId);
 
-    // Optimistically update UI immediately
     setLocalUserSites(prev => [...prev, siteId]);
 
     try {
@@ -108,13 +106,9 @@ export function ManageUserSitesDialog({
   };
 
   /**
-   * Ask about the talons first.
-   *
-   * Removing site access is a one-click action today, and for anyone who wrote
-   * a talon with an AI step it silently breaks that automation — the run
-   * re-resolves the AUTHOR's access, not the operator's. So the click now
-   * looks the damage up before it does anything, and only goes straight
-   * through when there is none.
+   * Ask about the talons first: a talon run re-resolves its AUTHOR's site access,
+   * so removing access silently breaks any automation they wrote. Look the damage
+   * up before acting, and go straight through only when there is none.
    */
   const handleRemoveSiteClick = async (siteId: string, siteName: string) => {
     setRemovingFrom(siteId);
@@ -139,7 +133,6 @@ export function ManageUserSitesDialog({
   const removeSite = async (siteId: string) => {
     setRemovingFrom(siteId);
 
-    // Optimistically update UI immediately
     setLocalUserSites(prev => prev.filter(id => id !== siteId));
 
     try {
@@ -192,7 +185,6 @@ export function ManageUserSitesDialog({
     await removeSite(siteId);
   };
 
-  // Filter sites based on search query
   const filterSites = (siteList: typeof sites) => {
     if (!searchQuery.trim()) return siteList;
     const query = searchQuery.toLowerCase();

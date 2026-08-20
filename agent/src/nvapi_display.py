@@ -65,12 +65,10 @@ _query_interface = None
 _initialized = False
 _func_cache: dict = {}
 
-# Protects one-time init and _func_cache mutations across threads.
-# The main service loop and the metrics loop both call into this module
-# concurrently, so check-then-set on _initialized and cache writes must
-# be serialised. Reads use double-checked locking to keep the hot path lock-free.
-# Reentrant because _initialize() (holding the lock) calls _bind() →
-# _nvapi_query_interface(), which re-acquires the same lock.
+# Serialises one-time init and _func_cache writes: the service loop and the
+# metrics loop call in concurrently. Reads use double-checked locking so the hot
+# path stays lock-free. Reentrant because _initialize() holds it while _bind() ->
+# _nvapi_query_interface() re-acquires it.
 _init_lock = threading.RLock()
 
 
@@ -79,9 +77,7 @@ def _make_version(struct_size: int, version: int) -> int:
     return (struct_size << 16) | version
 
 
-# ---------------------------------------------------------------------------
 # ctypes structures
-# ---------------------------------------------------------------------------
 
 class NV_MOSAIC_TOPO_BRIEF(Structure):
     _fields_ = [
@@ -191,9 +187,7 @@ NV_GPU_DISPLAYIDS_VER = _make_version(sizeof(NV_GPU_DISPLAYIDS), 3)
 NV_GSYNC_STATUS_PARAMS_VER = _make_version(sizeof(NV_GSYNC_STATUS_PARAMS), 1)
 
 
-# ---------------------------------------------------------------------------
 # DLL + QueryInterface bootstrap
-# ---------------------------------------------------------------------------
 
 def _load_dll():
     """Load nvapi64.dll if present. Returns the handle or None."""
@@ -226,11 +220,11 @@ def _nvapi_query_interface(function_id: int):
     """
     if _query_interface is None:
         return None
-    # Fast path — dict.get is atomic under the GIL for a single key lookup.
+    # dict.get is atomic under the GIL for a single key
     if function_id in _func_cache:
         return _func_cache[function_id]
     with _init_lock:
-        # Re-check: another thread may have resolved this while we waited.
+        # another thread may have resolved this while we waited
         if function_id in _func_cache:
             return _func_cache[function_id]
         try:
@@ -272,7 +266,7 @@ def _initialize() -> bool:
         return NVAPI_AVAILABLE
 
     with _init_lock:
-        # Re-check: another thread may have completed init while we waited.
+        # another thread may have finished init while we waited
         if _initialized:
             return NVAPI_AVAILABLE
 
@@ -301,13 +295,11 @@ def _initialize() -> bool:
         return True
 
 
-# Initialize at import so module-level NVAPI_AVAILABLE is meaningful immediately.
+# at import, so module-level NVAPI_AVAILABLE is immediately meaningful
 _initialize()
 
 
-# ---------------------------------------------------------------------------
 # Public API
-# ---------------------------------------------------------------------------
 
 def detect_mosaic():
     """Return current NVIDIA Mosaic topology, or None if unavailable/inactive.
@@ -331,7 +323,7 @@ def detect_mosaic():
         return None
 
     try:
-        # First, read the brief topology to know whether Mosaic is enabled.
+        # brief topology tells us whether Mosaic is enabled
         get_current_topo = _bind(
             _FUNC_NvAPI_Mosaic_GetCurrentTopo,
             c_int,
@@ -362,7 +354,6 @@ def detect_mosaic():
             except Exception as e:
                 logger.warning('NvAPI_Mosaic_GetCurrentTopo raised: %s', e)
 
-        # Query grid count first, then fetch that many.
         count = c_uint32(0)
         try:
             status = enum_display_grids(None, byref(count))
@@ -403,7 +394,7 @@ def detect_mosaic():
             composite_h = cell_h * rows if cell_h and rows else 0
 
             members = []
-            # NVAPI lays out displays in row-major order.
+            # NVAPI display layout is row-major
             for idx in range(display_count):
                 d = g.displays[idx]
                 if cols > 0:
@@ -506,9 +497,8 @@ def detect_sync():
         devices = []
         for i in range(count.value):
             handle = handles[i]
-            # Device identity: use the handle address as a stable-within-process ID.
-            # The real NVAPI device ID would require NvAPI_GSync_GetTopology, which
-            # is out of scope here — the handle pointer is sufficient for reporting.
+            # Handle address as a stable-within-process id; the real device id needs
+            # NvAPI_GSync_GetTopology, which is out of scope for reporting.
             dev_id = int(ctypes.cast(handle, c_void_p).value or 0)
 
             master = False
@@ -519,7 +509,7 @@ def detect_sync():
                 try:
                     st = get_status(handle, byref(params))
                     if st == NVAPI_OK:
-                        # House sync / refresh presence implies the sync board is locked.
+                        # house sync / refresh presence implies the sync board is locked
                         locked = bool(params.refreshRate) or bool(params.bHouseSync)
                         master = bool(params.bHouseSync)
                     else:

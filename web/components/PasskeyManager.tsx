@@ -22,33 +22,26 @@ interface PasskeyManagerProps {
   userId: string;
   compact?: boolean;
   /**
-   * Fired after a passkey is registered or deleted, so a parent showing the
-   * account's whole factor inventory can re-read it. Without this the counts
-   * beside a nested passkey list go stale the moment one is added or removed —
-   * `usePasskeys` refreshes its own rows and nothing else.
-   *
-   * OPTIONAL at the type level on purpose: /setup-2fa renders this component
-   * with no interest in the callback and must keep compiling untouched.
+   * Fired after register/delete so a parent showing the whole factor inventory
+   * can re-read it — `usePasskeys` refreshes only its own rows, so the parent's
+   * counts would otherwise go stale. Optional: /setup-2fa doesn't pass it.
    */
   onChange?: () => void;
   /**
-   * Fired when registration was refused by the enrollment gate (403
-   * `mfa_challenge_required`) rather than by the authenticator. The parent owns
-   * the recovery — offering a step-up — because the challenge covers every
-   * factor, not just passkeys. Omitted by callers that have no such affordance;
-   * the friendly sentence is toasted either way, so nothing is swallowed.
+   * Fired when the enrollment gate refuses registration (403
+   * `mfa_challenge_required`), not the authenticator. The parent owns recovery
+   * because the challenge covers every factor. Optional — the message is
+   * toasted regardless, so nothing is swallowed.
    */
   onChallengeRequired?: () => void;
   /**
-   * True when the account holds exactly one second factor overall — i.e. the
-   * single passkey below is it. Only a parent that can see the TOTP leg knows
-   * this, so it is passed in rather than inferred from `passkeys.length`.
+   * The account holds exactly one second factor overall. Passed in rather than
+   * inferred from `passkeys.length` — only a parent sees the TOTP leg.
    *
-   * It changes the copy on the remove dialog and NOTHING else. Removing the
-   * last factor is an approved outcome: the account re-arms `requiresMfaSetup`
-   * and the user is asked to enroll again. Never turn this into a disabled
-   * button — a user must always be able to remove a credential they no longer
-   * hold.
+   * Changes the remove-dialog copy and NOTHING else. Removing the last factor
+   * is approved: the account re-arms `requiresMfaSetup`. Never make this
+   * disable the button — a user must always be able to remove a credential
+   * they no longer hold.
    */
   isLastFactor?: boolean;
 }
@@ -306,7 +299,6 @@ export function PasskeyManager({
         </CardContent>
       </Card>
 
-      {/* Delete confirmation dialog */}
       <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent className="border-border bg-secondary text-white sm:max-w-sm">
           <DialogHeader>
@@ -316,7 +308,7 @@ export function PasskeyManager({
               you won&apos;t be able to sign in with this passkey anymore.
             </DialogDescription>
           </DialogHeader>
-          {/* Warn, then proceed. The removal itself is never blocked. */}
+          {/* Warn, never block — removal is always allowed. */}
           {isLastFactor && passkeys.length === 1 && (
             <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />

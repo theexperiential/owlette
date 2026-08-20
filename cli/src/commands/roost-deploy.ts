@@ -10,16 +10,14 @@
  *     dryRun?,
  *   }
  *
- * dry-run returns the server-computed plan (canary / fleet split +
- * resolved extractRoot + versionUrl) without writing anything. A real
- * deploy creates the rollout doc + queues `sync_pull` commands for the
- * canary wave. scheduleAt with a future time stores a `scheduled`
- * rollout that the wave-4 sweeper will kick off later.
+ * dry-run returns the server-computed plan (canary/fleet split, resolved
+ * extractRoot + versionUrl) and writes nothing. A real deploy creates the
+ * rollout doc and queues `sync_pull` for the canary wave; a future
+ * `scheduleAt` stores a `scheduled` rollout for the sweeper.
  *
- * Propagates the optional `Idempotency-Key` header — safe because the
- * server's idempotency layer caches the 201 response for 24h, so a
- * retry on network timeout returns the original plan instead of
- * accidentally starting a second rollout.
+ * Sends `Idempotency-Key`: the server caches the 201 for 24h, so a retry after
+ * a network timeout replays the original plan instead of starting a second
+ * rollout.
  */
 
 import { Command } from 'commander';
@@ -126,9 +124,8 @@ export function registerRoostDeployCommand(program: Command): void {
       if (opts.idempotencyKey) {
         headers['Idempotency-Key'] = idempotencyKey!;
       } else if (idempotencyKey) {
-        // Auto-key non-dry-run deploys so an accidental retry (network
-        // blip, ctrl-c → rerun) doesn't create a second rollout. Dry
-        // runs don't mutate anything, so no caching benefit there.
+        // Auto-key real deploys so a retry cannot create a second rollout. Dry
+        // runs mutate nothing, so there is nothing to cache.
         headers['Idempotency-Key'] = idempotencyKey;
       }
 
@@ -172,9 +169,7 @@ export function registerRoostDeployCommand(program: Command): void {
     });
 }
 
-/* --------------------------------------------------------------------- */
-/*  formatter                                                            */
-/* --------------------------------------------------------------------- */
+// formatter
 
 function formatDeployResult(r: DeployResponse, roostId: string): string {
   const lines: string[] = [];

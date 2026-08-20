@@ -1,9 +1,6 @@
 /**
- * Stop Hook — Build Checker
- *
- * After Claude responds, checks session-edits.json for recently edited files.
- * Runs TypeScript check for web/ changes, Python syntax check for agent/ changes.
- * Reports errors back to Claude.
+ * Stop hook: reads session-edits.json and runs `tsc` for web/ edits, a python
+ * syntax check for agent/ edits, reporting failures back to Claude.
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs'
@@ -15,20 +12,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const SESSION_FILE = join(__dirname, '..', 'session-edits.json')
 const PROJECT_ROOT = join(__dirname, '..', '..')
 
-// Read stdin (Stop hook receives empty or minimal input)
+// Stop hooks get empty/minimal stdin; drained so the pipe closes cleanly.
 let input = ''
 for await (const chunk of process.stdin) {
   input += chunk
 }
 
 try {
-  // Read recently edited files
   const editedFiles = getEditedFiles()
   if (editedFiles.length === 0) {
     process.exit(0)
   }
 
-  // Determine affected repos
   const hasWeb = editedFiles.some(f => f.includes('/web/') || f.includes('\web\'))
   const hasAgent = editedFiles.some(f => f.includes('/agent/') || f.includes('\agent\'))
 
@@ -39,7 +34,6 @@ try {
   const results = []
   let hasErrors = false
 
-  // Run web build check
   if (hasWeb) {
     try {
       execSync('npx tsc --noEmit', {
@@ -60,7 +54,6 @@ try {
     }
   }
 
-  // Run agent build check
   if (hasAgent) {
     const agentFiles = editedFiles
       .filter(f => f.includes('/agent/') || f.includes('\agent\'))
@@ -98,7 +91,6 @@ try {
     }))
   }
 
-  // Clear session file after checking
   if (existsSync(SESSION_FILE)) {
     writeFileSync(SESSION_FILE, '[]')
   }
@@ -113,7 +105,6 @@ function getEditedFiles() {
   if (!existsSync(SESSION_FILE)) return []
   try {
     const entries = JSON.parse(readFileSync(SESSION_FILE, 'utf-8'))
-    // Deduplicate by path
     const seen = new Set()
     return entries
       .map(e => e.path)

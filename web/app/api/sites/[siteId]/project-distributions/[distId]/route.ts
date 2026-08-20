@@ -1,16 +1,11 @@
 /**
- * GET    /api/sites/{siteId}/project-distributions/{distId}
- *        → fetch full distribution detail incl. per-target status array.
- *          Requires `site=<id>:read`.
+ * GET    — distribution detail incl. per-target status. Scope `site=<id>:read`.
+ * DELETE — 409 unless the distribution is terminal and no target is pre-flight.
+ *          Scope `site=<id>:write` plus an `Idempotency-Key` header.
  *
- * DELETE /api/sites/{siteId}/project-distributions/{distId}
- *        → delete a distribution doc. Refuses 409 unless the distribution
- *          is in a terminal state and no target is still pre-flight.
- *          Requires `site=<id>:write` and an `Idempotency-Key` header.
- *
- * Mirror of `/api/sites/{siteId}/deployments/{deploymentId}`, specialised
- * for the project-distribution surface (security-boundary-migration wave 3.4).
- * Action core: `web/lib/actions/deleteDistribution.server.ts`.
+ * Mirrors `/api/sites/{siteId}/deployments/{deploymentId}` for the
+ * project-distribution surface. Action core:
+ * `web/lib/actions/deleteDistribution.server.ts`.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -27,10 +22,6 @@ import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import { deleteDistribution } from '@/lib/actions/deleteDistribution.server';
 
 type RouteParams = { siteId: string; distId: string };
-
-/* --------------------------------------------------------------------- */
-/*  GET — distribution detail                                            */
-/* --------------------------------------------------------------------- */
 
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'DISTRIBUTION_MANAGE',
@@ -85,10 +76,6 @@ export const GET = authorizedSiteHandler<RouteParams>({
     return problemFromError(err, 'sites/[siteId]/project-distributions/[distId]:GET');
   }
 });
-
-/* --------------------------------------------------------------------- */
-/*  DELETE — terminal-only delete                                        */
-/* --------------------------------------------------------------------- */
 
 export const DELETE = authorizedSiteHandler<RouteParams>({
   capability: 'DISTRIBUTION_MANAGE',

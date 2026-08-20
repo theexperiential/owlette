@@ -28,7 +28,7 @@ except Exception as exc:  # pragma: no cover - environment guard
     pytest.skip(f"configure_site import failed: {exc}", allow_module_level=True)
 
 
-# ─── helpers ────────────────────────────────────────────────────────────────
+# helpers
 
 
 def _args(**overrides):
@@ -62,7 +62,7 @@ def _parser_args(argv):
     return mode.call_args.args[0]
 
 
-# ─── flag parsing ───────────────────────────────────────────────────────────
+# flag parsing
 
 
 class TestFlagParsing:
@@ -101,7 +101,7 @@ class TestFlagParsing:
         assert _events(capsys) == [{'event': 'error', 'value': 'boom'}]
 
 
-# ─── the line protocol ──────────────────────────────────────────────────────
+# the line protocol
 
 
 class TestEmit:
@@ -122,7 +122,7 @@ class TestEmit:
         assert json.loads(raw)['value'].endswith('check the network')
 
 
-# ─── --json-progress ────────────────────────────────────────────────────────
+# --json-progress
 
 
 class TestJsonProgress:
@@ -184,9 +184,7 @@ class TestJsonProgress:
 
     def test_reports_a_service_it_could_not_restart(self, capsys):
         # Stopping the service needs SERVICE_STOP, which a standard user lacks.
-        # Pairing still succeeded, so this is reported rather than raised — the
-        # caller turns it into "restart the service from the tray menu to
-        # finish".
+        # Pairing still succeeded, so it is reported rather than raised.
         def fake_flow(**kwargs):
             kwargs['on_phrase']({'pairPhrase': 'a-b-c'})
             return (True, 'Configuration successful', 'site-abc')
@@ -221,7 +219,7 @@ class TestJsonProgress:
         assert _events(capsys) == [{'event': 'status', 'value': 'waiting for authorization'}]
 
 
-# ─── --leave ────────────────────────────────────────────────────────────────
+# --leave
 
 
 class TestLeaveSite:
@@ -276,9 +274,9 @@ class TestLeaveSite:
         document.delete.assert_called_once()
 
     def test_addresses_the_site_captured_before_the_config_was_blanked(self, capsys):
-        # owlette_gui.on_leave_site_click read site_id back out of the config it
-        # had just cleared, so its delete addressed `sites//machines/{host}` and
-        # removed nothing. The site is captured up front here.
+        # owlette_gui.on_leave_site_click read site_id back out of the config it had
+        # just cleared, so its delete addressed `sites//machines/{host}` and removed
+        # nothing. The site is captured up front here.
         config = json.loads(json.dumps(self.CONFIG))
         with patch.object(configure_site.shared_utils, 'load_config', return_value=config), \
              patch.object(configure_site.shared_utils, 'save_config'), \
@@ -334,7 +332,7 @@ class TestLeaveSite:
         host.assert_not_called()
 
 
-# ─── --report-issue ─────────────────────────────────────────────────────────
+# --report-issue
 
 
 class TestReportIssue:
@@ -400,7 +398,7 @@ class TestReportIssue:
         assert configure_site._normalize_report_category(raw) == expected
 
 
-# ─── --reboot-now / --dismiss-reboot ────────────────────────────────────────
+# --reboot-now / --dismiss-reboot
 
 
 class TestRebootModes:
@@ -488,7 +486,7 @@ class TestRebootModes:
         assert 'not authenticated' in _events(capsys)[-1]['value']
 
 
-# ─── the installer path is untouched ────────────────────────────────────────
+# the installer path is untouched
 
 
 class TestInteractivePathUnchanged:
@@ -522,7 +520,7 @@ class TestInteractivePathUnchanged:
         ]
 
 
-# ─── service host helper ────────────────────────────────────────────────────
+# service host helper
 
 
 class TestServiceHostHelper:

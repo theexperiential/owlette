@@ -1,55 +1,23 @@
 /**
- * MFA Disable API
+ * POST /api/mfa/disable — server-mediated MFA disable for the session's own user.
  *
- * Server-mediated disable of MFA on the current user's account. Because
- * Wave 1B locked the user-doc write rules so a client can no longer mutate
- * `mfaEnrolled` / `mfaSecret` / `backupCodes` from the browser console
- * (see `firestore.rules` — diff().affectedKeys().hasOnly([...]) allowlist),
- * the only path to disable MFA is through this admin-SDK route.
+ * Wave 1B locked the user-doc write rules (firestore.rules affectedKeys allowlist),
+ * so `mfaEnrolled` / `mfaSecret` / `backupCodes` can no longer be mutated from a
+ * client; this admin-SDK route is the only authorized path. There is no `userId`
+ * parameter — the session decides the account. Rate-limited 10/min/IP.
  *
- * POST /api/mfa/disable
- * Request: { code: string, isBackupCode?: boolean }
- *   - `code` must be either:
- *       a current TOTP code from the user's authenticator (default), OR
- *       a valid backup code (set `isBackupCode: true`).
- *   - Session cookie must be authenticated AND match the userId encoded
- *     in the session — there is no `userId` parameter, the route always
- *     operates on the session's own user.
- *   - Rate-limited via the shared `auth` strategy (10 req / min / IP).
+ * Request: { code: string, isBackupCode?: boolean } → { success, backupCodeUsed }
+ * 400 bad code / not enrolled · 401 no session · 404 no user doc · 500 no MFA key.
  *
- * Response (200):
- *   {
- *     "success": true,
- *     "backupCodeUsed": boolean
- *   }
+ * Flow: verify the factor → `applyMfaFactorChange` drops the TOTP leg, clears
+ * secret + backup codes and stamps `mfaDisabledAt` in ONE write (it also owns
+ * `mfaEnrolled` / `requiresMfaSetup`: an account still holding passkeys stays
+ * enrolled, one dropping to zero factors is re-armed into mandatory setup) →
+ * re-mint the session via `markSessionMfaDisabled` so the user isn't bounced to
+ * /verify-2fa → emit a `user_mutated` audit row (platform tenant, no siteId).
  *
- * Failure modes:
- *   - 400 missing/invalid code, MFA not enrolled, bad backup code.
- *   - 401 no valid session.
- *   - 404 user document not found (shouldn't happen for a valid session).
- *   - 500 MFA encryption key not configured (operator misconfiguration).
- *
- * On success, this route:
- *   1. Verifies the supplied factor (TOTP or backup code).
- *   2. Drops the TOTP leg of the factor inventory via
- *      `applyMfaFactorChange`, which clears `mfaSecret` / `backupCodes` and
- *      stamps `mfaDisabledAt` in the SAME write. It also owns `mfaEnrolled`
- *      and `requiresMfaSetup`: an account that still holds passkeys stays
- *      enrolled, and one dropping to zero factors is re-armed straight back
- *      into mandatory setup (`requiresMfaSetup` re-armed to true).
- *   3. Re-mints the session cookie via `markSessionMfaDisabled` so the
- *      user is not immediately bounced to /verify-2fa (the just-completed
- *      proof of possession satisfies the gate).
- *   4. Emits a `user_mutated` audit row with verb `mfa_disabled` so the
- *      event is captured even though the platform-tenant has no siteId.
- *
- * SECURITY:
- *   - Admin SDK bypasses Firestore rules (rules block this write from any
- *     client-mediated path). This is intentional: the rule is the safety
- *     net; this route is the only authorized way to flip those fields.
- *   - No re-auth shortcut: the user must prove the second factor every
- *     time. If they've lost both TOTP and all backup codes, account
- *     recovery is a manual support process.
+ * No re-auth shortcut: the second factor is proven every time. Losing both TOTP
+ * and every backup code means manual support recovery.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -95,9 +63,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // The session is authoritative for which user we're operating on — we
-    // intentionally do NOT accept a userId from the request body, so this
-    // route can never be redirected against another account.
+    // The session is authoritative — no userId from the body, so this route can
+    // never be redirected against another account.
     const userId = await requireSession(request);
 
     const userData = await assertActiveUser(userId);
@@ -127,10 +94,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         if (idx === -1) {
           return { ok: false, reason: 'no_match' as const };
         }
-        // We're about to wipe backupCodes anyway in the disable-write
-        // below, but consume the code inside the transaction so a
-        // mid-flight crash between verification and the wipe doesn't
-        // leave the backup code re-usable.
+        // Consume inside the transaction so a crash between verification and the
+        // disable-write below can't leave the backup code re-usable.
         const remaining = codes.filter((_, i) => i !== idx);
         tx.update(userRef, { backupCodes: remaining });
         return { ok: true } as const;
@@ -178,15 +143,11 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       }
     }
 
-    // Verified. Tear down the TOTP factor in a single write so partial
-    // failure can't leave the user still flagged as enrolled with a deleted
-    // `mfaSecret` (which would make verify-login error out and lock the user
-    // out of their own account). The inventory module owns `mfaEnrolled` and
-    // `requiresMfaSetup` and derives both from what's left: an account that
-    // still holds passkeys stays enrolled, and one that just lost its only
-    // factor is re-armed into mandatory setup. That re-arm is deliberate —
-    // removing the last factor is always allowed, and the account goes
-    // straight back to the /setup-2fa nag rather than silently losing 2FA.
+    // Single write so partial failure can't leave the user enrolled with a deleted
+    // `mfaSecret` — verify-login would then error and lock them out. The inventory
+    // module derives `mfaEnrolled` / `requiresMfaSetup` from what remains: dropping
+    // the last factor is always allowed and re-arms the /setup-2fa nag rather than
+    // silently losing 2FA.
     const factorResult = await applyMfaFactorChange(
       userId,
       { totp: false },
@@ -199,15 +160,13 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       },
     );
 
-    // Re-mint the session. The user just proved possession of a factor,
-    // so we keep them signed in without forcing a re-challenge against
-    // an MFA configuration that no longer exists.
+    // The user just proved possession, so keep them signed in instead of
+    // re-challenging against an MFA configuration that no longer exists.
     await markSessionMfaDisabled();
 
-    // Purge every trusted-device record so a later re-enroll can't inherit
-    // stale trust. These records are already unusable once mfaEnrolled=false
-    // (trust is only consulted when mfaRequired === true), so a revocation
-    // failure must never block the disable — log and continue with count 0.
+    // Purge trusted-device records so a later re-enroll can't inherit stale trust.
+    // They're already unusable once mfaEnrolled=false, so a revocation failure must
+    // never block the disable.
     let trustedDevicesRevoked = 0;
     try {
       trustedDevicesRevoked = await revokeAllTrustedDevices(userId);
@@ -215,8 +174,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       console.error('[MFA Disable] failed to revoke trusted devices', revokeError);
     }
 
-    // Audit. Platform-tenant mutation (siteId = '') so the cloud function
-    // records it on the platform partition, not under any specific site.
+    // Platform-tenant mutation (siteId = '') — recorded on the platform partition.
     emitMutation({
       kind: 'user_mutated',
       siteId: '',
@@ -229,16 +187,14 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         factor: 'totp',
         factorUsed: useBackup ? 'backup_code' : 'totp',
         trustedDevicesRevoked,
-        // What the account is left with — a passkey-only account is still
-        // MFA-enrolled after this, and only a drop to zero re-arms the nag.
+        // A passkey-only account stays enrolled; only a drop to zero re-arms the nag.
         passkeysEnrolled: factorResult.factors.passkeys,
         stillEnrolled: factorResult.mfaEnrolled,
         setupReArmed: factorResult.requiresMfaSetup,
       },
     });
 
-    // Expire the device-trust cookie so the just-revoked token can't linger
-    // in the browser (the server-side records are gone; clear the client too).
+    // Expire the device-trust cookie; the server-side records are already gone.
     const response = NextResponse.json({ success: true, backupCodeUsed });
     response.cookies.set(DEVICE_TRUST_COOKIE, '', {
       ...deviceTrustCookieOptions(),

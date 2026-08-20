@@ -1,18 +1,15 @@
 /**
- * The schedule palette and the default windows, ported from
- * `web/lib/scheduleDefaults.ts`.
+ * Schedule palette and default windows, ported from `web/lib/scheduleDefaults.ts`.
  *
- * Two of the web module's exports deliberately did not come across:
- * `BUILT_IN_PRESETS` and `ensureBlockColors` belong to the preset bar of the
- * web's standalone schedule dialog, and presets live in Firestore — this app
- * only ever sees `config.json`, so it ports the process-dialog composition
- * (`web/app/dashboard/components/ProcessDialog.tsx:223-248`), which has no
- * preset bar and never stamps a colour onto a block it did not create.
+ * `BUILT_IN_PRESETS` and `ensureBlockColors` deliberately did NOT come across:
+ * presets live in Firestore and this app only sees `config.json`. It ports the
+ * process-dialog composition instead, which has no preset bar and never stamps
+ * a colour onto a block it didn't create.
  */
 
 import type { ScheduleBlock } from '@/lib/owletteConfig'
 
-/** Colour palette for schedule blocks — maximally distinct, never adjacent similar hues */
+/** Schedule-block palette — maximally distinct, no adjacent similar hues. */
 export const BLOCK_COLORS = [
   { pill: 'bg-blue-600', pillText: 'text-white', bar: 'bg-blue-500', label: 'text-blue-400' },
   { pill: 'bg-amber-500', pillText: 'text-white', bar: 'bg-amber-500', label: 'text-amber-400' },
@@ -25,11 +22,10 @@ export const BLOCK_COLORS = [
 ] as const
 
 /**
- * Default schedule offered when a scheduled entry has no windows of its own.
+ * Default schedule for an entry with no windows of its own.
  *
- * Never mutated: every edit in the blocks editor copies the array and the block
- * it touches, so this constant can be handed straight to the editor as its
- * seed — which is exactly what the web's process dialog does.
+ * Safe to pass straight to the blocks editor as a seed: every edit there copies
+ * the array and the touched block, so this constant is never mutated.
  */
 export const DEFAULT_SCHEDULE: ScheduleBlock[] = [
   { days: ['mon', 'tue', 'wed', 'thu', 'fri'], ranges: [{ start: '09:00', stop: '17:00' }] },

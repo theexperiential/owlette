@@ -1,26 +1,14 @@
 /**
  * POST /api/sites/{siteId}/machines/{machineId}/screenshots/upload-url
  *
- * Agent-internal helper invoked during a `capture_screenshot` command:
- * the agent calls this once it has captured a frame, gets back a 5-minute
- * v4-signed PUT url + the canonical storage path, and uploads the binary
- * directly to Firebase Storage. Decoupling upload from command queueing
- * means we never proxy a multi-MB image through Next.js.
+ * Called by the agent mid-`capture_screenshot`: returns a 5-minute v4-signed PUT url plus the
+ * canonical storage path so the binary goes straight to Firebase Storage — a multi-MB image
+ * never proxies through Next.js. The agent writes the path into its command result, and the
+ * GET status route re-signs a 1-hour read URL on each poll.
  *
- * The agent then writes the storage path back into its command result
- * doc; the GET status route (`commands/{commandId}`) re-issues a fresh
- * 1-hour signed read URL on every poll so the dashboard can render the
- * latest capture.
- *
- * Auth: `machine=<id>:write` (api-key) OR site membership (session/id-token
- * — used by the agent's bearer-id-token path). The agent uses its own
- * Firebase ID token, which carries the agent's uid + site_id; that
- * resolves through `requireMachineAuthAndScope` exactly like a dashboard
- * caller. Idempotency is intentionally *not* required: this endpoint
- * mints a single-use signed url and is safe to call repeatedly (each call
- * issues a fresh path).
- *
- * api-sprint wave 2 — track 2A (machine-api MVP).
+ * Auth: `machine=<id>:write` (api-key) or site membership; the agent's own Firebase ID token
+ * carries uid + site_id and resolves through `requireMachineAuthAndScope` like any caller.
+ * Idempotency deliberately not required — every call mints a fresh single-use url and path.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -51,9 +39,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const auth = await requireMachineAuthAndScope(request, siteId, machineId, 'write');
     if (!auth.ok) return auth.response;
 
-    // Body is optional; only `contentType` is honored. We still try to
-    // parse so a malformed payload surfaces a 400 instead of being silently
-    // ignored (consistent with the rest of the public surface).
+    // Body is optional and only `contentType` is honored, but still parsed so a malformed
+    // payload 400s instead of being silently ignored.
     let body: UploadUrlBody = {};
     const text = await request.text().catch(() => '');
     if (text.length > 0) {

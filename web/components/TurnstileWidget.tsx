@@ -5,29 +5,25 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 
 /**
  * Cloudflare Turnstile widget.
  *
- * Rendered explicitly (not via the `cf-turnstile` auto-scan class) so each
- * instance keeps its own widget id and can be reset. Turnstile tokens are
- * single-use: after a rejected submit the page stays mounted, so the stale
- * token must be cleared or the retry fails with `timeout-or-duplicate`.
+ * Rendered explicitly, not via the `cf-turnstile` auto-scan class, so each
+ * instance owns a widget id it can reset. Tokens are single-use — a rejected
+ * submit leaves the page mounted, so a stale token must be cleared or the
+ * retry fails `timeout-or-duplicate`.
  *
- * Inert when `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is unset — renders nothing and
- * reports an empty token, which the server treats as "unconfigured" outside
- * production. That keeps `next dev` working without Turnstile credentials.
+ * Inert without `NEXT_PUBLIC_TURNSTILE_SITE_KEY`: renders nothing, reports an
+ * empty token, which the server treats as unconfigured outside production —
+ * `next dev` works with no Turnstile credentials.
  *
- * CSP: the loader is injected programmatically by already-trusted (nonce-bearing)
- * React code, which `strict-dynamic` permits. The iframe still needs
+ * CSP: `strict-dynamic` permits the programmatic loader, but the iframe needs
  * `frame-src https://challenges.cloudflare.com` — see proxy.ts.
  */
 
 const SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 
 /**
- * Whether a sitekey is baked into this build.
- *
- * Forms use this to decide whether a token is REQUIRED before submit — without
- * it, a build with no sitekey would render no widget, never produce a token,
- * and leave the submit button permanently disabled. `NEXT_PUBLIC_*` is inlined
- * at build time, so this is a compile-time constant.
+ * Whether a sitekey is baked into this build (a `NEXT_PUBLIC_*` compile-time
+ * constant). Forms gate "token required" on it — otherwise a sitekey-less
+ * build renders no widget, mints no token, and disables submit forever.
  */
 export const TURNSTILE_ENABLED = Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
 
@@ -95,9 +91,8 @@ export const TurnstileWidget = forwardRef<TurnstileHandle, TurnstileWidgetProps>
   function TurnstileWidget({ action, onToken, className }, ref) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const widgetIdRef = useRef<string | null>(null);
-    // Keep the latest callback without re-rendering the widget when the parent
-    // re-renders with a new closure. Synced in an effect, not during render —
-    // mutating a ref while rendering is not safe under concurrent React.
+    // Latest callback without re-rendering the widget. Synced in an effect —
+    // mutating a ref during render is unsafe under concurrent React.
     const onTokenRef = useRef(onToken);
     useEffect(() => {
       onTokenRef.current = onToken;
@@ -134,14 +129,10 @@ export const TurnstileWidget = forwardRef<TurnstileHandle, TurnstileWidgetProps>
           widgetIdRef.current = window.turnstile.render(containerRef.current, {
             sitekey: siteKey,
             action,
-            // 'dark', NOT 'auto'. `auto` follows the OS prefers-color-scheme,
-            // but the app is hard-pinned dark (`<html className="dark">` in
-            // layout.tsx) with no light mode — so `auto` renders a white widget
-            // on a dark page for every visitor whose OS is in light mode.
-            // Revisit only if a real light theme ever ships.
+            // 'dark', NOT 'auto': the app is hard-pinned dark in layout.tsx, so
+            // `auto` renders a white widget for OS-light visitors.
             theme: 'dark',
-            // Span the container instead of a fixed ~300px box, so the widget
-            // lines up with the form inputs rather than floating inside them.
+            // Span the container so the widget lines up with the form inputs.
             size: 'flexible',
             callback: emit,
             'expired-callback': () => emit(''),

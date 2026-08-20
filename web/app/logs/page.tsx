@@ -156,24 +156,20 @@ const getLevelBadge = (level: string) => {
   }
 };
 
-// Format action for display
 const formatAction = (action: string) => {
   return action
     .split('_')
     .join(' ');
 };
 
-// When a search is active we load the full set of logs matching the current
-// server-side filters (not just the visible 50) so search covers the whole
-// scope. Bounded so a busy site can't trigger an unbounded read.
+// While searching, load the whole set matching the server-side filters (not just the
+// visible 50). Bounded so a busy site can't trigger an unbounded read.
 const SEARCH_POOL_CAP = 2000;
 
-// Build the Firestore query for a site's logs honouring the active filters.
-// Always ordered by timestamp desc so the page shows the *most recent* matching
-// logs (not an arbitrary __name__-ordered slice). Every filter combination —
-// action/machine/level, optionally with a timestamp range — is backed by a
-// composite index in firestore.indexes.json, so the ordering, date window, and
-// equality filters are all resolved server-side.
+// Firestore query for a site's logs honouring the active filters. Always ordered by
+// timestamp desc so the page shows the most recent matches, not an arbitrary
+// __name__-ordered slice. Every filter combination is backed by a composite index in
+// firestore.indexes.json, so ordering, date window and equality resolve server-side.
 function buildLogsQuery(
   logsRef: Query,
   filters: {
@@ -199,20 +195,16 @@ function buildLogsQuery(
   return q;
 }
 
-// Shared column template so the column header and every log row line up exactly:
-// chevron · level · time · event · machine · process · details(flex, truncates).
-// The fixed columns add up to ~664px, so they only apply from `md` up.
+// Shared column template so the header and every row line up: chevron · level · time ·
+// event · machine · process · details(flex, truncates). Fixed columns ≈664px, so `md` up.
 const LOG_COLS =
   'md:grid-cols-[14px_76px_104px_150px_132px_116px_minmax(0,1fr)] md:gap-3';
 
-// Row layout. Below `md` the row is a wrapping stack — level + time + event on
-// the first line, machine + process next, the details preview on its own
-// full-width line — and the column header is hidden, since each field reads for
-// itself at that size. From `md` up it is the original fixed grid, untouched.
+// Row layout. Below `md` the row is a wrapping stack and the column header is hidden
+// (each field reads for itself); from `md` up it is the original fixed grid.
 const LOG_GRID = `flex flex-wrap items-center gap-x-2 gap-y-1 md:grid ${LOG_COLS}`;
 
-// Compact relative time for the scannable time column ("2m ago", "3d ago"). The
-// absolute timestamp is shown on hover and in the expanded row.
+// Compact relative time ("2m ago"); the absolute stamp shows on hover + when expanded.
 function relativeTime(date?: Date): string {
   if (!date) return '';
   const s = Math.round((Date.now() - date.getTime()) / 1000);
@@ -230,10 +222,8 @@ function relativeTime(date?: Date): string {
   return `${Math.round(d / 365)}y ago`;
 }
 
-// Extracted + memoized so toggling one row's expanded state doesn't re-render
-// every other row in the list. Without this, a click burns ~100–300ms on a
-// full page of logs before Radix can flip `data-state` and the animation can
-// start, which reads as "delay before expand."
+// Memoized so toggling one row doesn't re-render every other row — without it a click
+// burns ~100–300ms on a full page before Radix can flip `data-state`, reading as lag.
 const LogRow = React.memo(function LogRow({
   log,
   isExpanded,
@@ -378,7 +368,6 @@ export default function LogsPage() {
   const [lastDoc, setLastDoc] = useState<DocumentData | null>(null);
   const [hasMore, setHasMore] = useState(false);
 
-  // Filters
   const [filterAction, setFilterAction] = useState<string>('all');
   const [filterMachine, setFilterMachine] = useState<string>('all');
   const [filterLevel, setFilterLevel] = useState<string>('all');
@@ -390,9 +379,8 @@ export default function LogsPage() {
   const [clearTo, setClearTo] = useState<Date | undefined>(undefined);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Free-text search. `searchQuery` mirrors the input; `searchTerm` is the
-  // debounced, normalised value the filter actually runs against. `searchActive`
-  // toggles the collapsed button ↔ expanded field.
+  // Free-text search: `searchQuery` mirrors the input, `searchTerm` is the debounced value
+  // the filter runs against, `searchActive` toggles collapsed button ↔ expanded field.
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchActive, setSearchActive] = useState(false);
@@ -406,22 +394,18 @@ export default function LogsPage() {
   const [searchPoolTruncated, setSearchPoolTruncated] = useState(false);
   const isSearching = searchTerm.length > 0;
 
-  // Clear logs confirmation dialog
   const [showClearDialog, setShowClearDialog] = useState(false);
   const [screenshotModalUrl, setScreenshotModalUrl] = useState<string | null>(null);
   const [isClearing, setIsClearing] = useState(false);
 
-  // Site management dialogs
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
-  // Account settings dialog
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
 
   // Expanded log rows (multi-expand)
   const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(new Set());
 
-  // Infinite scroll
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
 
@@ -437,8 +421,7 @@ export default function LogsPage() {
     });
   }, []);
 
-  // Debounce the search input so typing doesn't re-filter/re-render on every
-  // keystroke once a large batch is loaded.
+  // Debounce so typing doesn't re-filter/re-render on every keystroke.
   useEffect(() => {
     const id = setTimeout(() => setSearchTerm(searchQuery.trim().toLowerCase()), 150);
     return () => clearTimeout(id);
@@ -449,17 +432,14 @@ export default function LogsPage() {
     if (searchActive) searchInputRef.current?.focus();
   }, [searchActive]);
 
-  // Measure the collapsed button's natural width so expand/collapse can animate
-  // between real pixel widths — CSS can't transition to/from `auto`. Measured
-  // after paint while the wrapper is hugging content, so the value is exact and
-  // there's no layout shift.
+  // Measure the collapsed button's natural width so expand/collapse animates between real
+  // pixel widths — CSS can't transition to/from `auto`. Measured after paint, so exact.
   useEffect(() => {
     if (searchBtnRef.current) setSearchCollapsedW(searchBtnRef.current.offsetWidth);
   }, []);
 
-  // Collapse back to a button on outside click — but only when empty, so an
-  // active search is never silently hidden (e.g. clicking a log row to expand
-  // it while filtering).
+  // Collapse back to a button on outside click, but only when empty, so an active search
+  // is never silently hidden.
   useEffect(() => {
     if (!searchActive) return;
     const onMouseDown = (e: MouseEvent) => {
@@ -470,11 +450,9 @@ export default function LogsPage() {
     return () => document.removeEventListener('mousedown', onMouseDown);
   }, [searchActive, searchQuery]);
 
-  // Client-side substring filter. Firestore has no full-text query, so we match
-  // in JS against the search pool (the full set matching the active server-side
-  // filters, loaded on demand) — falling back to the on-screen logs until it
-  // arrives. Matches the formatted action label, raw action, machine, process,
-  // level, and details.
+  // Client-side substring filter: Firestore has no full-text query, so match in JS against
+  // the search pool (the full filtered set, loaded on demand; on-screen logs until it
+  // arrives) over formatted label, raw action, machine, process, level and details.
   const filteredLogs = useMemo(() => {
     if (!searchTerm) return logs;
     const source = searchPool ?? logs;
@@ -514,13 +492,10 @@ export default function LogsPage() {
   useEffect(() => {
     if (!db) return;
     if (!currentSiteId) {
-      // No site to subscribe to. Once the site list has settled that is a
-      // terminal answer, not a transient one — leaving `logsLoading` at its
-      // initial `true` is what pinned a site-less account on "loading
-      // logs..." forever, since the only two calls that clear it live inside
-      // the onSnapshot callbacks below and no listener is ever attached.
-      // Still gated on `!sitesLoading` so this cannot flash an empty state
-      // while sites are genuinely in flight.
+      // No site to subscribe to. Once the site list has settled that is terminal, not
+      // transient — leaving `logsLoading` true is what pinned site-less accounts on "loading
+      // logs..." forever, since only the onSnapshot callbacks clear it. Gated on
+      // `!sitesLoading` so it can't flash an empty state while sites are in flight.
       if (!sitesLoading) {
         setLogs([]);
         setLogsLoading(false);
@@ -538,19 +513,16 @@ export default function LogsPage() {
       LOGS_PER_PAGE + 1
     );
 
-    // Set up real-time listener
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LogEvent));
 
-      // Check if there are more pages
       const hasMoreData = docsData.length > LOGS_PER_PAGE;
       setHasMore(hasMoreData);
 
-      // Remove the extra document used for pagination check
+      // Drop the extra doc fetched for the has-more check.
       const displayLogs = hasMoreData ? docsData.slice(0, LOGS_PER_PAGE) : docsData;
       setLogs(displayLogs);
 
-      // Set pagination marker for infinite scroll
       if (displayLogs.length > 0) {
         setLastDoc(snapshot.docs[Math.min(LOGS_PER_PAGE - 1, snapshot.docs.length - 1)]);
       }
@@ -561,14 +533,11 @@ export default function LogsPage() {
       setLogsLoading(false);
     });
 
-    // Cleanup listener on unmount or when dependencies change
     return () => unsubscribe();
   }, [currentSiteId, sitesLoading, filterAction, filterMachine, filterLevel, filterDatePreset, filterDateFrom, filterDateTo]);
 
-  // While searching, load the full set of logs matching the current server-side
-  // filters (capped) so search spans the whole scope, not just the visible 50.
-  // Re-runs when the filters change, not on every keystroke (the text filters
-  // the pool client-side in `filteredLogs`).
+  // While searching, load the full set matching the current server-side filters (capped)
+  // so search spans the whole scope. Re-runs on filter change, not per keystroke.
   useEffect(() => {
     if (!isSearching || !currentSiteId || !db) {
       setSearchPool(null);
@@ -615,9 +584,8 @@ export default function LogsPage() {
     setIsFetchingMore(true);
 
     try {
-      // Same query as the initial page (identical ordering + filters), advanced
-      // past the last loaded doc — so page N+1 continues exactly where page N
-      // left off. Reusing buildLogsQuery keeps the two from drifting apart.
+      // Same query as the initial page, advanced past the last loaded doc; reusing
+      // buildLogsQuery keeps page N+1 from drifting away from page N.
       const logsRef = collection(db, 'sites', currentSiteId, 'logs');
       const baseQuery = buildLogsQuery(
         logsRef,
@@ -683,11 +651,9 @@ export default function LogsPage() {
     setIsClearing(true);
 
     try {
-      // Date window comes from the clear dialog's own from/to date pickers.
-      // Resolve the bounds in the SAME timezone the logs are displayed in (not
-      // browser-local) so clearing "May 25" deletes May 25 as the operator sees
-      // it — otherwise a cross-timezone admin over-/under-deletes at the day
-      // boundary. Mirrors the display resolution used to render each row.
+      // Resolve the clear-dialog date bounds in the SAME timezone the logs are displayed in,
+      // not browser-local — otherwise a cross-timezone admin over-/under-deletes at the day
+      // boundary.
       const clearTz = getDisplayTimezone(
         userPreferences.timeDisplayMode || 'machine',
         userPreferences.timezone,
@@ -742,8 +708,8 @@ export default function LogsPage() {
     }
   };
 
-  // Get unique machines for filter — drawn from the full loaded set (not the
-  // search-filtered view) so the dropdown doesn't collapse as you type.
+  // Machine filter options come from the full loaded set, not the search-filtered view,
+  // so the dropdown doesn't collapse as you type.
   const uniqueMachines = Array.from(new Set(logs.map(log => log.machineId)));
 
   // Header stats reflect the currently shown (search-filtered) logs.
@@ -794,10 +760,8 @@ export default function LogsPage() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onCreateSite={createSite}
-        // Focus the new site, matching /deployments, /roosts and /talons.
-        // Logs was the one surface that omitted this, so a user creating
-        // their first site from here stayed on the no-sites state until the
-        // fallback resolver happened to pick it up.
+        // Focus the new site, matching /deployments, /roosts and /talons — logs omitted this,
+        // so a user creating their first site here stayed on the no-sites state.
         onSiteCreated={(siteId) => pickSite(siteId)}
       />
 

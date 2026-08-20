@@ -1,20 +1,16 @@
 /**
  * GET /api/users/{uid}/talons — every talon this user authored, fleet-wide.
  *
- * The soft-delete counterpart to `/api/sites/{siteId}/talons/authored`.
- * `DELETE /api/users/{uid}` already refuses to orphan the SITES a user owns
- * (`?successorUid=`), but says nothing about the automations they wrote — and
- * a talon with a hoot output resolves its author's site access on every run,
- * so soft-deleting the author stops it dead. This is the count the delete
- * confirmation needs in order to name that consequence.
+ * `DELETE /api/users/{uid}` refuses to orphan the SITES a user owns but says
+ * nothing about their automations, and a hoot-output talon re-resolves its
+ * author's access on every run, so soft-deleting the author stops it dead.
+ * This is the count the delete confirmation needs to name that consequence.
  *
- * One collection-group query rather than a walk of `users/{uid}.sites[]`: a
- * superadmin's membership array can be empty while they author talons across
- * the fleet, which would under-report exactly the accounts whose departure
- * costs the most.
+ * One collection-group query, NOT a walk of `users/{uid}.sites[]` — a
+ * superadmin's membership array can be empty while they author fleet-wide,
+ * under-reporting exactly the accounts whose departure costs most.
  *
- * Auth: same as the rest of `/api/users/*` reads — superadmin session, or an
- * api key with `user=*:read`.
+ * Auth: superadmin session, or an api key with `user=*:read`.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -47,8 +43,8 @@ export async function GET(
 
     const talons = await listTalonsAuthoredByAcrossSites(getAdminDb(), uid);
 
-    // Per-site tally so the confirmation can say "3 on the lobby, 1 on the
-    // atrium" instead of one undifferentiated number.
+    // Per-site tally so the confirmation reads "3 on the lobby, 1 on the
+    // atrium" rather than one number.
     const countBySite = new Map<string, number>();
     for (const talon of talons) {
       countBySite.set(talon.siteId, (countBySite.get(talon.siteId) ?? 0) + 1);

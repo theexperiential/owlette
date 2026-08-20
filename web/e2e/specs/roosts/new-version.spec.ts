@@ -1,26 +1,11 @@
 /**
- * Roosts — publish new version of an existing roost (task 3.4)
+ * Roosts — publish a new version of an existing roost. The load-bearing spec
+ * for project-distribution-v2: locked-field UX → file drop → chunk upload →
+ * real finalize handler → Firestore pointer flip → UI re-render at v4.
  *
- * What this exercises:
- *   The full v2 push pipeline against an existing roost — the load-bearing
- *   spec for project-distribution-v2:
- *     1. open the per-roost "+ new version" modal from the expanded
- *        VersionHistory panel
- *     2. assert locked-field UX (name/extractPath/targets all pre-filled
- *        + disabled; only file picker + description editable)
- *     3. drop a tiny in-memory file → browser hashes it
- *     4. /api/chunks/check + /api/chunks/upload-urls + R2 PUT all
- *        intercepted by `installPushMocks`
- *     5. POST /api/roosts/{id}/versions hits the real finalize handler
- *        (chunk presence verified against pre-seeded `siteChunks` rows)
- *     6. Firestore: new version doc lands; roost pointers flip to v4
- *     7. dialog closes, success toast fires, version list re-renders,
- *        list-row badge updates to v4
- *
- * Data plane: mocked via pushMocks (no real R2, no real chunk hashing
- * downstream — the browser DOES hash 'hello roost' so the digest matches
- * the seeded `siteChunks/{digest}` row that `verifyChunksPresent` reads
- * server-side under OWLETTE_E2E=1).
+ * Data plane is mocked via pushMocks (no real R2), but the browser DOES hash
+ * 'hello roost' so the digest matches the seeded `siteChunks/{digest}` row
+ * that `verifyChunksPresent` reads server-side under OWLETTE_E2E=1.
  */
 import { test, expect } from '@playwright/test';
 import { roleState } from '../../helpers/roles';
@@ -40,14 +25,9 @@ const ROOST_ID = 'rst_test_newversion_001';
 const ROOST_NAME = 'lobby';
 const EXTRACT_PATH = 'C:/ProgramData/Owlette/projects/lobby';
 
-// SHA-256('hello roost') — pre-computed via node:crypto. The browser hashes
-// this exact 11-byte payload via the chunking pipeline (one chunk, since
-// 11 bytes ≪ CHUNK_SIZE_BYTES = 4 MiB), produces the same digest, and
-// references it in (a) the /chunks/check + /chunks/upload-urls + R2 PUT
-// path AND (b) the version envelope's files[0].chunks[0].hash.
-// `seedChunks` writes `siteChunks/{HASH}` so the finalize handler's
-// `verifyChunksPresent` lookup passes under OWLETTE_E2E=1 (see
-// web/lib/r2Client.server.ts:hasChunk).
+// SHA-256('hello roost'). 11 bytes << CHUNK_SIZE_BYTES (4 MiB), so the
+// browser produces this exact single-chunk digest, and `seedChunks` writes
+// `siteChunks/{HASH}` so finalize's `verifyChunksPresent` passes.
 const FILE_BYTES = 'hello roost';
 const FILE_HASH =
   '85e51c16208e35bacd07fb2dabcc79f78c68c53a2f3570ec04785638e7d28aa4';
@@ -74,16 +54,12 @@ test.beforeEach(async ({ page }) => {
     targets: [MACHINE_ID],
     extractPath: EXTRACT_PATH,
   });
-  // Pre-seed the chunk presence row so the real finalize handler's
-  // `verifyChunksPresent` (→ hasChunk → siteChunks/{hash}) passes without
-  // talking to R2. Without this, finalize 412s with "chunks missing".
+  // Without this row, finalize 412s with "chunks missing".
   await seedChunks(SITE_ID, [FILE_HASH]);
 
-  // The FolderDropzone prefers `showDirectoryPicker` / `showOpenFilePicker`
-  // when defined (Chrome/Edge — and headless chromium qualifies), and those
-  // pickers can't be driven by `setInputFiles`. Stripping them before any
-  // page script runs forces the `<input type="file">` fallback, which IS
-  // setInputFiles-friendly.
+  // FolderDropzone prefers showDirectoryPicker/showOpenFilePicker when
+  // defined (headless chromium qualifies) and those can't be driven by
+  // setInputFiles. Deleting them forces the <input type="file"> fallback.
   await page.addInitScript(() => {
     delete (window as unknown as { showDirectoryPicker?: unknown })
       .showDirectoryPicker;
@@ -106,23 +82,19 @@ test('+ new version round-trips through the full push pipeline', async ({ page }
   await page.goto('/roosts');
   await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
 
-  // Pre-condition — list row currently shows v3.
+  // Pre-condition: v3.
   const row = page.locator(`[data-roost-row="${ROOST_ID}"]`);
   await expect(row).toBeVisible();
   await expect(row.locator('[aria-label^="current version"]')).toHaveText('v3');
 
-  // Expand the panel.
   await row.click();
   await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 
-  // Click the "+ new version" button inside the VersionHistory panel.
   await page.getByRole('button', { name: /^new version$/i }).click();
 
-  // Modal opens in new-version mode — title disambiguates by roost name.
   const dialog = page.getByRole('dialog', { name: /^publish new version of "lobby"$/i });
   await expect(dialog).toBeVisible();
 
-  // ---- locked-field UX ----
   const nameInput = dialog.locator('#distribution-name');
   await expect(nameInput).toBeDisabled();
   await expect(nameInput).toHaveValue(ROOST_NAME);
@@ -138,19 +110,15 @@ test('+ new version round-trips through the full push pipeline', async ({ page }
   for (let i = 0; i < checkboxCount; i++) {
     await expect(targetCheckboxes.nth(i)).toBeDisabled();
   }
-  // The seeded target machine is the one ticked.
   const seededCheckbox = dialog.getByRole('checkbox', { name: MACHINE_ID });
   await expect(seededCheckbox).toBeChecked();
 
-  // ---- editable fields ----
   const description = dialog.locator('#distribution-description');
   await expect(description).toBeEnabled();
   await description.fill('bumped Q2 ads');
 
-  // FolderDropzone's "browse files" fallback renders <input type="file"
-  // multiple hidden> alongside the label. setInputFiles on the hidden
-  // input fires `handleLooseFilesPick` which routes through `deliver` →
-  // `onFilesReady`, populating `droppedFiles` in the dialog.
+  // The "browse files" fallback's hidden input routes through
+  // handleLooseFilesPick → deliver → onFilesReady into `droppedFiles`.
   const fileInput = dialog.locator('input[type="file"]:not([webkitdirectory])').first();
   await fileInput.setInputFiles({
     name: 'test.toe',
@@ -158,11 +126,9 @@ test('+ new version round-trips through the full push pipeline', async ({ page }
     buffer: Buffer.from(FILE_BYTES),
   });
 
-  // Summary chip materialises once enumeration completes — confirms the
-  // file landed in droppedFiles before we hit submit.
+  // Chip confirms the file landed in droppedFiles before submit.
   await expect(dialog.getByText(/^1 file$/)).toBeVisible();
 
-  // ---- submit + assert response ----
   const responsePromise = page.waitForResponse(
     (res) =>
       res.url().includes(`/api/roosts/${ROOST_ID}/versions`) &&
@@ -170,29 +136,24 @@ test('+ new version round-trips through the full push pipeline', async ({ page }
     { timeout: 30_000 },
   );
 
-  // In new-version mode the dialog ALWAYS provides targets (locked,
-  // pre-filled), so the primary action is "upload and distribute to N
-  // machine(s)" — not the bare "upload" upload-only button.
+  // New-version mode always has locked targets, so the primary action is
+  // "upload and distribute to N machine(s)", not bare "upload".
   await dialog.getByRole('button', { name: /^upload and distribute to \d+ machine/i }).click();
 
-  // Confirmation gate (PreUploadSummary, wired in c3e1a93) — dialog footer
-  // hides and a "ready to roost?" panel renders with file-count / size /
-  // disk-warning tiles. Operator must click "start upload" to actually
-  // kick off the chunk upload + finalize POST.
+  // PreUploadSummary gate: "start upload" is what kicks off the chunk
+  // upload + finalize POST.
   await expect(dialog.getByRole('heading', { name: 'ready to roost?' })).toBeVisible();
   await dialog.getByRole('button', { name: /^start upload$/i }).click();
 
   const response = await responsePromise;
   expect(response.status()).toBe(201);
 
-  // Response body: `{versionId, versionNumber, currentVersionId, previousVersionId}`.
   const responseBody = (await response.json()) as Record<string, unknown>;
   expect(responseBody.versionNumber).toBe(4);
   expect(typeof responseBody.versionId).toBe('string');
   expect(responseBody.previousVersionId).toBe(`vrs_${ROOST_ID}_v3`);
   const newVersionId = responseBody.versionId as string;
 
-  // Request body: OCI version envelope wrapped alongside name/targets/etc.
   const reqBody = response.request().postDataJSON() as Record<string, unknown>;
   expect(reqBody).toMatchObject({
     siteId: SITE_ID,
@@ -218,7 +179,6 @@ test('+ new version round-trips through the full push pipeline', async ({ page }
   expect(files[0].chunks[0].hash).toBe(FILE_HASH);
   expect(files[0].chunks[0].size).toBe(FILE_BYTES.length);
 
-  // ---- Firestore: new version doc + roost pointer flips ----
   await expect.poll(
     async () => {
       const snap = await getAdminDb()
@@ -253,21 +213,17 @@ test('+ new version round-trips through the full push pipeline', async ({ page }
     versionCounter: 4,
   });
 
-  // ---- UI: dialog closes, list-row badge bumps to v4, panel re-fetches ----
   await expect(dialog).toBeHidden({ timeout: 10_000 });
 
-  // Success toast — copy in ProjectDistributionDialog's terminal-state effect
-  // is `roost published — v4 (uploaded … of …)`. Anchor on the version label
-  // since the byte counts depend on whether the upload phase actually ran.
+  // Anchor on the version label — byte counts vary with whether the upload
+  // phase actually ran.
   await expect(page.getByText(/roost published.*v4/i)).toBeVisible({ timeout: 10_000 });
 
-  // List-row badge re-renders to v4.
   await expect(row.locator('[aria-label^="current version"]')).toHaveText('v4', {
     timeout: 5_000,
   });
 
-  // VersionHistory re-fetches (refreshKey bumps after upload success).
-  // #4 should now be the head row with the current-version marker.
+  // VersionHistory re-fetches on refreshKey; #4 becomes the head row.
   const versionRows = page.getByTestId('roost-version-row');
   const versionNumbers = versionRows.locator('span.font-mono', { hasText: /^#\d+$/ });
   await expect(versionNumbers.first()).toHaveText('#4', { timeout: 5_000 });

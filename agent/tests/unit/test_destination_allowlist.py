@@ -18,9 +18,6 @@ from destination_allowlist import (
 )
 
 
-# ─── fail-closed semantics (critical security property) ─────────────────
-
-
 def test_none_roots_rejects_all_paths():
     allowlist = DestinationAllowlist(None)
     assert not allowlist.is_allowed('C:\\Windows\\System32\\evil.exe')
@@ -42,8 +39,7 @@ def test_empty_roots_validate_raises_with_clear_message():
 
 def test_from_config_with_missing_agent_config_applies_defaults(tmp_path, monkeypatch):
     """no agent_config key → field unset → apply DEFAULT_ROOTS."""
-    # Point DEFAULT_ROOTS at tmp_path so the test doesn't depend on
-    # whether ~/Documents/Owlette exists on the CI runner.
+    # Don't depend on ~/Documents/Owlette existing on the CI runner.
     import destination_allowlist as mod
     monkeypatch.setattr(mod, 'DEFAULT_ROOTS', [str(tmp_path)])
     allowlist = mod.DestinationAllowlist.from_config({})
@@ -66,9 +62,6 @@ def test_from_config_with_explicit_empty_list_is_fail_closed():
     assert not allowlist.is_allowed('/tmp/test')
 
 
-# ─── path under allowed root ────────────────────────────────────────────
-
-
 def test_path_under_allowed_root_is_allowed(tmp_path):
     allowlist = DestinationAllowlist([str(tmp_path)])
     target = tmp_path / 'project' / 'file.toe'
@@ -87,9 +80,6 @@ def test_validate_returns_resolved_path(tmp_path):
     result = allowlist.validate(target)
     assert isinstance(result, Path)
     assert result.is_absolute()
-
-
-# ─── path traversal rejection ───────────────────────────────────────────
 
 
 def test_path_traversal_with_dotdot_is_rejected(tmp_path):
@@ -118,9 +108,6 @@ def test_completely_unrelated_root_rejected(tmp_path):
     assert not allowlist.is_allowed(target)
 
 
-# ─── invalid input rejection ────────────────────────────────────────────
-
-
 def test_relative_path_rejected(tmp_path):
     allowlist = DestinationAllowlist([str(tmp_path)])
     with pytest.raises(DestinationNotAllowedError, match="absolute"):
@@ -147,11 +134,8 @@ def test_null_byte_in_target_raises_DestinationNotAllowedError(tmp_path):
     allowlist = DestinationAllowlist([str(tmp_path)])
     with pytest.raises(DestinationNotAllowedError):
         allowlist.validate(str(tmp_path / 'file\x00.evil'))
-    # is_allowed wrapper must also return False, not bubble the ValueError
+    # The wrapper returns False rather than bubbling the ValueError.
     assert not allowlist.is_allowed(str(tmp_path / 'evil\x00.toe'))
-
-
-# ─── multiple roots ────────────────────────────────────────────────────
 
 
 def test_multiple_roots_any_match_allows(tmp_path):
@@ -163,9 +147,6 @@ def test_multiple_roots_any_match_allows(tmp_path):
     assert allowlist.is_allowed(str(a / 'file'))
     assert allowlist.is_allowed(str(b / 'file'))
     assert not allowlist.is_allowed(str(tmp_path / 'c' / 'file'))
-
-
-# ─── tilde expansion ───────────────────────────────────────────────────
 
 
 def test_tilde_in_root_is_expanded():
@@ -186,9 +167,6 @@ def test_tilde_in_target_is_expanded(tmp_path, monkeypatch):
     assert allowlist.is_allowed('~/Documents/Owlette/file.toe')
 
 
-# ─── invalid root entries (false-positive fix) ─────────────────────────
-
-
 def test_invalid_root_entries_are_skipped_keeping_valid_one(tmp_path):
     """
     feedback fix: previously this asserted len==1 without verifying WHICH
@@ -207,9 +185,6 @@ def test_invalid_root_entries_are_skipped_keeping_valid_one(tmp_path):
     assert allowlist.roots[0] == valid_root.resolve()
 
 
-# ─── config loader ─────────────────────────────────────────────────────
-
-
 def test_from_config_with_valid_roots():
     config = {
         'agent_config': {
@@ -218,9 +193,6 @@ def test_from_config_with_valid_roots():
     }
     allowlist = DestinationAllowlist.from_config(config)
     assert len(allowlist.roots) == 2
-
-
-# ─── repr for diagnostics (false-positive fix) ─────────────────────────
 
 
 def test_repr_includes_roots(tmp_path):
@@ -240,9 +212,6 @@ def test_repr_includes_roots(tmp_path):
     assert 'second-root' in repr_str
 
 
-# ─── DEFAULT_ROOTS sanity check (false-positive fix) ──────────────────
-
-
 def test_default_roots_constant_is_safe():
     """
     feedback fix: previous final assertion `root.startswith('~') or '/' in root or '\\' in root`
@@ -258,9 +227,6 @@ def test_default_roots_constant_is_safe():
         assert root.startswith('~') or 'Users' in root or 'home' in root, (
             f"DEFAULT_ROOTS entry {root!r} doesn't look like a user-space path"
         )
-
-
-# ─── windows-only: junction + symlink defense via reparse-point check ──
 
 
 @pytest.mark.skipif(sys.platform != 'win32', reason='Windows-specific reparse-point check')
@@ -305,7 +271,7 @@ def test_windows_reparse_point_detected_via_mocked_attribute(tmp_path):
     # without the mock, the path is allowed (no actual reparse points)
     assert allowlist.is_allowed(str(target))
 
-    # patch os.lstat to claim the 'sub' parent has reparse-point attribute
+    # Claim the 'sub' parent carries the reparse-point attribute.
     real_lstat = os.lstat
 
     def fake_lstat(path):
@@ -329,9 +295,6 @@ def test_windows_reparse_point_detected_via_mocked_attribute(tmp_path):
             allowlist.validate(str(target))
 
 
-# ─── windows-only: case-insensitive match ─────────────────────────────
-
-
 @pytest.mark.skipif(sys.platform != 'win32', reason='Windows NTFS is case-insensitive')
 def test_windows_case_insensitive_allowlist_match(tmp_path):
     """
@@ -344,15 +307,14 @@ def test_windows_case_insensitive_allowlist_match(tmp_path):
     allowed.mkdir()
     allowlist = DestinationAllowlist([str(allowed)])
 
-    # construct a target that points into the allowed dir but with
-    # different casing — on NTFS this resolves to the same place.
+    # Different casing resolves to the same place on NTFS.
     target = str(allowed).lower() + os.sep + 'file.toe'
     assert allowlist.is_allowed(target), (
         f"case-folded match failed: target={target!r} not allowed under {allowed!r}"
     )
 
 
-# ─── stat OSError → fail-closed (was: fail-open log-and-allow) ────────
+# stat OSError fails closed; it used to log and allow.
 
 
 @pytest.mark.skipif(sys.platform != 'win32', reason='Windows alternate data streams')
@@ -379,7 +341,7 @@ def test_windows_drive_root_in_allowlist_is_rejected():
     including System32. fail-loud at allowlist construction.
     """
     allowlist = DestinationAllowlist(['C:\\'])
-    # the dangerous root is dropped — allowlist becomes empty → fail-closed
+    # Dangerous root dropped, allowlist empty, so everything fails closed.
     assert allowlist.roots == []
     assert not allowlist.is_allowed('C:\\Windows\\System32\\evil.dll')
 

@@ -2,26 +2,21 @@
 /**
  * @jest-environment jsdom
  *
- * The in-app-browser branch of /register.
+ * The in-app-browser branch of /register. Inside a third-party webview the
+ * Google popup is refused by the host app and no Firebase config changes that
+ * (lib/inAppBrowser), so the button is swapped for remediation naming the host
+ * app and the email fallback is pre-expanded.
  *
- * Inside a third-party webview, "continue with Google" cannot work — the popup
- * is refused by the host app and no Firebase configuration changes that (see
- * lib/inAppBrowser). This asserts the pre-empt: the button is swapped for
- * remediation that names the host app, and the email fallback we point the user
- * at is expanded rather than left collapsed behind a focus gesture.
- *
- * The negative case is asserted just as hard. Detection gates a working sign-in
- * path, so an ordinary visitor must see exactly what they saw before.
+ * The negative case matters as much: detection gates a working sign-in path,
+ * so an ordinary visitor must see exactly what they saw before.
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 
 import type { InAppBrowserState } from '@/hooks/useInAppBrowser';
 
-// jsdom ships no ResizeObserver, and the expanded email form renders Radix
-// primitives (the terms checkbox) that construct one on mount. Local rather
-// than in jest.setup.js: this is the first suite to render that subtree, so
-// there is no shared need to serve yet.
+// jsdom has no ResizeObserver and the expanded form's Radix checkbox builds one
+// on mount. Local, not jest.setup.js — no other suite renders this subtree yet.
 global.ResizeObserver = class {
   observe() {}
   unobserve() {}
@@ -97,8 +92,8 @@ describe('/register inside an in-app browser', () => {
     expect(screen.getByLabelText(/^confirm password$/i)).toBeInTheDocument();
   });
 
-  // Fail open. Detection is a heuristic over user-agent strings; it must never
-  // be the only thing standing between a user and a sign-in method.
+  // Fail open: UA detection is a heuristic and must never be the only thing
+  // between a user and a sign-in method.
   it('still offers a way to attempt Google anyway', () => {
     render(<RegisterPage />);
 

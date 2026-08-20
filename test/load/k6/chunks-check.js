@@ -1,21 +1,11 @@
 /**
- * k6 load test: POST /api/chunks/check.
+ * k6 load test: POST /api/chunks/check — the hot path when a client re-drops a
+ * known folder. Body is 1..1000 sha-256 hashes; response is the missing subset.
+ * SLO p99 < 200 ms (rationale in lib/config.js).
  *
- * The hot path when a browser client re-drops a previously-uploaded
- * folder: for every chunk in the new manifest, does the server already
- * have that byte-sequence? Small-but-frequent calls — request body is
- * a list of 1..1000 sha-256 hashes, response is the subset missing.
+ * Scenarios: `smoke` (CI regression floor), `sustained` (10→50 VUs / 5 min),
+ * `spike` (200 VUs / 30 s — a 500 GB re-drop in 50k-chunk batches).
  *
- * SLO: p99 < 200 ms. See lib/config.js for rationale.
- *
- * Scenarios:
- *   `smoke`   — 1 VU, 10 s: regression floor, run every CI build.
- *   `sustained` — ramping 10 → 50 VUs over 5 min: "are we fine at
- *                  30 ops/sec per VU sustained?" check.
- *   `spike`   — 200 VUs for 30 s: what happens when a customer re-drops
- *               a 500 GB folder in 50k-chunk batches?
- *
- * Run a single scenario with:
  *   K6_BASE_URL=https://dev.owlette.app k6 run --env SCENARIO=smoke chunks-check.js
  */
 
@@ -56,8 +46,7 @@ export const options = {
 };
 
 export default function () {
-  // build a batch of 100 hashes per request. unique per VU+iteration so
-  // the server can't just return a cached identical response.
+  // Unique per VU+iteration so the server can't serve a cached response.
   const hashes = [];
   for (let i = 0; i < 100; i++) {
     hashes.push(fakeHash(__VU * 1000 + __ITER * 100 + i));
@@ -85,6 +74,6 @@ export default function () {
     },
   });
 
-  // think time to mimic real client bursts between manifest-build passes.
-  sleep(0.1);
+  sleep(0.1); // think time between manifest-build passes
+
 }

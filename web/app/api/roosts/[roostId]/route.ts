@@ -8,8 +8,6 @@
  *
  * DELETE /api/roosts/{roostId}?siteId=...
  *        → soft-delete. stamps `deletedAt` and `tombstoneExpiresAt = now + 30d`.
- *
- * roost public api wave 3.1.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';

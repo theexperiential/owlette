@@ -1,17 +1,13 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for the talon author pre-flight.
+ * Talon author pre-flight. A `TalonAuthorError` switches the talon off on first
+ * occurrence, so the FATAL/TRANSIENT split is the contract pinned here: a
+ * deterministic refusal is fatal, an unreachable database is not.
  *
- * This module is the one place that decides whether an unattended run has hit
- * something a retry could fix. Everything it throws as a `TalonAuthorError`
- * switches the talon off on the first occurrence, so the FATAL/TRANSIENT split
- * below is the contract worth pinning: a deterministic refusal is fatal, and an
- * unreachable database — which says nothing at all about the author — is not.
- *
- * `hoot-utils` is mocked at its boundary, including a stand-in `SiteAccessError`
- * whose shape mirrors the real class (`name` + `code`), because the real module
- * pulls in the whole tool registry to be loaded.
+ * `hoot-utils` is mocked at its boundary (with a `SiteAccessError` stand-in
+ * matching `name` + `code`) because loading the real one drags in the whole
+ * tool registry.
  */
 
 const mockVerifyUserSiteAccess = jest.fn();
@@ -127,8 +123,8 @@ describe('resolveTalonAuthor', () => {
   });
 
   it('does not classify a missing site as an author problem', async () => {
-    // The site being gone is not the author's fault, and a talon in a
-    // collection that no longer exists has bigger problems than its flag.
+    // Not the author's fault, and a talon whose collection is gone has bigger
+    // problems than its enabled flag.
     const thrown = new SiteAccessError('site_not_found', 'Site not found');
     mockVerifyUserSiteAccess.mockRejectedValue(thrown);
 
@@ -139,8 +135,8 @@ describe('resolveTalonAuthor', () => {
     const thrown = new Error('DEADLINE_EXCEEDED');
     mockVerifyUserSiteAccess.mockRejectedValue(thrown);
 
-    // Not a TalonAuthorError — so nothing downstream disables the talon over a
-    // database that happened to be unreachable for one firing.
+    // Not a TalonAuthorError, so nothing disables the talon over one
+    // unreachable-database firing.
     await expect(reasonOf(resolveTalonAuthor(db, SITE, talonFixture()))).resolves.toBe(thrown);
   });
 });
@@ -167,7 +163,7 @@ describe('the llm key pre-flight', () => {
 
   it('asserts the key without ever receiving it', async () => {
     await expect(assertTalonAuthorLlmKey(db, 'admin-uid')).resolves.toBeUndefined();
-    // The void-returning helper, not the one that returns the decrypted key.
+    // The void helper, never the one returning the decrypted key.
     expect(mockAssertLlmKeyAvailable).toHaveBeenCalledWith(db, 'admin-uid');
     expect(mockResolveLlmConfig).not.toHaveBeenCalled();
   });

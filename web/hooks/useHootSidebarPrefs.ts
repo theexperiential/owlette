@@ -1,15 +1,14 @@
 'use client';
 
 /**
- * Per-device persistence for the Hoot sidebar's expand/collapse state:
- *  - `sidebarOpen` — the whole sidebar panel open/collapsed
- *  - `collapsedGroups` — which category sections are collapsed
+ * Per-device persistence for the Hoot sidebar's `sidebarOpen` and
+ * `collapsedGroups`, stored on the shared per-device prefs doc
+ * (`users/{uid}/devicePrefs/global`) as `cortexSidebarOpen` /
+ * `cortexCollapsedGroups`.
  *
- * Stored on the existing per-device prefs doc (`users/{uid}/devicePrefs/global`,
- * the same doc `useDevicePrefs` uses) under `cortexSidebarOpen` /
- * `cortexCollapsedGroups`. Hydrated once on mount, then local state is the
- * source of truth and writes are debounced. The setters mirror `useState`
- * (accept a value or an updater) so they're drop-in replacements.
+ * Hydrated once on mount; after that local state is the source of truth and
+ * writes are debounced. The setters take a value or an updater, so they drop
+ * straight in for `useState`.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -35,8 +34,8 @@ export function useHootSidebarPrefs(): HootSidebarPrefs {
   const [sidebarOpen, setSidebarOpenState] = useState(true);
   const [collapsedGroups, setCollapsedGroupsState] = useState<Set<string>>(new Set());
 
-  // Mirror refs let the setters read current state without being re-created.
-  // Updated in effects (writing refs during render is disallowed).
+  // Let the setters read current state without being re-created. Updated in
+  // effects — writing refs during render is disallowed.
   const sidebarOpenRef = useRef(sidebarOpen);
   const collapsedRef = useRef(collapsedGroups);
   const uidRef = useRef<string | null>(uid);
@@ -70,8 +69,8 @@ export function useHootSidebarPrefs(): HootSidebarPrefs {
     [flush],
   );
 
-  // Hydrate once from Firestore. setState lives in the async callback (not the
-  // synchronous effect body), so it doesn't trip the cascading-render lint rule.
+  // Hydrate once. setState sits in the async callback, not the effect body, to
+  // stay clear of the cascading-render lint rule.
   useEffect(() => {
     if (!db || !uid) return;
     let cancelled = false;

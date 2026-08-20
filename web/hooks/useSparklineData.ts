@@ -1,21 +1,14 @@
 'use client';
 
 /**
- * useSparklineData Hook
+ * Live sparkline data (last 60 samples, ~1h at 1-min resolution) for machine cards.
  *
- * Provides real-time sparkline data for a specific metric type.
- * Uses Firestore snapshot listeners for live updates.
- *
- * Returns the last 60 samples (~1 hour at 1-min resolution) for displaying
- * inline sparklines in machine cards.
- *
- * Bucket shapes (mirrors useHistoricalMetrics):
- * - The cloud function writes hourly UTC buckets: metrics_history/{YYYY-MM-DD-HH}.
- * - Legacy data and the e2e fixtures use a daily bucket: metrics_history/{YYYY-MM-DD}.
- * We subscribe to the current + previous hour buckets (so the window stays full
- * across the top of the hour) plus today's daily bucket, then merge and keep the
- * most recent 60 samples. Listeners re-subscribe at each hour boundary so the
- * data doesn't freeze on a stale bucket when a tab stays open.
+ * Bucket shapes, mirroring useHistoricalMetrics: the cloud function writes hourly
+ * UTC buckets `metrics_history/{YYYY-MM-DD-HH}`; legacy data and the e2e fixtures
+ * use a daily `metrics_history/{YYYY-MM-DD}`. We subscribe to current + previous
+ * hour (so the window stays full across the hour boundary) plus today's daily
+ * bucket, merge, and keep the last 60. Listeners re-subscribe each hour so an
+ * open tab doesn't freeze on a stale bucket.
  */
 
 import { useState, useEffect } from 'react';
@@ -27,7 +20,7 @@ import type { SparklineDataPoint, MetricColor } from '@/components/charts';
 
 type SparklineMetricType = 'cpu' | 'memory' | 'disk' | 'gpu';
 
-// Map metric type to abbreviated key in Firestore
+// Firestore stores metrics under abbreviated keys.
 const metricKeyMap: Record<SparklineMetricType, 'c' | 'm' | 'd' | 'g'> = {
   cpu: 'c',
   memory: 'm',
@@ -56,9 +49,8 @@ function msUntilNextHour(): number {
 }
 
 /**
- * Re-derive an hour epoch at every UTC hour boundary so subscriptions that
- * close over a bucket id get torn down and recreated for the new hour. Inert
- * (no timer) when `active` is false.
+ * Re-derive an hour epoch at every UTC hour boundary so subscriptions closing over
+ * a bucket id are recreated for the new hour. No timer when `active` is false.
  */
 function useHourEpoch(active: boolean): number {
   const [epoch, setEpoch] = useState<number>(() => currentHourEpoch());
@@ -72,15 +64,13 @@ function useHourEpoch(active: boolean): number {
 }
 
 /**
- * Subscribe to the metrics_history buckets that can hold the last hour of
- * samples — current + previous hourly buckets plus today's legacy daily bucket
- * — merge them (deduped by timestamp), and deliver the most recent 60 samples
- * sorted ascending by time. Returns an unsubscribe.
+ * Subscribe to the buckets that can hold the last hour (current + previous hourly
+ * plus today's legacy daily), merge deduped by timestamp, and deliver the newest
+ * 60 samples ascending. Returns an unsubscribe.
  *
- * A single `documentId() in [...]` query listener covers all three buckets
- * (one listener per machine, not three), mirroring how useHistoricalMetrics
- * reads this collection. Only the current-hour doc actually changes minute to
- * minute, so steady-state update traffic is unchanged.
+ * One `documentId() in [...]` listener covers all three buckets (one per machine,
+ * not three). Only the current-hour doc changes minute to minute, so steady-state
+ * traffic is unchanged.
  */
 function subscribeLastHourSamples(
   database: Firestore,
@@ -101,11 +91,9 @@ function subscribeLastHourSamples(
   return onSnapshot(
     bucketsQuery,
     (snapshot) => {
-      // Dedupe by timestamp (a sample maps to exactly one bucket in practice;
-      // this is defensive against daily/hourly overlap). Query results iterate
-      // in documentId order, so the daily bucket ("YYYY-MM-DD") is visited
-      // before the hourly ones ("YYYY-MM-DD-HH") — hourly wins any tie. Then
-      // sort and keep the last 60.
+      // Dedupe by timestamp, defensive against daily/hourly overlap. Results
+      // iterate in documentId order, so the daily bucket ("YYYY-MM-DD") is
+      // visited before the hourly ones — hourly wins any tie.
       const byTime = new Map<number, RawSample>();
       snapshot.forEach((docSnap) => {
         const samples = (docSnap.data()?.samples ?? []) as RawSample[];
@@ -130,23 +118,15 @@ interface UseSparklineDataResult {
   loading: boolean;
 }
 
-/**
- * Hook to get sparkline data for a specific metric
- *
- * @param siteId - The site ID
- * @param machineId - The machine ID
- * @param metricType - The metric type (cpu, memory, disk, gpu)
- * @returns Sparkline data array and loading state
- */
+/** Sparkline data for one metric of one machine. */
 export function useSparklineData(
   siteId: string | null,
   machineId: string | null,
   metricType: SparklineMetricType
 ): UseSparklineDataResult {
-  // loadedKey pins data to the (siteId, machineId, metricType) it was loaded
-  // for, so `loading` can be derived at render without a sync setState on key
-  // change. Parents that haven't resolved IDs yet stay in loading naturally
-  // because loadedKey is null until the first snapshot lands.
+  // loadedKey pins data to the (siteId, machineId, metricType) it was loaded for,
+  // so `loading` derives at render without a sync setState on key change. Null
+  // until the first snapshot, so unresolved ids stay in loading.
   const [state, setState] = useState<{
     data: SparklineDataPoint[];
     loadedKey: string | null;
@@ -172,8 +152,8 @@ export function useSparklineData(
 
   const matched = currentKey !== null && state.loadedKey === currentKey;
   const data = matched ? state.data : EMPTY_SPARKLINE;
-  // loading=true whenever db is configured but we haven't loaded current key —
-  // includes the "IDs haven't resolved" state so the sparkline doesn't flash.
+  // Loading while db is configured but the current key hasn't loaded — includes
+  // the "ids not resolved yet" state so the sparkline doesn't flash.
   const loading = !!db && !matched;
   return { data, loading };
 }
@@ -181,14 +161,6 @@ export function useSparklineData(
 /** Stable empty array so consumers' memo/effect deps don't churn. */
 const EMPTY_SPARKLINE: SparklineDataPoint[] = [];
 
-/**
- * Hook to get all sparkline data for a machine in one call
- * More efficient than calling useSparklineData 4 times
- *
- * @param siteId - The site ID
- * @param machineId - The machine ID
- * @returns Object with sparkline data for each metric type
- */
 interface AllSparklineState {
   cpu: SparklineDataPoint[];
   memory: SparklineDataPoint[];
@@ -197,13 +169,13 @@ interface AllSparklineState {
   loading: boolean;
 }
 
+/** All four metrics for one machine in a single subscription — cheaper than four hooks. */
 export function useAllSparklineData(
   siteId: string | null,
   machineId: string | null
 ): AllSparklineState {
   const demo = useDemoContext();
-  // Track the (siteId, machineId) the snapshot was loaded for so we can derive
-  // loading at render without a sync setState on key change.
+  // loadedKey as above: derive loading at render, no sync setState on key change.
   const [state, setState] = useState<{
     cpu: SparklineDataPoint[];
     memory: SparklineDataPoint[];
@@ -216,8 +188,8 @@ export function useAllSparklineData(
   const hourEpoch = useHourEpoch(currentKey !== null);
 
   useEffect(() => {
-    // Demo mode is handled entirely at render (see below) — the synthesized
-    // topology is pure and cheap to recompute, so we don't stuff it into state.
+    // Demo mode is handled at render — the synthesized topology is pure and cheap
+    // to recompute, so it never enters state.
     if (demo) return;
     if (!currentKey || !db || !siteId || !machineId) return;
 
@@ -234,7 +206,7 @@ export function useAllSparklineData(
         if ((s.g ?? 0) > 0) gpu.push({ t: s.t, v: s.g as number });
       }
 
-      // Single setState — one re-render instead of five
+      // Single setState — one re-render instead of five.
       setState({ cpu, memory, disk, gpu, loadedKey: currentKey });
     });
 
@@ -243,10 +215,9 @@ export function useAllSparklineData(
   }, [currentKey, siteId, machineId, demo, hourEpoch]);
 
   if (demo && machineId) return { ...demo.getSparklineData(machineId) };
-  // Surface only data that matches the currently-requested key. If db isn't
-  // configured, loading stays false — there's nothing to wait for. When IDs
-  // haven't resolved yet (currentKey is null), stay in loading so the card
-  // doesn't flash a "no data" state before the real subscription attaches.
+  // Surface only data matching the requested key. db unconfigured → nothing to
+  // wait for. Ids unresolved (currentKey null) → stay loading so the card doesn't
+  // flash "no data" before the subscription attaches.
   const matched = currentKey !== null && state.loadedKey === currentKey;
   return {
     cpu: matched ? state.cpu : EMPTY_SPARKLINE,
@@ -257,9 +228,7 @@ export function useAllSparklineData(
   };
 }
 
-/**
- * Map metric type to chart color
- */
+/** Map metric type to chart color. */
 export function getSparklineColor(metricType: SparklineMetricType): MetricColor {
   return metricType as MetricColor;
 }

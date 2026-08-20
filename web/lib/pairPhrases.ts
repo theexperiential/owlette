@@ -1,20 +1,16 @@
 /**
- * Pairing phrase generation for device code authentication flow.
+ * Pairing phrases for the device-code auth flow: 3-word phrases like
+ * "silver-compass-drift" that pair an agent with a site.
  *
- * Generates 3-word phrases like "silver-compass-drift" used to pair
- * agents with sites. Words are chosen from a curated list of 2048
- * common, unambiguous English words (no profanity, no homophones).
- *
- * Entropy: 2048^3 = ~8.6 billion combinations.
- * With 10-minute expiry + rate limiting, brute force is not viable.
+ * 2048^3 ≈ 8.6e9 combinations; with the 10-minute expiry and rate limiting,
+ * brute force isn't viable.
  */
 
 import { randomInt } from 'crypto';
 
 /**
- * 2048 curated words: common, easy to type on mobile, no profanity,
- * no easily confused homophones (e.g., no "their/there/they're").
- * Alphabetically sorted for binary search during validation.
+ * 2048 curated words: common, mobile-typable, no profanity, no confusable
+ * homophones. Alphabetically sorted so validation can binary-search.
  */
 const WORD_LIST: string[] = [
   'able', 'about', 'above', 'absent', 'absorb', 'abstract', 'absurd', 'abuse',
@@ -266,10 +262,7 @@ const WORD_LIST: string[] = [
   'zone', 'zoo',
 ];
 
-/**
- * Generate a cryptographically random 3-word pairing phrase.
- * Example: "silver-compass-drift"
- */
+/** Cryptographically random 3-word phrase, e.g. "silver-compass-drift". */
 export function generatePairPhrase(): string {
   const words: string[] = [];
   for (let i = 0; i < 3; i++) {
@@ -279,19 +272,14 @@ export function generatePairPhrase(): string {
   return words.join('-');
 }
 
-/**
- * Validate that a string is a well-formed pairing phrase (3 words from the list).
- */
+/** True when the string is 3 words, all from the list. */
 export function isValidPairPhrase(phrase: string): boolean {
   const words = phrase.toLowerCase().trim().split('-');
   if (words.length !== 3) return false;
   return words.every(word => WORD_LIST.includes(word));
 }
 
-/**
- * Normalize a pairing phrase (lowercase, trim, validate format).
- * Returns null if invalid.
- */
+/** Lowercase + trim + validate; null when invalid. */
 export function normalizePairPhrase(phrase: string): string | null {
   const normalized = phrase.toLowerCase().trim();
   if (!isValidPairPhrase(normalized)) return null;

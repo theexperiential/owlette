@@ -1,22 +1,15 @@
 /**
- * setUserRole action core (security-boundary-migration wave 3.9).
+ * Shared core behind `POST /api/users/{uid}/promote` and `/demote`.
  *
- * Consolidates the bodies of the existing routes:
- *   - `POST /api/users/{uid}/promote` — accepts `role: 'admin' | 'superadmin'`
- *   - `POST /api/users/{uid}/demote`  — always sets `role: 'member'`
+ * Read-then-write inside a transaction so concurrent role mutations are safe:
+ * two simultaneous demotes cannot both observe "2 superadmins" and succeed.
  *
- * Both routes preserve their public contracts; this core is the shared
- * implementation they delegate to. The transactional read-then-write keeps
- * concurrent role mutations safe (two simultaneous demotes can't both
- * observe "2 superadmins" and both succeed).
+ * Last-superadmin guard: demoting a `superadmin` counts active (non-deleted)
+ * superadmins in the transaction and returns `last_superadmin` without writing
+ * if that would drop below `MIN_SUPERADMINS`.
  *
- * **Last-superadmin guard.** When the current role is `superadmin` and the
- * target role is anything else, the transaction counts active (non-deleted)
- * superadmins; if dropping the target would put the count below
- * `MIN_SUPERADMINS` the result is `last_superadmin` and no write happens.
- *
- * Capability: `USER_ROLE_MANAGE` — superadmin-only via the platform handler
- * wrapper. Soft-deleted users are rejected (caller must restore first).
+ * Capability `USER_ROLE_MANAGE` (superadmin-only). Soft-deleted users are
+ * rejected — restore first.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
@@ -86,8 +79,7 @@ export async function setUserRole(
       return { kind: 'noop', previousRole, newRole: input.role };
     }
 
-    // Last-superadmin protection: count active superadmins inside the
-    // transaction so a concurrent demote can't race past us.
+    // Counted inside the transaction so a concurrent demote can't race past.
     if (previousRole === 'superadmin' && input.role !== 'superadmin') {
       const allSnap = await tx.get(usersCol);
       const activeSuperadmins = allSnap.docs.reduce((n, doc) => {

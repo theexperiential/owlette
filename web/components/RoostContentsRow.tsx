@@ -1,18 +1,12 @@
 'use client';
 
 /**
- * RoostContentsRow — expandable "contents" row inside an expanded roost
- * panel. Collapsed: "N files · X MB" with a disclosure chevron. Expanded:
- * lazy-fetches the version JSON from R2 and shows path + size for every
- * file, scrollable.
+ * Expandable "contents" row in a roost panel: "N files · X MB" collapsed,
+ * lazy-fetched path+size list from R2 when expanded.
  *
- * Why separate component:
- *   - Keeps the network/hook lifecycle scoped to the row. Collapsed rows
- *     never mount the hook, so listing 20 roosts doesn't fan out into 20
- *     version fetches until the user explicitly expands.
- *   - `useRoostManifestFiles` has a module-level cache keyed by versionId,
- *     so an expand → collapse → expand cycle hits the cache with no
- *     loading flicker or re-fetch.
+ * Its own component so the fetch hook is scoped to the row — 20 collapsed
+ * roosts fan out zero version fetches. `useRoostManifestFiles` caches by
+ * versionId, so re-expanding doesn't re-fetch.
  */
 
 import React, { useState } from 'react';

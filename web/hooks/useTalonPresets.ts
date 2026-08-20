@@ -10,11 +10,9 @@ import {
 import { BUILT_IN_TALON_PRESETS } from '@/lib/talons/templates';
 import type { TalonPresetRequirement, TalonPresetTemplate } from '@/lib/talons/presetTemplate';
 
-// A built-in's id is read from its definition (`builtin-<slug>`), never
-// re-derived from its name here. Deriving it twice typechecks and agrees
-// today, but the two spellings drift the moment a built-in is renamed — and
-// the failure is silent: the override stops matching and quietly reappears as
-// a *custom* preset alongside the built-in it was meant to replace.
+// A built-in's id comes from its definition (`builtin-<slug>`), never re-derived from its
+// name here: the two spellings drift the moment a built-in is renamed, and the failure is
+// silent — the override stops matching and reappears as a *custom* preset.
 
 /** Stable empty array so useMemo deps don't churn while no site is loaded. */
 const EMPTY_TALON_PRESETS: StoredTalonPreset[] = [];
@@ -35,9 +33,8 @@ export interface TalonPreset {
   createdAt: Timestamp | null;
   updatedAt?: Timestamp;
   /**
-   * What the operator still has to supply — derived from the shipped catalog,
-   * NEVER stored. An override of a built-in inherits its requirements: editing
-   * the copy cannot change what the template needs to run.
+   * What the operator still has to supply — derived from the shipped catalog, NEVER stored.
+   * An override inherits its built-in's requirements: editing the copy can't change them.
    */
   requires: readonly TalonPresetRequirement[];
 }
@@ -57,33 +54,25 @@ export interface UseTalonPresetsReturn {
 }
 
 /**
- * Hook to manage talon presets ("templates") scoped to a site.
- * Firestore path: `config/{siteId}/talon_presets/{presetId}`.
+ * Talon presets ("templates") scoped to a site, at `config/{siteId}/talon_presets/{id}`.
  *
- * Storage sits under `config/` with the schedule, restart and distribution
- * families rather than beside the talons themselves, because this is the fourth
- * family that ships built-ins and needs their client-side merge — the
- * deployment-template family's `sites/{siteId}` root is legacy compatibility
- * with `useDeployments`, not a pattern to propagate.
+ * Stored under `config/` with the schedule, restart and distribution families rather than
+ * beside the talons — the deployment-template family's `sites/{siteId}` root is legacy
+ * compatibility with `useDeployments`, not a pattern to propagate.
  *
- * Read is a direct Firestore listener; every write goes through
- * `/api/sites/{siteId}/presets/talon` so the capability check, the validator
- * and the audit emit can't be sidestepped — firestore.rules allows client reads
- * only.
+ * Reads are a direct Firestore listener; every write goes through
+ * `/api/sites/{siteId}/presets/talon` so the capability check, validator and audit emit
+ * can't be sidestepped (firestore.rules allows client reads only).
  *
- * Built-in presets are always present, merged client-side from
- * `BUILT_IN_TALON_PRESETS`. If an admin edits one, the override is saved at
- * `builtin-<slug>` and takes precedence on the next read. There is deliberately
- * no hide/archive flag: no preset family has one, and adding it here would make
- * talon presets the fifth divergent convention rather than the consistent
- * fourth.
+ * Built-ins are always present, merged client-side from `BUILT_IN_TALON_PRESETS`; an admin
+ * edit is saved at `builtin-<slug>` and takes precedence on the next read. Deliberately no
+ * hide/archive flag — no other preset family has one.
  *
- * Pass `null` for `siteId` to keep the listener closed (the editor does this in
- * edit mode, where no picker renders).
+ * Pass `null` for `siteId` to keep the listener closed (edit mode renders no picker).
  */
 export function useTalonPresets(siteId: string | null): UseTalonPresetsReturn {
-  // loadedSiteId pins the loaded presets to the site they came from so that
-  // loading can be derived at render (no sync setState in the effect body).
+  // loadedSiteId pins loaded presets to the site they came from, so loading can be derived
+  // at render (no sync setState in the effect body).
   const [state, setState] = useState<{
     firestorePresets: StoredTalonPreset[];
     loadedSiteId: string | null;
@@ -123,12 +112,11 @@ export function useTalonPresets(siteId: string | null): UseTalonPresetsReturn {
   const loading = !!db && !!siteId && state.loadedSiteId !== siteId;
   const error = state.error;
 
-  // Merge built-in defaults with Firestore overrides + custom presets
   const presets = useMemo(() => {
     const firestoreById = new Map(firestorePresets.map(p => [p.id, p]));
 
-    // Built-ins: use the Firestore override if one exists, otherwise the
-    // shipped default. Either way `requires` comes from the definition.
+    // Built-ins: Firestore override if one exists, else the shipped default. Either way
+    // `requires` comes from the definition.
     const builtIns: TalonPreset[] = BUILT_IN_TALON_PRESETS.map((definition, i) => {
       const id = definition.id;
       const override = firestoreById.get(id);

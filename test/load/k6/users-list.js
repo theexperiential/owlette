@@ -1,21 +1,12 @@
 /**
- * k6 load test: GET /api/users.
+ * k6 load test: GET /api/users — platform-wide collection scan with cursor
+ * pagination and optional role/site filters. Needs a key holding `user=*:read`.
  *
- * Platform-wide users collection scan with cursor pagination + optional
- * role/site filters. Superadmin-only (the load test must run with a key
- * holding `user=*:read`). The handler walks `users` ordered by `__name__`
- * with `where(role,...)` / `where(sites,'array-contains',...)` filters when
- * the query string carries them.
+ * SLO p99 < 300 ms, loose because the collection has no partition key: every
+ * page is a doc-id-ordered range scan.
  *
- * SLO: p99 < 300 ms (loose because the collection has no inherent partition
- * key — every page is a doc-id-ordered range scan).
- *
- * Scenarios:
- *   `smoke`     — 1 VU, 10 s
- *   `sustained` — ramping 10 → 50 VUs over 5 min
- *   `spike`     — 200 VUs for 30 s
- *
- * No mutations — re-runnable without cleanup.
+ * Scenarios: `smoke` (1 VU, 10s), `sustained` (10→50 VUs over 5m), `spike`
+ * (200 VUs, 30s). No mutations — re-runnable without cleanup.
  */
 import http from 'k6/http';
 import { check, sleep } from 'k6';

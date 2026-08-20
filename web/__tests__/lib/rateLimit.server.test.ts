@@ -1,48 +1,30 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/rateLimit.server.ts` (security-boundary-migration
- * wave 1.4).
+ * Unit tests for `web/lib/rateLimit.server.ts`: in-memory token bucket,
+ * firestore sharded counter (including fail-open), the combined entry point,
+ * and the `{ ok: false, reason: 'rate_limited', retryAfterSec }` envelope.
  *
- * Coverage:
- *   - in-memory token bucket: refill, cross-actor isolation, cross-bucket
- *     isolation, capability isolation, capacity edge cases
- *   - firestore sharded counter: under-limit allow, over-limit reject,
- *     window roll-over, shard distribution, retryAfter math, fail-open on
- *     transaction error
- *   - combined entry point: in-memory short-circuit, system actor cannot
- *     consume user-bucket tokens (and vice versa), unconfigured cap
- *     allowed
- *   - structured rejection envelope: `{ ok: false, reason: 'rate_limited',
- *     retryAfterSec }`
- *
- * Strategy: the firestore admin client is mocked at the
- * `@/lib/firebase-admin` boundary. We do NOT spin up the emulator from
- * this suite (the emulator-driven harness lands with wave 1.7); instead
- * we drive the transaction + collection apis through jest mocks so the
- * unit tests stay fast and hermetic.
+ * Firestore is mocked at the `@/lib/firebase-admin` boundary — no emulator, so
+ * these stay fast and hermetic.
  */
 
 import { Capability, type Actor } from '@/lib/capabilities';
-
-/* -------------------------------------------------------------------------- */
-/*  firestore admin mock — minimal in-memory shard store                      */
-/* -------------------------------------------------------------------------- */
 
 interface ShardDoc {
   count: number;
   windowStart: number;
 }
 
-// Map keyed by absolute path → shard doc. Reset between tests via beforeEach.
+// Absolute path → shard doc; reset in beforeEach.
 const fakeStore = new Map<string, ShardDoc>();
 const fakeObservationWrites: Array<{ path: string; data: Record<string, unknown> }> = [];
 
-// Fail-mode toggles (per-test).
+// Per-test fail-mode toggles.
 let failTransaction = false;
 let failGetAll = false;
 
-// Spy on transaction invocations so tests can assert call counts.
+// Lets tests assert transaction call counts.
 const transactionSpy = jest.fn();
 
 function makeDocRef(path: string) {
@@ -100,8 +82,7 @@ const fakeDb = {
       const tx = {
         get: async (ref: { get: () => Promise<unknown> }) => ref.get(),
         set: (ref: { set: (data: ShardDoc) => Promise<void> }, data: ShardDoc) => {
-          // Synchronous in mock; the real txn `set` is staged inside the
-          // transaction and not awaited by the caller.
+          // Synchronous here; the real txn `set` is staged, not awaited.
           void ref.set(data);
         },
       };
@@ -140,10 +121,6 @@ import {
   pickShardIndex,
   __resetInMemoryBucketsForTests,
 } from '@/lib/rateLimit.server';
-
-/* -------------------------------------------------------------------------- */
-/*  test fixtures                                                             */
-/* -------------------------------------------------------------------------- */
 
 const userActor: Actor = {
   type: 'user',
@@ -218,10 +195,6 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-/* -------------------------------------------------------------------------- */
-/*  default limits                                                            */
-/* -------------------------------------------------------------------------- */
-
 describe('default limits', () => {
   it('declares a per-minute limit for every capability in the user bucket', () => {
     for (const cap of Object.values(Capability)) {
@@ -251,10 +224,6 @@ describe('default limits', () => {
     expect(SYSTEM_LIMITS[Capability.MACHINE_EXEC_COMMAND].perMinute).toBe(300);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  small helpers                                                             */
-/* -------------------------------------------------------------------------- */
 
 describe('bucketForActor', () => {
   it('routes user actors to the user bucket', () => {
@@ -293,10 +262,6 @@ describe('rateLimitSubjectKey', () => {
     expect(rateLimitSubjectDocId('apiKey:key-a')).not.toBe(rateLimitSubjectDocId('apiKey:key-b'));
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  layer 1 — in-memory token bucket                                          */
-/* -------------------------------------------------------------------------- */
 
 describe('checkInMemoryBurst', () => {
   it('allows the first request from a fresh actor', () => {
@@ -358,18 +323,13 @@ describe('checkInMemoryBurst', () => {
     }
     expect(checkInMemoryBurst(userActor, Capability.USER_DELETE)).toBe(false);
 
-    // Advance time enough for at least one token to refill (5 tokens/min →
-    // 1 token per 12 seconds).
+    // 5 tokens/min = 1 per 12s.
     jest.spyOn(Date, 'now').mockReturnValue(start + 13_000);
     expect(checkInMemoryBurst(userActor, Capability.USER_DELETE)).toBe(true);
     // The next call should reject again (refill is gradual, not full).
     expect(checkInMemoryBurst(userActor, Capability.USER_DELETE)).toBe(false);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  layer 2 — firestore sharded counter                                       */
-/* -------------------------------------------------------------------------- */
 
 describe('checkFirestoreLimit', () => {
   it('allows the first call and stamps shard 0 with count=1', async () => {
@@ -394,8 +354,7 @@ describe('checkFirestoreLimit', () => {
   });
 
   it('returns rate_limited with retryAfterSec once the summed total exceeds limit', async () => {
-    // Pre-populate shard 0 with `count = limit` in the active window so
-    // the increment we perform pushes total past `limit`.
+    // Shard 0 at `count = limit` in the active window, so this call exceeds it.
     const limit = 3;
     const nowSec = Math.floor(Date.now() / 1000);
     const path = shardPath('site-1', 'user', 'user', Capability.MACHINE_REMOVE);
@@ -520,10 +479,6 @@ describe('pickShardIndex', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  combined entry point                                                      */
-/* -------------------------------------------------------------------------- */
-
 describe('checkRateLimit (combined)', () => {
   it('returns ok:true under normal conditions and writes to the user bucket', async () => {
     const result = await checkRateLimit(
@@ -569,9 +524,8 @@ describe('checkRateLimit (combined)', () => {
     );
     expect(userResult.ok).toBe(false);
 
-    // The system actor uses a separate in-memory key prefix already, but
-    // we reset to belt-and-braces guarantee the firestore layer is what
-    // we're checking.
+    // Reset so the firestore layer, not the separate in-memory prefix, is
+    // what this assertion exercises.
     __resetInMemoryBucketsForTests();
     const systemResult = await checkRateLimit(
       systemActor,

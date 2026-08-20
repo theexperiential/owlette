@@ -19,7 +19,7 @@ from sync_downloader import (
 from sync_state import SyncState
 
 
-# ─── helpers ─────────────────────────────────────────────────────────
+# helpers
 
 
 def _hash(data: bytes) -> str:
@@ -35,7 +35,7 @@ def _put_chunk(store: Path, data: bytes) -> str:
     return h
 
 
-# ─── default content store resolution ──────────────────────────────
+# default content store resolution
 
 
 def test_default_content_store_windows(monkeypatch):
@@ -57,15 +57,13 @@ def test_default_content_store_posix_xdg(monkeypatch):
 
 
 def test_default_content_store_not_under_documents():
-    """
-    regression: the default content store MUST NOT live under Documents
-    (because LocalSystem-expanded `~` points at System32).
-    """
+    """regression: the default content store MUST NOT live under Documents —
+    LocalSystem-expanded `~` points at System32."""
     got = _default_content_store()
     assert 'Documents' not in got
 
 
-# ─── chunk_path + has_chunk ─────────────────────────────────────────
+# chunk_path + has_chunk
 
 
 def test_chunk_path_shards_by_first_two_chars(tmp_path):
@@ -100,7 +98,7 @@ def test_has_chunk_deletes_wrong_content(tmp_path):
     assert not target.exists()
 
 
-# ─── download_all happy paths ───────────────────────────────────────
+# download_all happy paths
 
 
 def _bulk_provider(url='http://r2/sig'):
@@ -274,13 +272,9 @@ def test_signed_url_403_triggers_url_refresh(tmp_path):
 
 
 def test_range_resume_from_partial_file(tmp_path):
-    """
-    mid-download crash recovery (wave 4c.2 coverage): a `.partial` file
-    left from a prior run causes the next attempt to send
-    `Range: bytes=<offset>-` and append the tail rather than refetching
-    from byte 0. regression guard for the docstring claim + the code
-    path at src/sync_downloader.py:334.
-    """
+    """mid-download crash recovery: a `.partial` file from a prior run must make
+    the next attempt send `Range: bytes=<offset>-` and append the tail rather
+    than refetch from byte 0 (src/sync_downloader.py:334)."""
     state = SyncState(str(tmp_path / 'state.db'))
     try:
         store = tmp_path / 'content'
@@ -290,8 +284,8 @@ def test_range_resume_from_partial_file(tmp_path):
         first_half = full_data[:split]
         second_half = full_data[split:]
 
-        # pre-create the .partial file with the first half — simulates a
-        # prior download that got ~40% through before dying.
+        # pre-create .partial with the first half — a prior download that died
+        # ~40% through.
         partial_target = chunk_path(store, h).with_suffix(chunk_path(store, h).suffix + '.partial')
         partial_target.parent.mkdir(parents=True, exist_ok=True)
         partial_target.write_bytes(first_half)
@@ -322,8 +316,8 @@ def test_range_resume_from_partial_file(tmp_path):
             )
 
         assert result.fetched == 1
-        # the worker must have sent a Range header starting from where
-        # the partial left off — otherwise it would refetch the whole file.
+        # must have sent a Range header from where the partial left off,
+        # otherwise it refetched the whole file.
         assert captured_headers.get('Range') == f'bytes={split}-'
         # final file is the full assembly: first_half (preserved) + second_half (appended).
         final = chunk_path(store, h)
@@ -351,8 +345,8 @@ def test_bulk_prefetch_batches_above_threshold(tmp_path):
             files=[], chunks=chunks,
         )
 
-        # all are dedup-skipped → url_provider is never called at all
-        # (the prefetch is short-circuited because pending=[])
+        # all dedup-skipped → url_provider never called (prefetch short-circuits
+        # on pending=[])
         url_provider = MagicMock(side_effect=AssertionError("dedup means no fetch"))
         result = download_all(
             distribution_id=dist_id,

@@ -1,23 +1,14 @@
 /**
  * @jest-environment node
  *
- * Tests for the Hoot history repair (repairDanglingToolParts).
- *
- * Pins down:
- *   1. clean histories pass through untouched (same references)
- *   2. dangling `input-available` / `input-streaming` tool parts on a
- *      superseded assistant turn become terminal `output-error` parts
- *   3. unanswered `approval-requested` parts superseded by a later user
- *      message are resolved (approval stripped, error output)
- *   4. the final in-flight assistant message is never touched (the tier-3
- *      approval round-trip depends on it)
- *   5. regression pin against the real AI SDK: the broken shape makes
- *      convertToModelMessages throw MissingToolResultsError; the repaired
- *      shape converts cleanly
- *   6. the async resolver overload: recovered `{ output }` becomes a real
- *      `output-available` part, `{ errorText }` customizes the error,
- *      `null` falls back to LOST_RESULT_ERROR, and approval-requested
- *      parts never consult the resolver
+ * Tests for Hoot history repair (repairDanglingToolParts). Pins: clean histories pass
+ * through by reference; dangling `input-available`/`input-streaming` parts on a superseded
+ * assistant turn become terminal `output-error`; unanswered `approval-requested` parts
+ * superseded by a later user message are resolved; the final in-flight assistant message
+ * is never touched (the tier-3 approval round-trip needs it); a regression pin against the
+ * real AI SDK (broken shape throws MissingToolResultsError, repaired shape converts); and
+ * the async resolver overload — `{ output }` → `output-available`, `{ errorText }`
+ * customizes the error, `null` → LOST_RESULT_ERROR, approvals never consult the resolver.
  */
 
 import { convertToModelMessages, streamText, type UIMessage } from 'ai';
@@ -198,11 +189,10 @@ describe('repairDanglingToolParts', () => {
     expect(out[1]).toBe(messages[1]);
   });
 
-  // The prod failure that the live smoke surfaced: a tier-3 tool approved and
-  // executing, then superseded by a new user message. Its part is
-  // `approval-responded` (approved) with no output — repair must give it a
-  // synthetic result or convertToModelMessages emits a dangling tool_use and
-  // the provider 400s the whole request ("tool_use ids without tool_result").
+  // The prod failure the live smoke surfaced: a tier-3 tool approved and executing, then
+  // superseded by a new user message. Its part is `approval-responded` with no output —
+  // repair must synthesize a result, else convertToModelMessages emits a dangling tool_use
+  // and the provider 400s the request ("tool_use ids without tool_result").
   it('repairs an APPROVED approval-responded part superseded mid-execution', () => {
     const approvedInflight = {
       type: 'tool-execute_script',
@@ -259,12 +249,10 @@ describe('repairDanglingToolParts', () => {
     });
   });
 
-  // The regression pin this module exists for: the exact prod failure shape
-  // (dangling tool call followed by user messages) makes streamText's prompt
-  // preparation throw MissingToolResultsError ("Tool result is missing for
-  // tool call toolu_…"); the repaired history streams cleanly. Note the throw
-  // happens inside streamText (convertToLanguageModelPrompt), NOT in
-  // convertToModelMessages — so the pin must exercise streamText itself.
+  // The regression pin this module exists for: the prod failure shape (dangling tool call
+  // followed by user messages) throws MissingToolResultsError during streamText's prompt
+  // preparation — inside convertToLanguageModelPrompt, NOT convertToModelMessages, so the
+  // pin must exercise streamText itself. The repaired history streams cleanly.
   it('unbricks streamText for the prod failure shape', async () => {
     const broken = [
       userMsg('u1', 'run sfc /scannow and DISM in parallel'),
@@ -314,8 +302,7 @@ describe('repairDanglingToolParts', () => {
     const repairedErrors = await streamErrors(repaired);
     expect(repairedErrors).toEqual([]);
 
-    // The dangling call now has a matching error tool-result in the model
-    // messages, which is what satisfies the SDK's validation.
+    // The dangling call now has a matching error tool-result, satisfying SDK validation.
     const modelMessages = await convertToModelMessages(repaired);
     const toolResults = modelMessages
       .filter((m) => m.role === 'tool')

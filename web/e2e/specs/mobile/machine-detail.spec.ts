@@ -1,22 +1,15 @@
 /**
- * Mobile — machine detail (expanded card)
+ * Mobile — machine detail (expanded card). Viewport/isMobile/hasTouch come from
+ * the `mobile-chromium` project, which owns every spec under specs/mobile/**.
  *
- * Viewport / isMobile / hasTouch come from the `mobile-chromium` project in
- * playwright.config.ts, which owns every spec under specs/mobile/**.
+ * responsive-acceptance.spec.ts proves the dashboard RENDERS at 390px; this
+ * proves the card is OPERABLE there, with an overflow assertion after each step
+ * so a control that "works" by pushing the document sideways still fails.
  *
- * `mobile/responsive-acceptance.spec.ts` proves the dashboard *renders* inside
- * 390px. This spec proves the card is still OPERABLE there: the collapsible
- * sections open, the context menu is reachable at a touch-sized hit area, and
- * both detail panels (metrics + display) mount from card controls — each step
- * followed by an overflow assertion, so a control that "works" by pushing the
- * document sideways still fails.
- *
- * Shared-fixture note: the three expand/collapse toggles are USER PREFERENCES
- * (`updateUserPreferences` in dashboard/page.tsx), not local component state —
+ * The three expand/collapse toggles are USER PREFERENCES, not component state —
  * toggling one writes `users/admin-uid.preferences` and every other spec that
- * renders a machine card inherits it. `resetExpandPrefs` therefore runs in
- * both `beforeEach` (order-independence inside this file) and `afterAll` (no
- * leak out of it); see commit cb94099 for that failure mode.
+ * renders a machine card inherits it. Hence `resetExpandPrefs` in both
+ * `beforeEach` and `afterAll`; see commit cb94099 for that failure mode.
  */
 
 import { test, expect, type Locator, type Page } from '@playwright/test';
@@ -34,19 +27,16 @@ const CPU_PERCENT = 42;
 const MEMORY_PERCENT = 61;
 
 /**
- * Minimum touch target for the controls tagged `pointer-coarse:h-10 w-10`
- * (task 4.4). Playwright's `hasTouch` makes `pointer: coarse` match, so the
- * variant is live in this project and dead in `chromium`.
+ * Minimum touch target for controls tagged `pointer-coarse:h-10 w-10`.
+ * `hasTouch` makes `pointer: coarse` match, so the variant is live here and
+ * dead in the `chromium` project.
  */
 const MIN_TOUCH_TARGET_PX = 40;
 
 /**
- * Extend the seeded machine with the v2 metric shape the card's stats section
- * renders from. `joinMachineDevices` (hooks/useFirestore.ts) derives a
- * metric-only hardware profile when no `hardware/profile` doc exists, so
- * `metrics.cpus` + `metrics.memory` alone are enough to resolve a cpu device.
- * One process is added under `metrics.processes` — the same location
- * `dispatch/kill-process.spec.ts` seeds.
+ * Extend the seeded machine with the v2 metric shape the stats section renders.
+ * `joinMachineDevices` derives a metric-only hardware profile when no
+ * `hardware/profile` doc exists, so `metrics.cpus` + `metrics.memory` suffice.
  */
 async function seedDetailMachine(): Promise<void> {
   await seedMachine(SITE_ID, MACHINE_ID);
@@ -89,13 +79,8 @@ async function cardFor(page: Page): Promise<Locator> {
 test.describe('mobile machine detail — admin on site-A', () => {
   test.use(roleState('admin'));
 
-  /**
-   * Pin the three expand flags to the app's own defaults
-   * (AuthContext.tsx:431-433 — all three `?? true`). Written before every
-   * test so the collapse/expand test cannot leave a later test in this file
-   * looking at a collapsed card, and again in `afterAll` so it cannot leak
-   * out of the file.
-   */
+  /** Pin the three expand flags to the app defaults (all `?? true`) so the
+   * collapse/expand test can't leave a later test on a collapsed card. */
   async function resetExpandPrefs(): Promise<void> {
     await getAdminDb()
       .collection('users')
@@ -122,8 +107,7 @@ test.describe('mobile machine detail — admin on site-A', () => {
 
   test.afterAll(async () => {
     await resetExpandPrefs();
-    // Drop the machine so the dashboard's card count is unchanged for
-    // whatever runs next.
+    // Drop the machine so the next spec sees an unchanged card count.
     await getAdminDb()
       .collection('sites')
       .doc(SITE_ID)
@@ -135,9 +119,7 @@ test.describe('mobile machine detail — admin on site-A', () => {
   test('collapsing and re-expanding the card sections keeps the page inside the viewport', async ({ page }) => {
     const card = await cardFor(page);
 
-    // All three sections start expanded: AuthContext.tsx:431-433 defaults
-    // stats/processes/displays to `?? true`, so the card's opening state is
-    // the fully-expanded one — the widest thing it ever renders.
+    // All three sections default expanded, so this is the widest the card gets.
     await expect(card.getByText(`${CPU_PERCENT}%`, { exact: true })).toBeVisible();
     await expect(card.getByText(`${MEMORY_PERCENT}%`, { exact: true })).toBeVisible();
     await expect(card.getByText(PROCESS_NAME, { exact: true })).toBeVisible();
@@ -146,10 +128,8 @@ test.describe('mobile machine detail — admin on site-A', () => {
     await expect(card.getByText('Test Monitor 2', { exact: true })).toBeVisible();
     await assertNoHorizontalOverflow(page);
 
-    // The dashboard's expand/collapse-all control is icon-only with no
-    // accessible name, so it is addressed by its lucide glyph — the same
-    // convention `settings/webhooks-manage.spec.ts` uses. `ChevronsDownUp`
-    // is the "collapse all" state (dashboard/page.tsx:1030).
+    // Icon-only with no accessible name, so addressed by its lucide glyph
+    // (`ChevronsDownUp` = the "collapse all" state).
     await page.locator('button:has(svg.lucide-chevrons-down-up)').click();
 
     // Collapsed: each section falls back to its one-line summary trigger.
@@ -158,17 +138,14 @@ test.describe('mobile machine detail — admin on site-A', () => {
     await expect(card.getByRole('button').filter({ hasText: /1 process/i })).toBeVisible();
     await assertNoHorizontalOverflow(page);
 
-    // Re-expand just the displays section through its own trigger. Located by
-    // TEXT rather than accessible name: the header's display shortcut is
-    // icon-only with `aria-label="view displays"`, which a name-based match
-    // would also hit.
+    // Located by TEXT, not accessible name — the header's icon-only display
+    // shortcut carries `aria-label="view displays"` and would also match.
     await card.getByRole('button').filter({ hasText: /2 displays/i }).click();
     await expect(card.getByText('Test Monitor 1', { exact: true })).toBeVisible();
     await expect(card.getByText('Test Monitor 2', { exact: true })).toBeVisible();
     await assertNoHorizontalOverflow(page);
 
-    // Back to fully expanded via the same control (now in its "expand all"
-    // state), so the card ends this test the way it started it.
+    // Back to fully expanded so the card ends as it started.
     await page.locator('button:has(svg.lucide-chevrons-up-down)').click();
     await expect(card.getByText(PROCESS_NAME, { exact: true })).toBeVisible();
     await assertNoHorizontalOverflow(page);
@@ -177,9 +154,8 @@ test.describe('mobile machine detail — admin on site-A', () => {
   test('the context menu has a touch-sized trigger and opens its admin actions', async ({ page }) => {
     const card = await cardFor(page);
 
-    // `pointer-coarse:h-10 pointer-coarse:w-10` on MachineContextMenu.tsx:197
-    // only resolves when the primary pointer is coarse — i.e. exactly this
-    // project. Assert the grown size rather than that the class is present.
+    // `pointer-coarse:h-10/w-10` only resolves when the primary pointer is
+    // coarse. Assert the grown size, not the class.
     const trigger = card.getByTestId('machine-context-menu-trigger');
     const box = await trigger.boundingBox();
     expect(box).not.toBeNull();
@@ -202,9 +178,8 @@ test.describe('mobile machine detail — admin on site-A', () => {
   test('tapping a metric row opens the metrics detail panel', async ({ page }) => {
     const card = await cardFor(page);
 
-    // The whole row carries the click handler; the percentage is a child, so
-    // the tap bubbles. No metrics_history is seeded, so the panel resolves to
-    // its deterministic empty-range copy rather than a chart.
+    // The row carries the handler and the percentage is a child, so the tap
+    // bubbles. No metrics_history seeded → deterministic empty-range copy.
     await card.getByText(`${CPU_PERCENT}%`, { exact: true }).click();
     await expect(
       page.getByText(/no data available for this time range/i),

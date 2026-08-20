@@ -1,37 +1,23 @@
 /**
- * Pure logic for the roost webhook subsystem.
+ * Pure logic for roost webhooks: signing, canonicalisation, backoff, retry budget.
+ * webhookDispatch.ts does the HTTP.
  *
- * Roost emits structured events for the release-engineering lifecycle.
- * External pipelines (CI runners, operator alerting) subscribe per-site
- * and receive HMAC-SHA256-signed POSTs on every matching event. This
- * module handles the signing, canonicalisation, backoff, and retry-budget
- * decisions; the handler in webhookDispatch.ts does the HTTP.
- *
- * Wire format (stripe-style, wave 6.9):
- *   POST {subscriber.url}
- *   Content-Type: application/json
+ * Wire format (stripe-style):
+ *   POST {subscriber.url}, Content-Type: application/json
  *   Roost-Event:     <event.type>
- *   Roost-Delivery:  <uuid>                    (stable across retries for dedup)
- *   Roost-Signature: t=<unix>,v1=<hex>         (unix seconds + hmac-sha256 over "t.body")
+ *   Roost-Delivery:  <uuid>                (stable across retries, for dedup)
+ *   Roost-Signature: t=<unix>,v1=<hex>     v1 = hmac_sha256(secret, "<t>.<raw_body>")
  *   {canonical JSON body}
  *
- * The signature is `v1 = hmac_sha256(secret, "<t>.<raw_body>")` where
- * `<t>` is the unix-seconds timestamp encoded in the same header. The
- * timestamp is *part* of the signed payload, which prevents replay:
- * receivers reject any delivery whose `t` is more than 5 minutes away
- * from their own clock (`DEFAULT_REPLAY_TOLERANCE_SECONDS`).
+ * The timestamp is part of the signed material, so receivers block replay by rejecting
+ * any `t` more than DEFAULT_REPLAY_TOLERANCE_SECONDS from their own clock.
  */
 
 import { createHash, createHmac } from 'crypto';
 
-/* --------------------------------------------------------------------- */
-/*  Event taxonomy                                                       */
-/* --------------------------------------------------------------------- */
-
 /**
- * Stable event names emitted by roost. Consumers pin on these strings —
- * renames are breaking changes. Extending the union requires a coordinated
- * release with the docs site (wave 5.6).
+ * Stable event names. Consumers pin on these strings — renames are breaking, and
+ * extending the union needs a coordinated docs-site release.
  */
 export type RoostEventType =
   | 'distribution.queued'
@@ -56,10 +42,6 @@ export function isRoostEventType(x: unknown): x is RoostEventType {
   return typeof x === 'string' && (ROOST_EVENT_TYPES as readonly string[]).includes(x);
 }
 
-/* --------------------------------------------------------------------- */
-/*  Payload                                                              */
-/* --------------------------------------------------------------------- */
-
 export interface WebhookPayload {
   /** Stable event name; receivers switch on this. */
   event: RoostEventType;
@@ -71,10 +53,7 @@ export interface WebhookPayload {
   data: Record<string, unknown>;
 }
 
-/**
- * Canonical JSON for signing: recursive key-sort so any two senders /
- * verifiers that speak this format agree on the byte sequence.
- */
+/** Canonical JSON for signing: recursive key-sort so sender and verifier agree byte-for-byte. */
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(sortForCanonical(value));
 }
@@ -88,25 +67,14 @@ function sortForCanonical(v: unknown): unknown {
   return out;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Signing (stripe-style: t=<unix>,v1=<hex> over "t.body")              */
-/* --------------------------------------------------------------------- */
-
 /** 5-minute default replay-window for verifiers. */
 export const DEFAULT_REPLAY_TOLERANCE_SECONDS = 300;
 
 /**
- * Compute the `Roost-Signature` header value for a payload given a shared
- * secret. The signature is
- *
- *     v1 = hmac_sha256(secret, "<t>.<canonicalBody>")
- *
- * encoded as `t=<unix>,v1=<hex>` so the timestamp is part of the signed
- * material. Receivers MUST re-compute v1 and reject any `t` older than
- * `DEFAULT_REPLAY_TOLERANCE_SECONDS` (5 min) to block replay attacks.
- *
- * `nowMs` is injectable for deterministic tests; production callers pass
- * nothing and get `Date.now()`.
+ * `Roost-Signature` value: `t=<unix>,v1=<hex>` where v1 = hmac_sha256(secret,
+ * "<t>.<canonicalBody>"). Signing the timestamp is what blocks replay — receivers must
+ * re-compute v1 and reject `t` older than DEFAULT_REPLAY_TOLERANCE_SECONDS.
+ * `nowMs` is injectable for deterministic tests.
  */
 export function signPayload(
   canonicalBody: string,
@@ -134,12 +102,9 @@ export interface VerifyResult {
 }
 
 /**
- * Constant-time signature verification helper for use by receivers. Kept
- * here so first-party integrations can import a shared implementation
- * instead of rolling their own (common source of timing leaks).
- *
- * Returns a structured result so callers can distinguish stale-timestamp
- * from bad-hmac in their logs / metrics.
+ * Constant-time verification for receivers — shared so first-party integrations don't roll
+ * their own and leak timing. Returns a structured result so callers can tell stale-timestamp
+ * from bad-hmac.
  */
 export function verifySignature(
   canonicalBody: string,
@@ -197,21 +162,14 @@ export function verifySignature(
   return { ok: false, reason: 'bad_signature', timestamp: t };
 }
 
-/**
- * Stable delivery id for idempotency. Derived from `event + canonicalBody`
- * so retries of the same delivery send the same id. Receivers can dedup
- * on this header. Not cryptographic — just a stable content hash.
- */
+/** Delivery id = content hash of event + canonicalBody, so retries reuse the same id and
+ * receivers can dedup. Not cryptographic. */
 export function deliveryId(payload: WebhookPayload, canonicalBody: string): string {
   return createHash('sha256')
     .update(`${payload.event}|${payload.siteId}|${canonicalBody}`)
     .digest('hex')
     .slice(0, 32);
 }
-
-/* --------------------------------------------------------------------- */
-/*  Retry arithmetic                                                     */
-/* --------------------------------------------------------------------- */
 
 export interface BackoffOptions {
   baseMs?: number;
@@ -249,14 +207,8 @@ export function shouldGiveUp(
 }
 
 /**
- * Decide whether a particular HTTP response should trigger a retry.
- *
- * - 2xx: success, no retry.
- * - 4xx (except 408/425/429): permanent — bad URL / auth problem on the
- *   receiver's side. Retrying would spam. Mark failed.
- * - 408 / 425 / 429: transient — receiver is rate-limited or timed out.
- * - 5xx: transient.
- * - Network error (no status): transient.
+ * 2xx succeeds; 4xx is permanent (bad URL / auth — retrying just spams) except
+ * 408/425/429; 5xx and network errors (no status) are transient.
  */
 export type DeliveryOutcome =
   | { kind: 'success'; status: number }
@@ -279,14 +231,9 @@ export function classifyResponse(status: number | null): DeliveryOutcome {
   if (status >= 500) {
     return { kind: 'retry', reason: `http_${status}` };
   }
-  // weird non-standard codes (e.g. 1xx / 3xx that somehow surface): treat
-  // as permanent failure so we don't loop forever on oddities.
+  // Non-standard codes (1xx/3xx) are permanent, so we don't loop forever on oddities.
   return { kind: 'permanent_failure', reason: `http_${status}` };
 }
-
-/* --------------------------------------------------------------------- */
-/*  Subscription filtering                                               */
-/* --------------------------------------------------------------------- */
 
 export interface Subscription {
   id: string;

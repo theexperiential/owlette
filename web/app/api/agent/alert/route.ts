@@ -29,25 +29,11 @@ import { apiError } from '@/lib/apiErrorResponse';
 import { hootInternalSecret } from '@/lib/hootInternalSecret';
 
 /**
- * POST /api/agent/alert
- *
- * Agent-authenticated endpoint to send alert emails when the agent
- * detects a persistent connection failure or a process crash/start failure.
- *
- * Request headers:
- * - Authorization: Bearer <agent-firebase-id-token>
- *
- * Request body:
- * - siteId: string
- * - machineId: string
- * - errorCode: string (for connection_failure)
- * - errorMessage: string
- * - agentVersion: string
- * - eventType: string (default: 'connection_failure')
- * - data: object (generic alert payload)
- * - processName: string (required for process events unless data.process_name is set)
- *
- * Rate limited: connection failures at 5/hr per IP, process alerts at 3/hr per machineId:processName.
+ * POST /api/agent/alert — agent-authenticated alert intake (connection
+ * failures, process crash/start failures, display events).
+ * Auth: `Authorization: Bearer <agent-firebase-id-token>`.
+ * Rate limits: connection failures 5/hr per IP, process alerts 3/hr per
+ * `machineId:processName`.
  */
 
 
@@ -94,7 +80,6 @@ function readRecord(value: unknown): Record<string, unknown> {
 export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
-      // Verify agent Bearer token
       const authHeader = request.headers.get('Authorization') || '';
       const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
@@ -110,12 +95,10 @@ export const POST = withRateLimit(
         return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
       }
 
-      // Require agent role
       if (decodedToken.role !== 'agent') {
         return NextResponse.json({ error: 'Forbidden — agent token required' }, { status: 403 });
       }
 
-      // Parse body
       const body = await request.json() as Record<string, unknown>;
       const siteId = readString(body.siteId);
       const machineId = readString(body.machineId);
@@ -134,12 +117,12 @@ export const POST = withRateLimit(
         readString(alertData.error_message) ||
         readString(alertData.errorMessage);
 
-      // Determine event type (default to connection_failure for backward compat)
+      // Defaults to connection_failure — pre-eventType agents omit the field.
       const resolvedEventType = eventType || 'connection_failure';
       const isProcessEvent = resolvedEventType === 'process_crash' || resolvedEventType === 'process_start_failed';
       const isExeMissingEvent = resolvedEventType === 'exe_missing';
-      // [B3.1] Display events route through `DISPLAY_EVENT_ROUTING` rather
-      // than the legacy email-immediate / process-digest branches.
+      // Display events route through `DISPLAY_EVENT_ROUTING`, not the legacy
+      // email-immediate / process-digest branches.
       const isDisplayEvent =
         typeof resolvedEventType === 'string' &&
         resolvedEventType.startsWith('display_') &&
@@ -153,7 +136,6 @@ export const POST = withRateLimit(
       const displayData: Record<string, unknown> =
         isDisplayEvent ? alertData : {};
 
-      // Validate required fields
       if (!siteId || !machineId) {
         return NextResponse.json(
           { error: 'Missing required fields: siteId, machineId' },
@@ -175,7 +157,7 @@ export const POST = withRateLimit(
         );
       }
 
-      // Verify the token's site_id matches the claimed siteId (security check)
+      // Token's site_id must match the claimed siteId.
       if (decodedToken.site_id && decodedToken.site_id !== siteId) {
         console.warn(
           `[agent/alert] site_id mismatch: token=${decodedToken.site_id}, body=${siteId}`
@@ -190,7 +172,7 @@ export const POST = withRateLimit(
         return NextResponse.json({ error: 'machine_id_mismatch' }, { status: 403 });
       }
 
-      // Per-process rate limiting for process events (separate from the IP-based limiter)
+      // Per-process limit, separate from the IP-based limiter.
       if (isProcessEvent && processAlertRateLimit) {
         const processRateLimitKey = `process_alert:${machineId}:${resolvedProcessName}`;
         const processRateResult = await checkRateLimit(processAlertRateLimit, processRateLimitKey);
@@ -206,31 +188,22 @@ export const POST = withRateLimit(
 
       const db = getAdminDb();
 
-      // Talon tap, placed HERE rather than after routing: every branch below
-      // returns its own response (display, exe_missing, generic, process,
-      // connection failure), so there is no shared exit a tap could sit on.
-      // Everything above this line is authentication, validation and rate
-      // limiting — a request that reaches this statement is a real, authorized
-      // event from the machine it claims to be. Fire-and-forget by contract.
+      // Talon tap sits here, not after routing: every branch below returns its
+      // own response, so there is no shared exit. Above this line is only
+      // auth/validation/rate-limiting. Fire-and-forget by contract.
       //
-      // SINGLE-SOURCE RULE — display events are excluded on purpose. Display
-      // talons are fired by `functions/src/talonLogEvents.ts` off the agent's
-      // `sites/{siteId}/logs` write, and that write happens on every agent
-      // regardless of whether it also posts here. Tapping again would
-      // double-fire every display talon on agents new enough to send the
-      // alert. The logs trigger stays the one source; do not "restore" this.
+      // SINGLE SOURCE: display events are excluded on purpose —
+      // `functions/src/talonLogEvents.ts` already fires them off the agent's
+      // `sites/{siteId}/logs` write. Tapping here too double-fires. Do not
+      // "restore" this.
       if (!isDisplayEvent) {
         tapTalonMatcher(db, siteId, { kind: 'event', eventType: resolvedEventType, machineId });
       }
 
-      // --- Display events (B3.1 + B3.3) ---
-      // Routed through `DISPLAY_EVENT_ROUTING`. `suppressAlert === true`
-      // (stamped agent-side when the event fires within 90s of a successful
-      // apply) skips email entirely but still fires the webhook — receivers
-      // handle their own dedupe and the audit trail stays complete.
-      // Critical-path events (`route.criticalPath: true` —
-      // `display_monitor_removed` / `display_auto_revert_fired`) bypass the
-      // 3-min digest and email inline so operators get sub-minute delivery.
+      // `suppressAlert` (agent-stamped when the event fires within 90s of a
+      // successful apply) skips email but STILL fires the webhook — receivers
+      // dedupe themselves and the audit trail stays complete. `criticalPath`
+      // events bypass the 3-min digest and email inline.
       if (isDisplayEvent) {
         const route = DISPLAY_EVENT_ROUTING[resolvedEventType];
         const suppressAlert = displayData.suppressAlert === true;
@@ -257,9 +230,7 @@ export const POST = withRateLimit(
           }
         }
 
-        // Email path: critical-path events send inline; everything else
-        // queues to the digest cron. Both paths respect suppressAlert + the
-        // route.email flag.
+        // Critical-path sends inline; everything else queues to the digest cron.
         let queuedForEmail = false;
         let immediateEmailsSent = 0;
         if (route.email && !suppressAlert) {
@@ -287,8 +258,7 @@ export const POST = withRateLimit(
           }
         }
 
-        // Webhook path: fire immediately (still happens when suppressAlert
-        // is set — receivers see the activity even if email is squelched).
+        // Fires even when suppressAlert is set — receivers still see activity.
         let webhookFired = false;
         if (route.webhook) {
           const siteDoc = await db.collection('sites').doc(siteId).get();
@@ -377,14 +347,12 @@ export const POST = withRateLimit(
         return NextResponse.json({ success: true, logged: true });
       }
 
-      // Determine webhook event type (used by both process and connection paths)
       const webhookEvent = resolvedEventType === 'process_crash' ? 'process.crashed'
         : resolvedEventType === 'process_start_failed' ? 'process.restarted'
         : 'machine.offline';
 
-      // --- Process events: queue for batched digest email ---
+      // Process events: queue for the batched digest email.
       if (isProcessEvent) {
-        // Write to pending_process_alerts for batched delivery by cron
         await db.collection('pending_process_alerts').add({
           siteId,
           machineId,
@@ -397,7 +365,6 @@ export const POST = withRateLimit(
 
         console.log(`[agent/alert] Queued process alert: ${resolvedEventType} - ${resolvedProcessName} on ${machineId} (${siteId})`);
 
-        // Fire webhooks immediately (non-blocking)
         const siteDoc = await db.collection('sites').doc(siteId).get();
         const siteName = siteDoc.data()?.name || siteId;
         fireWebhooks(siteId, siteName, webhookEvent, {
@@ -405,7 +372,6 @@ export const POST = withRateLimit(
           process: { name: resolvedProcessName, error: resolvedErrorMessage || '' },
         }).catch(console.error);
 
-        // Trigger autonomous Hoot investigation immediately (non-blocking)
         const localHootRunning = await isLocalHootRunning(db, siteId, machineId);
         if (localHootRunning) {
           console.log(`[agent/alert] Local Hoot is running on ${machineId} — skipping server-side investigation`);
@@ -424,7 +390,7 @@ export const POST = withRateLimit(
         return NextResponse.json({ success: true, queued: true });
       }
 
-      // --- Connection failure events: send email immediately (unchanged) ---
+      // Connection failures email immediately.
       const resendClient = getResend();
       if (!resendClient) {
         console.warn('[agent/alert] RESEND_API_KEY not configured — alert not sent');
@@ -446,7 +412,7 @@ export const POST = withRateLimit(
       let emailsSent = 0;
 
       for (const recipient of recipients) {
-        // Honor per-machine mutes here too (mirrors the critical-display loop).
+        // Honor per-machine mutes (mirrors the critical-display loop).
         if (recipient.mutedMachines.includes(machineId)) continue;
         try {
           const unsubscribeUrl = recipient.userId !== 'fallback'
@@ -475,7 +441,6 @@ export const POST = withRateLimit(
 
       console.log(`[agent/alert] Alert sent for ${machineId} (${siteId}): ${resolvedEventType}, ${recipients.length} recipient(s)`);
 
-      // Fire webhooks (non-blocking)
       const siteDoc = await db.collection('sites').doc(siteId).get();
       const siteName = siteDoc.data()?.name || siteId;
       fireWebhooks(siteId, siteName, webhookEvent, {
@@ -490,9 +455,7 @@ export const POST = withRateLimit(
   { strategy: 'agentAlert', identifier: 'ip' }
 );
 
-/**
- * Check if local Hoot is running on a machine (fresh heartbeat within 30s).
- */
+/** True when local Hoot has a heartbeat within 30s. */
 async function isLocalHootRunning(
   db: FirebaseFirestore.Firestore,
   siteId: string,
@@ -508,8 +471,8 @@ async function isLocalHootRunning(
 
     if (!machineDoc.exists) return false;
 
-    // Wire field: machines/{id}.cortexStatus.{online,lastHeartbeat} — written by
-    // the agent, so the stored name keeps its legacy spelling.
+    // Wire field `machines/{id}.cortexStatus` keeps its legacy spelling — the
+    // agent writes it.
     const hootStatus = machineDoc.data()?.cortexStatus;
     if (!hootStatus?.online) return false;
 
@@ -526,10 +489,7 @@ async function isLocalHootRunning(
   }
 }
 
-/**
- * Trigger autonomous Hoot investigation for a process event.
- * Checks if autonomous mode is enabled, then fires a non-blocking internal request.
- */
+/** Fire a non-blocking autonomous Hoot investigation if the site enabled it. */
 async function triggerAutonomousHoot(
   db: FirebaseFirestore.Firestore,
   params: {
@@ -545,14 +505,12 @@ async function triggerAutonomousHoot(
   const secret = hootInternalSecret();
   if (!secret) return; // Not configured — autonomous mode unavailable
 
-  // Quick check: is autonomous mode enabled for this site?
   const settingsDoc = await db.doc(`sites/${params.siteId}/settings/cortex`).get();
   if (!settingsDoc.exists || !settingsDoc.data()?.autonomousEnabled) return;
 
-  // Build internal URL for the autonomous endpoint
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://owlette.app';
 
-  // Fire and forget — don't await the response
+  // Fire and forget.
   fetch(`${baseUrl}/api/hoot/autonomous`, {
     method: 'POST',
     headers: {
@@ -564,19 +522,11 @@ async function triggerAutonomousHoot(
 }
 
 /**
- * [B3.3] Send a single critical-path display alert immediately, bypassing
- * the digest cron. Used by `display_monitor_removed` and
- * `display_auto_revert_fired` — events where minute-scale latency is
- * unacceptable (panel down, apply silently auto-reverted) and the
- * standard digest cadence would let the operator miss them.
- *
- * Uses the same `buildDisplayDigestEmail` helper as the cron path so the
- * single-event email layout is identical regardless of which path emitted
- * it. Per-recipient send loop honors `mutedMachines` + emits individual
- * unsubscribe links the same way the digest cron does.
- *
- * Returns the count of emails actually sent (after Resend failures) so
- * the caller can include it in the response payload.
+ * Send one critical-path display alert inline, bypassing the digest cron —
+ * `display_monitor_removed` / `display_auto_revert_fired` can't wait minutes.
+ * Shares `buildDisplayDigestEmail` with the cron path so the layout is
+ * identical, and honors `mutedMachines` + unsubscribe links the same way.
+ * Returns the number of emails that actually sent.
  */
 async function sendCriticalDisplayEmailNow(params: {
   siteId: string;
@@ -601,9 +551,8 @@ async function sendCriticalDisplayEmailNow(params: {
   ]);
   if (recipients.length === 0) return 0;
 
-  // Build a synthetic single-alert payload that buildDisplayDigestEmail
-  // expects — mirrors the queue-write shape from the digest path so the
-  // template can't tell the two routes apart.
+  // Synthetic single-alert payload mirroring the digest path's queue-write
+  // shape, so the template can't tell the two routes apart.
   const alert: PendingDisplayAlert = {
     docId: `inline-${Date.now()}`,
     siteId,
@@ -619,9 +568,7 @@ async function sendCriticalDisplayEmailNow(params: {
   let emailsSent = 0;
   for (const recipient of recipients) {
     try {
-      // Honor per-user mute on the same machine. mutedMachines is the
-      // operator's escape hatch for noisy installations; critical-path
-      // bypass shouldn't override that intent.
+      // Critical-path bypass must not override the operator's mute.
       if (recipient.mutedMachines.includes(machineId)) continue;
 
       const unsubscribeUrl = recipient.userId !== 'fallback'

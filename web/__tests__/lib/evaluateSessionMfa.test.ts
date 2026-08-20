@@ -3,13 +3,10 @@
 /**
  * `evaluateSessionMfa` — the proxy's per-request MFA read.
  *
- * The point of this suite is the COST as much as the answer: the proxy calls
- * this on every non-`/api` request, so `requiresMfaSetup` must come out of the
- * session cookie, not out of Firestore. Every test therefore asserts on
- * `firestoreReads` alongside the outcome.
- *
- * Sessions issued before a field existed are the interesting case — they are
- * the whole live population on the day this ships.
+ * The COST matters as much as the answer: this runs on every non-`/api` request, so
+ * `requiresMfaSetup` must come from the session cookie, not Firestore. Every test asserts on
+ * `firestoreReads` too. Sessions issued before a field existed are the interesting case — they
+ * are the whole live population on ship day.
  */
 
 import { NextRequest } from 'next/server';
@@ -106,10 +103,8 @@ describe('evaluateSessionMfa — requiresSetup', () => {
   });
 
   it('derives requiresSetup:false for an enrolled session missing the field — no read', async () => {
-    // The rollout case for everyone who already has 2FA. `mfaRequired === true`
-    // means enrolled, and the single writer keeps the two flags inverse, so the
-    // answer is provable without a lookup. Skipping it is what stops a
-    // pre-existing session from paying a read on every single request.
+    // `mfaRequired === true` means enrolled, and the single writer keeps the flags inverse, so no
+    // lookup is needed — which is what stops every pre-existing session paying a read per request.
     session = makeSession({ mfaRequired: true, mfaVerified: true });
 
     const result = await evaluateSessionMfa(request());
@@ -126,15 +121,13 @@ describe('evaluateSessionMfa — requiresSetup', () => {
 
     expect(result.requiresSetup).toBe(true);
     expect(firestoreReads).toBe(1);
-    // Written back into the session so the value is at least consistent for
-    // this request, and durable once the cookie is re-stamped.
+    // Written back so the value is consistent for this request and durable once re-stamped.
     expect(session.requiresMfaSetup).toBe(true);
   });
 
   it('does not clobber a verified state when only the setup flag is missing', async () => {
-    // A session that already passed a real challenge must not be re-stamped
-    // from Firestore (which reports every enrolled account as unverified) —
-    // that would silently re-challenge the user.
+    // Re-stamping a passed challenge from Firestore (which reports every enrolled account as
+    // unverified) would silently re-challenge the user.
     userDoc = { exists: true, data: { mfaEnrolled: true, requiresMfaSetup: false } };
     session = makeSession({ mfaRequired: false, mfaVerified: true });
 
@@ -146,9 +139,8 @@ describe('evaluateSessionMfa — requiresSetup', () => {
   });
 
   it('never reports requiresSetup for an account Firestore says is enrolled', async () => {
-    // Inconsistent doc (both flags true). Setup outranks the challenge in the
-    // proxy, so an enrolled account must never be diverted into mandatory
-    // setup on the strength of a stale flag.
+    // Both flags true: setup outranks the challenge in the proxy, so an enrolled account must not
+    // be diverted into mandatory setup by a stale flag.
     userDoc = { exists: true, data: { mfaEnrolled: true, requiresMfaSetup: true } };
     session = makeSession({ mfaRequired: false, mfaVerified: true });
 
@@ -182,13 +174,10 @@ describe('evaluateSessionMfa — requiresSetup', () => {
   });
 
   it('honours the cached challenge state — not a forced challenge — when only the setup lookup throws', async () => {
-    // Only a session with `mfaRequired === false` can reach the setup-only
-    // lookup at all (the derivation short-circuits enrolled ones), and its
-    // cached challenge state is intact and authoritative, so it is used as-is.
-    // Fail-closed on the challenge is unchanged for sessions that genuinely
-    // have no cached state; the setup flag is a policy gate whose worst case if
-    // unknown for one request is the pre-existing behaviour, and diverting
-    // users into mandatory setup during a Firestore blip would be worse.
+    // Only `mfaRequired === false` sessions reach the setup-only lookup, and their cached
+    // challenge state is authoritative, so it is used as-is. Fail-closed on the challenge still
+    // applies to sessions with no cached state; the setup flag is a policy gate whose unknown-case
+    // is the pre-existing behaviour — better than diverting users into setup on a Firestore blip.
     userDoc = {
       get exists(): boolean {
         throw new Error('firestore down');

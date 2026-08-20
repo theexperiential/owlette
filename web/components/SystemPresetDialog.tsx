@@ -14,18 +14,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useInstallerChecksum } from '@/hooks/useInstallerChecksum';
 import InstallerChecksumStatus from '@/components/InstallerChecksumStatus';
 
-/**
- * SystemPresetDialog Component
- *
- * Form dialog for creating and editing system presets.
- * Used by admin to manage global software deployment presets.
- *
- * Features:
- * - Create new preset (preset prop is null)
- * - Edit existing preset (preset prop provided)
- * - Form validation
- * - Category selection
- */
+/** Create/edit dialog for global software-deployment presets. Null `preset` = create mode. */
 interface SystemPresetDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -39,7 +28,6 @@ export default function SystemPresetDialog({
 }: SystemPresetDialogProps) {
   const { createPreset, updatePreset } = useSystemPresets();
   const { user } = useAuth();
-  // Form state
   const [name, setName] = useState('');
   const [softwareName, setSoftwareName] = useState('');
   const [category, setCategory] = useState('');
@@ -65,7 +53,6 @@ export default function SystemPresetDialog({
   });
   const { adoptChecksum, resetChecksum } = checksum;
 
-  // Load preset data when editing
   useEffect(() => {
     if (preset) {
       setName(preset.name);
@@ -81,7 +68,6 @@ export default function SystemPresetDialog({
       setOrder(preset.order);
       adoptChecksum(preset.sha256_checksum, preset.installer_url);
     } else {
-      // Reset form for new preset
       setName('');
       setSoftwareName('');
       setCategory('');
@@ -134,7 +120,6 @@ export default function SystemPresetDialog({
   };
 
   const handleSave = async () => {
-    // Validation
     if (!name.trim()) {
       toast.error('Name required', { description: 'Please enter a preset name.' });
       return;
@@ -175,8 +160,8 @@ export default function SystemPresetDialog({
     setSaving(true);
 
     try {
-      // Build base preset data (sparse — optional fields only included when set;
-      // Firestore doesn't accept undefined). `createdAt` is stamped by the hook.
+      // Sparse: Firestore rejects undefined, so optional fields are omitted when unset.
+      // `createdAt` is stamped by the hook.
       const baseData: Omit<SystemPreset, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'> = {
         name,
         software_name: softwareName,
@@ -194,14 +179,12 @@ export default function SystemPresetDialog({
       };
 
       if (isEditMode && preset) {
-        // Update existing preset
         await updatePreset(preset.id, baseData);
 
         toast.success('Preset Updated', {
           description: `"${name}" has been updated successfully.`,
         });
       } else {
-        // Create new preset (hook sets createdAt = serverTimestamp())
         await createPreset({
           ...baseData,
           createdBy: user?.uid || 'unknown',
@@ -395,9 +378,8 @@ export default function SystemPresetDialog({
               id="silentFlags"
               placeholder="/VERYSILENT /NORESTART /SUPPRESSMSGBOXES"
               value={silentFlags}
-              // Flags are a single command line — wrap for readability, but
-              // collapse typed/pasted newlines so the agent's installer
-              // invocation never receives a broken multi-line string.
+              // Flags are one command line: wrap visually, but collapse typed/pasted newlines
+              // so the agent never gets a broken multi-line invocation.
               onChange={(e) => setSilentFlags(e.target.value.replace(/\s*[\r\n]+\s*/g, ' '))}
               className="border-border bg-background text-white font-mono text-sm"
             />

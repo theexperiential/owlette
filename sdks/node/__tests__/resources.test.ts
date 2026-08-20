@@ -1,7 +1,6 @@
 /**
- * Resource HTTP-shape tests — asserts each public method hits the
- * expected URL + method + body. Uses the same fake-fetch strategy as
- * client.test.ts but exercises every resource class surface.
+ * Resource HTTP-shape tests: every public method hits the expected URL, method,
+ * and body. Same fake-fetch strategy as client.test.ts, across all resources.
  */
 
 import { Owlette } from '../src/index';
@@ -1143,10 +1142,7 @@ describe('owlette.machines (extended)', () => {
   });
 
   it('captureScreenshot → dispatch + poll + fetch signed URL', async () => {
-    // 1: dispatch returns commandId
-    // 2: first poll returns pending
-    // 3: second poll returns completed with screenshot_url
-    // 4: signed-url fetch returns binary bytes
+    // dispatch → pending poll → completed poll (screenshot_url) → binary fetch.
     const calls: Call[] = [];
     let i = 0;
     const responses: Array<{ status: number; body: unknown; bytes?: Uint8Array }> = [

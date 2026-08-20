@@ -7,8 +7,8 @@ import time
 import json
 
 try:
-    # Patch secure_storage and shared_utils before importing auth_manager
-    # since they may require Windows-specific setup
+    # Patch secure_storage and shared_utils before importing auth_manager —
+    # they may need Windows-specific setup.
     mock_storage = MagicMock()
     mock_storage.get_access_token.return_value = (None, None)
     mock_storage.get_site_id.return_value = None
@@ -57,9 +57,7 @@ def auth_manager(storage):
     return am
 
 
-# ---------------------------------------------------------------------------
 # TestTokenExchange — registration code -> tokens
-# ---------------------------------------------------------------------------
 class TestTokenExchange:
     def test_successful_exchange(self, auth_manager):
         """exchange_registration_code should return True on 200."""
@@ -114,9 +112,7 @@ class TestTokenExchange:
                 auth_manager.exchange_registration_code("REG-CODE")
 
 
-# ---------------------------------------------------------------------------
 # TestTokenRefresh — caching and refresh logic
-# ---------------------------------------------------------------------------
 class TestTokenRefresh:
     def test_returns_cached_token_when_valid(self, auth_manager):
         """If the cached token is not expired, return it directly."""
@@ -165,9 +161,7 @@ class TestTokenRefresh:
             auth_manager.get_valid_token()
 
 
-# ---------------------------------------------------------------------------
 # TestBackoff — reset on success, exponential growth
-# ---------------------------------------------------------------------------
 class TestBackoff:
     def test_success_resets_failure_count(self, auth_manager, storage):
         """After a successful refresh, failure counters should reset."""

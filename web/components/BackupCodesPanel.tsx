@@ -18,18 +18,13 @@ interface BackupCodesPanelProps {
 }
 
 /**
- * The shown-once backup-codes display.
+ * The shown-once backup-codes display. Purely presentational — takes the
+ * plaintext sheet as a prop, fetches nothing — which is what lets one component
+ * serve both issuance paths (`/setup-2fa` enrollment and account settings).
  *
- * Purely presentational: it takes the plaintext sheet as a prop and neither
- * fetches nor generates anything. That is what lets one component serve both
- * issuance paths — the enrollment flow in `/setup-2fa`, which gets its codes
- * from `POST /api/mfa/verify-setup`, and account settings, which gets them from
- * `POST /api/mfa/backup-codes` after a live proof of possession.
- *
- * The "only shown once" warning is load-bearing, not decoration: the server
- * stores hashes, so a user who navigates away without saving these has no way
- * to recover them short of regenerating (which invalidates the sheet they just
- * lost, and requires a factor they may no longer hold).
+ * The "only shown once" warning is load-bearing: the server stores hashes only,
+ * so navigating away without saving means regenerating, which needs a factor
+ * the user may no longer hold.
  */
 export function BackupCodesPanel({
   codes,
@@ -38,8 +33,8 @@ export function BackupCodesPanel({
   successDuration = 2000,
 }: BackupCodesPanelProps) {
   const [copied, setCopied] = useState(false);
-  // Track the latest timer so a second click before the first reset doesn't
-  // leave the button stuck on "copied" if the new write fails.
+  // Track the latest timer: a second click before the first reset must not
+  // leave the button stuck on "copied" when the new write fails.
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function handleCopyAll() {
@@ -50,8 +45,8 @@ export function BackupCodesPanel({
       if (resetTimer.current) clearTimeout(resetTimer.current);
       resetTimer.current = setTimeout(() => setCopied(false), successDuration);
     } catch (err) {
-      // Permissions denied / insecure context / clipboard API unavailable.
-      // Say so rather than pretending the codes are safely saved.
+      // Denied permission, insecure context, or no clipboard API — say so
+      // rather than imply the codes were saved.
       console.error('clipboard write failed:', err);
       toast.error('copy failed — select the codes and copy with Ctrl+C');
     }

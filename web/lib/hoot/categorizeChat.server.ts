@@ -1,13 +1,9 @@
 /**
- * Auto-title + categorization for new Hoot conversations.
+ * Auto-title + categorization for new Hoot conversations. Server-only.
  *
- * Extracted from `app/api/hoot/categorize/route.ts` so the detached turn
- * runner (`turnRunner.server.ts`) can categorize new conversations directly —
- * a server-side runner cannot round-trip through the authenticated categorize
- * endpoint. The route keeps its auth/batch concerns and calls these helpers
- * for the shared generation logic.
- *
- * IMPORTANT: Server-side only — never import this in client components.
+ * Split out of app/api/hoot/categorize/route.ts because the detached turn runner can't
+ * round-trip through the authenticated endpoint; the route keeps auth/batch concerns and
+ * calls these helpers for the generation itself.
  */
 
 import { generateText, type LanguageModel } from 'ai';
@@ -31,10 +27,7 @@ export function parseChatCategory(text: string): ChatCategory {
   );
 }
 
-/**
- * Two-line title + category prompt shared by single mode, the batch-mode
- * first-message fallback, and the turn runner.
- */
+/** Shared by single mode, the batch-mode first-message fallback, and the turn runner. */
 export function buildTitleCategoryPrompt(message: string): string {
   return `You manage IT/media-server systems. Given this user question, respond with exactly two lines:
 Line 1: A short title (max 6 words, no quotes) summarizing the topic
@@ -47,11 +40,8 @@ CPU and memory stability check
 Performance`;
 }
 
-/**
- * Generate a title + category for a new conversation from its first user
- * message and stamp them onto `chats/{chatId}`. The caller is responsible
- * for access checks and for providing an (already resolved) cheap model.
- */
+/** Title + category from the first user message, stamped onto `chats/{chatId}`. The caller
+ * owns access checks and supplies an already-resolved cheap model. */
 export async function categorizeNewChat(
   db: FirebaseFirestore.Firestore,
   model: LanguageModel,

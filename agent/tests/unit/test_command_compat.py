@@ -1,28 +1,15 @@
-"""
-test_command_compat — wave 1.0 regression coverage for the
-security-boundary-migration project.
+"""Regression coverage: command dispatch must tolerate unknown extra fields.
 
-verifies the agent's command dispatch path is tolerant of unknown extra
-fields on a command entry. specifically guards against the failure mode
-where adding `createdAt` / `auditCorrelationId` (or future audit
-metadata) to a command document would cause a strict handler to raise
-`TypeError` on dispatch.
+Guards the failure mode where adding `createdAt` / `auditCorrelationId` to a
+command doc makes a strict handler raise TypeError. Two checks: dispatch
+tolerates extra fields at runtime, and no source file unpacks `**cmd_data` /
+`**command_data`.
 
-scope: two complementary checks:
-  1. CommandRouter.dispatch tolerates extra fields end-to-end (runtime).
-  2. The agent source code contains no `**cmd_data` / `**command_data`
-     unpacking pattern in any command handler — a static guard against
-     future regressions.
-
-the legacy if/elif chain in `owlette_service.handle_firebase_command` is
-intentionally NOT instantiated at runtime here. instantiating
-`OwletteService` (or even `FirebaseClient`) in a unit test pulls in
-cryptography/PyO3, which fights pytest's interpreter reuse — a known
-constraint already documented in `firebase_client.py:67-69`. instead we
-verify the structural invariant: every handler reads fields by `.get()`
-and no kwarg unpacking is used. the findings doc at
-`dev/active/security-boundary-migration/reference/agent-compat.md`
-captures the manual audit those static checks are guarding.
+`owlette_service.handle_firebase_command` is deliberately not instantiated —
+constructing OwletteService/FirebaseClient pulls in cryptography/PyO3, which
+fights pytest's interpreter reuse (see firebase_client.py:67-69). The static
+check stands in for it; the manual audit is in
+dev/active/security-boundary-migration/reference/agent-compat.md.
 """
 
 from __future__ import annotations
@@ -42,24 +29,17 @@ EXTRA_FIELDS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Runtime — CommandRouter.dispatch tolerates unknown fields.
-# ---------------------------------------------------------------------------
+# runtime: dispatch tolerates unknown fields
 
 
 def test_command_router_dispatch_tolerates_extra_fields():
-    """
-    CommandRouter.dispatch must pass the cmd_data dict to the handler
-    verbatim. extra fields beyond what the handler reads must NOT cause
-    dispatch to raise.
-    """
+    """dispatch passes cmd_data verbatim; extra fields must not raise."""
     router = CommandRouter()
     received = {}
 
     @router.register("audit_probe")
     def handler(cmd_data, cmd_id, service):
-        # Handler reads only the fields it knows about. Unknown fields
-        # are ignored — this is the contract every handler must satisfy.
+        # the contract: read known fields, ignore the rest
         received["cmd_data"] = cmd_data
         received["expected_field"] = cmd_data.get("expected_field")
         return "ok"
@@ -73,21 +53,16 @@ def test_command_router_dispatch_tolerates_extra_fields():
     result = router.dispatch("audit_probe", cmd_data, "cmd-1", object())
 
     assert result == "ok"
-    # Handler saw the unchanged dict — every extra field is still present.
     for key, value in EXTRA_FIELDS.items():
         assert received["cmd_data"][key] == value
-    # Handler's own field also flowed through.
     assert received["expected_field"] == "value"
 
 
 def test_command_router_dispatch_handler_with_fixed_signature_does_not_break():
-    """
-    A handler with a fixed positional signature (the standard contract)
-    must NOT receive cmd_data unpacked as kwargs. If dispatch were ever
-    changed to invoke `handler(**cmd_data)`, this test would raise
-    TypeError because `createdAt` / `auditCorrelationId` / `_future_field`
-    would become unexpected kwargs against the (cmd_data, cmd_id, service)
-    signature.
+    """A fixed-signature handler must not get cmd_data unpacked as kwargs.
+
+    If dispatch ever called `handler(**cmd_data)`, EXTRA_FIELDS would become
+    unexpected kwargs against (cmd_data, cmd_id, service) and raise TypeError.
     """
     router = CommandRouter()
 
@@ -103,15 +78,11 @@ def test_command_router_dispatch_handler_with_fixed_signature_does_not_break():
 
 
 def test_command_router_extra_fields_pass_through_to_synthetic_dispatch_chain():
-    """
-    Simulate the full dispatch chain shape (firestore listener →
-    `_process_command` → `_execute_command` → `command_callback` →
-    `handle_firebase_command` → `CommandRouter.dispatch`) by chaining
-    plain Python callables that mirror the same dict-passing contract.
+    """Mirror the full dispatch chain with plain callables.
 
-    Each layer is a thin wrapper that forwards cmd_data unchanged.
-    The test asserts the dict arrives at the bottom-most handler with
-    EXTRA_FIELDS intact AND nothing was filtered/rewritten in transit.
+    Chains listener -> _process_command -> _execute_command -> command_callback
+    -> handle_firebase_command -> dispatch, asserting the dict reaches the
+    handler with EXTRA_FIELDS intact and nothing rewritten in transit.
     """
     router = CommandRouter()
     handler_received = {}
@@ -122,22 +93,19 @@ def test_command_router_extra_fields_pass_through_to_synthetic_dispatch_chain():
         handler_received["cmd_id"] = cmd_id
         return "chain ok"
 
-    # Mirror handle_firebase_command's router check + dispatch step.
+    # mirrors handle_firebase_command's router check + dispatch
     def fake_handle_firebase_command(cmd_id, cmd_data):
         cmd_type = cmd_data.get("type")
         if router.has_handler(cmd_type):
             return router.dispatch(cmd_type, cmd_data, cmd_id, None)
         return f"Unknown command type: {cmd_type}"
 
-    # Mirror _execute_command's callback invocation.
     def fake_execute_command(cmd_id, cmd_data):
         return fake_handle_firebase_command(cmd_id, cmd_data)
 
-    # Mirror _process_command's lane selection — pass through verbatim.
     def fake_process_command(cmd_id, cmd_data):
         return fake_execute_command(cmd_id, cmd_data)
 
-    # Mirror on_commands_changed's iteration — also passes through verbatim.
     def fake_on_commands_changed(commands_data):
         results = {}
         for cmd_id, cmd_data in commands_data.items():
@@ -156,26 +124,19 @@ def test_command_router_extra_fields_pass_through_to_synthetic_dispatch_chain():
 
     assert results == {"cmd-chain-1": "chain ok"}
     assert handler_received["cmd_id"] == "cmd-chain-1"
-    # Every extra field reached the handler intact.
     for key, value in EXTRA_FIELDS.items():
         assert handler_received["cmd_data"][key] == value
-    # The known field is still present too.
     assert handler_received["cmd_data"]["known_field"] == "still here"
     assert handler_received["cmd_data"]["type"] == "chain_probe"
 
 
-# ---------------------------------------------------------------------------
-# Static — guard against any future contributor introducing `**cmd_data`
-# or `**command_data` unpacking, which would re-introduce the strict-
-# signature failure mode.
-# ---------------------------------------------------------------------------
+# static: `**cmd_data` / `**command_data` unpacking would re-introduce the
+# strict-signature failure mode
 
 
 _AGENT_SRC = Path(__file__).resolve().parents[2] / "src"
 
-# Files that participate in the command dispatch chain. We don't audit
-# every src file — just the ones that touch a command dict. This list
-# matches the audit recorded in agent-compat.md.
+# Files that touch a command dict, per the audit in agent-compat.md.
 _DISPATCH_FILES = (
     "firebase_client.py",
     "owlette_service.py",
@@ -189,15 +150,10 @@ _DISPATCH_FILES = (
 
 @pytest.mark.parametrize("filename", _DISPATCH_FILES)
 def test_no_kwarg_unpacking_in_dispatch_files(filename):
-    """
-    No source file in the dispatch chain may unpack a command dict via
-    `**cmd_data` or `**command_data`. That pattern is what would cause
-    a `TypeError: unexpected keyword argument 'createdAt'` when the
-    server starts attaching audit metadata to commands.
+    """No dispatch-chain file may unpack a command dict as kwargs.
 
-    If a future change wants to forward the dict, it must do so as a
-    positional arg (the CommandRouter contract) so unknown fields are
-    naturally tolerated.
+    `**cmd_data` yields `TypeError: unexpected keyword argument 'createdAt'` once
+    the server attaches audit metadata. Forward the dict positionally instead.
     """
     path = _AGENT_SRC / filename
     if not path.exists():
@@ -219,10 +175,8 @@ def test_no_kwarg_unpacking_in_dispatch_files(filename):
 
 
 def test_public_process_command_types_are_agent_dispatchable():
-    """
-    Public process routes queue these Firebase command types. The legacy
-    dispatch chain must recognize every one before falling through to
-    ``Unknown command type``.
+    """Command types queued by the public process routes must all be recognized
+    by the legacy dispatch chain, not fall through to ``Unknown command type``.
     """
     service_text = (_AGENT_SRC / "owlette_service.py").read_text(encoding="utf-8")
 

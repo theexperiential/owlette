@@ -1,11 +1,9 @@
 /**
- * HTTP-shape tests for `owlette chat new | list | send | delete | rename`.
- *
- * Intercepts global.fetch, builds an in-process commander program, and
- * asserts the request URL/method/headers/body match the contract documented
- * in `src/commands/chat.ts`. Streaming bodies are supplied via an async
- * iterator so we can drive `chat send` through its full deltas → flush
- * → final-newline path without a real network.
+ * HTTP-shape tests for `owlette chat new | list | send | delete | rename`:
+ * intercept global.fetch, run an in-process commander program, assert the
+ * request matches the contract in `src/commands/chat.ts`. Streaming bodies come
+ * from an async iterator so `chat send` runs its full deltas → flush →
+ * final-newline path offline.
  */
 
 import { Command } from 'commander';
@@ -42,9 +40,8 @@ function installFetchStub(payload: unknown, status = 200): FetchCall[] {
 }
 
 /**
- * Stub fetch with a streaming body — emits the AI-SDK v3 line-delimited
- * frames the CLI parses (one or more `0:"..."` deltas, optionally
- * terminated by a `d:` end frame).
+ * Streaming-body fetch stub: AI-SDK v3 line-delimited frames — `0:"..."`
+ * deltas, optionally closed by a `d:` end frame.
  */
 function installStreamingFetchStub(frames: string[]): FetchCall[] {
   const calls: FetchCall[] = [];
@@ -95,8 +92,6 @@ afterEach(() => {
   process.exitCode = 0;
   jest.restoreAllMocks();
 });
-
-/* -------------------- new -------------------- */
 
 describe('owlette chat new', () => {
   it('POSTs /api/hoot/conversations with siteId + Bearer + auto Idempotency-Key', async () => {
@@ -187,8 +182,6 @@ describe('owlette chat new', () => {
   });
 });
 
-/* -------------------- list -------------------- */
-
 describe('owlette chat list', () => {
   it('GETs /api/hoot/conversations with siteId + Bearer auth', async () => {
     const calls = installFetchStub({
@@ -272,8 +265,6 @@ describe('owlette chat list', () => {
     expect(process.exitCode).toBe(2);
   });
 });
-
-/* -------------------- send -------------------- */
 
 describe('owlette chat send', () => {
   it('POSTs /api/hoot/conversations/:id with role=user + content + auto Idempotency-Key', async () => {
@@ -398,8 +389,6 @@ describe('owlette chat send', () => {
   });
 });
 
-/* -------------------- delete -------------------- */
-
 describe('owlette chat delete', () => {
   it('DELETEs /api/hoot/conversations/:id with Bearer + auto Idempotency-Key when --yes is supplied', async () => {
     const calls = installFetchStub({
@@ -439,8 +428,6 @@ describe('owlette chat delete', () => {
     process.exitCode = 0;
   });
 });
-
-/* -------------------- rename -------------------- */
 
 describe('owlette chat rename', () => {
   it('PATCHes /api/hoot/conversations/:id with title body + auto Idempotency-Key', async () => {

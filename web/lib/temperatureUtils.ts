@@ -1,24 +1,13 @@
 /**
- * Temperature utility functions for converting and formatting temperatures
- *
- * Storage standard: All temperatures are stored in Celsius
- * Display: User can choose Celsius or Fahrenheit via preferences
+ * Temperature conversion + formatting. Storage standard is Celsius; the user picks
+ * Celsius or Fahrenheit for display via preferences.
  */
 
-/**
- * Convert Celsius to Fahrenheit
- */
 export function celsiusToFahrenheit(celsius: number): number {
   return (celsius * 9 / 5) + 32;
 }
 
-/**
- * Convert temperature from Celsius to the user's preferred unit
- *
- * @param celsius - Temperature in Celsius (storage standard)
- * @param unit - User's preferred unit ('C' or 'F')
- * @returns Temperature in the requested unit
- */
+/** Convert Celsius (storage standard) to the user's preferred unit. */
 export function convertTemperature(celsius: number, unit: 'C' | 'F'): number {
   if (unit === 'F') {
     return celsiusToFahrenheit(celsius);
@@ -26,14 +15,7 @@ export function convertTemperature(celsius: number, unit: 'C' | 'F'): number {
   return celsius;
 }
 
-/**
- * Format temperature with unit symbol
- *
- * @param celsius - Temperature in Celsius (storage standard)
- * @param unit - User's preferred unit ('C' or 'F')
- * @param decimals - Number of decimal places (default: 1)
- * @returns Formatted temperature string with unit (e.g., "45.0°C" or "113.0°F")
- */
+/** Format a Celsius value in the user's unit, e.g. "45.0°C" or "113.0°F". */
 export function formatTemperature(
   celsius: number,
   unit: 'C' | 'F',
@@ -45,15 +27,8 @@ export function formatTemperature(
 }
 
 /**
- * Get temperature status (for color coding)
- *
- * Thresholds based on typical hardware safe operating ranges:
- * - Normal: < 70°C (158°F)
- * - Warning: 70-85°C (158-185°F)
- * - Critical: > 85°C (185°F)
- *
- * @param celsius - Temperature in Celsius (storage standard)
- * @returns Status string: 'normal' | 'warning' | 'critical'
+ * Temperature status for colour coding. Thresholds follow typical hardware safe
+ * operating ranges: normal < 70°C, warning 70-85°C, critical > 85°C.
  */
 export function getTemperatureStatus(celsius: number): 'normal' | 'warning' | 'critical' {
   if (celsius < 70) {
@@ -65,12 +40,7 @@ export function getTemperatureStatus(celsius: number): 'normal' | 'warning' | 'c
   }
 }
 
-/**
- * Get Tailwind CSS classes for temperature status
- *
- * @param celsius - Temperature in Celsius (storage standard)
- * @returns Tailwind CSS classes for text color
- */
+/** Tailwind text-colour classes for the temperature status. */
 export function getTemperatureColorClass(celsius: number): string {
   const status = getTemperatureStatus(celsius);
 

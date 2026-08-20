@@ -1,17 +1,13 @@
 /**
- * Per-conversation chat-noun routes.
+ * Per-conversation chat routes: POST appends a user message + streams, PATCH
+ * renames, DELETE soft-deletes (true-idempotent).
  *
- *   POST   /api/hoot/conversations/{conversationId}  — append a user message + stream
- *   PATCH  /api/hoot/conversations/{conversationId}  — rename (title-only)
- *   DELETE /api/hoot/conversations/{conversationId}  — soft-delete (true-idempotent)
+ * `/api/hoot/conversations/{id}` is canonical; `/api/chat/{id}` is a
+ * compatibility alias.
  *
- * `/api/chat/{conversationId}` remains a compatibility alias; the
- * `/api/hoot/conversations/{conversationId}` path is canonical.
- *
- * All three verbs require `chat=<siteId>:write`. siteId is read from the
- * conversation document (the URL only carries the conversation id) and
- * passed into `requireChatAuthAndScope` so api-key callers must hold the
- * correct site-scoped chat permission.
+ * All three need `chat=<siteId>:write`. The URL carries only the conversation
+ * id, so siteId comes off the document and is passed to
+ * `requireChatAuthAndScope`.
  */
 
 import type { NextRequest } from 'next/server';
@@ -51,13 +47,9 @@ const VALID_ROLES: ChatRole[] = ['user'];
 const SEND_ALLOWED_FIELDS = new Set(['role', 'content']);
 
 /**
- * Conversations are user-private within a site: only the owner (or a
- * platform superadmin) may read/write/delete them. Without this guard, any
- * site member with `chat=<siteId>:write` could access other users' chats
- * on the same site.
- *
- * Returns 404 (not 403) on miss to avoid leaking the existence of another
- * user's conversation.
+ * Conversations are user-private: without this, any site member holding
+ * `chat=<siteId>:write` could read another user's chats. 404 not 403, so the
+ * existence of someone else's conversation doesn't leak.
  */
 async function ensureConversationOwner(
   conversation: ChatConversation,
@@ -68,10 +60,6 @@ async function ensureConversationOwner(
   if (userDoc.exists && userDoc.data()?.role === 'superadmin') return null;
   return problemNotFound('conversation not found');
 }
-
-/* -------------------------------------------------------------------------- */
-/*  POST — send message + stream response                                     */
-/* -------------------------------------------------------------------------- */
 
 interface SendBody {
   role?: unknown;
@@ -131,8 +119,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       },
       parsed.raw,
       async () => {
-        // Persist the user's turn before kicking off the LLM. If the stream
-        // fails we still have the prompt on disk for retries.
+        // Persist the user's turn first, so a failed stream still leaves the
+        // prompt on disk for a retry.
         try {
           await appendMessage({
             conversationId,
@@ -213,14 +201,10 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
           });
         }
 
-        // Pass the streaming response straight through. NOTE: idempotency
-        // caching is a no-op for streaming responses (the wrapper only
-        // caches NextResponse text bodies); this means a replayed stream
-        // will execute again rather than returning a cached transcript.
-        // That's intentional — the assistant's reply is non-deterministic
-        // and we rely on the user-message append being naturally
-        // idempotent at the transport layer (same key, same content =
-        // same write).
+        // Idempotency caching is a no-op for streams (the wrapper only caches
+        // NextResponse text bodies), so a replay re-executes. Intentional: the
+        // reply is non-deterministic and the user-message append is naturally
+        // idempotent (same key, same content = same write).
         return applyAuthDeprecations(
           streamResult.response as unknown as NextResponse,
           auth.scopeCheck,
@@ -232,10 +216,6 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     return problemFromError(err, `chat/[conversationId]:POST`);
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/*  PATCH — rename                                                            */
-/* -------------------------------------------------------------------------- */
 
 const PATCH_ALLOWED_FIELDS = new Set(['title']);
 
@@ -342,18 +322,13 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  DELETE — soft delete                                                      */
-/* -------------------------------------------------------------------------- */
-
 export async function DELETE(request: NextRequest, { params }: RouteContext) {
   try {
     const { conversationId } = await params;
 
     const conversation = await getConversation(conversationId);
     if (!conversation) {
-      // Hard 404 on never-existed: idempotency would be misleading because
-      // the caller is targeting a resource that has no site to authorize on.
+      // Hard 404 on never-existed — there is no site to authorize against.
       return problemNotFound('conversation not found');
     }
 
@@ -369,8 +344,8 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
         userId: auth.userId,
         environment: auth.auth.keyContext?.environment ?? 'unknown',
       },
-      // DELETE has no body, but withIdempotency still hashes a key against
-      // an empty string — same pattern as the rest of the suite.
+      // No body, but withIdempotency still hashes the key against '' — the
+      // same pattern as the rest of the suite.
       '',
       async () => {
         let result: { alreadyDeleted: boolean };
@@ -378,8 +353,7 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
           result = await softDeleteConversation(conversationId);
         } catch (err) {
           if (err instanceof ChatStorageError && err.status === 404) {
-            // Race: conversation got hard-deleted between the gate read and
-            // the txn. Treat as already-deleted for idempotency.
+            // Hard-deleted between the gate read and the txn — already-deleted.
             result = { alreadyDeleted: true };
           } else if (err instanceof ChatStorageError) {
             return problem({
@@ -426,10 +400,6 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     return problemFromError(err, 'chat/[conversationId]:DELETE');
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/*  Helpers                                                                   */
-/* -------------------------------------------------------------------------- */
 
 function resolveMachineId(
   conversation: ChatConversation,

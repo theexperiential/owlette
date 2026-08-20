@@ -1,20 +1,15 @@
 /**
- * Client-side wrapper for the off-main-thread version builder worker
- * (roost wave 3.2).
+ * Client-side wrapper for the off-main-thread version builder worker (roost 3.2).
  *
- * Spawns the worker defined in `workers/versionBuilder.worker.ts`,
- * forwards File objects via transferable-friendly messages, and returns
- * a promise that resolves with the finished version entries. Progress
- * events stream via an optional callback.
+ * Spawns `workers/versionBuilder.worker.ts`, forwards File objects via
+ * transferable-friendly messages, resolves with the finished version entries and
+ * streams progress through an optional callback.
  *
- * **Why a worker at all**: hashing a 100 GB folder in ~25,000 × 4 MiB
- * chunks keeps the CPU + IO pipeline busy for tens of seconds. Running
- * it on the main thread would freeze the dashboard. The worker keeps
- * the UI responsive; the main thread just displays progress ticks.
+ * Why a worker: hashing a 100 GB folder in ~25,000 × 4 MiB chunks saturates CPU/IO
+ * for tens of seconds and would freeze the dashboard on the main thread.
  *
- * The pure chunking logic lives in `./chunking.ts` — this file is the
- * message-protocol glue. Both halves import the same types so the wire
- * format is statically validated.
+ * Pure chunking lives in `./chunking.ts`; this file is the message-protocol glue.
+ * Both halves import the same types, so the wire format is statically validated.
  */
 
 import type {
@@ -22,10 +17,6 @@ import type {
   VersionProgress,
   NamedBlob,
 } from './chunking';
-
-/* --------------------------------------------------------------------- */
-/*  Wire protocol                                                        */
-/* --------------------------------------------------------------------- */
 
 export type WorkerInbound =
   | { type: 'start'; files: NamedBlob[] }
@@ -36,17 +27,10 @@ export type WorkerOutbound =
   | { type: 'done'; entries: VersionFileEntry[] }
   | { type: 'error'; message: string; name?: string };
 
-/* --------------------------------------------------------------------- */
-/*  Public API                                                           */
-/* --------------------------------------------------------------------- */
-
 export interface BuildOptions {
   onProgress?: (p: VersionProgress) => void;
   signal?: AbortSignal;
-  /**
-   * Injectable Worker factory — lets tests swap in a fake without
-   * bundler-specific `new Worker(new URL(...))` syntax.
-   */
+  /** Injectable Worker factory — lets tests swap in a fake without bundler syntax. */
   workerFactory?: () => WorkerLike;
 }
 
@@ -62,20 +46,16 @@ export interface WorkerLike {
 }
 
 /**
- * Build a version for the supplied files, off-main-thread.
- *
- * Resolves with the ordered list of `VersionFileEntry` once every file
- * is hashed. Rejects on worker error or abort. The worker is terminated
- * on resolve, reject, or abort — no lingering threads.
+ * Build a version for the supplied files, off-main-thread. Resolves with the ordered
+ * `VersionFileEntry` list; rejects on worker error or abort. The worker is terminated
+ * on resolve, reject and abort alike — no lingering threads.
  */
 export async function buildVersion(
   files: readonly NamedBlob[],
   opts: BuildOptions = {},
 ): Promise<VersionFileEntry[]> {
-  // Env without Worker (Jest/Node unit tests, SSR snapshots, etc.) falls
-  // back to the sync in-process path so behaviour is correct everywhere.
-  // Browser prod always has Worker, so this branch doesn't cost real users
-  // anything.
+  // No Worker (jest/node unit tests, SSR) → sync in-process path, so behaviour is
+  // correct everywhere. Browsers always have Worker, so real users never take this.
   if (!opts.workerFactory && typeof Worker === 'undefined') {
     const { buildVersionEntries } = await import('./chunking');
     return buildVersionEntries(files, {
@@ -84,12 +64,9 @@ export async function buildVersion(
     });
   }
 
-  // Multi-worker fan-out for multi-file uploads. A single worker is
-  // sequential across files, so a 3-file × 4.9 GB upload pipelines only
-  // one file at a time. Splitting across N workers — where N is capped
-  // by file count and CPU cores — lets independent files hash in
-  // parallel. For the typical media-asset workload (a handful of large
-  // .orbx / .toe files) this yields near-linear speedup up to file count.
+  // Multi-worker fan-out: one worker is sequential across files, so a 3-file × 4.9 GB
+  // upload pipelines only one at a time. N workers (capped by file count and cores)
+  // hash independent files in parallel — near-linear speedup up to file count.
   const hardwareConcurrency =
     typeof navigator !== 'undefined' && navigator.hardwareConcurrency
       ? navigator.hardwareConcurrency
@@ -161,10 +138,9 @@ function runSingleWorker(
 }
 
 /**
- * Partition files across `workerCount` workers using largest-first
- * balanced bin-packing (greedy: put the biggest file in the bin with
- * the smallest current load). For heterogeneous file sizes this keeps
- * the slowest worker from dominating total wall time.
+ * Partition files across `workerCount` bins, largest-first greedy (biggest file into
+ * the lightest bin), so heterogeneous sizes don't leave one worker dominating the
+ * total wall time.
  */
 function partitionFiles(
   files: readonly NamedBlob[],
@@ -185,10 +161,9 @@ function partitionFiles(
 }
 
 /**
- * Multi-worker path — each worker gets a disjoint subset of the files,
- * runs the same sequential pipeline internally. Entries are reassembled
- * in the caller's original file order; progress is aggregated to a
- * single global view so the UI still sees a monotonic bar.
+ * Multi-worker path: each worker gets a disjoint file subset and runs the same
+ * sequential pipeline. Entries are reassembled in the caller's original file order;
+ * progress is aggregated to one global view so the UI still sees a monotonic bar.
  */
 function runMultiWorker(
   files: readonly NamedBlob[],
@@ -297,10 +272,6 @@ function runMultiWorker(
     });
   });
 }
-
-/* --------------------------------------------------------------------- */
-/*  Default worker factory — bundler-dependent                           */
-/* --------------------------------------------------------------------- */
 
 function defaultWorkerFactory(): WorkerLike {
   // Next.js / Webpack 5 accepts `new Worker(new URL('...', import.meta.url))`

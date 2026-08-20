@@ -1,18 +1,15 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/actions/cancelUninstall.server.ts`
- * (security-boundary-migration wave 3.5).
+ * Unit tests for `web/lib/actions/cancelUninstall.server.ts`.
  *
- * Covers:
- *   - input parsing + validation (`parseCancelUninstallInput`)
- *   - end-to-end cancel write against a fake firestore
- *   - command shape parity with the legacy client-side write in
- *     `web/hooks/useUninstall.ts:cancelUninstall` so the agent's existing
- *     `cmd_type == 'cancel_uninstall'` handler processes it identically.
+ * Covers input parsing + validation, the end-to-end cancel write against a fake
+ * firestore, and command-shape parity with the legacy client write in
+ * `web/hooks/useUninstall.ts:cancelUninstall`, so the agent's existing
+ * `cmd_type == 'cancel_uninstall'` handler processes it identically.
  *
- * Authorization (capability + scope) is enforced by `authorizedSiteHandler`
- * in the route shim — those tests live alongside the route integration.
+ * Authorization is enforced by `authorizedSiteHandler` in the route shim; those tests
+ * live alongside the route integration.
  */
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
@@ -27,7 +24,7 @@ import {
   CancelUninstallError,
 } from '@/lib/actions/cancelUninstall.server';
 
-/* ── fake firestore (machine-doc + pending-set only) ──────────────────── */
+/* fake firestore (machine-doc + pending-set only) */
 
 interface SetCall {
   path: string;
@@ -85,7 +82,7 @@ function buildFakeDb(): FakeDbState {
   };
 }
 
-/* ── parseCancelUninstallInput ────────────────────────────────────────── */
+/* parseCancelUninstallInput */
 
 describe('parseCancelUninstallInput', () => {
   it('accepts a minimal valid payload', () => {
@@ -124,7 +121,7 @@ describe('parseCancelUninstallInput', () => {
   });
 });
 
-/* ── cancelUninstall (action core) ────────────────────────────────────── */
+/* cancelUninstall (action core) */
 
 describe('cancelUninstall — input guards', () => {
   it('throws when siteId is empty', async () => {
@@ -174,7 +171,7 @@ describe('cancelUninstall — input guards', () => {
   });
 });
 
-/* ── command write shape parity with useUninstall.ts:cancelUninstall ──── */
+/* command write shape parity with useUninstall.ts:cancelUninstall */
 
 describe('cancelUninstall — command write shape', () => {
   it('writes the canonical cancel_uninstall payload with lifecycle stamps', async () => {

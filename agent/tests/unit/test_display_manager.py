@@ -1,14 +1,7 @@
 """Unit tests for display_manager write path.
 
-Covers the pieces that operate in pure Python with CCD stubbed out:
-- `_apply_core` — shared query/mutate/validate/apply/verify sequence.
-- `ack_apply` — stale-id rejection + no-in-flight gate.
-- `apply_revert_from_sentinel` — schema version check + OSError preservation.
-- `DisplayErrorCode` enum — presence of the codes the helper contract uses.
-
-The real CCD calls (`_SetDisplayConfig`, `_query_active_paths_safe`,
-`_snapshot_live_config`, `_apply_snapshot`) are patched via `unittest.mock`,
-so these tests don't require a real monitor or Windows session.
+CCD calls (`_SetDisplayConfig`, `_query_active_paths_safe`, `_snapshot_live_config`,
+`_apply_snapshot`) are patched — no real monitor or Windows session needed.
 """
 
 import json
@@ -85,10 +78,8 @@ class TestDisplayErrorCode:
 
 
 class TestValidateDesiredLayout:
-    """`_validate_desired_layout` is the service-side shape check before the
-    helper is invoked. It returns ``(ok, err, code)`` so the dashboard can
-    distinguish 'no primary selected' from 'unknown field' without parsing
-    the error string."""
+    """`_validate_desired_layout` shape-checks before the helper runs. Returns
+    ``(ok, err, code)`` so the dashboard can tell 'no primary' from 'unknown field'."""
 
     def _monitor(self, **overrides):
         base = {
@@ -259,24 +250,17 @@ class TestApplyCore:
 
 
 class TestCcdFailureCode:
-    """`_ccd_failure_code(rc, stage)` maps SetDisplayConfig rcs to specific
-    error codes so the dashboard can distinguish an unsupported-mode
-    rejection from a generic config-rejected failure.
-    """
+    """`_ccd_failure_code(rc, stage)` maps SetDisplayConfig rcs so the dashboard can
+    tell an unsupported-mode rejection from a generic config-rejected failure."""
 
     @pytest.mark.parametrize('rc', [dm.ERROR_GEN_FAILURE, dm.ERROR_BAD_CONFIGURATION])
     @pytest.mark.parametrize('stage', ['validate', 'apply'])
     def test_mode_rcs_map_to_unsupported_mode(self, rc, stage):
-        # Both ERROR_GEN_FAILURE (31, post-TDR-retry) and ERROR_BAD_CONFIGURATION
-        # (1610, explicit driver rejection) translate to UNSUPPORTED_MODE at
-        # either stage — the dashboard's "unsupported mode" toast is the
-        # correct surface for both.
+        # 31 (post-TDR-retry) and 1610 (driver rejection) both mean unsupported mode.
         assert dm._ccd_failure_code(rc, stage) == DisplayErrorCode.UNSUPPORTED_MODE
 
     def test_other_rc_at_validate_stays_generic(self):
-        # ERROR_INVALID_PARAMETER is ambiguous — could mean bad struct, bad
-        # LUID, bad mode. Leave under VALIDATE_REJECTED so UNSUPPORTED_MODE
-        # only fires for the two explicit mode-rejection rcs.
+        # ERROR_INVALID_PARAMETER is ambiguous; keep it generic so UNSUPPORTED_MODE stays precise.
         assert (
             dm._ccd_failure_code(87, 'validate')
             == DisplayErrorCode.VALIDATE_REJECTED
@@ -286,11 +270,8 @@ class TestCcdFailureCode:
         assert dm._ccd_failure_code(87, 'apply') == DisplayErrorCode.APPLY_FAILED
 
     def test_zero_rc_not_called_in_practice_but_maps_to_generic(self):
-        # ERROR_SUCCESS (0) should never be passed to `_ccd_failure_code` —
-        # callers only hit this helper after rc != ERROR_SUCCESS. But if a
-        # refactor ever leaks through, make sure we don't spuriously tag a
-        # success as UNSUPPORTED_MODE. 0 isn't in the mode-rejection set so
-        # we fall through to the generic code per stage.
+        # rc 0 never reaches this helper; guard against a refactor tagging success
+        # as UNSUPPORTED_MODE.
         assert (
             dm._ccd_failure_code(0, 'validate') == DisplayErrorCode.VALIDATE_REJECTED
         )
@@ -301,7 +282,6 @@ class TestApplyRevertFromSentinel:
     """Startup recovery must fail loud on corruption; preserve sentinel on transient errors."""
 
     def test_no_sentinel_returns_cleanly(self, tmp_sentinel):
-        # Sentinel path doesn't exist yet.
         result = dm.apply_revert_from_sentinel()
         assert result['success'] is False
         assert 'no sentinel' in result['error']
@@ -336,7 +316,6 @@ class TestApplyRevertFromSentinel:
         with open(tmp_sentinel, 'w') as f:
             json.dump({'version': 1, 'snapshot': {}}, f)
 
-        # Patch open() to raise OSError on the read inside apply_revert_from_sentinel.
         real_open = open
         call_count = {'n': 0}
 
@@ -406,21 +385,13 @@ class TestMakeRevertWatchdog:
         assert dm._apply_in_flight is False
 
 
-# ---------------------------------------------------------------------------
-# Wave A3.1 — supported-modes enumeration
-
 
 def _make_enum_mock(specs):
-    """Build a fake ``_EnumDisplaySettingsExW`` that serves synthetic modes by
-    index. ``specs`` is a list of dicts with keys ``bpp``, ``flags``, ``hz``,
-    ``w``, ``h``; index past the list length (or a ``None`` entry) signals
-    end-of-enumeration (FALSE) exactly like the real Win32 call.
+    """Fake ``_EnumDisplaySettingsExW`` serving synthetic modes by index; a ``None``
+    entry or an index past the list ends enumeration (FALSE), as Win32 does.
 
-    The fake writes into the caller's DEVMODEW via the byref's ``._obj``
-    attribute — a CPython implementation detail but stable across every
-    supported Python 3 we run the agent on, and the alternative (refactoring
-    ``_enum_modes_for_monitor`` to take a dependency injection point) would
-    distort production code for test scaffolding.
+    Writes into the caller's DEVMODEW via the byref's ``._obj`` — a CPython detail,
+    but stable, and the alternative distorts production code for test scaffolding.
     """
     def _mock(device_name, mode_num, dev_ref, flags):
         if mode_num >= len(specs) or specs[mode_num] is None:
@@ -437,14 +408,11 @@ def _make_enum_mock(specs):
 
 
 class TestEnumerateModes:
-    """`_enum_modes_for_monitor` filter/dedup/sort and `_build_display_modes_catalogue`
-    byEdidHash keying — the shape the dashboard resolution/refresh dropdowns
-    will read in A3.3/A3.4.
-    """
+    """`_enum_modes_for_monitor` filter/dedup/sort plus `_build_display_modes_catalogue`
+    byEdidHash keying — the shape the dashboard resolution/refresh dropdowns read."""
 
     def test_filters_interlaced_and_16bpp_and_low_hz(self, monkeypatch):
-        # Four modes: one interlaced (drop), one 16bpp (drop), one <24Hz (drop),
-        # one valid. Only the valid one should survive.
+        # One interlaced, one 16bpp, one <24Hz (all dropped) plus one valid.
         monkeypatch.setattr(dm, '_EnumDisplaySettingsExW', _make_enum_mock([
             {'bpp': 32, 'flags': dm.DM_INTERLACED, 'hz': 60, 'w': 1920, 'h': 1080},
             {'bpp': 16, 'flags': 0, 'hz': 60, 'w': 1920, 'h': 1080},
@@ -455,8 +423,7 @@ class TestEnumerateModes:
         assert out == [{'w': 1920, 'h': 1080, 'hz': 60}]
 
     def test_dedupes_repeated_tuples(self, monkeypatch):
-        # Same (w, h, hz) offered four times under different BPPs / flags that
-        # all pass the filter. The final list should contain exactly one entry.
+        # Same (w, h, hz) offered four times under different BPPs/flags — dedupe to one.
         monkeypatch.setattr(dm, '_EnumDisplaySettingsExW', _make_enum_mock([
             {'bpp': 32, 'flags': 0, 'hz': 60, 'w': 1920, 'h': 1080},
             {'bpp': 32, 'flags': 0, 'hz': 60, 'w': 1920, 'h': 1080},
@@ -490,9 +457,8 @@ class TestEnumerateModes:
         assert dm._enum_modes_for_monitor(None) == []
 
     def test_catalogue_keys_one_per_edidhash(self, monkeypatch):
-        # Stub out everything the catalogue builder calls so we can drive the
-        # composition logic with known inputs: two active paths, distinct
-        # edidHashes, each with a known canned modes list.
+        # Stub everything the catalogue builder calls: two active paths, distinct
+        # edidHashes, canned modes each.
 
         # 1. Skip the profile walk (we only need its signatureHash surfaced).
         monkeypatch.setattr(dm, 'build_display_profile', lambda: {
@@ -557,9 +523,8 @@ class TestEnumerateModes:
             assert info['dpiScales'] == list(dm._DPI_SCALE_TABLE)
 
     def test_catalogue_tolerates_empty_modes(self, monkeypatch):
-        # Monitor present but EnumDisplaySettings returns nothing — the catalogue
-        # should still carry its edidHash, with modes: []. Matches Risk 2 in the
-        # sub-plan: "don't fail the whole catalogue".
+        # EnumDisplaySettings returning nothing must still yield the edidHash with
+        # modes: [] — don't fail the whole catalogue.
         monkeypatch.setattr(dm, 'build_display_profile', lambda: {
             'schemaVersion': dm.SCHEMA_VERSION,
             'signatureHash': 'cafe' * 8,
@@ -594,9 +559,8 @@ class TestEnumerateModes:
         assert only_entry['dpiScales'] == list(dm._DPI_SCALE_TABLE)
 
     def test_catalogue_surfaces_enumeration_failed(self, monkeypatch):
-        # When build_display_profile reports enumerationFailed, the catalogue
-        # short-circuits with an empty byEdidHash and the flag set — A3.2 will
-        # read this and skip the Firestore upload.
+        # enumerationFailed short-circuits to an empty byEdidHash with the flag set;
+        # A3.2 reads it and skips the Firestore upload.
         monkeypatch.setattr(dm, 'build_display_profile', lambda: {
             'schemaVersion': dm.SCHEMA_VERSION,
             'signatureHash': '0' * 32,
@@ -610,55 +574,41 @@ class TestEnumerateModes:
         assert cat['byEdidHash'] == {}
 
 
-# ---------------------------------------------------------------------------
-# Wave B2.4 — post-apply suppression window for display events
-
 
 @pytest.fixture
 def reset_suppression_state():
-    """Restore `_last_apply_finished_at` after each test so the global
-    doesn't leak between cases. Default 0.0 = "no apply since startup".
-    """
+    """Restore `_last_apply_finished_at` after each test. Default 0.0 = no apply
+    since startup."""
     yield
     dm._last_apply_finished_at = 0.0
 
 
 class TestSuppressionWindow:
-    """`is_within_apply_suppression_window(now, window_s)` — pure predicate
-    behind owlette_service's `suppressAlert` stamping. Default window is
-    90s; pre-apply (initial 0.0 timestamp) returns False unconditionally.
-    """
+    """`is_within_apply_suppression_window(now, window_s)` backs owlette_service's
+    `suppressAlert` stamping. Default 90s; the initial 0.0 timestamp returns False."""
 
     def test_initial_state_is_not_suppressed(self, reset_suppression_state):
-        # Fresh service start — no apply has run yet. Drift events emitted
-        # in the first 90s of uptime must NOT be misclassified as
-        # apply-correlated, or the operator never sees real bootup drift.
+        # No apply yet — drift in the first 90s of uptime must not be misclassified
+        # as apply-correlated, or real bootup drift is never surfaced.
         dm._last_apply_finished_at = 0.0
         assert dm.is_within_apply_suppression_window(now=1_700_000_000.0) is False
 
     def test_event_within_window_is_suppressed(self, reset_suppression_state):
-        # Apply finished 30s ago — well inside the 90s window. The follow-on
-        # drift events that always arrive after a successful apply (OS
-        # settling + topology re-check tick) get correctly tagged for
-        # suppression downstream.
+        # 30s after apply: the OS-settling drift events that always follow get tagged.
         dm._last_apply_finished_at = 1_700_000_000.0
         assert (
             dm.is_within_apply_suppression_window(now=1_700_000_030.0) is True
         )
 
     def test_event_at_window_edge_is_suppressed(self, reset_suppression_state):
-        # Strictly less-than gate: an event 89.999s after apply still
-        # qualifies. Off-by-one guard so a single-second floor doesn't
-        # collapse "just inside" to False.
+        # Strictly-less-than gate: 89.999s still qualifies (off-by-one guard).
         dm._last_apply_finished_at = 1_700_000_000.0
         assert (
             dm.is_within_apply_suppression_window(now=1_700_000_089.999) is True
         )
 
     def test_event_after_window_is_not_suppressed(self, reset_suppression_state):
-        # 91s after apply — past the window, so the event represents real
-        # operator-relevant drift (something physically changed long after
-        # the apply settled) and routing should treat it as a normal alert.
+        # 91s after apply — real operator-relevant drift, route it as a normal alert.
         dm._last_apply_finished_at = 1_700_000_000.0
         assert (
             dm.is_within_apply_suppression_window(now=1_700_000_091.0) is False
@@ -667,18 +617,14 @@ class TestSuppressionWindow:
     def test_window_boundary_exactly_90s_is_not_suppressed(
         self, reset_suppression_state,
     ):
-        # The < (not <=) comparison means 90.0 exactly falls OUTSIDE the
-        # window. Documents the boundary so a future tweak to <= can't
-        # silently flip the semantics.
+        # `<` not `<=`: 90.0 exactly falls OUTSIDE the window.
         dm._last_apply_finished_at = 1_700_000_000.0
         assert (
             dm.is_within_apply_suppression_window(now=1_700_000_090.0) is False
         )
 
     def test_custom_window_s_overrides_default(self, reset_suppression_state):
-        # Test injection: caller can shorten or lengthen the window for
-        # specific scenarios. 30s window with a 60s gap → not suppressed
-        # even though 60s would suppress under the default 90s.
+        # Caller override: 30s window with a 60s gap → not suppressed.
         dm._last_apply_finished_at = 1_700_000_000.0
         assert (
             dm.is_within_apply_suppression_window(
@@ -693,45 +639,32 @@ class TestSuppressionWindow:
         )
 
     def test_now_defaults_to_wall_clock(self, reset_suppression_state):
-        # When `now` is omitted the helper reads `time.time()`. Set
-        # `_last_apply_finished_at` to "just now" via the same source so
-        # the helper sees a sub-second elapsed value and reports True.
+        # Omitted `now` reads time.time(); set the timestamp from the same source.
         import time as _time
         dm._last_apply_finished_at = _time.time()
         assert dm.is_within_apply_suppression_window() is True
-        # And the converse: an apply timestamp from far in the past falls
-        # outside the window even with the default-now path.
+        # Converse: an old apply timestamp is outside the window on the default-now path.
         dm._last_apply_finished_at = _time.time() - 3600
         assert dm.is_within_apply_suppression_window() is False
 
 
-# ---------------------------------------------------------------------------
-# Wave C1 — auto_restore branch in apply_topology
-
 
 class TestApplyTopologyAutoRestore:
-    """`apply_topology(..., auto_restore=True)` is the unattended drift-correction
-    path driven by the topology checker (C2). Success skips the watchdog (no
-    operator to ack), removes the sentinel, emits ``display_auto_restore_fired``,
-    and returns a dict shaped for `_maybe_auto_restore` to consume.
-    """
+    """`apply_topology(..., auto_restore=True)`: unattended drift correction driven by
+    the topology checker. Success skips the watchdog (no operator to ack), removes the
+    sentinel, and emits ``display_auto_restore_fired``."""
 
     def _patch_auto_restore_success_path(self, monkeypatch, changes=None):
         """Force the S1 in-process branch with `_apply_core` returning success.
-
-        Stubs out: session probe (S1), Mosaic detect (inactive),
-        `shared_utils.read_config` (kill switch absent → enabled), CCD apply,
-        and the profile resync trigger.
-        """
+        Stubs session probe, Mosaic detect, read_config, CCD apply, resync trigger."""
         if changes is None:
             changes = [{'monitorId': 'aaaaaaaa', 'field': 'primary'}]
 
         # Force S1 (in-process) so `_apply_core` is the success-path stub point.
         monkeypatch.setattr(dm, '_is_session_0', lambda: False)
 
-        # `displays.enabled` absent → feature enabled (missing-key default);
-        # `displays.remoteApplyEnabled` must read True or the Wave 6.1 master
-        # kill switch rejects the apply.
+        # `displays.enabled` absent → enabled by default; `remoteApplyEnabled` must
+        # read True or the master kill switch rejects the apply.
         import shared_utils
 
         def _read_config(keys=None, **kw):
@@ -746,15 +679,13 @@ class TestApplyTopologyAutoRestore:
             nvapi_display, 'detect_mosaic', lambda: {'mosaicActive': False},
         )
 
-        # `_apply_core` is the only CCD-touching call on the S1 path; stub the
-        # whole thing so the test never reaches Win32.
+        # `_apply_core` is the only CCD-touching call on S1; stub it so we never hit Win32.
         monkeypatch.setattr(
             dm,
             '_apply_core',
             lambda *a, **kw: {'ok': True, 'changes': changes, '_snapshot': SAMPLE_SNAPSHOT},
         )
-        # `_trigger_profile_resync` is fire-and-forget; stub to avoid touching
-        # the (mocked) firebase client's `_ensure_display_profile`.
+        # `_trigger_profile_resync` is fire-and-forget; stub it off the firebase client.
         monkeypatch.setattr(dm, '_trigger_profile_resync', lambda fb: None)
 
         return changes
@@ -785,9 +716,8 @@ class TestApplyTopologyAutoRestore:
         self, monkeypatch, tmp_sentinel, reset_apply_state,
     ):
         self._patch_auto_restore_success_path(monkeypatch)
-        # Pre-create a sentinel as if a prior interactive apply orphaned one;
-        # auto-restore success must remove it (no recovery hook needed —
-        # drift will re-fire from a fresh state on the next checker tick).
+        # Auto-restore success must remove an orphaned sentinel — drift re-fires from
+        # a fresh state on the next checker tick.
         with open(tmp_sentinel, 'w') as f:
             json.dump({'version': 1, 'snapshot': {}}, f)
         assert os.path.exists(tmp_sentinel)
@@ -829,9 +759,7 @@ class TestApplyTopologyAutoRestore:
         self, monkeypatch, tmp_sentinel, reset_apply_state,
     ):
         self._patch_auto_restore_success_path(monkeypatch)
-        # Simulate a concurrent apply by holding the apply lock; a separate
-        # in-flight flag is set so we can verify the contention path doesn't
-        # clobber it (the holder still owns that flag's lifecycle).
+        # Hold the apply lock to simulate contention; the holder owns the in-flight flag.
         dm._apply_in_flight = True
         assert dm._apply_lock.acquire(blocking=False), 'precondition: lock free'
         try:
@@ -844,8 +772,7 @@ class TestApplyTopologyAutoRestore:
             assert 'apply already in progress' in result['error']
             # Contention path emits no audit event — it's a pre-apply gate.
             assert fb.log_event.call_count == 0
-            # Crucially, the contention return path must NOT touch
-            # `_apply_in_flight` — the existing apply's holder owns it.
+            # The contention return must NOT touch `_apply_in_flight` — the in-flight apply owns it.
             assert dm._apply_in_flight is True
         finally:
             dm._apply_lock.release()
@@ -866,8 +793,7 @@ class TestApplyTopologyAutoRestore:
             )
             assert result['success'] is False
             assert 'rate limited' in result['error']
-            # No `code` field — C2 must distinguish rate-limit (transient,
-            # not a failure) from a real failure with a code.
+            # No `code` field — C2 distinguishes rate-limit (transient) from a failure.
             assert 'code' not in result
             # No audit event on rate-limit return.
             assert fb.log_event.call_count == 0
@@ -877,9 +803,8 @@ class TestApplyTopologyAutoRestore:
     def test_killswitch_returns_disabled_error(
         self, monkeypatch, tmp_sentinel, reset_apply_state,
     ):
-        # Force just the displays.enabled key to read False; everything else
-        # behaves as default. Mosaic stub still installed in case the killswitch
-        # gate ever moves (defensive).
+        # Only displays.enabled reads False; Mosaic stub stays in case the killswitch
+        # gate ever moves.
         import shared_utils
         import nvapi_display
         monkeypatch.setattr(dm, '_is_session_0', lambda: False)
@@ -921,19 +846,11 @@ class TestApplyTopologyAutoRestore:
         assert result['changes'] == changes
 
 
-# ---------------------------------------------------------------------------
-# Wave C2.5 — full auto-restore cycle integration test
-
 
 class _FakeService:
-    """Minimum surface needed to bind `OwletteService._maybe_auto_restore` and
-    `_run_auto_restore` as bound methods. Constructing a real OwletteService
-    pulls in pywin32 ServiceFramework, threading watchdogs, Firestore listeners
-    — all unnecessary noise for unit-testing the orchestration logic.
-
-    Method binding (in tests) uses ``OwletteService.<method>.__get__(fake, OwletteService)``
-    so the production code paths execute verbatim against the fake's attributes.
-    """
+    """Minimum surface to bind `OwletteService._maybe_auto_restore` and
+    `_run_auto_restore` as bound methods; a real OwletteService drags in pywin32,
+    watchdogs and Firestore listeners. Bind via ``.__get__(fake, OwletteService)``."""
 
     _DISPLAY_DRIFT_FIELDS = (
         ('position.x',        lambda m: (m.get('position') or {}).get('x')),
@@ -947,39 +864,28 @@ class _FakeService:
     )
 
     def __init__(self):
-        # `_run_auto_restore` reads ``self.firebase_client.update_display_autorestore_state``
-        # and `_maybe_auto_restore` doesn't touch firebase_client directly, but
-        # both methods reach `self._emit_display_event` via the unfixable /
+        # Both methods reach `self._emit_display_event` via the unfixable /
         # breaker-trip branches.
         self.firebase_client = MagicMock()
-        # Drift-persistence gate (gate 6): default at the firing threshold so
-        # _maybe_auto_restore proceeds unless a test overrides it.
+        # Drift-persistence gate (gate 6): default at the firing threshold.
         self._drift_pending_tick_count = 2
         self._drift_pending_key = None
         self._last_auto_restore_success_key = None
-        # _emit_display_event is invoked by both methods; mock so tests can
-        # assert call_args_list against the real production-side payloads.
+        # Mocked so tests can assert call_args_list against real production payloads.
         self._emit_display_event = MagicMock()
 
 
 class TestAutoRestoreCycle:
-    """Full auto-restore cycle (C2.5): drift -> apply -> failure-counter ->
-    breaker trip -> skip-while-tripped -> manual reset re-enables.
-
-    Mocks at the I/O boundary only (apply_topology, update_display_autorestore_state,
-    shared_utils.read_config); the orchestration logic in `_maybe_auto_restore` /
-    `_run_auto_restore` runs unmodified by binding the real methods to a tiny
-    `_FakeService` via descriptor protocol (``__get__``).
-    """
+    """Full auto-restore cycle: drift -> apply -> failure-counter -> breaker trip ->
+    skip-while-tripped -> manual reset re-enables. Mocks at the I/O boundary only; the
+    real methods bind to `_FakeService` so the orchestration logic runs unmodified."""
 
     @pytest.fixture
     def fake_service(self):
         from owlette_service import OwletteService
         svc = _FakeService()
-        # Bind the production methods so the body executes against the fake's
-        # attributes. ``__get__(svc, cls)`` is the standard descriptor recipe
-        # for turning an unbound function into a bound method on a foreign
-        # instance — keeps the test honest (real branches, real call shapes).
+        # Bind the production methods via the descriptor protocol so the real branches
+        # and call shapes execute against the fake's attributes.
         svc._maybe_auto_restore = OwletteService._maybe_auto_restore.__get__(
             svc, OwletteService,
         )
@@ -1012,8 +918,7 @@ class TestAutoRestoreCycle:
 
     @pytest.fixture
     def assigned_layout(self):
-        # The layout `_run_auto_restore` passes to `apply_topology`. Identical
-        # shape to what gates pull from `displays.assigned` in a real config.
+        # Same shape the gates pull from `displays.assigned` in a real config.
         return {
             'monitors': [
                 {'edidHash': 'aaaaaaaa', 'primary': True,
@@ -1024,10 +929,8 @@ class TestAutoRestoreCycle:
         }
 
     def _make_config_reader(self, config_state):
-        """Build a `shared_utils.read_config` stub that resolves dotted-key paths
-        from a nested ``config_state`` dict. Mirrors the production traversal
-        (return None on missing key) so the gate logic sees the same shape.
-        """
+        """`shared_utils.read_config` stub resolving dotted-key paths from a nested
+        ``config_state``; returns None on a missing key, like production."""
         def _read(keys=None, **kw):
             if not keys:
                 return config_state
@@ -1044,21 +947,14 @@ class TestAutoRestoreCycle:
     def test_full_cycle(
         self, monkeypatch, fake_service, assigned_layout, reset_apply_state,
     ):
-        """End-to-end: 3 consecutive failures trip the breaker, the next drift
-        is skipped while tripped, and a manual reset re-enables firing.
-
-        Failure-counter steps invoke `_run_auto_restore` directly — bypassing
-        the thread spawn keeps the assertions deterministic without monkey-
-        patching `threading.Thread`. The skip-while-tripped + reset steps
-        invoke `_maybe_auto_restore` end-to-end so the real gate chain runs.
-        """
+        """End-to-end: 3 consecutive failures trip the breaker, the next drift is
+        skipped while tripped, a manual reset re-enables firing. Failure steps call
+        `_run_auto_restore` directly so assertions don't race the thread spawn."""
         import shared_utils
         import display_manager as dm_mod
 
-        # Mutable config state — drives both `shared_utils.read_config` (gate
-        # reads) and the in-flight breaker counter `_run_auto_restore` reads
-        # before incrementing. Tests mutate this dict to simulate Firestore
-        # -> local config sync (e.g., manual reset writing tripped=False).
+        # Mutable config state driving both read_config and the breaker counter; tests
+        # mutate it to simulate the Firestore -> config.json sync.
         config_state = {
             'displays': {
                 'enabled': True,
@@ -1073,11 +969,8 @@ class TestAutoRestoreCycle:
             shared_utils, 'read_config', self._make_config_reader(config_state),
         )
 
-        # `update_display_autorestore_state` is the sole Firestore write surface
-        # for breaker bookkeeping. Patch it on the fake's MagicMock so we can
-        # also propagate writes back into local `config_state` — that mirrors
-        # the real Firestore listener pulling the new value into `config.json`
-        # on the next sync tick, which is what the gate chain will read.
+        # `update_display_autorestore_state` is the only Firestore write for breaker
+        # bookkeeping; writes propagate back into config_state to mirror the sync tick.
         def _record_state_write(patch):
             cb = config_state['displays']['autoRestore']['circuitBreaker']
             cb.update(patch)
@@ -1085,10 +978,7 @@ class TestAutoRestoreCycle:
             _record_state_write
         )
 
-        # Sequence of `apply_topology` outcomes: fail, fail, fail (which trips
-        # the breaker on the 3rd). Codes are the generic apply-failure path
-        # (NOT rate-limited / unfixable, which are pre-apply skips that don't
-        # increment the counter).
+        # fail, fail, fail — generic apply-failure codes (not skips, which don't increment).
         apply_results = [
             {'success': False, 'error': 'ccd rejected layout',
              'code': dm_mod.DisplayErrorCode.APPLY_FAILED},
@@ -1105,7 +995,7 @@ class TestAutoRestoreCycle:
 
         monkeypatch.setattr(dm_mod, 'apply_topology', _mock_apply_topology)
 
-        # --- Failure 1: counter -> 1, breaker untripped ---------------------
+        # Failure 1: counter -> 1, breaker untripped.
         fake_service._run_auto_restore(assigned_layout)
         cb = config_state['displays']['autoRestore']['circuitBreaker']
         assert cb['failures'] == 1
@@ -1113,14 +1003,14 @@ class TestAutoRestoreCycle:
         # No trip event yet — only fires when failures >= 3.
         assert fake_service._emit_display_event.call_count == 0
 
-        # --- Failure 2: counter -> 2, breaker still untripped ---------------
+        # Failure 2: counter -> 2, breaker still untripped.
         fake_service._run_auto_restore(assigned_layout)
         cb = config_state['displays']['autoRestore']['circuitBreaker']
         assert cb['failures'] == 2
         assert cb.get('tripped') is False
         assert fake_service._emit_display_event.call_count == 0
 
-        # --- Failure 3: counter -> 3, breaker trips, audit event fires ------
+        # Failure 3: counter -> 3, breaker trips, audit event fires.
         fake_service._run_auto_restore(assigned_layout)
         cb = config_state['displays']['autoRestore']['circuitBreaker']
         assert cb['failures'] == 3
@@ -1139,15 +1029,12 @@ class TestAutoRestoreCycle:
         assert trip_payload['failures'] == 3
         assert trip_payload['lastError'] == 'unsupported mode'
 
-        # --- 3 apply_topology calls so far; no more should occur while tripped
+        # 3 apply_topology calls so far; no more while tripped.
         assert len(apply_calls) == 3
 
-        # --- New drift while tripped: gate 3 short-circuits, no apply spawn -
-        # `_maybe_auto_restore` is the gate-chain entry point. With tripped=True
-        # in local config it must return before reaching the thread spawn.
-        # The profile must carry the assigned monitors in live topology so that
-        # after the manual reset below the apply isn't short-circuited by gate
-        # 5b (assigned-monitor-absent); gate 3 still rejects first while tripped.
+        # New drift while tripped: gate 3 short-circuits before the thread spawn.
+        # Live topology carries the assigned monitors so the post-reset apply isn't
+        # blocked by gate 5b.
         new_profile = {
             'monitors': [
                 {'edidHash': 'aaaaaaaa', 'primary': True,
@@ -1163,17 +1050,13 @@ class TestAutoRestoreCycle:
         assert len(apply_calls) == 3
         assert fake_service._emit_display_event.call_count == 1
 
-        # --- Manual reset (dashboard writes tripped=False; Firestore listener
-        # propagates back into local config.json on next sync) ----------------
-        # Also reset the failures counter, mirroring how the manual-reset
-        # endpoint clears both fields atomically.
+        # Manual reset: dashboard writes tripped=False and clears failures (the endpoint
+        # clears both atomically); the Firestore listener propagates it into config.json.
         config_state['displays']['autoRestore']['circuitBreaker'] = {
             'failures': 0, 'tripped': False,
         }
-        # Next apply succeeds — `_maybe_auto_restore` should let it through
-        # and `_run_auto_restore` (called manually here, since we don't want
-        # the test to depend on real thread-spawn timing) writes the success
-        # state back. Replace the apply mock with a success result.
+        # Next apply succeeds; `_run_auto_restore` is called manually so the test doesn't
+        # depend on thread-spawn timing.
         success_changes = [{'monitorId': 'aaaaaaaa', 'field': 'primary'}]
         success_result = {
             'success': True,
@@ -1189,9 +1072,7 @@ class TestAutoRestoreCycle:
 
         monkeypatch.setattr(dm_mod, 'apply_topology', _mock_apply_success)
 
-        # First, prove the gate chain now lets `_maybe_auto_restore` through —
-        # it spawns a daemon thread that calls `_run_auto_restore`. Capture
-        # the spawn so we can join it deterministically rather than racing.
+        # Capture the spawned thread so we can join deterministically instead of racing.
         spawned = []
         real_thread_cls = threading.Thread
 
@@ -1204,8 +1085,7 @@ class TestAutoRestoreCycle:
         monkeypatch.setattr(threading, 'Thread', _capture_thread)
 
         fake_service._maybe_auto_restore(new_profile, drifted_hashes)
-        # Exactly one auto-restore worker spawned (and `_maybe_auto_restore`
-        # already invoked .start() on it before returning).
+        # Exactly one worker spawned (already .start()ed by `_maybe_auto_restore`).
         assert len(spawned) == 1
         assert spawned[0].name == 'display-auto-restore'
         spawned[0].join(timeout=2.0)
@@ -1223,10 +1103,8 @@ class TestAutoRestoreCycle:
     def test_stable_assigned_drift_fires_after_two_display_ticks(
         self, monkeypatch, fake_service, assigned_layout, reset_apply_state,
     ):
-        """Auto-restore must catch stable live-vs-assigned drift, not only
-        topology-change events. First tick records persistence; second tick
-        enters the normal gate chain and spawns the worker.
-        """
+        """Auto-restore must catch stable live-vs-assigned drift, not only topology-change
+        events. First tick records persistence; second tick spawns the worker."""
         import shared_utils
         import display_manager as dm_mod
 
@@ -1289,10 +1167,8 @@ class TestAutoRestoreCycle:
             == fake_service._drift_pending_key
         )
 
-        # If Windows accepts the apply but the next live sample still reports
-        # the exact same drift, auto-restore must not keep re-applying the same
-        # layout every topology tick. That repeated SetDisplayConfig call is
-        # visible to users as a display flash.
+        # If Windows accepts the apply but live still reports the same drift, don't
+        # re-apply every tick — users see the repeated SetDisplayConfig as a flash.
         fake_service._maybe_auto_restore_assigned_drift(live_profile)
         assert len(spawned) == 1
         assert len(apply_calls) == 1
@@ -1302,8 +1178,7 @@ class TestAutoRestoreCycle:
         assert fake_service._drift_pending_tick_count == 0
         assert fake_service._last_auto_restore_success_key is None
 
-        # Once the drift actually converges, the same future drift is a new
-        # event and should get the normal two-tick persistence treatment.
+        # After convergence the same drift is a new event and gets the two-tick treatment.
         fake_service._maybe_auto_restore_assigned_drift(live_profile)
         assert len(spawned) == 1
         fake_service._maybe_auto_restore_assigned_drift(live_profile)
@@ -1396,12 +1271,8 @@ class TestAutoRestoreCycle:
     def test_scale_only_and_tiny_refresh_drift_do_not_auto_restore(
         self, monkeypatch, fake_service, reset_apply_state,
     ):
-        """Auto-restore ignores drift it cannot or should not apply.
-
-        DPI scale is not enforced by apply_topology(), and refresh-rate
-        readbacks can differ by harmless rounding. Neither should dispatch an
-        unattended SetDisplayConfig call.
-        """
+        """Auto-restore ignores drift it cannot or should not apply: DPI scale isn't
+        enforced by apply_topology(), and refresh readbacks differ by harmless rounding."""
         import shared_utils
         import display_manager as dm_mod
 
@@ -1503,9 +1374,8 @@ class TestAutoRestoreCycle:
         apply_results = [
             {'success': False, 'error': 'rate limited - 7s cooldown remaining'},
             {'success': False, 'error': 'apply already in progress'},
-            # A powered-off / disconnected assigned monitor: apply_topology
-            # rejects pre-SetDisplayConfig. Must NOT increment the breaker, or a
-            # routine monitor power-off would trip the sticky breaker.
+            # Powered-off assigned monitor: apply_topology rejects pre-SetDisplayConfig
+            # and must NOT increment the breaker, or a monitor power-off trips it.
             {'success': False,
              'error': "desired monitors not present in live topology: ['1d7d7cc72281ed07']",
              'code': dm_mod.DisplayErrorCode.MISSING_MONITORS,
@@ -1538,14 +1408,9 @@ class TestAutoRestoreCycle:
     def test_assigned_monitor_absent_from_live_skips_without_apply(
         self, monkeypatch, fake_service, assigned_layout, reset_apply_state,
     ):
-        """Gate 5b: a powered-off / disconnected assigned monitor must not even
-        trigger an apply attempt.
-
-        apply_topology would reject it pre-SetDisplayConfig with MISSING_MONITORS
-        and emit a `display_apply_failed` warning audit on *every* tick while the
-        monitor is off. The gate chain must skip before dispatching the worker —
-        no apply, no breaker churn, no audit spam.
-        """
+        """Gate 5b: a powered-off / disconnected assigned monitor must not trigger an
+        apply attempt — apply_topology would reject with MISSING_MONITORS and emit a
+        `display_apply_failed` audit every tick. Skip before dispatching the worker."""
         import shared_utils
         import display_manager as dm_mod
 
@@ -1583,9 +1448,7 @@ class TestAutoRestoreCycle:
 
         monkeypatch.setattr(threading, 'Thread', _capture_thread)
 
-        # Live topology is missing the primary assigned monitor 'aaaaaaaa' (it
-        # was powered off); the surviving monitor 'bbbbbbbb' has drifted to
-        # primary at the origin, which is what triggered the drift check.
+        # Primary 'aaaaaaaa' powered off; surviving 'bbbbbbbb' drifted to primary at origin.
         live_profile = {
             'monitors': [
                 {'edidHash': 'bbbbbbbb', 'primary': True,
@@ -1607,14 +1470,9 @@ class TestAutoRestoreCycle:
     def test_apply_was_skip_classifies_both_enum_and_helper_string_codes(
         self, fake_service,
     ):
-        """The production Session-0 helper path returns `code` as a JSON-
-        deserialized PLAIN STRING (e.g. 'missing_monitors'), not the enum
-        member (display_manager._spawn_user_session_helper does json.load).
-        The skip classifier must treat both forms identically — otherwise the
-        MISSING_MONITORS skip is a silent no-op on the production path while the
-        in-process unit tests (which pass the raw enum) stay green. Pins the
-        str-enum equality contract at the IPC boundary.
-        """
+        """The Session-0 helper path returns `code` as a JSON-deserialized plain string
+        (e.g. 'missing_monitors'), not the enum member. Both forms must classify
+        identically or the MISSING_MONITORS skip is a silent no-op in production."""
         from display_manager import DisplayErrorCode
         was_skip = fake_service._auto_restore_apply_was_skip
         # Plain-string (helper / JSON) form — every skip code must classify True.
@@ -1627,8 +1485,7 @@ class TestAutoRestoreCycle:
         assert was_skip(
             {'success': False, 'code': DisplayErrorCode.MISSING_MONITORS}
         ) is True
-        # Genuine failures (both forms) must NOT be skipped — the breaker must
-        # still trip on real apply failures.
+        # Genuine failures (both forms) must still trip the breaker.
         assert was_skip({'success': False, 'code': 'apply_failed'}) is False
         assert was_skip(
             {'success': False, 'code': DisplayErrorCode.VALIDATE_REJECTED}
@@ -1636,21 +1493,12 @@ class TestAutoRestoreCycle:
 
 
 class TestEdidHashStability:
-    """Identity hash must NOT shift when only the friendly name changes.
-
-    The previous hash payload included `friendly`, which Windows reports
-    inconsistently across driver state transitions (RDP attach/detach,
-    monitor sleep). That made every stored monitor read as "not connected"
-    after a remote session even though the panel was physically unchanged.
-    """
+    """Identity hash must NOT shift when only the friendly name changes. `friendly` used
+    to be in the hash payload and Windows reports it inconsistently across driver state
+    transitions, so stored monitors read as "not connected" after a remote session."""
 
     def test_friendly_name_not_in_hash(self):
-        # The bug: previously the friendly name was part of the hash payload,
-        # so the same physical monitor produced different hashes when Windows
-        # reported a different friendly name across a driver state transition.
-        # `canonical_edid_hash_for_monitor` reads from the dict, including
-        # `friendlyName` — the invariant is that two monitors with the SAME
-        # identity but DIFFERENT friendly names hash identically.
+        # Same identity, different friendlyName → identical hash.
         base_identity = {
             'manufacturerId': 'DEL',
             'productCode': '40F2',
@@ -1680,13 +1528,11 @@ class TestEdidHashStability:
 
 
 class TestCanonicalizeMonitorHashes:
-    """Re-derivation rewrites `edidHash` from raw identity fields so layouts
-    persisted under the old (friendly-inclusive) scheme still match.
-    """
+    """Re-derivation rewrites `edidHash` from raw identity fields so layouts persisted
+    under the old (friendly-inclusive) scheme still match."""
 
     def _live_format_dell(self):
-        # The shape `_enumerate_monitors_ccd` produces: productCode is a hex
-        # string, edidHash is the new identity-only SHA-1.
+        # Shape `_enumerate_monitors_ccd` produces: hex productCode, identity-only SHA-1.
         return {
             'edidHash': dm._edid_hash('DEL', 0x40F2, '5&abc&0&UID257'),
             'manufacturerId': 'DEL',
@@ -1696,9 +1542,7 @@ class TestCanonicalizeMonitorHashes:
         }
 
     def test_old_format_assigned_normalizes_to_new_hash(self):
-        # An assigned-layout monitor written by an older agent: same raw
-        # fields, but its `edidHash` was computed with `friendly` folded in
-        # — so it doesn't match the canonical identity hash.
+        # Older-agent layout: same raw fields, but edidHash folded in `friendly`.
         legacy = {
             'edidHash': 'old_scheme_hash',
             'manufacturerId': 'DEL',
@@ -1729,9 +1573,8 @@ class TestCanonicalizeMonitorHashes:
         assert canon['primary'] is True
 
     def test_empty_identity_preserves_existing_hash(self):
-        # Monitors without raw fields (broken EDID, generic driver) keep
-        # their stored hash rather than collapse to a single zero-payload
-        # hash that would alias every unknown monitor together.
+        # Monitors without raw fields keep their stored hash rather than all aliasing
+        # to one zero-payload hash.
         m = {'edidHash': 'kept', 'manufacturerId': '', 'productCode': '', 'serialNumber': ''}
         canon = dm.canonicalize_monitor_hashes([m])
         assert canon[0]['edidHash'] == 'kept'
@@ -1757,9 +1600,8 @@ class TestCanonicalizeMonitorHashes:
         )
 
     def test_compute_drift_count_matches_legacy_assigned(self):
-        # Drift counter must work even when the assigned-side hashes are
-        # from the old (friendly-inclusive) scheme. Without canonicalisation
-        # inside compute_drift_count, the lookup misses and drift is 0.
+        # compute_drift_count must canonicalise old friendly-inclusive assigned hashes
+        # or the lookup misses and drift reads 0.
         live = self._live_format_dell()
         live['position'] = {'x': 0, 'y': 0}
         live['resolution'] = {'width': 1920, 'height': 1200}
@@ -1783,19 +1625,15 @@ class TestIndirectDisplayFilter:
     """RDP / Miracast / dummy-plug paths must not pollute enumeration."""
 
     def test_indirect_techs_set(self):
-        # Sanity-check the set contents — these specific tech values are the
-        # ones documented in the WinSDK headers as virtual/indirect outputs.
-        # Value 18 (DISPLAYPORT_USB_TUNNEL) is real USB-C and must stay
-        # included in normal enumeration.
+        # These tech values are the WinSDK-documented virtual/indirect outputs.
+        # 18 (DISPLAYPORT_USB_TUNNEL) is real USB-C and must stay included.
         assert 15 in dm._INDIRECT_OUTPUT_TECHS  # MIRACAST
         assert 16 in dm._INDIRECT_OUTPUT_TECHS  # INDIRECT_WIRED
         assert 17 in dm._INDIRECT_OUTPUT_TECHS  # INDIRECT_VIRTUAL
         assert 18 not in dm._INDIRECT_OUTPUT_TECHS  # DISPLAYPORT_USB_TUNNEL — real
 
     def _stub_path(self, source_id, target_id, output_tech):
-        """Build a MagicMock that satisfies the attribute-access pattern
-        `_enumerate_monitors_ccd` uses against ctypes path structs.
-        """
+        """MagicMock matching the ctypes path-struct attribute access."""
         p = MagicMock()
         p.flags = dm.DISPLAYCONFIG_PATH_ACTIVE
         p.sourceInfo.adapterId = 'A1'
@@ -1805,17 +1643,14 @@ class TestIndirectDisplayFilter:
         p.targetInfo.id = target_id
         # Real ctypes field is a uint; the code does `int(target.outputTechnology)`.
         p.targetInfo.outputTechnology = output_tech
-        # Refresh + rotation paths read these — return zero-like sentinels so
-        # _refresh_hz / _rotation_degrees don't blow up under the mock.
+        # _refresh_hz / _rotation_degrees read these — zero-like sentinels keep them alive.
         p.targetInfo.refreshRate.Numerator = 60
         p.targetInfo.refreshRate.Denominator = 1
         p.targetInfo.rotation = dm.DISPLAYCONFIG_ROTATION_IDENTITY
         return p
 
     def _stub_mode(self, source_id):
-        """Mode struct for a given source slot — produces a SOURCE-type info
-        block with non-zero position/size so `source_mode` resolves successfully.
-        """
+        """SOURCE-type mode info with non-zero position/size so `source_mode` resolves."""
         m = MagicMock()
         m.infoType = dm.DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE
         m.sourceMode.position.x = source_id * 1920
@@ -1836,9 +1671,8 @@ class TestIndirectDisplayFilter:
         return info
 
     def test_indirect_paths_dropped_from_enumeration(self, monkeypatch):
-        # Three CCD paths: two physical (HDMI=5, DP-external=10) and one
-        # RDP-injected virtual (INDIRECT_VIRTUAL=17). After enumeration the
-        # virtual one must be absent from the returned monitor list.
+        # Two physical paths (HDMI=5, DP=10) plus one RDP-injected virtual (17), which
+        # must be absent from the returned monitor list.
         physical_a = self._stub_path(source_id=0, target_id=100, output_tech=5)
         virtual = self._stub_path(source_id=1, target_id=101, output_tech=17)
         physical_b = self._stub_path(source_id=2, target_id=102, output_tech=10)
@@ -1857,8 +1691,7 @@ class TestIndirectDisplayFilter:
             'expected only the two physical paths to survive; '
             f'virtual targetId=101 (tech=17) leaked through: {target_ids}'
         )
-        # Spot-check that USB-C tunnel (tech=18) IS kept — guards against
-        # accidentally widening the filter to include real hardware.
+        # USB-C tunnel (18) IS kept — guards against widening the filter to real hardware.
         usb_c = self._stub_path(source_id=0, target_id=200, output_tech=18)
         monkeypatch.setattr(dm, '_query_active_paths',
                             lambda: ([usb_c], [self._stub_mode(0)]))
@@ -1866,16 +1699,14 @@ class TestIndirectDisplayFilter:
         assert [m['targetId'] for m in monitors] == [200]
 
 
-# ---------------------------------------------------------------------------
-# Display alert dispatch — the log write and the alert POST are two sinks,
-# not one. `send_display_alert` had zero call sites from v2.11.0 onward,
-# which left every routed display email and webhook dormant fleet-wide.
+# Display alert dispatch: the log write and the alert POST are two sinks, not one.
+# `send_display_alert` had zero call sites from v2.11.0 onward, which left every routed
+# display email and webhook dormant fleet-wide.
 
 
 class TestEmitAuditAlertDispatch:
-    """`_emit_audit` must reach BOTH sinks: `log_event` (dashboard feed +
-    talon log bridge) and `send_display_alert` (email + webhook routing).
-    """
+    """`_emit_audit` must reach BOTH sinks: `log_event` (dashboard feed + talon log
+    bridge) and `send_display_alert` (email + webhook routing)."""
 
     def test_emits_log_and_alert(self):
         fb = MagicMock()
@@ -1900,9 +1731,8 @@ class TestEmitAuditAlertDispatch:
         )
 
     def test_extras_win_over_the_merged_details_key(self):
-        # `details` is merged in for webhook rendering
-        # (`webhookSender.extractFields` reads `data.details`), but an
-        # explicit extras key is the caller's intent and must not be clobbered.
+        # `details` is merged in for webhook rendering, but an explicit extras key is
+        # the caller's intent and must not be clobbered.
         fb = MagicMock()
         dm._emit_audit(
             fb, 'display_sync_lost', 'warning', 'positional detail',
@@ -1918,8 +1748,7 @@ class TestEmitAuditAlertDispatch:
         )
 
     def test_none_client_is_a_no_op(self):
-        # The user-session helper process runs display_manager without a
-        # firebase client; it must not blow up on the audit path.
+        # The user-session helper runs display_manager without a firebase client.
         dm._emit_audit(None, 'display_apply_failed', 'warning', 'x', {})
 
     def test_alert_failure_does_not_break_the_caller(self):
@@ -1929,8 +1758,7 @@ class TestEmitAuditAlertDispatch:
         fb.log_event.assert_called_once()
 
     def test_log_failure_still_sends_the_alert(self):
-        # A Firestore write failure must not swallow the operator's alert —
-        # the two sinks fail independently.
+        # A Firestore write failure must not swallow the alert — the sinks fail apart.
         fb = MagicMock()
         fb.log_event.side_effect = RuntimeError('firestore down')
         dm._emit_audit(fb, 'display_auto_revert_fired', 'error', 'reverted', {})
@@ -1938,9 +1766,8 @@ class TestEmitAuditAlertDispatch:
 
 
 class TestEmitDisplayEventAlertDispatch:
-    """`owlette_service._emit_display_event` is the other display-event funnel
-    (the six topology-observation events). Same two-sink contract.
-    """
+    """`owlette_service._emit_display_event` is the other display-event funnel (the six
+    topology-observation events). Same two-sink contract."""
 
     @staticmethod
     def _bound_service():
@@ -1967,8 +1794,7 @@ class TestEmitDisplayEventAlertDispatch:
         )
         return svc
 
-    # One drifted field on a monitor present in both profiles — the minimum
-    # input that produces exactly one `display_drift` event.
+    # One drifted field on a monitor in both profiles — minimum input for one `display_drift` event.
     _PREV = {'monitors': [{'edidHash': 'aaaa', 'refreshHz': 60}]}
     _NEW = {
         'monitors': [{'edidHash': 'aaaa', 'refreshHz': 30}],
@@ -1990,17 +1816,15 @@ class TestEmitDisplayEventAlertDispatch:
         )
 
     def test_unserializable_payload_sends_nothing(self):
-        # The early return on a serialization failure must skip BOTH sinks —
-        # an alert whose payload can't be logged is not worth half-emitting.
+        # A serialization failure must skip BOTH sinks.
         svc = self._bound_service()
         svc._emit_display_event('display_drift', 'warning', {'bad': object()})
         svc.firebase_client.log_event.assert_not_called()
         svc.firebase_client.send_display_alert.assert_not_called()
 
     def test_suppress_flag_reaches_the_alert_payload(self, reset_suppression_state):
-        # End-to-end for the `suppressAlert` contract: the stamping lives in
-        # `_emit_display_change_events` (B2.2) and rides the same payload dict
-        # into the alert, which `/api/agent/alert` reads off `data`.
+        # `suppressAlert` contract: stamped in `_emit_display_change_events` and ridden
+        # into the alert payload that /api/agent/alert reads off `data`.
         import time as _time
 
         svc = self._bind_change_events(self._bound_service())

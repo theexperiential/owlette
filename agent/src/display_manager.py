@@ -1,26 +1,19 @@
 """Display topology enumeration via the Windows CCD API.
 
-Exposes ``build_display_profile()`` for read-side snapshots and
-``apply_topology()`` / ``ack_apply()`` / ``apply_revert_from_sentinel()`` for
-the write path. The write path validates a desired layout against the live
-topology, applies it via ``SetDisplayConfig``, persists a revert snapshot to a
-sentinel file on disk, and starts a watchdog thread that rolls the config back
-if the caller does not acknowledge within ``ack_timeout`` seconds.
+Read side: ``build_display_profile()``. Write side: ``apply_topology()`` /
+``ack_apply()`` / ``apply_revert_from_sentinel()`` — validate the desired layout
+against the live topology, ``SetDisplayConfig``, persist a revert snapshot to a
+sentinel file, then a watchdog thread rolls back unless acked within
+``ack_timeout``.
 
 Mosaic detection lives in ``nvapi_display.py``; this module always emits
-``mosaicActive: False`` and the NVAPI layer is expected to flip it when
-appropriate.
+``mosaicActive: False`` for that layer to flip.
 
-Session 0 caveat
-----------------
-Windows CCD (``QueryDisplayConfig`` / ``SetDisplayConfig``) requires the
-calling process to be attached to the interactive console session. When the
-Owlette service runs as LocalSystem in Session 0, ``GetDisplayConfigBufferSizes``
-returns ``paths=0, modes=0``, which makes the follow-up ``QueryDisplayConfig``
-call fail with ``ERROR_INVALID_PARAMETER`` (rc=87). Thread impersonation does
-not fix this — CCD checks the *process* session, not the thread token. So
-when we detect we're in Session 0, we transparently delegate enumeration to a
-helper subprocess spawned in the active console user's session via
+Session 0 caveat: CCD requires the calling *process* — not the thread, so
+impersonation does not help — to be in the interactive session. As LocalSystem
+in Session 0, ``GetDisplayConfigBufferSizes`` returns paths=0/modes=0 and
+``QueryDisplayConfig`` then fails rc=87 (ERROR_INVALID_PARAMETER). So Session 0
+delegates to a helper subprocess spawned into the console user's session via
 ``CreateProcessAsUser``.
 """
 
@@ -46,9 +39,8 @@ SCHEMA_VERSION = 1
 class DisplayEnumerationError(Exception):
     """Raised when CCD enumeration times out or fails internally.
 
-    Distinct from the "zero monitors connected" case, which returns an empty
-    list without raising. Callers should catch this to avoid conflating
-    transient driver stalls with a genuinely empty topology.
+    Distinct from "zero monitors connected", which returns an empty list —
+    don't conflate a transient driver stall with a genuinely empty topology.
     """
     pass
 
@@ -59,12 +51,10 @@ class DisplayIpcError(DisplayEnumerationError):
 
 
 class DisplayErrorCode(str, enum.Enum):
-    """Taxonomy of failure codes surfaced across the apply / revert paths.
+    """Failure codes for the apply / revert paths.
 
-    Values are lowercase snake_case strings so they serialise naturally into
-    JSON responses (helper ↔ service IPC) and Firestore audit events. The
-    enum is the single source of truth; add new variants here rather than
-    introducing ad-hoc strings at call sites.
+    snake_case so they serialise into helper↔service IPC JSON and Firestore
+    audit events. Single source of truth — no ad-hoc strings at call sites.
     """
 
     # Input / protocol
@@ -97,7 +87,7 @@ class DisplayErrorCode(str, enum.Enum):
     MOSAIC_ACTIVE = 'mosaic_active'
     NO_CONSOLE_SESSION = 'no_console_session'
 
-    # Auto-restore skip reasons (Wave C2 — not failures)
+    # Auto-restore skip reasons (not failures)
     AUTO_RESTORE_SKIPPED_UNFIXABLE = 'auto_restore_skipped_unfixable'
     AUTO_RESTORE_RATE_LIMITED = 'auto_restore_rate_limited'
 
@@ -113,7 +103,6 @@ class DisplayErrorCode(str, enum.Enum):
     UNEXPECTED = 'unexpected'
 
 
-# ---------------------------------------------------------------------------
 # CCD API constants
 
 QDC_ALL_PATHS = 0x00000001
@@ -165,41 +154,28 @@ _CONNECTION_TYPE_MAP = {
     _OUTPUT_TECH_INTERNAL: 'internal',
 }
 
-# DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY values for virtual / indirect displays:
-# Miracast, Indirect Wired (Microsoft Remote Display Adapter / IddCx), and
-# Indirect Virtual. We drop these at enumeration time because they appear and
-# disappear with RDP / Miracast / dummy-plug drivers and would otherwise show
-# up in the dashboard as "added/removed monitors" and corrupt the topology
-# signature every time someone attaches a remote session. Value 18
-# (DISPLAYPORT_USB_TUNNEL) is a real USB-C display and stays included.
+# Virtual / indirect output techs (Miracast, IddCx Remote Display Adapter,
+# Indirect Virtual). Dropped at enumeration: they appear/disappear with RDP and
+# dummy-plug drivers, churning the topology signature with phantom
+# added/removed monitors. 18 (DISPLAYPORT_USB_TUNNEL) is real USB-C — kept.
 _INDIRECT_OUTPUT_TECHS = frozenset({15, 16, 17})
 
 ERROR_SUCCESS = 0
 ERROR_INSUFFICIENT_BUFFER = 122
 ERROR_GEN_FAILURE = 31  # SetDisplayConfig may return this during GPU TDR
-ERROR_BAD_CONFIGURATION = 1610  # SetDisplayConfig returns this when the driver
-                                 # rejects the proposed config — typically a
-                                 # resolution / refresh combo the panel can't
-                                 # do. Combined with ERROR_GEN_FAILURE (after
-                                 # TDR retry) it's the strongest signal the
-                                 # operator picked an unsupported mode.
+ERROR_BAD_CONFIGURATION = 1610  # driver rejected the config — usually an
+                                 # unsupported resolution / refresh combo.
 
-# Heuristic: CCD return codes that map to "unsupported display mode" rather
-# than a generic config rejection. Keyed on what Windows actually returns
-# from SDC_VALIDATE / SDC_APPLY when the panel can't do the requested mode.
-# Other rcs (e.g. ERROR_INVALID_PARAMETER=87) stay under VALIDATE_REJECTED /
-# APPLY_FAILED because they're ambiguous — 87 can mean bad struct as easily
-# as bad mode.
+# rcs meaning "panel can't do this mode". Everything else stays generic —
+# rc=87 is as likely a bad struct as a bad mode.
 _UNSUPPORTED_MODE_RCS = frozenset({ERROR_GEN_FAILURE, ERROR_BAD_CONFIGURATION})
 
 
 def _ccd_failure_code(rc: int, stage: str):
     """Translate a SetDisplayConfig rc into a DisplayErrorCode.
 
-    ``stage`` is ``'validate'`` or ``'apply'`` — determines the fallback
-    (generic) code when the rc isn't in `_UNSUPPORTED_MODE_RCS`. Extracted as
-    a pure helper so the mapping is testable in isolation without having to
-    construct real `DISPLAYCONFIG_PATH_INFO` ctypes arrays.
+    ``stage`` ('validate' | 'apply') picks the generic fallback. Pure so the
+    mapping is testable without building real ctypes path arrays.
     """
     if rc in _UNSUPPORTED_MODE_RCS:
         return DisplayErrorCode.UNSUPPORTED_MODE
@@ -229,7 +205,6 @@ SDC_USE_DATABASE_CURRENT = (
 _CCD_ENUMERATE_TIMEOUT = 2.0
 _CCD_APPLY_TIMEOUT = 10.0
 
-# ---------------------------------------------------------------------------
 # apply_topology module state
 
 _apply_lock = threading.Lock()
@@ -239,31 +214,19 @@ _current_apply_id = None  # UUID of the in-flight apply; ack must match it.
                           # Prevents stale acks for a prior apply from cancelling
                           # the watchdog of a newer apply.
 _last_apply_time = 0.0
-_last_apply_finished_at = 0.0  # [B2.1] wall-clock seconds at the moment an
-                                # apply success path completed. Read by
-                                # owlette_service._emit_display_change_events
-                                # (B2.2): events fired within 90s of this
-                                # timestamp get stamped `suppressAlert: True`
-                                # + `correlatedApplyId`, which the routing
-                                # endpoint then uses to skip email delivery
-                                # while still firing the webhook for audit.
-                                # 0.0 = no apply has succeeded since service
-                                # startup (suppression window inactive).
-_APPLY_SUPPRESS_WINDOW_S = 90.0  # [B2.4] default suppression window for
-                                  # display events that follow a successful
-                                  # apply. Exposed as a module constant so
-                                  # tests can override and so the service
-                                  # consumer doesn't redefine it locally.
+_last_apply_finished_at = 0.0  # wall-clock secs of the last apply success; 0.0
+                                # = none yet. _emit_display_change_events stamps
+                                # events inside the window `suppressAlert` +
+                                # `correlatedApplyId` so routing skips the email
+                                # but still fires the webhook for audit.
+_APPLY_SUPPRESS_WINDOW_S = 90.0  # suppression window for post-apply display
+                                  # events; module constant so tests override.
 _APPLY_COOLDOWN_SECONDS = 10  # min gap between applies to prevent rapid-fire
 _SENTINEL_PATH = None  # lazy-init via shared_utils.get_data_path('.display_revert_pending')
-# `_sentinel_lock` is an IN-PROCESS lock; it serialises sentinel I/O between
-# the ack-path, watchdog-path, startup-recovery path, and any apply thread
-# WITHIN THE SERVICE PROCESS. The user-session helper subprocess reads the
-# sentinel without acquiring this lock — by design: helpers are spawned
-# synchronously (service blocks until helper exits) and never run concurrently
-# with a service-side writer. The helper-side write in `_apply_core` uses
-# `_atomic_write_json` (`.tmp` + `os.replace`) so a partial file is never
-# visible even if the service also reads at that instant.
+# In-process only: serialises sentinel I/O across the ack / watchdog / startup-
+# recovery / apply threads. The helper subprocess deliberately skips it —
+# helpers run synchronously (service blocks) so never concurrently with a
+# service-side writer, and its write is atomic (.tmp + os.replace).
 _sentinel_lock = threading.Lock()
 _SENTINEL_SCHEMA_VERSION = 1  # bump when the on-disk sentinel shape changes
 
@@ -272,14 +235,10 @@ _IPC_TEMPDIR_LOCK = threading.Lock()
 _IPC_SWEEP_DONE = False
 _IPC_STALE_SECONDS = 60 * 60
 
-# Wave 5: deferred-revert state. When startup recovery finds a sentinel but
-# no console user is logged in, it cannot delegate to a user-session helper
-# (the entire write path requires Session 1+). Instead we set this flag,
-# preserve the sentinel, and let the main-loop tick (`_check_display_topology`
-# in owlette_service) retry once a console session appears. The
-# `_deferred_revert_alerted` companion gates the Firestore alert so we emit
-# `display_revert_deferred` exactly once per pending sentinel — re-cleared
-# in `_cleanup_sentinel()` so a fresh deferred state re-alerts cleanly.
+# Deferred-revert state: startup recovery found a sentinel but no console user,
+# so the helper (Session 1+ only) can't run. Preserve the sentinel and let
+# _check_display_topology retry once a session appears. `_deferred_revert_alerted`
+# fires `display_revert_deferred` once per sentinel; cleared in _cleanup_sentinel().
 _deferred_revert_pending = False
 _deferred_revert_alerted = False
 
@@ -538,7 +497,6 @@ def _ipc_dir_dacl_matches(ipc_dir: str, expected: list, ws, ntcon) -> bool:
         logger.debug('display IPC: DACL comparison failed for %s: %s', ipc_dir, e)
         return False
 
-# ---------------------------------------------------------------------------
 # ctypes structs
 
 
@@ -676,9 +634,8 @@ class DISPLAYCONFIG_TARGET_MODE(ctypes.Structure):
 
 
 class DISPLAYCONFIG_DESKTOP_IMAGE_INFO(ctypes.Structure):
-    # Not used directly, but included so the mode union is large enough on all
-    # Windows 10+ SDKs. Size matches DISPLAYCONFIG_TARGET_MODE on x64 (48) but
-    # we size-check via assertion below.
+    # Unused, but keeps the mode union large enough on all Windows 10+ SDKs
+    # (48 bytes on x64, asserted below).
     _fields_ = [
         ('PathSourceSize', POINTL),
         ('DesktopImageRegion', ctypes.c_int32 * 4),
@@ -770,17 +727,10 @@ class DISPLAYCONFIG_SOURCE_DEVICE_NAME(ctypes.Structure):
     ]
 
 
-# ---------------------------------------------------------------------------
 # DEVMODEW — required by EnumDisplaySettingsExW / ChangeDisplaySettingsEx.
-#
-# The full Windows DEVMODEW struct is a tagged union whose layout depends on
-# whether the caller is a printer or display driver; in the display path the
-# second form (POINTL + two DWORDs) is active. We mirror the printer union
-# exclusively for ABI padding — the display fields are the only ones we read.
-#
-# Canonical x64 size is 220 bytes; the `_EXPECTED_SIZES` block below asserts
-# this at import time so an ABI drift (e.g. new Windows SDK ships a longer
-# DEVMODEW) fails loudly rather than silently corrupting calls.
+# It's a tagged union: printer vs display layout. We mirror the printer arm
+# purely for ABI padding; only the display fields are read. Canonical x64 size
+# is 220 bytes, asserted in `_EXPECTED_SIZES` so SDK ABI drift fails loudly.
 
 
 class _DEVMODEW_DISPLAY(ctypes.Structure):
@@ -820,10 +770,8 @@ class _DEVMODEW_UNION2(ctypes.Union):
     ]
 
 
-# dmDisplayFlags bit indicating an interlaced mode. Used by
-# `_enum_modes_for_monitor` to drop legacy interlaced entries from the
-# supported-modes catalogue — operators never want to apply these on a
-# modern panel.
+# dmDisplayFlags interlaced bit; `_enum_modes_for_monitor` drops these from the
+# supported-modes catalogue — nobody wants interlaced on a modern panel.
 DM_INTERLACED = 0x00000002
 
 
@@ -862,10 +810,8 @@ class DEVMODEW(ctypes.Structure):
 # DPI scale percentages exposed by Windows settings (maps relative index → %).
 _DPI_SCALE_TABLE = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500]
 
-# ---------------------------------------------------------------------------
-# Struct size sanity checks — the whole module relies on these matching the
-# C ABI exactly. Failing loud at import time is better than silently reading
-# garbage out of a mis-sized buffer.
+# Struct size sanity checks — everything here depends on an exact C ABI match.
+# Fail loud at import rather than read garbage out of a mis-sized buffer.
 
 _EXPECTED_SIZES = {
     'LUID': (LUID, 8),
@@ -892,7 +838,6 @@ for _name, (_cls, _expected) in _EXPECTED_SIZES.items():
         'CCD bindings rely on the Windows x64 ABI.'.format(_name, _expected, _actual)
     )
 
-# ---------------------------------------------------------------------------
 # user32.dll function prototypes
 
 _user32 = ctypes.windll.user32
@@ -926,10 +871,6 @@ _SetDisplayConfig.argtypes = [
 ]
 _SetDisplayConfig.restype = wt.LONG
 
-# EnumDisplaySettingsExW lets us walk every supported display mode for a given
-# ``\\\\.\\DISPLAYn`` device name. The display name comes from a SOURCE-name
-# lookup (see _get_source_device_name below), not from a hard-coded enum — CCD
-# is the authoritative source of which sources are currently live.
 _EnumDisplaySettingsExW = _user32.EnumDisplaySettingsExW
 _EnumDisplaySettingsExW.argtypes = [
     wt.LPCWSTR,
@@ -940,7 +881,6 @@ _EnumDisplaySettingsExW.argtypes = [
 _EnumDisplaySettingsExW.restype = wt.BOOL
 
 
-# ---------------------------------------------------------------------------
 # Low-level CCD calls
 
 
@@ -1013,32 +953,21 @@ def _get_source_device_name(adapter_id: LUID, source_id: int):
     return name if name else None
 
 
-# Filter thresholds for `_enum_modes_for_monitor`. See wave-a3.1 Decision 2.
-# Enum loops frequently return 50+ modes on high-refresh panels; dropping
-# interlaced / non-32bpp / sub-24Hz entries keeps the dashboard dropdown
-# focused on the options an operator actually wants to apply.
+# `_enum_modes_for_monitor` filters: high-refresh panels enumerate 50+ modes;
+# dropping interlaced / non-32bpp / sub-24Hz keeps the dashboard dropdown usable.
 _MODE_MIN_REFRESH_HZ = 24
 _MODE_REQUIRED_BPP = 32
 
 
 def _enum_modes_for_monitor(device_name: str) -> list:
-    """Walk every supported display mode for a CCD source via EnumDisplaySettingsExW.
+    """Walk supported display modes for a CCD source via EnumDisplaySettingsExW.
 
     ``device_name`` is a ``\\\\.\\DISPLAYn`` string from ``_get_source_device_name``.
-    Iterates ``iModeNum`` from 0 until the Win32 call returns FALSE (end of
-    enumeration). Each returned DEVMODEW is filtered against Decision 2:
+    Drops interlaced / non-32bpp / sub-24Hz modes, dedupes on (w, h, hz), sorts
+    descending. Wrapped in ``_with_timeout`` so a stuck driver can't hang the
+    helper; on timeout returns [] and the catalogue emits ``modes: []``.
 
-      * drop interlaced modes (``dmDisplayFlags & DM_INTERLACED``)
-      * drop non-32-bits-per-pixel
-      * drop refresh rates below 24 Hz
-
-    Surviving entries are deduped on the ``(w, h, hz)`` tuple and sorted
-    descending by width, then height, then refresh. The whole enumeration
-    runs inside ``_with_timeout`` so a stuck driver can't hang the helper
-    process — on timeout we return an empty list and let the catalogue
-    builder emit ``modes: []`` for this edidHash (Risk 2 in the plan).
-
-    Returns a list of ``{'w': int, 'h': int, 'hz': int}`` dicts.
+    Returns ``[{'w': int, 'h': int, 'hz': int}, ...]``.
     """
     if not device_name:
         return []
@@ -1047,10 +976,8 @@ def _enum_modes_for_monitor(device_name: str) -> list:
         seen = set()
         out = []
         mode_num = 0
-        # Guard against a hypothetical driver that returns TRUE forever —
-        # modern GPUs expose at most a few hundred unique modes, so a hard
-        # ceiling of 4096 iterations is well outside any legitimate case
-        # while still bounding the loop if the watchdog ever misses.
+        # Bound the loop against a driver that returns TRUE forever; real GPUs
+        # expose a few hundred modes at most.
         while mode_num < 4096:
             dev = DEVMODEW()
             dev.dmSize = ctypes.sizeof(DEVMODEW)
@@ -1104,8 +1031,8 @@ def _get_dpi_scale_percent(adapter_id: LUID, source_id: int) -> int:
         )
         if rc != ERROR_SUCCESS:
             return 100
-        # curScaleRel is signed; the table index of the 100% entry is
-        # -minScaleRel. Clamp to the table bounds so a bogus value can't crash.
+        # curScaleRel is signed; the 100% entry sits at index -minScaleRel.
+        # Clamp to table bounds so a bogus value can't crash.
         idx = req.curScaleRel - req.minScaleRel
         if idx < 0 or idx >= len(_DPI_SCALE_TABLE):
             return 100
@@ -1115,7 +1042,6 @@ def _get_dpi_scale_percent(adapter_id: LUID, source_id: int) -> int:
         return 100
 
 
-# ---------------------------------------------------------------------------
 # Helpers
 
 
@@ -1143,11 +1069,10 @@ def _decode_edid_manufacturer(mfg_id: int) -> str:
 def _serial_from_device_path(device_path: str) -> str:
     """Extract a stable serial/instance token from the monitor device path.
 
-    Windows doesn't surface the EDID serial directly via CCD, but the monitor
-    device path already encodes a unique per-instance id (e.g.
-    ``\\\\?\\DISPLAY#GSM5B09#5&abcdef&0&UID256#{...}``). Use the middle
-    ``5&...`` segment — it's stable across boots for a given port+cable pair
-    and distinguishes otherwise-identical monitors.
+    CCD doesn't expose the EDID serial, but the device path
+    (``\\\\?\\DISPLAY#GSM5B09#5&abcdef&0&UID256#{...}``) encodes a per-instance
+    id. The middle ``5&...`` segment is stable across boots for a given
+    port+cable and separates otherwise-identical monitors.
     """
     if not device_path:
         return ''
@@ -1159,23 +1084,17 @@ def _serial_from_device_path(device_path: str) -> str:
 
 
 def _edid_hash(manufacturer: str, product_code: int, serial: str) -> str:
-    # Identity-only hash. Friendly name was previously part of the payload
-    # but Windows reports it inconsistently during driver state transitions
-    # (RDP attach/detach, monitor sleep, EDID re-read fallback), causing the
-    # same physical monitor to receive different hashes between snapshots —
-    # which surfaced as every stored monitor showing "not connected" after a
-    # remote session. The (manufacturer, product_code, device-path serial)
-    # tuple is what actually identifies the panel.
+    # Identity fields only — deliberately excludes the friendly name, which
+    # Windows reports inconsistently across driver state transitions (RDP
+    # attach/detach, sleep, EDID re-read). Including it made every stored
+    # monitor read "not connected" after a remote session.
     payload = '{0}|{1}|{2}'.format(manufacturer, product_code, serial)
     return hashlib.sha1(payload.encode('utf-8')).hexdigest()[:16]
 
 
 def _product_code_to_int(product_code) -> int:
-    # Live enumeration computes the hash from the raw integer product code,
-    # but uploaded monitor dicts (and stored assigned layouts in Firestore)
-    # carry it as a zero-padded hex string like "000A". Canonicalisation has
-    # to round-trip that representation back to the int so the recomputed
-    # hash matches what `_enumerate_monitors_ccd` produced for the same panel.
+    # Live enumeration hashes the raw int, but Firestore-stored monitors carry
+    # a zero-padded hex string ("000A"). Round-trip so recomputed hashes match.
     if product_code is None or product_code == '':
         return 0
     if isinstance(product_code, int):
@@ -1187,12 +1106,10 @@ def _product_code_to_int(product_code) -> int:
 
 
 def canonical_edid_hash_for_monitor(monitor: dict) -> str:
-    """Recompute a monitor's `edidHash` from its own raw identity fields.
+    """Recompute a monitor's `edidHash` from its raw identity fields.
 
-    Use this when reading a monitor dict that may have been persisted with
-    an older hashing scheme (e.g. an assigned layout in Firestore written
-    before the friendly-name was dropped). Returns the canonical hash; falls
-    back to the stored `edidHash` if the raw fields are missing.
+    For dicts persisted under an older hashing scheme. Falls back to the stored
+    `edidHash` when the raw fields are missing.
     """
     if not isinstance(monitor, dict):
         return ''
@@ -1205,9 +1122,9 @@ def canonical_edid_hash_for_monitor(monitor: dict) -> str:
 
 
 def canonicalize_monitor_hashes(monitors):
-    """Return a new list of monitor dicts with each `edidHash` re-derived
-    from the monitor's raw identity fields. Idempotent on already-canonical
-    input. Safe on None / non-list / non-dict entries (filtered out).
+    """Re-derive each monitor's `edidHash` from its raw identity fields.
+
+    Idempotent. Non-dict entries and None input are filtered out.
     """
     if not monitors:
         return []
@@ -1222,9 +1139,9 @@ def canonicalize_monitor_hashes(monitors):
 
 
 def canonicalize_assigned_layout(layout):
-    """Apply `canonicalize_monitor_hashes` to an assigned-layout dict's
-    `monitors` field in place of the originals. Returns the original input
-    unchanged if it isn't a dict with a monitor list.
+    """Apply `canonicalize_monitor_hashes` to a layout's `monitors` list.
+
+    Returns the input unchanged if it isn't a dict with a monitor list.
     """
     if not isinstance(layout, dict):
         return layout
@@ -1251,32 +1168,22 @@ def _rotation_degrees(rotation: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Session 0 delegation — CCD requires the interactive session.
-#
-# When this module is imported inside the Owlette Windows service
-# (LocalSystem / Session 0), CCD calls return zero buffer sizes and
-# QueryDisplayConfig then fails with ERROR_INVALID_PARAMETER. We detect that
-# case at enumeration time and re-run _enumerate_monitors in a subprocess
-# launched into the active console user's session via CreateProcessAsUser.
-#
-# The helper mode is triggered by the ``--enumerate-json <outfile>`` CLI flag
-# at the bottom of this file, so a single script serves both roles.
+# Session 0 delegation — CCD needs the interactive session. In the service
+# (LocalSystem / Session 0) CCD returns zero buffer sizes and QueryDisplayConfig
+# fails rc=87, so we re-run in a subprocess launched into the console user's
+# session via CreateProcessAsUser. Helper mode = the ``--enumerate-json`` /
+# ``--apply-json`` CLI flags at the bottom of this file; one script, both roles.
 
-_ENUM_HELPER_TIMEOUT = 4.0  # seconds; real round-trip is ~1-2s but CreateProcessAsUser
-                            # + Python startup can spike. Kept below the 5s outer
-                            # watchdog in owlette_service._check_display_topology so
-                            # we surface a specific error rather than letting the
-                            # outer ThreadPool cancel silently.
+_ENUM_HELPER_TIMEOUT = 4.0  # secs; ~1-2s typical, spawn can spike. Must stay under
+                            # the 5s watchdog in _check_display_topology so we
+                            # report a specific error instead of a silent cancel.
 
-_ENUM_MODES_HELPER_TIMEOUT = 6.0  # seconds; modes enumeration does N monitors × K
-                                   # modes each, so ~50% more headroom than the
-                                   # single-walk enumerate helper. EnumDisplaySettings
-                                   # is cheap per call but adds up on fleets with 4+
-                                   # monitors.
+_ENUM_MODES_HELPER_TIMEOUT = 6.0  # secs; N monitors × K modes, so more headroom
+                                   # than the single-walk enumerate helper.
 
-_APPLY_HELPER_TIMEOUT = 20.0  # seconds; covers spawn + query + validate + SDC_APPLY
-                              # (with possible TDR retry) + post-verify. Must exceed
-                              # 2 × _CCD_APPLY_TIMEOUT + 2s TDR sleep + spawn overhead.
+_APPLY_HELPER_TIMEOUT = 20.0  # secs; spawn + query + validate + SDC_APPLY (with TDR
+                              # retry) + post-verify. Must exceed
+                              # 2 × _CCD_APPLY_TIMEOUT + 2s TDR sleep + spawn.
 
 
 def _current_session_id() -> int:
@@ -1292,11 +1199,10 @@ def _current_session_id() -> int:
 
 
 def _is_session_0() -> bool:
-    """True when the current process is running in Windows Session 0.
+    """True when running in Windows Session 0 (the services session).
 
-    Session 0 is the non-interactive services session. CCD APIs always return
-    an empty topology when called from Session 0 regardless of thread token,
-    so we must delegate to a helper in the user's session.
+    CCD always returns an empty topology there regardless of thread token, so
+    callers must delegate to a helper in the user's session.
     """
     return _current_session_id() == 0
 
@@ -1306,21 +1212,14 @@ def _spawn_user_session_helper(
     out_path: str,
     timeout: float,
 ) -> dict:
-    """Spawn ``display_manager.py`` in the active console user's session with
-    ``helper_args`` appended to the command line. Wait for ``out_path`` to
-    materialise with a JSON payload and return it parsed.
+    """Spawn ``display_manager.py`` in the console user's session and read back JSON.
 
-    ``helper_args`` is a list of extra CLI args (already quoted where needed)
-    such as ``['--enumerate-json', out_path]`` or
-    ``['--apply-json', req_path, out_path]``. The caller owns the request
-    file (if any) and the out_path temp location. The spawner additionally
-    creates a stderr log file, passes its path via ``--stderr-log``, and
-    drains it into the service log after the helper exits so apply failures
-    aren't invisible.
+    ``helper_args`` are extra CLI args, e.g. ``['--enumerate-json', out_path]``.
+    Caller owns the request file and ``out_path``. Helper stderr is redirected to
+    a temp log and drained into the service log so failures aren't invisible.
 
-    Raises ``DisplayEnumerationError`` on timeout / failure (including no
-    console session, token acquisition failure, helper crash, or malformed
-    response). Never returns partial data.
+    Raises ``DisplayEnumerationError`` on timeout, no console session, token
+    failure, crash, or malformed response. Never returns partial data.
     """
     try:
         import win32ts
@@ -1340,7 +1239,7 @@ def _spawn_user_session_helper(
             'no active console session; display helper requires an interactive user'
         )
 
-    # Best-effort: enable SE_TCB_PRIVILEGE so WTSQueryUserToken succeeds.
+    # Best-effort: WTSQueryUserToken needs SE_TCB_PRIVILEGE.
     try:
         priv_token = win32security.OpenProcessToken(
             ctypes.windll.kernel32.GetCurrentProcess(),
@@ -1379,10 +1278,8 @@ def _spawn_user_session_helper(
 
         python_exe = _resolve_python_exe()
         script_path = os.path.abspath(__file__)
-        # Use subprocess.list2cmdline — Windows-correct quoting rules (the
-        # same routine CreateProcess uses internally). Handles spaces,
-        # embedded quotes, and trailing backslashes without hand-rolled
-        # escapes.
+        # list2cmdline implements CreateProcess's own quoting rules — handles
+        # spaces, embedded quotes and trailing backslashes correctly.
         import subprocess as _sub
         cmd = _sub.list2cmdline([
             python_exe,
@@ -1421,9 +1318,8 @@ def _spawn_user_session_helper(
         timed_out = False
         exit_code = None
         try:
-            # Wait for the process to exit, bounded by `timeout`. WAIT_OBJECT_0
-            # means the helper exited on its own; WAIT_TIMEOUT means we must
-            # kill it to avoid a zombie racing future helpers on the same CCD.
+            # On WAIT_TIMEOUT we must kill it, or the zombie races future
+            # helpers on the same CCD.
             rc = win32event.WaitForSingleObject(hProcess, int(timeout * 1000))
             if rc != 0:  # WAIT_OBJECT_0 == 0
                 timed_out = True
@@ -1448,8 +1344,8 @@ def _spawn_user_session_helper(
             except Exception as e:
                 logger.debug('display helper: hProcess.Close failed: %s', e, exc_info=True)
 
-        # Drain stderr into the service log so helper failures aren't invisible.
-        # Capped at 64 KB to prevent a wedged helper from OOMing the service.
+        # Drain helper stderr into the service log; capped so a wedged helper
+        # can't OOM the service.
         _STDERR_MAX_BYTES = 64 * 1024
         try:
             if os.path.exists(stderr_path):
@@ -1481,8 +1377,7 @@ def _spawn_user_session_helper(
                 f'display helper timed out after {timeout:.1f}s (process terminated)'
             )
 
-        # Helper exited — atomic rename on the helper side means the file is
-        # either fully present or absent; no partial-read retry needed.
+        # Helper writes via atomic rename: file is whole or absent, never partial.
         if not os.path.exists(out_path):
             if exit_code == 2:
                 raise DisplayIpcError(
@@ -1508,8 +1403,7 @@ def _spawn_user_session_helper(
         return payload
 
     finally:
-        # Destroy the environment block before closing its owning token —
-        # CreateEnvironmentBlock allocates memory that must be explicitly freed.
+        # Must free the env block before closing its owning token.
         if environment is not None:
             try:
                 import win32profile
@@ -1714,14 +1608,13 @@ def _resolve_python_exe() -> str:
     return sys.executable
 
 
-# ---------------------------------------------------------------------------
 # Monitor enumeration
 
 
 def _enumerate_monitors_ccd() -> list:
-    """Enumerate monitors via direct CCD calls. Must be invoked from an
-    interactive session — returns an empty list from Session 0 because
-    ``GetDisplayConfigBufferSizes`` reports zero paths there.
+    """Enumerate monitors via direct CCD calls.
+
+    Interactive session only — Session 0 reports zero paths and yields [].
     """
     paths, modes = _query_active_paths()
     monitors = []
@@ -1792,15 +1685,13 @@ def _enumerate_monitors_ccd() -> list:
             'targetId': target_id,
         })
 
-    # Stable ordering — primary first, then left-to-right, top-to-bottom.
+    # Stable order: primary first, then left-to-right, top-to-bottom.
     monitors.sort(key=lambda m: (not m['primary'], m['position']['x'], m['position']['y']))
     return monitors
 
 
 def _enumerate_monitors() -> list:
-    """Enumerate active monitors, delegating to a user-session helper when
-    invoked from Session 0 (where CCD returns zero paths).
-    """
+    """Enumerate active monitors; delegates to a user-session helper in Session 0."""
     if _is_session_0():
         return _enumerate_monitors_via_user_session()
     return _enumerate_monitors_ccd()
@@ -1838,17 +1729,15 @@ def _enumerate_with_timeout(timeout: float = _CCD_ENUMERATE_TIMEOUT) -> list:
             ) from e
 
 
-# ---------------------------------------------------------------------------
 # Public API
 
 
 def build_display_profile() -> dict:
     """Build a display profile snapshot.
 
-    Never raises. On CCD enumeration failure, returns a profile with
-    ``enumerationFailed: True`` and an empty monitors list so callers can
-    distinguish a transient driver stall from a genuinely empty topology
-    and skip uploads that would clobber valid Firestore data.
+    Never raises. On enumeration failure returns ``enumerationFailed: True``
+    with no monitors, so callers can tell a driver stall from an empty topology
+    and skip an upload that would clobber valid Firestore data.
     """
     enumeration_failed = False
     try:
@@ -1872,15 +1761,12 @@ def build_display_profile() -> dict:
 
 
 def _build_display_modes_catalogue() -> dict:
-    """Build a per-edidHash catalogue of supported display modes for every
-    currently-active monitor, suitable for the dashboard editor's resolution
-    + refresh dropdowns.
+    """Per-edidHash catalogue of supported modes, for the editor's dropdowns.
 
-    The catalogue is signature-hashed against the current display profile so
-    A3.2's Firestore writer can skip-upload when the topology hasn't changed
-    since the last catalogue was written.
+    Signature-hashed against the current profile so the Firestore writer can
+    skip the upload when the topology is unchanged.
 
-    Payload shape::
+    Shape::
 
         {
           'schemaVersion': 1,
@@ -1888,15 +1774,12 @@ def _build_display_modes_catalogue() -> dict:
           'capturedAt': <unix seconds>,
           'byEdidHash': {
             '<edid>': {'modes': [{'w', 'h', 'hz'}, ...], 'dpiScales': [...]},
-            ...
           },
           'enumerationFailed': <optional: bool>,
         }
 
-    On enumeration failure the catalogue is emitted with empty ``byEdidHash``
-    and ``enumerationFailed: True`` — matches ``build_display_profile``'s
-    never-raise contract so the A3.2 writer can distinguish "no topology"
-    from "upload failed".
+    Never raises (same contract as ``build_display_profile``): on failure emits
+    an empty ``byEdidHash`` plus ``enumerationFailed: True``.
     """
     profile = build_display_profile()
     captured_at = int(time.time())
@@ -1910,10 +1793,9 @@ def _build_display_modes_catalogue() -> dict:
         base['enumerationFailed'] = True
         return base
 
-    # Walk CCD paths to capture (sourceAdapter, sourceId) per active target so
-    # we can resolve `\\.\DISPLAYn` strings to feed EnumDisplaySettingsExW.
-    # The edidHash is re-derived from the same target-device-name lookup
-    # `_enumerate_monitors_ccd` uses so the two mappings match exactly.
+    # (sourceAdapter, sourceId) per active target resolves the `\\.\DISPLAYn`
+    # string for EnumDisplaySettingsExW. edidHash is re-derived from the same
+    # target-device-name lookup `_enumerate_monitors_ccd` uses so both match.
     paths_result = _query_active_paths_safe()
     if paths_result is None:
         base['enumerationFailed'] = True
@@ -1941,9 +1823,8 @@ def _build_display_modes_catalogue() -> dict:
         serial = _serial_from_device_path(device_info.monitorDevicePath or '')
         edid_hash = _edid_hash(manufacturer, product_code, serial)
 
-        # Clone / mirror topologies can point two active paths at the same
-        # physical panel — first-entry-wins avoids re-enumerating the same
-        # modes twice and emitting a surprising duplicate key.
+        # Clone/mirror topologies point two active paths at one panel;
+        # first-entry-wins avoids duplicate keys and a redundant mode walk.
         if edid_hash in by_edid:
             continue
 
@@ -1957,9 +1838,8 @@ def _build_display_modes_catalogue() -> dict:
     return base
 
 
-# Fields compared between a live monitor and its assigned counterpart for
-# drift detection. Mirrors DRIFT_FIELDS in web/hooks/useDisplayState.ts so the
-# count we publish here matches what the dashboard would compute itself.
+# Drift-detection fields. Mirrors DRIFT_FIELDS in web/hooks/useDisplayState.ts —
+# keep in sync or our published count diverges from the dashboard's.
 _DRIFT_FIELDS = (
     ('position.x',        lambda m: (m.get('position') or {}).get('x')),
     ('position.y',        lambda m: (m.get('position') or {}).get('y')),
@@ -1975,13 +1855,9 @@ _DRIFT_FIELDS = (
 def compute_drift_count(live_monitors, assigned_monitors) -> int:
     """Count how many live monitors differ from their assigned counterpart.
 
-    Matching is keyed on edidHash (physical identity) so connector reshuffles
-    don't register as drift. Monitors present in `live` but missing from
-    `assigned` (or vice versa) are not counted — that's a higher-level
-    "layout changed" signal handled by the dashboard.
-
-    Re-derives the assigned-side hashes so layouts stored under an older
-    hashing scheme still match canonical live hashes by physical identity.
+    Keyed on edidHash so connector reshuffles aren't drift. Monitors on only
+    one side are not counted — the dashboard handles "layout changed".
+    Assigned-side hashes are re-derived so legacy-scheme layouts still match.
     """
     if not live_monitors or not assigned_monitors:
         return 0
@@ -2036,14 +1912,13 @@ def display_signature(profile: dict) -> str:
     return hashlib.md5(payload.encode('utf-8')).hexdigest()
 
 
-# ---------------------------------------------------------------------------
 # Write path — apply_topology / ack_apply / apply_revert_from_sentinel
 
 
 def _with_timeout(fn, timeout: float):
-    """Run ``fn`` in a worker thread under a watchdog. Matches the pattern used
-    for CCD reads — CCD calls can stall behind driver work, and an apply can
-    stall even longer after a hot-plug or TDR.
+    """Run ``fn`` in a worker thread under a watchdog.
+
+    CCD calls stall behind driver work; an apply stalls longer after hot-plug/TDR.
     """
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(fn)
@@ -2051,9 +1926,7 @@ def _with_timeout(fn, timeout: float):
 
 
 def _query_active_paths_safe():
-    """Run ``_query_active_paths`` under the standard CCD watchdog. Returns
-    ``(paths, modes)`` on success, ``None`` on timeout / error.
-    """
+    """``_query_active_paths`` under the CCD watchdog. ``None`` on timeout/error."""
     try:
         return _with_timeout(_query_active_paths, _CCD_ENUMERATE_TIMEOUT)
     except FuturesTimeoutError:
@@ -2065,8 +1938,9 @@ def _query_active_paths_safe():
 
 
 def _edid_hash_for_target(adapter_id: LUID, target_id: int) -> str:
-    """Derive the same edidHash that ``_enumerate_monitors`` produces for a
-    given (adapterId, targetId). Used to match desired monitors to live paths.
+    """edidHash for an (adapterId, targetId), matching ``_enumerate_monitors``.
+
+    Used to match desired monitors to live paths.
     """
     device_name = _get_target_device_name(adapter_id, target_id)
     manufacturer = ''
@@ -2218,12 +2092,10 @@ def _snapshot_live_config() -> dict:
 
 
 def _apply_snapshot(snapshot: dict) -> bool:
-    """Restore a serialised snapshot by calling SetDisplayConfig. Returns True
-    on success. Never raises — logs and returns False on failure.
+    """Restore a serialised snapshot via SetDisplayConfig. Never raises.
 
-    Passes ``SDC_SAVE_TO_DATABASE`` so the reverted config overwrites any bad
-    entry Windows may have saved during the failed apply. Without this flag,
-    the next driver reload / reboot can re-apply the bad config from the DB.
+    ``SDC_SAVE_TO_DATABASE`` is required: without it the bad config Windows
+    saved during the failed apply gets re-applied on the next driver reload.
     """
     try:
         paths, modes = _deserialize_paths_modes(snapshot)
@@ -2250,13 +2122,11 @@ def _apply_snapshot(snapshot: dict) -> bool:
 
 
 def _cleanup_sentinel():
-    """Safely delete the sentinel file; swallow missing-file errors.
+    """Delete the sentinel file; swallow missing-file errors.
 
-    Held under ``_sentinel_lock`` to serialise with readers and writers —
-    ack-path, watchdog-path, startup-recovery path and the helper subprocess
-    all may race otherwise. Also clears the Wave 5 deferred-revert flags so
-    a future apply that gets stuck mid-flight can re-defer and re-alert
-    independently of any prior pending sentinel.
+    Under ``_sentinel_lock`` — the ack, watchdog and startup-recovery paths
+    otherwise race. Also clears the deferred-revert flags so a later stuck
+    apply can re-defer and re-alert independently.
     """
     global _deferred_revert_pending, _deferred_revert_alerted
     with _sentinel_lock:
@@ -2278,14 +2148,11 @@ _CANONICAL_ROTATIONS = (0, 90, 180, 270)
 
 
 def _validate_desired_layout(desired_layout):
-    """Return ``(ok, error_message, code)``. ``desired_layout`` must be a dict
-    with a non-empty ``monitors`` list; each monitor needs ``edidHash`` and
-    ``position``, the set must contain exactly one ``primary``, and every
-    ``rotation`` (if present) must be canonical (0 / 90 / 180 / 270).
+    """Return ``(ok, error_message, code)`` for a desired layout.
 
-    The specific ``code`` lets the dashboard surface a targeted error
-    message — e.g. "no primary display selected" vs. the generic "invalid
-    input" — without re-parsing the error string.
+    Requires a non-empty ``monitors`` list, ``edidHash`` + ``position`` per
+    monitor, exactly one ``primary``, and canonical rotations. The specific
+    ``code`` lets the dashboard surface a targeted error without string-parsing.
     """
     if not isinstance(desired_layout, dict):
         return False, 'desired_layout must be a dict', DisplayErrorCode.INVALID_INPUT
@@ -2313,10 +2180,8 @@ def _validate_desired_layout(desired_layout):
                 f'monitors[{i}] missing position.x/y',
                 DisplayErrorCode.INVALID_INPUT,
             )
-        # Rotation is optional (legacy captures may omit it), but when
-        # present it must land on a 90° tick — Windows CCD rejects anything
-        # else at SDC_VALIDATE time with a generic rc, so catch it earlier
-        # with a specific code.
+        # Rotation optional (legacy captures omit it). CCD rejects off-tick
+        # values at SDC_VALIDATE with a generic rc — catch it here instead.
         rot = m.get('rotation')
         if rot is not None and rot not in _CANONICAL_ROTATIONS:
             return (
@@ -2342,23 +2207,19 @@ def _validate_desired_layout(desired_layout):
 
 
 def _apply_desired_to_paths(paths, modes, desired_by_hash, hash_by_path_idx):
-    """Mutate the path/mode arrays in-place so they reflect the desired layout.
+    """Mutate the path/mode arrays in-place to reflect the desired layout.
 
-    Re-offsets all positions so the primary monitor (if specified) sits at
-    (0, 0) — Windows refuses to apply a config where no source is at origin.
-    Returns the list of ``{'monitorId', 'field', 'fromValue', 'toValue'}``
-    change descriptors for the return value of apply_topology.
+    Re-offsets all positions so the primary sits at (0, 0) — Windows refuses a
+    config with no source at origin. Returns
+    ``{'monitorId', 'field', 'fromValue', 'toValue'}`` change descriptors.
     """
     changes = []
 
-    # First pass: resolve desired → (path_idx, source_mode_idx, target_mode_idx)
-    # and compute the primary-origin offset.
     path_lookup = {}  # path_idx -> desired monitor dict
     for path_idx, ehash in hash_by_path_idx.items():
         if ehash in desired_by_hash:
             path_lookup[path_idx] = desired_by_hash[ehash]
 
-    # Determine origin offset from the desired primary (if any).
     offset_x, offset_y = 0, 0
     for desired in path_lookup.values():
         if desired.get('primary'):
@@ -2372,10 +2233,8 @@ def _apply_desired_to_paths(paths, modes, desired_by_hash, hash_by_path_idx):
             _luid_to_str(path.targetInfo.adapterId), int(path.targetInfo.id)
         )
 
-        # Ensure the path stays active.
         path.flags |= DISPLAYCONFIG_PATH_ACTIVE
 
-        # Source-mode changes (position + resolution).
         src_idx = path.sourceInfo.modeInfoIdx
         if 0 <= src_idx < len(modes) and modes[src_idx].infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE:
             sm = modes[src_idx].sourceMode
@@ -2406,7 +2265,6 @@ def _apply_desired_to_paths(paths, modes, desired_by_hash, hash_by_path_idx):
                     sm.width = new_w
                     sm.height = new_h
 
-        # Target-mode changes (refresh + rotation).
         if 'rotation' in desired:
             new_rot = _ROTATION_FROM_DEGREES.get(int(desired['rotation']))
             if new_rot is not None and path.targetInfo.rotation != new_rot:
@@ -2422,8 +2280,7 @@ def _apply_desired_to_paths(paths, modes, desired_by_hash, hash_by_path_idx):
         if isinstance(refresh, (int, float)) and refresh > 0:
             current_hz = _refresh_hz(path.targetInfo.refreshRate)
             if abs(current_hz - float(refresh)) > 0.01:
-                # Represent the new rate as a rational with denominator 1000
-                # so non-integer Hz (e.g. 59.94) round-trip cleanly.
+                # Denominator 1000 so non-integer Hz (59.94) round-trips.
                 new_num = int(round(float(refresh) * 1000))
                 changes.append({
                     'monitorId': monitor_id,
@@ -2435,8 +2292,8 @@ def _apply_desired_to_paths(paths, modes, desired_by_hash, hash_by_path_idx):
                 path.targetInfo.refreshRate.Denominator = 1000
 
         if desired.get('primary'):
-            # Primary status is determined by the source at (0, 0), which the
-            # offset logic above already enforces. Surface it in the diff.
+            # Primary = source at (0, 0), already enforced by the offset above;
+            # just surface it in the diff.
             changes.append({
                 'monitorId': monitor_id,
                 'field': 'primary',
@@ -2454,25 +2311,18 @@ def _emit_audit(
     details: str,
     extras: dict = None,
 ) -> None:
-    """Fire-and-forget audit event emission. Never raises; logs at debug on
-    failure so a broken Firestore client can't take down the apply path.
-
-    Replaces 6+ inline ``try: fb_client.log_event(...); except Exception: ...``
-    blocks scattered across the apply / watchdog / revert code paths.
+    """Fire-and-forget audit emission. Never raises — a broken Firestore client
+    must not take down the apply path.
 
     Two sinks, both required:
+      1. ``log_event`` → ``sites/{siteId}/logs``: dashboard feed + talon log
+         bridge (``functions/src/talonLogEvents.ts``).
+      2. ``send_display_alert`` → ``/api/agent/alert``: email + webhook
+         delivery. Non-blocking, and it drops unrouted actions itself, so any
+         audit action can be passed verbatim.
 
-      1. ``log_event`` — writes ``sites/{siteId}/logs``, which drives the
-         dashboard event feed and the talon log bridge
-         (``functions/src/talonLogEvents.ts``). Unchanged.
-      2. ``send_display_alert`` — posts to ``/api/agent/alert`` so the routed
-         events reach email + webhook delivery. Non-blocking (daemon thread,
-         queued for retry on failure) and it drops the actions with no routing
-         entry itself, so every audit action can be handed to it verbatim.
-
-    The human-readable ``details`` line is merged into the alert payload so
-    webhook receivers render it (``webhookSender.extractFields`` reads
-    ``data.details``) — ``extras`` wins if it already carries the key.
+    ``details`` is merged into the alert payload because
+    ``webhookSender.extractFields`` reads ``data.details``; ``extras`` wins.
     """
     if fb_client is None:
         return
@@ -2497,11 +2347,9 @@ def _emit_audit(
 def _trigger_profile_resync(firebase_client) -> None:
     """Force an immediate Firestore upload of the current display profile.
 
-    Called right after apply succeeds and right after revert completes so
-    the dashboard canvas reflects the real physical state within seconds
-    instead of waiting up to the next ``_check_display_topology`` tick
-    (~30s). Never raises — resync failure is non-fatal; the tick-based
-    path will still catch up.
+    Called after apply/revert so the dashboard canvas catches up in seconds
+    rather than at the next ``_check_display_topology`` tick (~30s). Never
+    raises — the tick path is the fallback.
     """
     if firebase_client is None:
         return
@@ -2512,18 +2360,14 @@ def _trigger_profile_resync(firebase_client) -> None:
 
 
 def _make_revert_watchdog(revert_fn, ack_timeout: int, firebase_client):
-    """Build the ack-or-revert watchdog used by both the S0 and S1 success
-    paths. Returns a thread target; caller spawns the ``threading.Thread``.
+    """Build the ack-or-revert watchdog (thread target; caller spawns it).
 
-    ``revert_fn`` is a zero-arg callable that performs the actual revert and
-    returns ``{'ok': bool, 'error'?: str}`` — typically either
-    ``lambda: _revert_via_user_session(sentinel_path=...)`` (S0) or
-    ``lambda: {'ok': _apply_snapshot(snap)}`` (S1).
+    ``revert_fn`` is zero-arg returning ``{'ok': bool, 'error'?: str}`` —
+    ``_revert_via_user_session`` (S0) or ``_apply_snapshot`` (S1).
 
-    The watchdog cleans up the sentinel only when the revert succeeds, so a
-    failed revert leaves the recovery hook on disk for startup-recovery to
-    retry. It always clears ``_apply_in_flight`` in ``finally`` so a later
-    apply isn't blocked by a stale flag.
+    Deletes the sentinel only on a successful revert, so a failed revert leaves
+    the recovery hook for startup recovery. Always clears ``_apply_in_flight``
+    in ``finally`` so a stale flag can't block later applies.
     """
     def _watchdog():
         global _apply_in_flight
@@ -2547,10 +2391,6 @@ def _make_revert_watchdog(revert_fn, ack_timeout: int, firebase_client):
                     'revert watchdog: revert failed (%s) — sentinel preserved for startup recovery',
                     rev.get('error', 'unknown'),
                 )
-            # Physical topology just changed (either reverted successfully or
-            # left in a partial state). Push the current profile to Firestore
-            # NOW so the dashboard canvas catches up within seconds instead
-            # of up to ~30s (the next `_check_display_topology` tick).
             _trigger_profile_resync(firebase_client)
             details = (
                 f'no ack received within {ack_timeout}s; auto-reverted'
@@ -2582,21 +2422,14 @@ def _emit_success_and_build_response(
     firebase_client,
     monitor_count: int,
 ) -> dict:
-    """Shared success tail: emit the ``display_apply_succeeded`` audit event
-    and build the apply_topology response dict. Called after the watchdog
-    is armed (S0 and S1 converge here).
+    """Shared success tail for S0 and S1: audit event + response dict.
 
-    ``revertDeadlineEpochMs`` is a wall-clock deadline the dashboard could
-    use to drive an absolute countdown. Today the dashboard's countdown is
-    client-local (starts at dispatch time + 30s) because command-response
-    docs aren't subscribed to; the server-authoritative deadline is only
-    consumed via audit-event correlation. Still returned for future-proofing.
+    Called after the watchdog is armed. ``revertDeadlineEpochMs`` is currently
+    unused by the dashboard (its countdown is client-local, since it doesn't
+    subscribe to command-response docs) — returned for future use.
     """
-    # [B2.1] Stamp the wall-clock completion time so the operator-caused
-    # drift events that always follow a successful apply (the OS settles +
-    # the next topology check observes the new state) get correctly
-    # correlated to the apply that produced them. Window read by
-    # owlette_service in B2.2.
+    # Stamp completion so the operator-style drift events that always follow an
+    # apply get correlated to it rather than alerting.
     global _last_apply_finished_at
     _last_apply_finished_at = time.time()
     revert_deadline_ms = int((time.time() + ack_timeout) * 1000)
@@ -2615,9 +2448,6 @@ def _emit_success_and_build_response(
             'applyId': apply_id,
         },
     )
-    # Physical topology just changed. Push the new profile to Firestore NOW
-    # so the dashboard canvas reflects it within ~1-2s (helper spawn), not
-    # up to ~30s (next `_check_display_topology` tick).
     _trigger_profile_resync(firebase_client)
     return {
         'success': True,
@@ -2634,15 +2464,12 @@ def _apply_via_user_session(
 ) -> dict:
     """Service-side wrapper: drive an apply through the user-session helper.
 
-    Builds a request JSON, spawns ``display_manager.py --apply-json ...`` in
-    the active console session, waits for the response, and returns it.
-    Helper does the full CCD write path (query → validate → mutate →
-    write sentinel → SDC_APPLY → post-verify). On helper timeout / crash /
-    malformed response, returns ``{'ok': False, 'error': '...', 'code': 'helper_failed'}``.
+    The helper runs the full CCD write path (query → validate → mutate → write
+    sentinel → SDC_APPLY → post-verify). On timeout/crash/malformed response
+    returns ``{'ok': False, 'error': ..., 'code': 'helper_failed'}``.
 
-    ``apply_id`` is threaded into the request so the helper stores it in the
-    sentinel. The caller inspects ``ok`` and ``sentinel_written`` to decide
-    whether a defensive revert is needed.
+    ``apply_id`` is threaded through so the helper stores it in the sentinel.
+    Callers read ``ok`` + ``sentinel_written`` to decide on a defensive revert.
     """
     req_path = None
     out_path = None
@@ -2687,10 +2514,8 @@ def _revert_via_user_session(
 ) -> dict:
     """Service-side wrapper: drive a revert through the user-session helper.
 
-    Exactly one of ``snapshot`` or ``sentinel_path`` must be supplied. When
-    ``sentinel_path`` is given the helper reads the snapshot from disk; when
-    ``snapshot`` is given the helper uses it directly (handy when the service
-    already has it in-memory). Returns ``{'ok': bool, 'error'?: str}``.
+    Supply exactly one of ``snapshot`` (used directly) or ``sentinel_path``
+    (helper reads it from disk). Returns ``{'ok': bool, 'error'?: str}``.
     """
     if snapshot is None and not sentinel_path:
         return {'ok': False, 'error': 'must supply snapshot or sentinel_path', 'code': DisplayErrorCode.BAD_REQUEST}
@@ -2733,14 +2558,11 @@ def _revert_via_user_session(
 
 
 def _self_test_via_user_session() -> dict:
-    """Service-side wrapper: drive the Wave 6.2 read-only apply self-test
-    through the user-session helper.
+    """Read-only apply self-test through the user-session helper.
 
-    Spawns ``display_manager.py --self-test ...`` in the active console
-    session and returns the parsed response. Used by the dashboard's "test
-    apply capability" button so operators can verify the helper IPC works
-    on a given machine before flipping the ``displays.remoteApplyEnabled``
-    kill switch on. Never mutates display state.
+    Backs the dashboard's "test apply capability" button so operators can
+    verify helper IPC before enabling ``displays.remoteApplyEnabled``.
+    Never mutates display state.
     """
     out_path = None
     try:
@@ -2771,23 +2593,18 @@ def _apply_core(
     ack_timeout_s: int = 30,
     apply_id: str = None,
 ) -> dict:
-    """Shared CCD write sequence, callable from anywhere CCD actually works.
+    """Shared CCD write sequence; requires a session where CCD works.
 
-    Runs query → EDID coverage → mutate → pre-zero check → SDC_VALIDATE →
-    snapshot → write sentinel → SDC_APPLY (with TDR retry + per-call
-    timeout) → post-verify. Never raises.
+    query → EDID coverage → mutate → pre-zero check → SDC_VALIDATE → snapshot →
+    write sentinel → SDC_APPLY (TDR retry, per-call timeout) → post-verify.
+    Never raises.
 
-    Returns ``{ok: bool, error?: str, code?: DisplayErrorCode, changes?: list,
-    post_active_paths?: int, sentinel_written?: bool}``. When ``ok`` is
-    False, ``sentinel_written`` indicates whether the sentinel is on disk
-    (caller should run a defensive revert through this same path when
-    ``sentinel_written`` is True).
+    Returns ``{ok, error?, code?, changes?, post_active_paths?,
+    sentinel_written?}``. On failure, ``sentinel_written: True`` means the
+    caller must run a defensive revert.
 
-    Called by:
-      - ``_helper_apply_to_json`` (when the service is in Session 0 and the
-        work is delegated to a user-session subprocess).
-      - ``apply_topology``'s Session 1+ branch (debug mode; CCD works
-        in-process).
+    Callers: ``_helper_apply_to_json`` (Session 0 delegation) and
+    ``apply_topology``'s Session 1+ branch.
     """
     sentinel_written = False
     try:
@@ -2808,10 +2625,8 @@ def _apply_core(
             if ehash:
                 hash_by_path_idx[idx] = ehash
 
-        # Canonicalise so a layout stored under the previous (friendly-name
-        # inclusive) hashing scheme still matches the live identity hashes
-        # this apply path produces. Without this, every legacy stored layout
-        # would fail with MISSING_MONITORS after the agent upgrades.
+        # Canonicalise or every layout stored under the old (friendly-name
+        # inclusive) hashing scheme fails MISSING_MONITORS after an upgrade.
         desired_by_hash = {
             m['edidHash']: m
             for m in canonicalize_monitor_hashes(desired_layout['monitors'])
@@ -2836,12 +2651,10 @@ def _apply_core(
                 'code': DisplayErrorCode.ZERO_ACTIVE_PATHS_PRE,
             }
 
-        # `_query_active_paths` returns Python lists of ctypes struct
-        # instances (so they can be sliced / iterated cheaply). ctypes
-        # functions only auto-coerce ctypes arrays to pointers — not
-        # lists — so for the SetDisplayConfig calls below we copy into
-        # properly-typed arrays. Must happen AFTER `_apply_desired_to_paths`
-        # which mutates path/mode struct fields in place.
+        # ctypes coerces arrays to pointers but not lists, and
+        # `_query_active_paths` returns lists — copy into typed arrays for
+        # SetDisplayConfig. Must run AFTER `_apply_desired_to_paths`, which
+        # mutates the structs in place.
         paths_arr = (DISPLAYCONFIG_PATH_INFO * len(paths))()
         for _i, _p in enumerate(paths):
             paths_arr[_i] = _p
@@ -2849,7 +2662,6 @@ def _apply_core(
         for _i, _m in enumerate(modes):
             modes_arr[_i] = _m
 
-        # SDC_VALIDATE.
         def _do_validate():
             return _SetDisplayConfig(
                 len(paths_arr), paths_arr, len(modes_arr), modes_arr,
@@ -2879,7 +2691,7 @@ def _apply_core(
                 'code': DisplayErrorCode.SNAPSHOT_FAILED,
             }
 
-        # Write sentinel BEFORE SDC_APPLY so mid-apply crashes are recoverable.
+        # Sentinel BEFORE SDC_APPLY so a mid-apply crash is recoverable.
         sentinel_data = {
             'version': _SENTINEL_SCHEMA_VERSION,
             'apply_id': apply_id,
@@ -2902,7 +2714,7 @@ def _apply_core(
                 'code': DisplayErrorCode.SENTINEL_WRITE_FAILED,
             }
 
-        # SDC_APPLY with per-call timeout + single TDR retry.
+        # Per-call timeout + single TDR retry.
         def _do_apply():
             return _SetDisplayConfig(
                 len(paths_arr), paths_arr, len(modes_arr), modes_arr,
@@ -2939,7 +2751,7 @@ def _apply_core(
                 'sentinel_written': sentinel_written,
             }
 
-        # Post-apply verification — ensure we didn't end up with zero monitors.
+        # Post-apply verify: catch a config that left zero monitors active.
         post = _query_active_paths_safe()
         if post is None:
             return {
@@ -2963,12 +2775,9 @@ def _apply_core(
             'changes': changes,
             'post_active_paths': post_count,
             'sentinel_written': sentinel_written,
-            # The snapshot is returned so in-process (Session 1) callers don't
-            # have to re-read it from disk to arm their watchdog. Helper-path
-            # callers send it over IPC anyway; non-JSON-serialisable ctypes
-            # objects are stripped by `_serialize_path` / `_serialize_mode`
-            # inside `_snapshot_live_config`, so this is safe to return across
-            # the helper boundary too.
+            # Returned so Session 1 callers can arm the watchdog without
+            # re-reading the sentinel. JSON-safe (ctypes already stripped by
+            # `_snapshot_live_config`), so it crosses the helper boundary too.
             '_snapshot': snapshot,
         }
     except Exception as e:
@@ -2990,35 +2799,24 @@ def apply_topology(
 ) -> dict:
     """Apply a desired monitor layout with ack-or-revert safety.
 
-    Validates the layout against the live topology, calls
-    ``SetDisplayConfig(SDC_VALIDATE)`` first, snapshots the current config,
-    persists a revert sentinel to disk, then applies. A daemon watchdog
-    thread rolls the config back if ``ack_apply()`` is not called within
-    ``ack_timeout`` seconds. Never raises — returns ``{'success': bool, ...}``.
+    SDC_VALIDATE → snapshot → sentinel → apply, then a daemon watchdog reverts
+    unless ``ack_apply()`` lands within ``ack_timeout``. Never raises; returns
+    ``{'success': bool, ...}``.
 
-    ``firebase_client`` is an optional handle used to emit lifecycle audit
-    events (``display_apply_succeeded`` / ``display_apply_failed`` /
-    ``display_auto_revert_fired``). When ``None`` — e.g. unit tests or the
-    CLI smoke path — events are skipped silently. The caller need not check
-    connectivity; ``log_event`` is already non-blocking and swallows errors.
+    ``firebase_client=None`` (tests, CLI) silently skips audit events.
 
-    ``auto_restore`` (Feature C): when ``True`` the apply is treated as an
-    unattended drift-correction apply driven by the topology checker. The
-    correctness gates (kill switch, Mosaic refuse, lock, cooldown, validate)
-    still apply, but on success the watchdog is NOT armed (no operator to
-    ack), the sentinel is removed (no recovery hook needed — drift will
-    re-fire auto-restore from a fresh state), and the audit event is
-    emitted as ``display_auto_restore_fired`` instead of
-    ``display_apply_succeeded``.
+    ``auto_restore=True`` marks an unattended drift-correction apply: all gates
+    still run, but no watchdog is armed (nobody to ack), the sentinel is removed
+    (drift re-fires auto-restore from a fresh state), and the event is
+    ``display_auto_restore_fired``.
     """
     global _last_apply_time, _apply_in_flight
 
     monitor_count = len(desired_layout.get('monitors', [])) if isinstance(desired_layout, dict) else 0
 
     def _emit_auto_restore_success(changes: list) -> dict:
-        # Auto-restore success path: no watchdog, no revert deadline, no
-        # sentinel — the topology checker re-evaluates drift on each tick
-        # and will re-fire if the apply silently regressed.
+        # No watchdog / deadline / sentinel: the topology checker re-fires on
+        # the next tick if this apply silently regressed.
         global _last_apply_finished_at
         _last_apply_finished_at = time.time()
         _cleanup_sentinel()
@@ -3051,10 +2849,8 @@ def apply_topology(
             'error': error_str,
             'monitorCount': monitor_count,
         }
-        # Surface the specific failure class (e.g. unsupported_mode,
-        # validate_rejected, helper_failed) into the audit payload so the
-        # dashboard + downstream alert routing can distinguish modes
-        # without parsing error strings.
+        # Specific failure class in the payload so the dashboard and alert
+        # routing don't have to parse the error string.
         if code:
             payload['code'] = str(code)
         _emit_audit(
@@ -3065,9 +2861,8 @@ def apply_topology(
             payload,
         )
 
-    # Kill switch: when the displays feature is explicitly disabled, reject
-    # apply before any locks, audit events, or CCD calls. Missing key defaults
-    # to enabled (mirrors _check_display_topology).
+    # Kill switch, checked before any lock / audit / CCD call. Missing key =
+    # enabled (mirrors _check_display_topology).
     try:
         import shared_utils
         if shared_utils.read_config(['displays', 'enabled']) is False:
@@ -3075,11 +2870,9 @@ def apply_topology(
     except Exception:  # pragma: no cover — config read failures shouldn't block apply
         pass
 
-    # Master kill switch for the Wave 6 rollout. Defaults OFF on fresh
-    # installs so a bare agent can't be remotely reconfigured until the
-    # operator explicitly opts in via a Firestore config update. Distinct
-    # from `displays.enabled` (which gates the whole feature including
-    # drift detection); this flag scopes only the write path.
+    # Write-path-only kill switch, default OFF: a fresh agent can't be remotely
+    # reconfigured until an operator opts in. `displays.enabled` gates the whole
+    # feature including drift detection; this one gates only writes.
     try:
         import shared_utils
         if shared_utils.read_config(['displays', 'remoteApplyEnabled']) is not True:
@@ -3087,10 +2880,8 @@ def apply_topology(
     except Exception:  # pragma: no cover — config read failures shouldn't block apply
         pass
 
-    # NVIDIA Mosaic refuse-guard: mutating individual CCD paths while Mosaic is
-    # active can unravel the Mosaic grid. Until explicit Mosaic support lands,
-    # refuse the apply cleanly so the operator gets a specific error instead
-    # of driver surprise.
+    # Mutating individual CCD paths under NVIDIA Mosaic can unravel the grid.
+    # Refuse cleanly until Mosaic support lands.
     try:
         import nvapi_display
         if nvapi_display.detect_mosaic().get('mosaicActive'):
@@ -3107,19 +2898,14 @@ def apply_topology(
         logger.debug('apply_topology: Mosaic detection failed (assuming inactive): %s', e)
 
     if not _apply_lock.acquire(blocking=False):
-        # Contention, not an apply attempt — no audit event emitted.
+        # Contention, not an apply attempt — no audit event.
         return {'success': False, 'error': 'apply already in progress'}
 
-    # Arm ack state early so an ack arriving during the apply work (not just
-    # after the watchdog starts) is accepted. `_armed` tracks whether the
-    # watchdog thread has actually been started; on any failure path, the
-    # finally block clears `_apply_in_flight` so a stale flag doesn't block
-    # future applies. See dev/active/display-apply-session0/plan.md.
-    #
-    # `apply_id` is the generation token used to match acks. Prefer the
-    # caller-supplied value (dashboard generates a UUID and threads it
-    # through the apply and ack commands). Fall back to a fresh UUID when
-    # callers don't supply one (tests, CLI, legacy Cortex MCP invocations).
+    # Arm ack state early so an ack arriving *during* the apply work is still
+    # accepted. `_armed` tracks whether the watchdog actually started; the
+    # finally block clears `_apply_in_flight` so a stale flag can't block later
+    # applies. `apply_id` is the ack generation token — prefer the caller's
+    # (dashboard threads one UUID through apply + ack), else mint one.
     global _current_apply_id
     _ack_event.clear()
     _apply_in_flight = True
@@ -3128,7 +2914,7 @@ def apply_topology(
     _armed = False
 
     try:
-        # Rate limit. Pre-apply gate, no audit event.
+        # Pre-apply rate-limit gate; no audit event.
         elapsed = time.time() - _last_apply_time
         if elapsed < _APPLY_COOLDOWN_SECONDS:
             remaining = _APPLY_COOLDOWN_SECONDS - elapsed
@@ -3137,9 +2923,8 @@ def apply_topology(
                 'error': f'rate limited — {remaining:.0f}s cooldown remaining',
             }
 
-        # Validate input shape only. Topology-dependent validation (EDID
-        # coverage, zero-active-paths) runs inside the helper where the live
-        # query actually succeeds — the service in Session 0 can't query CCD.
+        # Shape only. Topology-dependent checks (EDID coverage, zero active
+        # paths) run in the helper — Session 0 can't query CCD.
         ok, err, validation_code = _validate_desired_layout(desired_layout)
         if not ok:
             error_str = f'invalid input: {err}'
@@ -3153,19 +2938,17 @@ def apply_topology(
 
         sentinel_path = _get_sentinel_path()
 
-        # Session 0 — delegate the whole write path to a helper in the active
-        # console user's session. Helper writes the sentinel before SDC_APPLY
-        # so a crash mid-apply is always recoverable at startup.
+        # Session 0: delegate the whole write path to the console-session
+        # helper, which sentinels before SDC_APPLY for crash recovery.
         if _is_session_0():
             helper_result = _apply_via_user_session(
                 desired_layout, sentinel_path, ack_timeout, apply_id=apply_id,
             )
             if not helper_result.get('ok'):
                 error_str = helper_result.get('error', 'helper failed')
-                # Defensive revert: helper may have written the sentinel and
-                # called SDC_APPLY before the failure (e.g. post-verify caught
-                # zero active paths). Route revert through a fresh helper so
-                # we stop at a known-good state.
+                # The helper may have sentinelled and applied before failing
+                # (e.g. post-verify saw zero active paths) — revert through a
+                # fresh helper to land on a known-good state.
                 if helper_result.get('sentinel_written') or os.path.exists(sentinel_path):
                     logger.error(
                         'apply helper failed with sentinel on disk (%s); '
@@ -3176,9 +2959,8 @@ def apply_topology(
                     except Exception as rev_err:
                         logger.error('defensive revert also failed: %s', rev_err)
                         rev_result = {'ok': False, 'error': str(rev_err)}
-                    # Only delete the sentinel if the defensive revert actually
-                    # succeeded — otherwise we'd throw away the recovery hook
-                    # that startup-recovery needs on the next boot.
+                    # Keep the sentinel unless the revert succeeded — it's the
+                    # recovery hook startup needs on the next boot.
                     if rev_result.get('ok'):
                         _cleanup_sentinel()
                     else:
@@ -3194,8 +2976,8 @@ def apply_topology(
                     'code': helper_code,
                 }
 
-            # Success — arm the watchdog. Revert goes through a fresh helper
-            # reading from the sentinel file (S0 service can't call CCD itself).
+            # Arm the watchdog; its revert goes through a fresh helper reading
+            # the sentinel (the S0 service can't call CCD itself).
             changes = helper_result.get('changes', [])
             _last_apply_time = time.time()
             if auto_restore:
@@ -3221,14 +3003,12 @@ def apply_topology(
                 apply_id, changes, ack_timeout, firebase_client, monitor_count,
             )
 
-        # Session 1+ (debug mode) — run the shared core in-process. CCD works
-        # directly; no helper subprocess needed.
+        # Session 1+ (debug mode) — CCD works in-process, no helper needed.
         core_result = _apply_core(
             desired_layout, sentinel_path, ack_timeout, apply_id=apply_id,
         )
         if not core_result.get('ok'):
             error_str = core_result.get('error', 'apply failed')
-            # Defensive revert if sentinel was written but apply failed.
             if core_result.get('sentinel_written'):
                 try:
                     snap_data = None
@@ -3250,11 +3030,9 @@ def apply_topology(
             return {'success': False, 'error': error_str, 'code': core_result.get('code')}
 
         changes = core_result.get('changes', [])
-        # `_apply_core` returns the pre-apply snapshot in-band so we don't
-        # have to re-read the sentinel file for the watchdog closure (saves
-        # an I/O + eliminates a window where a racing cleanup could steal
-        # it). Helper-path responses strip this key — it's an internal
-        # contract, not surfaced across IPC.
+        # In-band snapshot so the watchdog closure doesn't re-read the sentinel
+        # — saves I/O and closes the window where a racing cleanup steals it.
+        # Helper responses strip `_snapshot`; it never crosses IPC.
         snapshot = core_result.get('_snapshot')
         _last_apply_time = time.time()
         if auto_restore:
@@ -3288,8 +3066,7 @@ def apply_topology(
         return {'success': False, 'error': error_str}
     finally:
         if not _armed:
-            # Watchdog never started — clear the in-flight flag so the next
-            # apply isn't blocked by a stale True.
+            # Watchdog never started — clear the flag or the next apply blocks.
             _apply_in_flight = False
         _apply_lock.release()
 
@@ -3297,20 +3074,12 @@ def apply_topology(
 def is_within_apply_suppression_window(
     now: float = None, window_s: float = None,
 ) -> bool:
-    """[B2.4] True when ``now`` falls within the post-apply suppression
-    window relative to ``_last_apply_finished_at`` — the signal the service
-    uses (``_emit_display_change_events``) to decide whether to stamp
-    ``suppressAlert: True`` on drift-class events that follow a successful
-    apply.
+    """True when ``now`` is inside the post-apply suppression window.
 
-    Pure function over module state — testable without monkey-patching the
-    service caller. Returns ``False`` whenever ``_last_apply_finished_at``
-    is still its initial 0.0 (no successful apply since startup), which
-    keeps fresh-boot drift events from being mis-classified as
-    apply-correlated.
-
-    ``now`` defaults to ``time.time()`` and ``window_s`` to
-    ``_APPLY_SUPPRESS_WINDOW_S`` (90s). Both are exposed for test injection.
+    ``_emit_display_change_events`` uses this to stamp ``suppressAlert: True``
+    on drift events that merely follow a successful apply. Always False while
+    ``_last_apply_finished_at`` is 0.0, so fresh-boot drift isn't mis-correlated.
+    ``now`` / ``window_s`` are injectable for tests.
     """
     if _last_apply_finished_at == 0.0:
         return False
@@ -3322,19 +3091,13 @@ def is_within_apply_suppression_window(
 def ack_apply(apply_id: str = None, firebase_client=None) -> dict:
     """Acknowledge a pending apply, cancelling its auto-revert watchdog.
 
-    If ``apply_id`` is supplied, it must match the in-flight apply's generation
-    token — a stale ack from a prior apply won't cancel the watchdog of a
-    newer one. If omitted (legacy callers), ack is accepted whenever any
-    apply is in flight, preserving backwards compatibility.
+    ``apply_id`` must match the in-flight generation token, so a stale ack from
+    a prior apply can't cancel a newer watchdog. Omitting it (legacy callers)
+    accepts any in-flight apply. Returns ``{'success': False}`` on mismatch or
+    when nothing is in flight.
 
-    Returns ``{'success': False}`` if no apply is in flight or the supplied
-    ``apply_id`` doesn't match.
-
-    ``firebase_client`` is an optional handle used to emit a Wave 6.5(d)
-    ``display_apply_acked`` audit event on a successful ack so the dashboard
-    event feed has an honest "operator confirmed" record (the toast on the
-    web side can only confirm the Firestore write, not the agent's
-    acknowledgement).
+    ``firebase_client`` emits ``display_apply_acked`` — the only honest record
+    that the *agent* acked; the web toast only proves the Firestore write.
     """
     if not _apply_in_flight:
         return {
@@ -3372,52 +3135,44 @@ def ack_apply(apply_id: str = None, firebase_client=None) -> dict:
 def apply_revert_from_sentinel(firebase_client=None) -> dict:
     """Restore the display config from a stale sentinel file.
 
-    Called by service startup if a sentinel is found (service crashed or
-    rebooted mid-apply before ack or revert). In Session 0 the revert is
-    routed through a user-session helper; in Session 1+ it runs in-process.
+    Called at service startup when a sentinel survives a crash/reboot mid-apply.
+    Session 0 routes through the user-session helper; Session 1+ runs in-process.
 
-    Sentinel preservation policy (matters for headless-kiosk recovery):
-      - Transient errors (OSError reading, helper failure, no console user)
-        → PRESERVE sentinel so main-loop or next-boot retries succeed.
-      - Terminal errors (malformed JSON AND no recoverable snapshot,
-        unknown schema version) → preserve as well; a corrupt sentinel
-        needs operator intervention, not a silent delete.
-      - Success → delete via `_cleanup_sentinel()`.
+    Sentinel policy (matters for headless-kiosk recovery): preserve on BOTH
+    transient errors (read error, helper failure, no console user → retried) and
+    terminal ones (malformed JSON, unknown schema → needs an operator, never a
+    silent delete). Delete only on success.
 
-    ``firebase_client`` is an optional handle used to emit the Wave 5
-    ``display_revert_deferred`` audit event when the helper path can't run
-    because no console user is logged in. Throttled to one emission per
-    pending sentinel via ``_deferred_revert_alerted``.
+    ``firebase_client`` emits ``display_revert_deferred`` when no console user is
+    logged in — once per pending sentinel via ``_deferred_revert_alerted``.
     """
     global _deferred_revert_pending, _deferred_revert_alerted
     path = _get_sentinel_path()
     if not os.path.exists(path):
         return {'success': False, 'error': 'no sentinel file present'}
 
-    # Read under the sentinel lock to avoid interleaving with a writer.
+    # Under the sentinel lock so we can't interleave with a writer.
     with _sentinel_lock:
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
         except OSError as e:
-            # Transient file-read glitch — preserve sentinel for retry.
+            # Transient — preserve the sentinel for retry.
             logger.warning(
                 'apply_revert_from_sentinel: OSError reading sentinel (%s) — preserved for retry',
                 e,
             )
             return {'success': False, 'error': str(e), 'deferred': True}
         except (ValueError, json.JSONDecodeError) as e:
-            # Malformed JSON is unrecoverable. Preserve for operator review
-            # rather than silently nuke — a sentinel we can't parse points
-            # at a deeper bug.
+            # Unparseable sentinel points at a deeper bug — preserve for an
+            # operator rather than silently nuking it.
             logger.error(
                 'apply_revert_from_sentinel: malformed sentinel JSON (%s) — preserved for operator review',
                 e,
             )
             return {'success': False, 'error': f'malformed sentinel: {e}', 'code': DisplayErrorCode.SENTINEL_MALFORMED}
 
-    # Schema version check — fail loud on unknown versions rather than
-    # attempt to deserialise a future format as the current one.
+    # Fail loud on unknown versions; never read a future format as the current one.
     version = data.get('version')
     if version != _SENTINEL_SCHEMA_VERSION:
         logger.error(
@@ -3433,21 +3188,17 @@ def apply_revert_from_sentinel(firebase_client=None) -> dict:
 
     snapshot = data.get('snapshot')
     if not snapshot:
-        # Missing snapshot in a well-formed sentinel is unusual but not
-        # transient — cleanup so we don't loop on it every startup.
+        # Well-formed but snapshot-less: not transient, so clean up rather than
+        # loop on it every startup.
         _cleanup_sentinel()
         return {'success': False, 'error': 'sentinel has no snapshot'}
 
-    # Session 0 — delegate to helper. Preserve the sentinel on helper
-    # failure (no console user at boot is the common case) so the main
-    # loop can retry when a session becomes available.
+    # Session 0 — delegate to the helper, preserving the sentinel on failure
+    # (no console user at boot is the common case) so the main loop can retry.
     if _is_session_0():
-        # Wave 5.1: short-circuit before spawning the helper if there's no
-        # active console session at all. The helper path requires a logged-in
-        # user (CreateProcessAsUser needs the console token); attempting it
-        # at headless boot would just churn through token-acquisition errors.
-        # Set the deferred flag, alert once, and let _check_display_topology
-        # in the main loop retry once a session appears.
+        # Short-circuit before spawning: CreateProcessAsUser needs a console
+        # token, so at headless boot the helper would only churn through
+        # token-acquisition errors. Defer and let the main loop retry.
         try:
             import win32ts
             console_session = win32ts.WTSGetActiveConsoleSessionId()
@@ -3462,9 +3213,7 @@ def apply_revert_from_sentinel(firebase_client=None) -> dict:
                 'deferring display revert — no console session '
                 '(sentinel preserved for retry once a user logs in)'
             )
-            # Wave 5.3: emit one Firestore alert per pending sentinel so the
-            # dashboard event feed surfaces the deferred state. Throttled by
-            # `_deferred_revert_alerted`; reset in `_cleanup_sentinel()`.
+            # One alert per pending sentinel; flag reset in `_cleanup_sentinel()`.
             if not _deferred_revert_alerted:
                 _emit_audit(
                     firebase_client,
@@ -3508,30 +3257,21 @@ def apply_revert_from_sentinel(firebase_client=None) -> dict:
     return {'success': False, 'error': 'SetDisplayConfig failed during revert'}
 
 
-# ---------------------------------------------------------------------------
-# CLI entry point
-#
-# Modes:
-#   python display_manager.py
-#       → smoke test: print build_display_profile() to stdout
-#
-#   python display_manager.py --enumerate-json <out_path>
-#       → helper mode: enumerate monitors, write JSON to <out_path>, exit.
-#         Invoked by the service (Session 0) via CreateProcessAsUser.
-#
-#   python display_manager.py --enumerate-modes-json <out_path>
-#       → helper mode: build the supported-modes catalogue for every active
-#         monitor (EnumDisplaySettingsExW per source), write JSON to <out_path>.
-#         Feeds the dashboard's resolution + refresh dropdowns (Wave A3).
-#
-#   --stderr-log <path> may be appended to any helper-mode invocation; when
-#   present the helper redirects sys.stderr to that path so the spawner can
-#   surface tracebacks in the service log.
+# CLI entry point. No args = smoke test (prints build_display_profile()).
+# Helper modes, spawned by the service from Session 0 via CreateProcessAsUser:
+#   --enumerate-json <out>        monitors → JSON
+#   --enumerate-modes-json <out>  supported-modes catalogue → JSON
+#   --apply-json <req> <out>      full CCD write path
+#   --revert-json <req> <out>     restore a snapshot
+#   --self-test <out>             read-only IPC + CCD reachability check
+# --stderr-log <path> may follow any helper mode; the helper redirects stderr
+# there so the detached process's tracebacks reach the service log.
 
 
 def _atomic_write_json(out_path: str, payload: dict) -> None:
-    """Write ``payload`` to ``out_path`` via write-to-temp + os.replace so the
-    parent process never reads a partial file. Raises OSError on failure.
+    """Write ``payload`` to ``out_path`` atomically (temp + os.replace).
+
+    The parent must never see a partial file. Raises OSError on failure.
     """
     tmp = out_path + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
@@ -3545,12 +3285,9 @@ def _atomic_write_json(out_path: str, payload: dict) -> None:
 
 
 def _helper_enumerate_to_json(out_path: str) -> int:
-    """Run CCD enumeration and serialise the result to ``out_path`` as JSON.
-    Returns a shell exit code (0 on success, 1 on failure).
+    """CCD enumeration → ``out_path`` JSON. Exit code 0 ok / 1 fail / 2 write-fail.
 
-    The payload shape is ``{'ok': True, 'monitors': [...]}`` on success or
-    ``{'ok': False, 'error': '...'}`` on failure. The parent process reads
-    this file and surfaces the result through ``build_display_profile``.
+    Payload: ``{'ok': True, 'monitors': [...]}`` or ``{'ok': False, 'error'}``.
     """
     try:
         monitors = _enumerate_monitors_ccd()
@@ -3568,16 +3305,12 @@ def _helper_enumerate_to_json(out_path: str) -> int:
 
 
 def _helper_enumerate_modes_to_json(out_path: str) -> int:
-    """Build the per-edidHash display modes catalogue and serialise to JSON.
-    Returns a shell exit code (0 on success, 1 on failure, 2 on write failure)
-    — same contract as ``_helper_enumerate_to_json``.
+    """Modes catalogue → JSON. Exit codes as ``_helper_enumerate_to_json``.
 
-    Success shape: ``{'ok': True, 'schemaVersion', 'signatureHash',
-    'capturedAt', 'byEdidHash', ...}`` (spread from
-    ``_build_display_modes_catalogue``). Failure shape:
-    ``{'ok': False, 'error': '...'}``. An ``enumerationFailed: True`` flag in
-    the success payload (with empty ``byEdidHash``) signals a transient CCD
-    stall — distinct from a hard helper failure that returns ``ok: False``.
+    Success spreads ``_build_display_modes_catalogue``. Note the two failure
+    modes differ: ``ok: False`` is a hard helper failure, while
+    ``ok: True`` + ``enumerationFailed: True`` (empty ``byEdidHash``) is a
+    transient CCD stall.
     """
     try:
         catalogue = _build_display_modes_catalogue()
@@ -3596,18 +3329,13 @@ def _helper_enumerate_modes_to_json(out_path: str) -> int:
 
 
 def _helper_self_test_to_json(resp_path: str) -> int:
-    """Helper-mode entry point for the Wave 6.2 apply self-test.
+    """Helper-mode read-only apply self-test.
 
-    Read-only verification that the helper IPC plumbing (CreateProcessAsUser,
-    env block, response file, atomic rename) works end-to-end and that CCD is
-    reachable from the active console session, without ever calling
-    ``SDC_APPLY``. Runs ``QueryDisplayConfig`` to fetch the live paths/modes,
-    then ``SetDisplayConfig(SDC_VALIDATE)`` against those exact paths — a
-    true no-op the OS validates against itself.
-
-    Writes ``{ok, monitors_seen, query_ms, validate_ms}`` (plus ``error``/
-    ``code`` on failure) to ``resp_path`` atomically. Never mutates display
-    state.
+    Verifies the IPC plumbing (CreateProcessAsUser, env block, response file,
+    atomic rename) and CCD reachability from the console session without ever
+    calling SDC_APPLY: queries the live paths, then SDC_VALIDATEs them against
+    themselves — a true no-op. Writes ``{ok, monitors_seen, query_ms,
+    validate_ms}`` (+ ``error``/``code``) to ``resp_path``.
     """
     def _respond(payload: dict) -> int:
         try:
@@ -3635,8 +3363,7 @@ def _helper_self_test_to_json(resp_path: str) -> int:
         paths, modes = current
         monitors_seen = _count_active_paths(paths)
 
-        # Re-pack into ctypes arrays so SDC_VALIDATE accepts them (lists don't
-        # auto-coerce to pointers — same pattern as `_apply_core`).
+        # ctypes coerces arrays but not lists to pointers — same as `_apply_core`.
         paths_arr = (DISPLAYCONFIG_PATH_INFO * len(paths))()
         for _i, _p in enumerate(paths):
             paths_arr[_i] = _p
@@ -3690,15 +3417,10 @@ def _helper_self_test_to_json(resp_path: str) -> int:
 def _helper_apply_to_json(req_path: str, resp_path: str) -> int:
     """Helper-mode entry point for the apply path.
 
-    Reads ``{desired_layout, sentinel_path, ack_timeout_s}`` from ``req_path``;
-    runs query → EDID-coverage check → mutate → SDC_VALIDATE → snapshot →
-    **write sentinel** → SDC_APPLY → post-verify. Writes a structured response
-    to ``resp_path`` even on unexpected failure so the service never reads
-    an absent file for a helper that actually ran.
-
-    Returns a shell exit code (0 on ok, 1 on failure). Always writes a
-    response file — the spawner uses exit code only to distinguish "process
-    never launched" from "process ran and reported".
+    Reads ``{desired_layout, sentinel_path, ack_timeout_s}`` from ``req_path``
+    and delegates to ``_apply_core``. ALWAYS writes a response to ``resp_path``,
+    even on unexpected failure, so the service never sees an absent file for a
+    helper that actually ran; the exit code only distinguishes "never launched".
     """
     def _respond(payload: dict) -> int:
         try:
@@ -3739,12 +3461,8 @@ def _helper_apply_to_json(req_path: str, resp_path: str) -> int:
             'code': DisplayErrorCode.BAD_REQUEST,
         })
 
-    # Delegate the full CCD write sequence to _apply_core. The helper is just
-    # an IPC shim — it reads the request, calls the shared core, writes the
-    # response. Single source of truth for query/mutate/validate/apply/verify.
-    # Strip the internal `_snapshot` key — the service-side consumer reads
-    # the snapshot from the sentinel file (written by _apply_core) on its
-    # own, so the response doesn't need to carry it across the IPC boundary.
+    # Strip `_snapshot`: the service reads it from the sentinel `_apply_core`
+    # wrote, so it never needs to cross the IPC boundary.
     result = _apply_core(desired_layout, sentinel_path, ack_timeout_s, apply_id)
     result.pop('_snapshot', None)
     return _respond(result)
@@ -3753,11 +3471,9 @@ def _helper_apply_to_json(req_path: str, resp_path: str) -> int:
 def _helper_revert_from_json(req_path: str, resp_path: str) -> int:
     """Helper-mode entry point for the revert path.
 
-    Reads ``{snapshot?, sentinel_path?}`` from ``req_path`` — supply one or
-    the other. If ``sentinel_path`` is given, loads the snapshot from disk
-    first. Calls ``_apply_snapshot`` (which includes SDC_SAVE_TO_DATABASE on
-    the revert call so the restored config survives reboot). Writes a
-    structured response to ``resp_path``.
+    Reads ``{snapshot?, sentinel_path?}`` (one or the other) from ``req_path``
+    and calls ``_apply_snapshot``, which saves to the config DB so the restored
+    config survives reboot. Response written to ``resp_path``.
     """
     def _respond(payload: dict) -> int:
         try:
@@ -3812,10 +3528,10 @@ def _helper_revert_from_json(req_path: str, resp_path: str) -> int:
 
 
 def _maybe_redirect_stderr(argv: list) -> list:
-    """If ``--stderr-log <path>`` is present in argv, redirect sys.stderr to
-    that path and return argv with the pair stripped. Used by helper modes so
-    the spawner can capture tracebacks even though CreateProcessAsUser runs
-    detached with no console.
+    """Redirect sys.stderr per ``--stderr-log <path>``, returning argv stripped.
+
+    Helper modes need this: CreateProcessAsUser runs them detached with no
+    console, so tracebacks would otherwise vanish.
     """
     try:
         i = argv.index('--stderr-log')
@@ -3836,7 +3552,6 @@ def _maybe_redirect_stderr(argv: list) -> list:
 def _main():
     argv = _maybe_redirect_stderr(sys.argv)
 
-    # Helper modes — invoked by the service from Session 0 via CreateProcessAsUser.
     if len(argv) >= 3 and argv[1] == '--enumerate-json':
         sys.exit(_helper_enumerate_to_json(argv[2]))
     if len(argv) >= 3 and argv[1] == '--enumerate-modes-json':
@@ -3848,12 +3563,10 @@ def _main():
     if len(argv) >= 3 and argv[1] == '--self-test':
         sys.exit(_helper_self_test_to_json(argv[2]))
 
-    # Smoke-test mode — prints the full profile for manual verification.
     logging.basicConfig(level=logging.DEBUG, format='%(levelname)s %(name)s: %(message)s')
     profile = build_display_profile()
     print(json.dumps(profile, indent=2))
-    # Non-zero exit if enumeration failed, so `python display_manager.py`
-    # can be used as a smoke check in CI or by future maintainers.
+    # Non-zero on enumeration failure so this doubles as a CI smoke check.
     sys.exit(1 if profile.get('enumerationFailed') else 0)
 
 

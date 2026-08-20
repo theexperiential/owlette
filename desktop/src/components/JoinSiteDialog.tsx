@@ -23,13 +23,9 @@ interface JoinSiteDialogProps {
   /** Closes the dialog. Any run still in flight is cancelled first. */
   onClose: () => void
   /**
-   * Called once pairing succeeds, with the id of the site this machine joined.
-   *
-   * An id, not a label: the pairing response is the only thing this flow
-   * learns, and the site's display name is not known on this machine until the
-   * service has connected to the new site and published it
-   * ({@link import('@/lib/serviceHealth').siteNameOf}). Treat it as a signal
-   * rather than as copy — nothing here should put it on screen.
+   * Called on success with the joined site's id — an id, not a label: the
+   * display name is unknown here until the service connects and publishes it.
+   * Treat it as a signal, never as copy.
    */
   onJoined: (siteId: string) => void
 }
@@ -37,16 +33,13 @@ interface JoinSiteDialogProps {
 type Phase = 'starting' | 'waiting' | 'joined' | 'failed'
 
 /**
- * Device-code pairing, driven from the agent's own helper.
+ * Device-code pairing, driven by `configure_site.py --json-progress`: it
+ * streams the phrase as soon as the server issues it, then polls until someone
+ * approves. Cancel kills the helper and lets the code expire server-side, as
+ * the legacy GUI's Cancel did.
  *
- * The phrase is requested by `configure_site.py --json-progress`, which streams
- * it back the moment the server issues it, then keeps polling until someone
- * approves it from any device. Cancelling kills the helper; the code is left to
- * expire server-side, which is exactly what the legacy GUI's Cancel did
- * (`owlette_gui._join_cancel`).
- *
- * Nothing about tokens happens here. The helper writes them into
- * `.tokens.enc` and restarts the service; this window only watches.
+ * No token handling here — the helper writes `.tokens.enc` and restarts the
+ * service; this window only watches.
  */
 export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps) {
   const [phase, setPhase] = useState<Phase>('starting')
@@ -58,8 +51,8 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
   const run = useRef<AgentRun | null>(null)
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Held in a ref so an inline callback from the parent cannot re-run the effect
-  // and start a second pairing attempt.
+  // In a ref so an inline parent callback can't re-run the effect and start a
+  // second pairing attempt.
   const joined = useRef(onJoined)
   joined.current = onJoined
 
@@ -67,8 +60,7 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
     if (!open) return
 
     let disposed = false
-    // Whether a terminal event already decided how this run ended. The exit
-    // handler below only invents a failure when nothing did.
+    // Set by a terminal event; the exit handler only invents a failure if unset.
     let settled = false
 
     setPhase('starting')
@@ -114,8 +106,7 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
         return started.completed
       })
       .then((outcome) => {
-        // A helper that dies without an error event still has to close the
-        // window's "waiting" state, or it spins forever.
+        // A helper dying without an error event still has to close "waiting".
         if (disposed || settled) return
         setPhase('failed')
         setError(outcome.stderr.trim() || 'the pairing helper stopped unexpectedly')

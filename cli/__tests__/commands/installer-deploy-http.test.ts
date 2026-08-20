@@ -1,14 +1,9 @@
 /**
- * HTTP-shape tests for `owlette deploy {create,list,get,retry,cancel,uninstall,delete}`
- * — the **classic** installer-deploy noun (NOT to be confused with
- * `owlette roost deploy`, whose tests live in `deploy-http.test.ts`).
+ * HTTP-shape tests for `owlette deploy {create,list,get,retry,cancel,uninstall,delete}` — the
+ * CLASSIC installer-deploy noun, not `owlette roost deploy` (see deploy-http.test.ts).
  *
- * Drives src/commands/deploy.ts. Stubs `global.fetch` per test, asserts
- * url + method + headers (Bearer + auto Idempotency-Key on mutations) +
- * body shape + response parsing. `--json` mode emits raw server response
- * verbatim.
- *
- * Public API classic deployment CLI route handlers.
+ * Drives src/commands/deploy.ts with a per-test `global.fetch` stub; asserts url, method, headers
+ * (Bearer + auto Idempotency-Key on mutations), body shape and response parsing.
  */
 
 import { Command } from 'commander';
@@ -70,9 +65,7 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-/* --------------------------------------------------------------------- */
-/*  create                                                               */
-/* --------------------------------------------------------------------- */
+/* create */
 
 describe('owlette deploy create', () => {
   it('POSTs /api/sites/:siteId/deployments with the right body + auto Idempotency-Key', async () => {
@@ -279,9 +272,7 @@ describe('owlette deploy create', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  list                                                                 */
-/* --------------------------------------------------------------------- */
+/* list */
 
 describe('owlette deploy list', () => {
   it('GETs /api/sites/:siteId/deployments with no query when no flags given', async () => {
@@ -291,7 +282,6 @@ describe('owlette deploy list', () => {
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/deployments');
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer owk_live_testtoken');
-    // GETs are not idempotency-keyed.
     expect(headers['Idempotency-Key']).toBeUndefined();
   });
 
@@ -341,9 +331,7 @@ describe('owlette deploy list', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  get                                                                  */
-/* --------------------------------------------------------------------- */
+/* get */
 
 describe('owlette deploy get', () => {
   it('GETs /api/sites/:siteId/deployments/:id with Bearer auth', async () => {
@@ -392,9 +380,7 @@ describe('owlette deploy get', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  retry                                                                */
-/* --------------------------------------------------------------------- */
+/* retry */
 
 describe('owlette deploy retry', () => {
   it('POSTs /api/sites/:siteId/deployments/:id/retry with auto idempotency key', async () => {
@@ -418,9 +404,7 @@ describe('owlette deploy retry', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  cancel                                                               */
-/* --------------------------------------------------------------------- */
+/* cancel */
 
 describe('owlette deploy cancel', () => {
   it('POSTs /api/sites/:siteId/deployments/:id/cancel when --yes is supplied', async () => {
@@ -443,9 +427,7 @@ describe('owlette deploy cancel', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  uninstall                                                            */
-/* --------------------------------------------------------------------- */
+/* uninstall */
 
 describe('owlette deploy uninstall', () => {
   it('POSTs /api/sites/:siteId/deployments/:id/uninstall when --yes is supplied', async () => {
@@ -508,9 +490,7 @@ describe('owlette deploy uninstall', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  delete                                                               */
-/* --------------------------------------------------------------------- */
+/* delete */
 
 describe('owlette deploy delete', () => {
   it('DELETEs /api/sites/:siteId/deployments/:id when --yes is supplied', async () => {

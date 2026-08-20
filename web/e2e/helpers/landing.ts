@@ -1,12 +1,9 @@
 import { HERO_HEADLINES } from '@/lib/heroHeadlines';
 
 /**
- * The landing hero picks its headline per request from HERO_HEADLINES, so
- * specs match the union of the curated list instead of pinning one phrase.
- *
- * Built from the app's own list rather than a hand-copied one: adding a phrase
- * in lib/heroHeadlines.ts is then covered here automatically, and removing one
- * can't leave a spec asserting copy the site no longer ships.
+ * The landing hero picks a headline per request, so specs match the union of
+ * HERO_HEADLINES rather than one phrase. Built from the app's own list, not a
+ * hand-copied one, so edits to lib/heroHeadlines.ts stay covered automatically.
  */
 export const HERO_HEADLINE = new RegExp(
   HERO_HEADLINES.map((phrase) => phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),

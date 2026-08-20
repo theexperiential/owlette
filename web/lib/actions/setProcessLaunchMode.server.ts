@@ -1,11 +1,10 @@
 /**
  * Action core: set a process's launch mode (and optional schedule).
  *
- * Performs two writes:
- *   1. Atomic config-doc update via `withProcessLock` — the source of truth.
- *   2. Best-effort mirror onto the machine status doc so the dashboard sees
- *      the new mode immediately without waiting for the next agent
- *      heartbeat. Failure here is non-critical (agent will reconcile).
+ * Two writes: the atomic config-doc update via `withProcessLock` (source of
+ * truth), then a best-effort mirror onto the machine status doc so the dashboard
+ * reflects the new mode without waiting for the next agent heartbeat. A failed
+ * mirror is non-critical — the agent reconciles.
  */
 import { getAdminDb } from '@/lib/firebase-admin';
 import {

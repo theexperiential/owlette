@@ -1,20 +1,14 @@
 /**
- * R2 client + signed-URL helpers (roost wave 2a, server-side only).
+ * R2 client + signed-URL helpers (server-only). Thin @aws-sdk/client-s3 wrapper
+ * against R2's S3 endpoint.
  *
- * R2 speaks the S3 API, so this module is a thin wrapper around
- * @aws-sdk/client-s3 pointed at the Cloudflare R2 S3 endpoint. Every
- * call enforces the per-tenant path prefix (`project-content/{siteId}/…`
- * or the version body prefix /{siteId}/…) — callers provide `siteId`,
- * never raw keys, so a caller authorised for site A can't trick this
- * module into signing a URL for site B.
+ * Tenant isolation: callers pass `siteId`, never raw keys, so a caller
+ * authorised for site A cannot get a URL signed for site B.
  *
- * Env requirements (see `.claude/.env.local`):
- *   R2_S3_ACCESS_KEY_ID      — R2 API token access key id
- *   R2_S3_SECRET_ACCESS_KEY  — secret
- *   R2_S3_ENDPOINT           — https://<accountId>.r2.cloudflarestorage.com
+ * Env (see `.claude/.env.local`): R2_S3_ACCESS_KEY_ID, R2_S3_SECRET_ACCESS_KEY,
+ * R2_S3_ENDPOINT (https://<accountId>.r2.cloudflarestorage.com).
  *
- * Bucket names are hard-coded to match `scripts/provision-r2.mjs` — if
- * a future wave splits prod/dev by env, swap these to env-driven.
+ * Bucket names are hard-coded to match `scripts/provision-r2.mjs`.
  */
 
 import 'server-only';
@@ -27,10 +21,6 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
-/* --------------------------------------------------------------------- */
-/*  Constants                                                            */
-/* --------------------------------------------------------------------- */
-
 /** Environment — 'dev' for dev.owlette.app + localhost, 'prod' for owlette.app. */
 export type RoostEnv = 'dev' | 'prod';
 
@@ -39,24 +29,19 @@ export type RoostEnv = 'dev' | 'prod';
 export type R2BucketKind = 'content' | 'manifests';
 
 export function currentEnv(): RoostEnv {
-  // Authoritative override — set `ROOST_ENV=prod` or `ROOST_ENV=dev`
-  // explicitly in Railway if the heuristics below don't fit your setup.
+  // Authoritative override for when the heuristics below don't fit.
   const explicit = process.env.ROOST_ENV;
   if (explicit === 'prod') return 'prod';
   if (explicit === 'dev') return 'dev';
 
-  // Railway always builds with NODE_ENV=production, so NODE_ENV is
-  // useless as a prod/dev signal on Railway. Rely on RAILWAY_ENVIRONMENT
-  // (conventionally 'production' on the prod service) or the public
-  // hostname (owlette.app = prod, everything else = dev).
+  // Railway always builds with NODE_ENV=production, so NODE_ENV is useless as a
+  // prod/dev signal here — use RAILWAY_ENVIRONMENT or the public hostname.
   if (process.env.RAILWAY_ENVIRONMENT === 'production') return 'prod';
   const domain = process.env.RAILWAY_PUBLIC_DOMAIN || '';
   if (domain === 'owlette.app') return 'prod';
 
-  // Default to 'dev' — safer than defaulting to 'prod':
-  //   - dev bucket corruption is recoverable
-  //   - prod bucket writes from a misconfigured deploy aren't
-  // Localhost `npm run dev` also lands here (NODE_ENV != 'production').
+  // Fail toward 'dev': dev bucket corruption is recoverable, prod writes from a
+  // misconfigured deploy are not. Localhost also lands here.
   return 'dev';
 }
 
@@ -65,9 +50,8 @@ export function bucketFor(env: RoostEnv, kind: R2BucketKind): string {
 }
 
 /**
- * Per-tenant object key for a chunk. Shards by first-two hash chars so R2
- * listings don't bottleneck on a single prefix; matches the policy defined
- * in `storage/r2-bucket-policy.json` + documented in `docs/architecture.md`.
+ * Per-tenant chunk key, sharded by the first two hash chars so R2 listings
+ * don't bottleneck on one prefix. Matches `storage/r2-bucket-policy.json`.
  */
 export function chunkKey(siteId: string, hash: string): string {
   if (!isValidHash(hash)) throw new Error(`invalid chunk hash: ${hash}`);
@@ -101,10 +85,6 @@ function isValidSiteId(s: unknown): s is string {
   );
 }
 
-/* --------------------------------------------------------------------- */
-/*  Client singleton                                                     */
-/* --------------------------------------------------------------------- */
-
 let _client: S3Client | null = null;
 
 export function getR2Client(): S3Client {
@@ -131,23 +111,14 @@ function required(name: string): string {
   return v;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Chunk operations                                                     */
-/* --------------------------------------------------------------------- */
-
 /**
- * Is this chunk already in R2 for this tenant? HEAD is ~O(10ms) against
- * R2 edge. Returns true iff the object exists AND is non-zero.
- *
- * Never throws on "not found" — only on network/auth errors. Callers
- * distinguish "missing" from "broken" by the boolean vs. thrown Error.
+ * Is this chunk already in R2 for this tenant? True iff the object exists AND
+ * is non-zero. Never throws on "not found" — only on network/auth errors, so
+ * callers tell "missing" from "broken" by boolean vs thrown.
  */
 export async function hasChunk(siteId: string, hash: string): Promise<boolean> {
-  // E2E branch: in playwright runs the next-server is launched with
-  // OWLETTE_E2E=1 and points at the Firebase emulators (no real R2). A
-  // chunk is considered "present" iff a presence row exists at
-  // `siteChunks/{hash}` — seeded by `web/e2e/helpers/seed.ts:seedChunks`
-  // before any test that lets POST /versions go through.
+  // E2E: no real R2 under OWLETTE_E2E=1 — presence is a `siteChunks/{hash}` row
+  // written by `web/e2e/helpers/seed.ts:seedChunks`.
   if (process.env.OWLETTE_E2E === '1') {
     const { getAdminDb } = await import('@/lib/firebase-admin');
     const snap = await getAdminDb().collection('siteChunks').doc(hash).get();
@@ -170,9 +141,8 @@ export async function hasChunk(siteId: string, hash: string): Promise<boolean> {
 }
 
 /**
- * Bulk-check which of `hashes` are already present. Respects a
- * concurrency cap so a 1000-hash check doesn't open 1000 sockets.
- * Returns the subset of hashes that are MISSING from R2.
+ * Returns the subset of `hashes` MISSING from R2. Capped concurrency so a
+ * 1000-hash check doesn't open 1000 sockets.
  */
 export async function missingChunks(
   siteId: string,
@@ -228,10 +198,6 @@ export async function presignGetChunk(
     { expiresIn: ttlSeconds },
   );
 }
-
-/* --------------------------------------------------------------------- */
-/*  Version body operations                                              */
-/* --------------------------------------------------------------------- */
 
 /** Write a version JSON body. Idempotent — overwrite if same key exists. */
 export async function putVersionBody(
@@ -292,16 +258,10 @@ export async function getVersionBody(
   roostId: string,
   versionId: string,
 ): Promise<unknown | null> {
-  // E2E branch: same shape as hasChunk — under OWLETTE_E2E=1 there is no real
-  // R2, so we synthesize a structurally-valid empty version body iff the
-  // version's metadata doc exists in Firestore. seed.ts:seedVersion writes
-  // metadata only (no body); routes treat null body as 410 Gone, which is
-  // not what we want for a seeded version. Returning {schemaVersion, mediaType,
-  // config, files: []} matches the production envelope shape; routes that
-  // only need versionId/versionNumber/description (the addressing-grammar
-  // resolver) get past the 410 gate, and routes that read files[] (diff,
-  // files list) see an empty list — callers seed real `files` only via the
-  // full push pipeline (installPushMocks + chunks/check), which is unchanged.
+  // E2E: no real R2. seed.ts:seedVersion writes metadata only, and routes treat
+  // a null body as 410 Gone — so synthesize an empty but structurally valid
+  // envelope when the metadata doc exists. Real `files` only come from the full
+  // push pipeline (installPushMocks + chunks/check).
   if (process.env.OWLETTE_E2E === '1') {
     const { getAdminDb } = await import('@/lib/firebase-admin');
     const db = getAdminDb();

@@ -1,6 +1,4 @@
-/**
- * Unit tests for roost webhook dispatcher (wave 5.1).
- */
+/** Unit tests for the roost webhook dispatcher. */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -53,10 +51,6 @@ function sub(overrides: Partial<Subscription> = {}): Subscription {
   };
 }
 
-/* --------------------------------------------------------------------- */
-/*  Event taxonomy                                                       */
-/* --------------------------------------------------------------------- */
-
 describe('event taxonomy', () => {
   it('ROOST_EVENT_TYPES has all 7 required events from the task spec', () => {
     const required: RoostEventType[] = [
@@ -80,10 +74,6 @@ describe('event taxonomy', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  canonicalJson                                                        */
-/* --------------------------------------------------------------------- */
-
 describe('canonicalJson', () => {
   it('recursive key-sort — insertion order does not change output', () => {
     const a = canonicalJson({ b: 1, a: { z: 9, x: 0 } });
@@ -95,10 +85,6 @@ describe('canonicalJson', () => {
     assert.equal(canonicalJson(['c', 'a', 'b']), '["c","a","b"]');
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  Signing + verification                                               */
-/* --------------------------------------------------------------------- */
 
 describe('signPayload / verifySignature (stripe-style)', () => {
   const NOW_MS = Date.parse('2026-04-22T15:30:00Z');
@@ -171,10 +157,6 @@ describe('signPayload / verifySignature (stripe-style)', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  deliveryId                                                           */
-/* --------------------------------------------------------------------- */
-
 describe('deliveryId', () => {
   it('stable for the same payload + body', () => {
     const p = samplePayload();
@@ -191,10 +173,6 @@ describe('deliveryId', () => {
     );
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  classifyResponse                                                     */
-/* --------------------------------------------------------------------- */
 
 describe('classifyResponse', () => {
   it('2xx → success', () => {
@@ -225,10 +203,6 @@ describe('classifyResponse', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  nextRetryDelayMs / shouldGiveUp                                      */
-/* --------------------------------------------------------------------- */
-
 describe('backoff', () => {
   const rng = () => 0.5;
   it('attempt 1 → baseMs (default 5 s)', () => {
@@ -247,10 +221,6 @@ describe('backoff', () => {
     assert.equal(shouldGiveUp(100), true);
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  selectSubscribers                                                    */
-/* --------------------------------------------------------------------- */
 
 describe('selectSubscribers', () => {
   it('filters by siteId', () => {
@@ -287,24 +257,20 @@ describe('selectSubscribers', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  buildDelivery                                                        */
-/* --------------------------------------------------------------------- */
-
 describe('buildDelivery', () => {
   it('generates stable id + well-formed headers', () => {
     const rec = buildDelivery(samplePayload(), sub(), NOW);
-    // record id is `{contentHash}__{subId}` so two subs for the same event
-    // don't collide in the delivery store.
+    // Record id is `{contentHash}__{subId}` so two subs for one event can't
+    // collide in the delivery store.
     assert.match(rec.id, /^[0-9a-f]{32}__sub-1$/);
     assert.equal(rec.headers['Roost-Event'], 'distribution.succeeded');
-    // the PUBLIC delivery-id header is just the content hash — receivers
-    // dedup on this and it stays stable across retries + across subscribers.
+    // The public delivery-id header is the content hash alone — receivers
+    // dedup on it, so it must be stable across retries and subscribers.
     assert.match(rec.headers['Roost-Delivery'], /^[0-9a-f]{32}$/);
     assert.match(rec.headers['Roost-Signature'], /^t=\d+,v1=[0-9a-f]{64}$/);
     assert.equal(rec.state, 'pending');
     assert.equal(rec.attempt, 0);
-    // secret pinned on the record so retries can re-sign with a fresh `t=`.
+    // Secret pinned so retries can re-sign with a fresh `t=`.
     assert.equal(rec.secret, 'shhh');
   });
 
@@ -331,10 +297,6 @@ describe('buildDelivery', () => {
     assert.equal(result.ok, true);
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  attemptDelivery + pumpRetryQueue (orchestrators)                     */
-/* --------------------------------------------------------------------- */
 
 function makeStore(initial: DeliveryRecord[] = []): DeliveryStore & {
   all(): DeliveryRecord[];

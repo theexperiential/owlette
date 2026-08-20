@@ -1,29 +1,18 @@
 /**
- * POST /api/roosts/{roostId}/resync
- *      input:  { siteId: string }
- *      output: { resynced: number, targets: string[] }
+ * POST /api/roosts/{roostId}/resync — { siteId } → { resynced, targets }.
+ * Force every current target to re-pull the current version: operator retry
+ * after a sync failure, or resetting hand-edited drift.
  *
- * Force every current target to re-pull the current version. Intended
- * for operator-initiated retry after a sync failure, or to re-verify
- * drift (kiosk tech changed files by hand — operator wants them reset).
+ * Not routed through `onRoostWritten`: that trigger is idempotent per
+ * `rollouts/{versionId}` and only fires on `currentVersionId` changes, so it
+ * can't re-fire the same version. A resync is also the deliberate retry-all
+ * lane — skipping canary→fleet staging is the point.
  *
- * Design notes (why not go through `onRoostWritten`):
- * - The fan-out trigger is idempotent per `rollouts/{versionId}` and
- *   only fires on `currentVersionId` changes, so "re-fire with the same
- *   version" can't reuse the trigger without extra signalling.
- * - A resync is an explicit operator action ("try again, now"), so
- *   skipping canary→fleet staging is desirable — the canary wave already
- *   ran (or failed); this is the retry-all lane.
- *
- * Effects (all applied atomically in one BulkWriter commit):
- * - Delete `target_state/{machineId}` for every current target so the UI
- *   snaps back to "queued" instead of keeping the stale "failed" pill.
- * - Delete `rollouts/{currentVersionId}` so any stored canary state
- *   from the original attempt doesn't shadow the resync.
- * - Queue a fresh `sync_pull` pending command at
- *   `sites/{siteId}/machines/{machineId}/commands/pending` with a
- *   unique cmdId (the agent dedupes by cmdId, so reusing the original
- *   `roost_sync_{roostId}_{versionId}` would be skipped on replay).
+ * One atomic BulkWriter commit: delete `target_state/{machineId}` (so the UI
+ * drops the stale "failed" pill), delete `rollouts/{currentVersionId}` (so old
+ * canary state can't shadow the resync), and queue a fresh `sync_pull` with a
+ * unique cmdId — the agent dedupes by cmdId, so the original id would be
+ * skipped on replay.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -45,9 +34,8 @@ import {
   validateSiteIdBody,
 } from '../../../_shared';
 
-// Match the agent's destination_allowlist DEFAULT_ROOTS. Keep in sync
-// with the cloud function's DEFAULT_EXTRACT_ROOT — both fall back to
-// the same literal so agent-side `~` expansion lands on the same path.
+// Must match the agent's destination_allowlist DEFAULT_ROOTS and the cloud
+// function's DEFAULT_EXTRACT_ROOT — same literal, so `~` expands identically.
 const DEFAULT_EXTRACT_ROOT = '~/Documents/Owlette';
 
 interface RouteParams {
@@ -124,10 +112,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // Single timestamp-suffix nonce shared across this resync so every
-    // target machine sees the same cmdId family. Cheap way to guarantee
-    // uniqueness against the agent's _seen_commands set without touching
-    // the command router.
+    // One timestamp nonce for the whole resync: same cmdId family everywhere,
+    // and unique against the agent's _seen_commands set.
     const nonce = Date.now().toString(36);
 
     const batch = db.batch();
@@ -158,20 +144,18 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         { merge: true },
       );
 
-      // Clear stale target_state so the UI resets immediately rather than
-      // lingering on "failed" until the agent writes its first new report.
+      // Clear stale target_state so the UI resets before the agent's first report.
       const tsRef = roostRef.collection('target_state').doc(machineId);
       batch.delete(tsRef);
     }
 
-    // Drop the prior rollout doc so the fanout state machine doesn't
-    // treat the resync reports as belated arrivals for an aborted wave.
+    // Drop the prior rollout doc, else the fanout state machine reads resync
+    // reports as late arrivals for an aborted wave.
     const rolloutRef = roostRef.collection('rollouts').doc(versionId);
     batch.delete(rolloutRef);
 
-    // Stamp the roost doc for audit + so the UI's `updatedAt` reflects
-    // the resync. This update does NOT change currentVersionId so it
-    // won't re-trigger `onRoostWritten`.
+    // Stamps `updatedAt` for audit/UI. Leaves currentVersionId alone, so
+    // `onRoostWritten` does not re-fire.
     batch.set(
       roostRef,
       {

@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * tests for web/lib/dmcaLogic.ts (roost wave 0.2).
+ * tests for web/lib/dmcaLogic.ts.
  */
 
 import {
@@ -29,10 +29,6 @@ function validNotice(): DmcaNoticeInput {
     accuracyAndPerjuryAttestation: true,
   };
 }
-
-/* --------------------------------------------------------------------- */
-/*  validateNotice                                                       */
-/* --------------------------------------------------------------------- */
 
 describe('validateNotice', () => {
   it('accepts a fully-populated notice', () => {
@@ -77,8 +73,7 @@ describe('validateNotice', () => {
   });
 
   it('requires goodFaithBelief = true (not just truthy)', () => {
-    // a missing/false checkbox must fail closed — we need the attestation
-    // literal to match the statute.
+    // Fail closed: the attestation literal has to match the statute.
     const n1 = { ...validNotice(), goodFaithBelief: false };
     expect(validateNotice(n1).missing).toContain('goodFaithBelief');
     const n2 = { ...validNotice(), goodFaithBelief: undefined as unknown as boolean };
@@ -95,7 +90,7 @@ describe('validateNotice', () => {
     const r = validateNotice(n);
     expect(r.elementsComplete).toBe(false);
     // signature, copyrightedWork, identifiedMaterial, complainant,
-    // goodFaithBelief, accuracyAndPerjuryAttestation — six expected.
+    // goodFaithBelief, accuracyAndPerjuryAttestation.
     expect(r.missing.length).toBeGreaterThanOrEqual(6);
     expect(r.missing).toEqual(
       expect.arrayContaining([
@@ -114,10 +109,6 @@ describe('validateNotice', () => {
     expect(validateNotice(n).missing).toContain('complainant');
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  evaluateStrike                                                       */
-/* --------------------------------------------------------------------- */
 
 const NOW = new Date('2026-04-20T00:00:00Z');
 const daysAgo = (days: number) =>
@@ -187,8 +178,7 @@ describe('evaluateStrike', () => {
       { at: new Date(NOW.getTime() - STRIKE_EXPIRY_MS).toISOString(), noticeId: 'n1' },
     ];
     const r = evaluateStrike(prior, NOW);
-    // exactly-at-the-boundary: with strict `<` it counts; matches the
-    // code's `t < cutoff` guard which means `t === cutoff` is KEPT.
+    // The code's guard is `t < cutoff`, so `t === cutoff` is KEPT.
     expect(r.newCount).toBe(2);
   });
 
@@ -212,10 +202,6 @@ describe('evaluateStrike', () => {
     expect(r.newCount).toBe(4);
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  rateLimitVerdict                                                     */
-/* --------------------------------------------------------------------- */
 
 describe('rateLimitVerdict', () => {
   it('allows when under both caps', () => {
@@ -241,8 +227,8 @@ describe('rateLimitVerdict', () => {
   });
 
   it('email cap is more restrictive than ip cap (legit studio use-case)', () => {
-    // per-email cap < per-ip cap so a single complainant flooding
-    // from many IPs still hits the email limit first.
+    // per-email < per-ip, so a complainant flooding from many IPs still hits
+    // the email cap first.
     expect(RATE_LIMIT.perEmailPerHour).toBeLessThan(RATE_LIMIT.perIpPerHour);
   });
 });

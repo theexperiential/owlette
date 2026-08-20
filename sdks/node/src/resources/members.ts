@@ -11,9 +11,7 @@
 import { randomUUID } from 'crypto';
 import type { OwletteClient } from '../lib/client';
 
-/* --------------------------------------------------------------------- */
-/*  types                                                                */
-/* --------------------------------------------------------------------- */
+// types
 
 export type SiteMemberRole = 'owner' | 'superadmin' | 'admin' | 'member';
 
@@ -46,9 +44,7 @@ export interface RemoveMemberResult {
   wasMember: boolean;
 }
 
-/* --------------------------------------------------------------------- */
-/*  resource                                                             */
-/* --------------------------------------------------------------------- */
+// resource
 
 export class Members {
   constructor(

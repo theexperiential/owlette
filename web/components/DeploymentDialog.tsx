@@ -30,7 +30,7 @@ interface DeploymentDialogProps {
   onDeleteTemplate: (templateId: string) => Promise<void>;
 }
 
-// Prefix constants for the unified select value
+// Prefixes for the unified select value
 const PRESET_PREFIX = 'preset:';
 const TEMPLATE_PREFIX = 'template:';
 
@@ -62,9 +62,8 @@ export default function DeploymentDialog({
   const [parallelInstall, setParallelInstall] = useState(false);
   const [editingName, setEditingName] = useState(false);
 
-  // sha256 checksum — required by agents before they run any installer.
-  // Auto-computed server-side from the installer URL; manual entry covers
-  // URLs the web server cannot reach (e.g. LAN-only hosts).
+  // sha256 — agents refuse to run an installer without it. Computed server-side
+  // from the URL; manual entry covers hosts the web server can't reach.
   const checksum = useInstallerChecksum({
     endpoint: `/api/sites/${encodeURIComponent(siteId)}/deployments/checksum`,
     installerUrl,
@@ -75,18 +74,15 @@ export default function DeploymentDialog({
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
 
-  // Derive selection type from the unified selectedItem
   const isTemplateSelected = selectedItem.startsWith(TEMPLATE_PREFIX);
   const isPresetSelected = selectedItem.startsWith(PRESET_PREFIX);
   const selectedTemplateId = isTemplateSelected ? selectedItem.slice(TEMPLATE_PREFIX.length) : '';
 
-  // Filter out Owlette Agent presets from the library
   const filteredPresets = presets.filter(p => !p.is_owlette_agent);
   const filteredCategories = categories.filter(cat =>
     filteredPresets.some(p => p.category === cat)
   );
 
-  // Get display name for the selected item
   const getSelectedLabel = (): string => {
     if (!selectedItem) return '';
     if (selectedItem.startsWith(PRESET_PREFIX)) {
@@ -183,7 +179,7 @@ export default function DeploymentDialog({
 
   const handleSaveTemplate = async () => {
     if (!deploymentName.trim()) {
-      // Switch to edit mode so user can type a name
+      // Edit mode so the user can type a name
       setEditingName(true);
       toast.error('Enter a name first');
       return;
@@ -234,7 +230,7 @@ export default function DeploymentDialog({
         await onUpdateTemplate(selectedTemplateId, templateData);
         toast.success('Template updated');
       } else {
-        // Save as new template (also covers system presets — never overwrite those)
+        // New template — system presets are never overwritten
         const newId = await onCreateTemplate(templateData);
         setSelectedItem(`${TEMPLATE_PREFIX}${newId}`);
         toast.success('Saved as new template');
@@ -357,7 +353,7 @@ export default function DeploymentDialog({
         if (!closeProcesses.includes(name)) closeProcesses.push(name);
       });
 
-      // Build deployment object (sparse — only include optional fields when set)
+      // Sparse: optional fields only when set
       const deploymentData: Omit<Deployment, 'id' | 'createdAt' | 'status'> = {
         name: effectiveName,
         installer_name: installerName,
@@ -586,9 +582,8 @@ export default function DeploymentDialog({
               id="silent-flags"
               placeholder='/VERYSILENT /DIR="C:\\Program Files\\App"'
               value={silentFlags}
-              // Flags are a single command line — wrap for readability, but
-              // collapse typed/pasted newlines so the agent's installer
-              // invocation never receives a broken multi-line string.
+              // One command line: wrap visually, but collapse real newlines or the
+              // agent's installer invocation gets a broken multi-line string.
               onChange={(e) => setSilentFlags(e.target.value.replace(/\s*[\r\n]+\s*/g, ' '))}
               className="border-border bg-background text-white font-mono text-sm"
             />

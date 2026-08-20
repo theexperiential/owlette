@@ -1,13 +1,11 @@
 'use client';
 
 /**
- * RoostTargetsList — checkbox list of every machine in the site for the
- * selected roost. Checked rows are active targets (recorded in
- * roost.targets). Toggling fires a debounced PATCH on the roost doc;
- * the snapshot listener in `useRoosts` reconciles state on confirmation.
+ * RoostTargetsList — checkbox list of the site's machines for the selected roost;
+ * checked rows are `roost.targets`. Toggling fires a debounced PATCH and the
+ * `useRoosts` snapshot listener reconciles on confirmation.
  *
- * Owns ONE `useTargetStates` listener per expanded roost so per-target
- * sync state can be rendered inline only on currently-targeted rows.
+ * Owns ONE `useTargetStates` listener per expanded roost.
  */
 
 import React, { useState } from 'react';
@@ -47,10 +45,8 @@ interface StatusPresentation {
 }
 
 /**
- * When the agent's last report is for an OLD version, the machine is
- * really "pending" on the current rollout — surfacing a stale
- * `committed` for the prior version would mislead the operator into
- * thinking this deploy has landed.
+ * A report for an OLD version means "pending" on the current rollout — showing its
+ * stale `committed` would read as "this deploy landed".
  */
 function effectiveStatus(
   state: TargetState | undefined,
@@ -146,10 +142,8 @@ function metricLine(
 }
 
 /**
- * Aggregate per-machine states into a single rollup for the collapsed row.
- *
- * A report only counts for the current version — a prior `committed` for
- * an older version shouldn't make the new rollout look done.
+ * Roll per-machine states up for the collapsed row. Only reports for the current
+ * version count, so an old `committed` can't make the new rollout look done.
  */
 function rollup(
   targets: string[],
@@ -237,10 +231,9 @@ function rollupPresentation(status: RollupStatus): StatusPresentation {
 }
 
 /**
- * Compact status pill for the collapsed roost row. Mounts ONE listener
- * per roost (cheap — the target_state subcollection is small). Expanded
- * rows have their own `RoostTargetsList`; React keeps both hooks alive
- * when expanded so the snapshot is shared via Firestore's listener cache.
+ * Status pill for the collapsed roost row. One listener per roost (the
+ * target_state subcollection is small). When expanded, both this and
+ * `RoostTargetsList` stay mounted and share the snapshot via Firestore's cache.
  */
 export function RoostStatusPill({
   siteId,
@@ -259,8 +252,7 @@ export function RoostStatusPill({
     [targets, currentVersionId, byMachine],
   );
 
-  // While the first snapshot is still in flight, render a neutral
-  // placeholder rather than flashing "queued" → something-else.
+  // Neutral placeholder before the first snapshot, so it can't flash "queued".
   if (loading && targets.length > 0) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] bg-muted text-muted-foreground border-border">
@@ -272,9 +264,8 @@ export function RoostStatusPill({
 
   const pres = rollupPresentation(r.status);
   const Icon = pres.icon;
-  // Show counts when partial / syncing / failed — they're informative.
-  // For a clean "synced (3/3)" we also show on fully-synced so the
-  // operator can confirm total targets at a glance.
+  // Counts on partial/syncing/failed, and on fully-synced so "synced (3/3)"
+  // confirms the total at a glance.
   const showCount =
     r.total > 0 && (r.status === 'synced' || r.status === 'partial' || r.status === 'syncing' || r.status === 'failed');
   return (
@@ -300,17 +291,15 @@ export function RoostTargetsList({
   machines,
 }: RoostTargetsListProps) {
   const { states } = useTargetStates(siteId, roostId);
-  // Index by machineId so each row lookup is O(1). Rebuild only when
-  // the snapshot changes — not on every parent render.
+  // O(1) row lookup; rebuilt on snapshot change, not on every parent render.
   const byMachine = React.useMemo(() => {
     const m = new Map<string, TargetState>();
     for (const s of states) m.set(s.machineId, s);
     return m;
   }, [states]);
 
-  // Local mirror of the targets array so the checkbox flips immediately
-  // on click. The Firestore snapshot reconciles within ~1s; we keep the
-  // optimistic state in sync via the `targets` prop dependency below.
+  // Optimistic mirror so the checkbox flips on click; the snapshot reconciles
+  // within ~1s via the `targets` prop dependency below.
   const [localTargets, setLocalTargets] = useState<Set<string>>(
     () => new Set(targets),
   );
@@ -318,8 +307,7 @@ export function RoostTargetsList({
     setLocalTargets(new Set(targets));
   }, [targets]);
 
-  // Track in-flight PATCH dispatches so we can ignore stale responses
-  // from earlier clicks when the user toggles a row twice quickly.
+  // Ignore responses from superseded clicks when a row is toggled twice fast.
   const seqRef = React.useRef(0);
   const [busy, setBusy] = React.useState(false);
 
@@ -327,10 +315,8 @@ export function RoostTargetsList({
     async (nextTargets: string[], previousTargets: Set<string>) => {
       const seq = ++seqRef.current;
       setBusy(true);
-      // Newly-added machines auto-trigger a deploy so the user doesn't
-      // have to chase a separate "re-sync" action after checking a box —
-      // the obvious intent of "make this machine a target" is "send the
-      // current version to it now". Removed machines need no follow-up.
+      // Adding a target implies "send it the current version now", so deploy
+      // automatically. Removals need no follow-up.
       const added = nextTargets.filter((m) => !previousTargets.has(m));
       try {
         const res = await fetch(
@@ -356,8 +342,7 @@ export function RoostTargetsList({
           );
           if (!deployRes.ok) {
             const body = await deployRes.json().catch(() => ({}));
-            // Don't revert the checkbox — the target IS in the list now;
-            // the user can hit "re-sync targets" to retry the dispatch.
+            // Don't revert: the target IS in the list; "re-sync targets" retries.
             toast.error('queued, but failed to dispatch sync', {
               description: body.detail ?? body.title ?? `HTTP ${deployRes.status}`,
             });
@@ -369,9 +354,7 @@ export function RoostTargetsList({
         }
       } catch (err) {
         if (seq === seqRef.current) {
-          // Latest dispatch failed — revert. (Older failed dispatches
-          // would have already been superseded by a newer one and don't
-          // matter, since the latest one is what the user expects.)
+          // Only the latest dispatch matters; older ones were superseded.
           setLocalTargets(previousTargets);
           toast.error('failed to update targets', {
             description: err instanceof Error ? err.message : 'network error',
@@ -407,9 +390,8 @@ export function RoostTargetsList({
     );
   }
 
-  // Sort: targeted+online → targeted+offline → !targeted+online → !targeted+offline → machineId asc.
-  // Keeps the user's active fleet at the top while leaving "add a new
-  // target" reachable just below.
+  // targeted+online → targeted+offline → untargeted+online → untargeted+offline,
+  // then machineId asc: active fleet on top, "add a target" right below.
   const sorted = [...machines].sort((a, b) => {
     const aTarget = localTargets.has(a.machineId) ? 0 : 1;
     const bTarget = localTargets.has(b.machineId) ? 0 : 1;

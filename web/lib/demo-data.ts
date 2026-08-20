@@ -1,7 +1,4 @@
-/**
- * Demo data for the public /demo route.
- * Generates realistic-looking machine data for product screenshots and marketing.
- */
+/** Demo data for the public /demo route — realistic machines for screenshots. */
 
 import type {
   Machine,
@@ -24,9 +21,7 @@ import type { ChartDataPoint } from '@/hooks/useHistoricalMetrics';
 import type { TimeRange } from '@/components/charts/TimeRangeSelector';
 import type { DisplayProfile, AssignedLayout, MonitorInfo } from '@/hooks/useDisplayState';
 
-// ── Helpers ──────────────────────────────────────────────────────────
-
-/** Seeded pseudo-random number generator for deterministic data */
+/** Seeded PRNG — demo data must be deterministic across renders. */
 function seededRandom(seed: number) {
   let s = seed;
   return () => {
@@ -35,7 +30,7 @@ function seededRandom(seed: number) {
   };
 }
 
-/** Generate a smooth sine-wave based value with noise */
+/** Smooth sine-wave value with noise, clamped to 0-100. */
 function generateMetricValue(
   rand: () => number,
   base: number,
@@ -48,8 +43,6 @@ function generateMetricValue(
   return Math.max(0, Math.min(100, base + sine * amplitude + noise));
 }
 
-// ── Constants ────────────────────────────────────────────────────────
-
 export const DEMO_SITE_ID = 'demo-site';
 
 export const DEMO_SITE = {
@@ -58,8 +51,6 @@ export const DEMO_SITE = {
   createdAt: Date.now() - 90 * 24 * 3600 * 1000,
   timezone: 'America/Los_Angeles',
 };
-
-// ── Machine definitions ──────────────────────────────────────────────
 
 interface GpuDef { name: string; usageBase: number; vramTotal: number; vramUsed: number }
 
@@ -243,8 +234,6 @@ const machineDefs: MachineDef[] = [
   },
 ];
 
-// ── Build Machine objects ────────────────────────────────────────────
-
 function buildProcess(def: MachineDef['processes'][number], index: number): Process {
   return {
     ...def,
@@ -262,13 +251,9 @@ function buildProcess(def: MachineDef['processes'][number], index: number): Proc
   };
 }
 
-// ── v2 profile/metric synthesis ──────────────────────────────────────
-
 /**
- * Build a realistic HardwareProfile for a demo machine. Most machines get
- * 2 disks (C: system, D: data) and 2 NICs (Ethernet, Wi-Fi) so the
- * dashboard's per-device dropdowns actually appear and tell a good story.
- * Low-spec kiosks get a single disk and NIC.
+ * Realistic HardwareProfile for a demo machine. Most get 2 disks + 2 NICs so
+ * the dashboard's per-device dropdowns actually appear; kiosks get one of each.
  */
 function buildProfile(def: MachineDef): HardwareProfile {
   const isLowSpec = def.memTotal <= 16;
@@ -327,8 +312,8 @@ function buildProfile(def: MachineDef): HardwareProfile {
   };
 }
 
-/** Synthesize `devices` the same way `joinMachineDevices` does — since the
- *  demo page consumes `getDemoMachines()` directly (not via useMachines). */
+/** Mirrors `joinMachineDevices` — the demo page calls `getDemoMachines()`
+ *  directly, bypassing useMachines. */
 function joinDevices(
   profile: HardwareProfile,
   metrics: NonNullable<Machine['metrics']>,
@@ -375,7 +360,6 @@ function buildMachine(def: MachineDef): Machine {
 
   const profile = buildProfile(def);
 
-  // ── CPU metrics ──────────────────────────────────────────────────
   const cpus: Record<string, CpuMetric> = {
     CPU0: {
       percent: def.cpuBase + Math.floor(Math.random() * 8),
@@ -383,7 +367,6 @@ function buildMachine(def: MachineDef): Machine {
     },
   };
 
-  // ── Disk metrics ─────────────────────────────────────────────────
   const disks: Record<string, DiskMetric> = {};
   for (const d of profile.disks) {
     // System disk tracks def.diskBase; data disk runs a bit lower.
@@ -394,17 +377,14 @@ function buildMachine(def: MachineDef): Machine {
     };
   }
 
-  // ── Per-volume disk IO ───────────────────────────────────────────
-  // Synthesize plausible read/write rates so the cards' arrow rates and
-  // the detail-panel disk-IO chart aren't blank. Skipped for offline
-  // and restarting machines (their panels render the empty state).
+  // Plausible read/write rates so the cards' arrows and the disk-IO chart
+  // aren't blank. Skipped when offline/restarting (panels show empty state).
   const diskio: NonNullable<Machine['metrics']>['diskio'] = {};
   if (def.online && !def.rebooting) {
     // Activity scales with cpu+gpu workload.
     const activity = (def.cpuBase + (def.gpu?.usageBase ?? 0)) / 100; // 0 - ~2
     for (const d of profile.disks) {
-      // Media drive (D:) handles bulk reads (project files, video); system
-      // drive (C:) handles light reads + steady writes (logs, temp, swap).
+      // D: bulk reads (media); C: light reads + steady writes (logs, temp, swap).
       const isMedia = d.id !== 'C:';
       const baseReadBps = isMedia ? 80_000_000 : 3_000_000;
       const baseWriteBps = isMedia ? 12_000_000 : 4_000_000;
@@ -419,10 +399,8 @@ function buildMachine(def: MachineDef): Machine {
     }
   }
 
-  // ── GPU metrics ──────────────────────────────────────────────────
-  // Mirrors buildProfile: GPU0 is the primary; extraGpus become GPU1, GPU2…
-  // Every profiled GPU gets a live metric here so joinDevices doesn't tag
-  // it as `isMissing` in the dashboard's per-device dropdowns.
+  // Mirrors buildProfile (GPU0 primary, extraGpus → GPU1…). Every profiled GPU
+  // needs a live metric or joinDevices tags it `isMissing`.
   const gpus: Record<string, GpuMetric> = {};
   if (def.gpu) {
     gpus.GPU0 = {
@@ -439,7 +417,6 @@ function buildMachine(def: MachineDef): Machine {
     });
   }
 
-  // ── NIC metrics ──────────────────────────────────────────────────
   const nics: Record<string, NicMetric> = {};
   if (def.network) {
     // Primary NIC (Ethernet) carries the bulk of traffic.
@@ -460,13 +437,11 @@ function buildMachine(def: MachineDef): Machine {
     }
   }
 
-  // ── Memory ───────────────────────────────────────────────────────
   const memory: MemoryMetric = {
     percent: def.memBase + Math.floor(Math.random() * 5),
     usedGb: +(def.memTotal * (def.memBase / 100)).toFixed(1),
   };
 
-  // ── Primary device selection (most-active of each kind) ──────────
   const primary: PrimaryDevices = {
     cpu: 'CPU0',
     disk: 'C:',
@@ -495,9 +470,8 @@ function buildMachine(def: MachineDef): Machine {
     processes: Object.fromEntries(
       def.processes.map(p => [p.name, p.status])
     ),
-    // Sourced from displayTopologies — counts drifted monitors so the card
-    // dot agrees with what the panel will compute (the agent does this
-    // server-side at heartbeat time in production).
+    // From displayTopologies so the card dot agrees with the panel (in prod the
+    // agent computes this at heartbeat time).
     displayDriftCount: countDemoDrift(def.id),
   };
 
@@ -519,8 +493,6 @@ function buildMachine(def: MachineDef): Machine {
 export function getDemoMachines(): Machine[] {
   return machineDefs.map(buildMachine);
 }
-
-// ── Sparkline data ───────────────────────────────────────────────────
 
 export interface DemoSparklineData {
   cpu: SparklineDataPoint[];
@@ -564,8 +536,6 @@ export function getDemoSparklineData(machineId: string): DemoSparklineData {
   };
 }
 
-// ── Historical metrics data ──────────────────────────────────────────
-
 const TIME_RANGE_DURATIONS: Record<TimeRange, number> = {
   '1h': 3600,
   '1d': 86400,
@@ -599,8 +569,8 @@ export function getDemoHistoricalData(
   const interval = duration / points;
   const now = Math.floor(Date.now() / 1000);
 
-  // Profiled disks/GPUs — must mirror buildProfile so historical chart keys
-  // line up with the per-device dropdowns sourced from `metrics.disks`/`gpus`.
+  // Must mirror buildProfile or historical chart keys won't line up with the
+  // dropdowns sourced from `metrics.disks`/`gpus`.
   const isLowSpec = def.memTotal <= 16;
   const diskIds = isLowSpec ? ['C:'] : ['C:', 'D:'];
   const gpuDefs = def.gpu
@@ -610,8 +580,8 @@ export function getDemoHistoricalData(
       ]
     : [];
 
-  // Per-volume max bandwidth ceiling for `_io_*_pct` lines (mirrors agent's
-  // hardware-class estimate). System SSDs cap lower than the media NVMe.
+  // Bandwidth ceiling for `_io_*_pct` (mirrors the agent's hardware-class
+  // estimate); system SSDs cap lower than the media NVMe.
   const diskMaxBps: Record<string, number> = {
     'C:': 500_000_000,    // ~500 MB/s SATA SSD
     'D:': 3_000_000_000,  // ~3 GB/s NVMe
@@ -637,14 +607,12 @@ export function getDemoHistoricalData(
       disk: +disk.toFixed(1),
     };
 
-    // Per-disk fill % — system disk tracks def.diskBase, media disk runs lower
-    // (mirrors buildMachine's live-metrics derivation).
+    // Mirrors buildMachine: system disk tracks def.diskBase, media runs lower.
     for (const id of diskIds) {
       const pct = id === 'C:' ? def.diskBase : Math.max(5, def.diskBase - 12);
       point[`${id}_pct`] = +generateMetricValue(rand, pct, 1, t, 168).toFixed(1);
     }
 
-    // Per-GPU usage + temperature
     for (const { id, gpu } of gpuDefs) {
       const usage = generateMetricValue(rand, gpu.usageBase * dailyMultiplier, 15, t, 24);
       point[`${id}_usage`] = +usage.toFixed(1);
@@ -656,12 +624,10 @@ export function getDemoHistoricalData(
       point.gpuTemp = point['GPU0_temp'] as number;
     }
 
-    // CPU temp correlated with CPU usage
     if (def.cpuBase > 0) {
       point.cpuTemp = +(42 + cpu * 0.35 + (rand() - 0.5) * 3).toFixed(1);
     }
 
-    // Network data (per-NIC keys for Recharts)
     if (def.network) {
       const txUtil = generateMetricValue(rand, def.network.txUtil * dailyMultiplier, 8, t, 24);
       const rxUtil = generateMetricValue(rand, def.network.rxUtil * dailyMultiplier, 6, t, 24);
@@ -671,9 +637,8 @@ export function getDemoHistoricalData(
       point['Ethernet_rx'] = +(def.network.rxBps * (rxUtil / (def.network.rxUtil || 1)) * dailyMultiplier).toFixed(0);
     }
 
-    // Per-volume disk IO — emit both bytes (`_io_read`/`_io_write`) and
-    // %-of-max-bandwidth (`_io_read_pct`/`_io_write_pct`) plus busy% so the
-    // detail panel can flip between modes the same way it does for live data.
+    // Both bytes and %-of-max-bandwidth (plus busy%) so the detail panel can
+    // flip modes exactly as it does for live data.
     const activity = (def.cpuBase + (def.gpu?.usageBase ?? 0)) / 100; // 0 - ~2
     for (const id of diskIds) {
       const isMedia = id !== 'C:';
@@ -695,13 +660,10 @@ export function getDemoHistoricalData(
   return data;
 }
 
-// ── Display topology ─────────────────────────────────────────────────
-
 /**
- * Build a single MonitorInfo with sensible defaults so the call sites below
- * stay short and obvious. `id` is the Windows-style display path so it looks
- * realistic in the panel; `edidHash` is a stable fake derived from
- * (machineId, slot) so live and assigned monitors line up by identity.
+ * MonitorInfo with defaults. `id` is a Windows-style display path for realism;
+ * `edidHash` is a stable fake from (machineId, slot) so live and assigned
+ * monitors line up by identity.
  */
 function makeMonitor(
   machineId: string,
@@ -730,23 +692,12 @@ function makeMonitor(
 }
 
 /**
- * Demo monitor topology per machine. Built lazily so monitor synthesis only
- * runs when a card actually subscribes (most cards subscribe by default since
- * the displays summary is rendered on every collapsed card).
+ * Demo monitor topology per machine, built lazily (every collapsed card renders
+ * the displays summary, so most subscribe).
  *
- * Topology choices reflect real-world install patterns:
- *  - lobby / kiosk / single-screen sites: one monitor (kiosks are portrait).
- *  - immersive gallery / render server: 2-3 displays in horizontal layout.
- *  - theater: one large 4K projector.
- *  - admin workstation: two side-by-side desk monitors.
- *
- * Some machines have an assigned layout (admin captured it earlier); others
- * intentionally do not so the panel can demonstrate both states.
- *
- * The `theater-projector` row reports drift: the live config differs from the
- * assigned layout (refresh rate dropped to 30Hz after a power cycle). This
- * also matches the `displayDriftCount: 1` flag set on its metrics shape so
- * the card's amber dot and the panel's drift state are consistent.
+ * Deliberate coverage: some machines have an assigned layout and some don't, so
+ * the panel demonstrates both states; `theater-projector` drifts (live 30Hz vs
+ * assigned) and must stay consistent with its `displayDriftCount: 1`.
  */
 const displayTopologies: Record<
   string,
@@ -865,8 +816,7 @@ const displayTopologies: Record<
     assigned: null,
   },
   'kiosk-gift-shop': {
-    // Offline machine — last-known live profile still shows so the card has
-    // monitors to render even though metrics are stale.
+    // Offline: last-known profile still shows so the card isn't empty.
     live: [
       makeMonitor('kiosk-gift-shop', 0, {
         friendlyName: 'gift shop',
@@ -965,11 +915,10 @@ export function getDemoDisplayState(machineId: string): DemoDisplayState {
 }
 
 /**
- * Match-by-edidHash drift count, identical in shape to what the agent
- * publishes via `metrics.displayDriftCount`. Counts a monitor as drifted
- * if any of position/resolution/refreshHz/rotation/scalePct/primary
- * differs between live and assigned. Returns 0 when there's no assigned
- * layout (nothing to drift from).
+ * Match-by-edidHash drift count, same shape as the agent's
+ * `metrics.displayDriftCount`. Drifted = any of
+ * position/resolution/refreshHz/rotation/scalePct/primary differs. 0 when there
+ * is no assigned layout.
  */
 function countDemoDrift(machineId: string): number {
   const topology = displayTopologies[machineId];

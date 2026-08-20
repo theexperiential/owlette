@@ -7,15 +7,11 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
 /**
- * Freeze the page before measuring layout.
- *
- * Mirrors the stabilization used by the a11y smoke suite
- * (e2e/specs/a11y/route-smoke.spec.ts): kill every animation/transition, force
- * the landing hero's entrance states to their resting values, then wait for
- * webfonts. Without this, a mid-flight transform or a fallback-font reflow can
- * momentarily widen the document and make an overflow assertion flap.
- *
- * Safe to call more than once — the injected style tag is idempotent in effect.
+ * Freeze the page before measuring layout (same approach as
+ * e2e/specs/a11y/route-smoke.spec.ts): kill animations, settle the hero's
+ * entrance states, await webfonts. Without it a mid-flight transform or a
+ * fallback-font reflow briefly widens the document and flaps overflow asserts.
+ * Idempotent.
  */
 export async function stabilize(page: Page): Promise<void> {
   await page.addStyleTag({
@@ -41,17 +37,10 @@ export async function stabilize(page: Page): Promise<void> {
 }
 
 /**
- * Assert the page does not scroll horizontally at the current viewport.
- *
- * Checks both `document.documentElement` and `document.body`: a child that
- * escapes an `overflow-hidden` body still widens the documentElement, and a
- * body with its own width can overflow while the documentElement looks clean.
- *
- * The 1px tolerance absorbs sub-pixel rounding — fractional layout widths get
- * reported as a rounded-up integer `scrollWidth`, which otherwise reads as a
- * one-pixel overflow on a perfectly fitting page.
- *
- * Calls {@link stabilize} first so callers can't measure a page mid-animation.
+ * Assert no horizontal scroll at the current viewport. Checks documentElement AND
+ * body: a child escaping an overflow-hidden body still widens documentElement,
+ * and a body can overflow while documentElement looks clean. 1px tolerance
+ * absorbs the rounded-up integer `scrollWidth` on fractional layouts.
  */
 export async function assertNoHorizontalOverflow(page: Page): Promise<void> {
   await stabilize(page);
@@ -73,8 +62,7 @@ export async function assertNoHorizontalOverflow(page: Page): Promise<void> {
 
     if (offenders.length === 0) return { offenders, culprits: [] as string[] };
 
-    // Name the widest elements poking past the viewport — a bare
-    // "1091 > 391" failure is not actionable on a real dashboard page.
+    // name the widest offenders; a bare "1091 > 391" is not actionable
     const viewportWidth = document.documentElement.clientWidth;
     const culprits = Array.from(document.querySelectorAll<HTMLElement>('body *'))
       .map((el) => ({ el, right: el.getBoundingClientRect().right }))
@@ -100,27 +88,18 @@ export async function assertNoHorizontalOverflow(page: Page): Promise<void> {
 }
 
 /**
- * Assert a single control is fully inside the viewport box.
- *
- * {@link assertNoHorizontalOverflow} measures the document scroll width, so it
- * is blind to a position-fixed surface (a dialog, a portalled sheet) whose own
- * contents run past the viewport edge — the overflow never reaches the document.
- * Reachability of the controls inside such a surface has to be asserted
- * directly, and this is that assertion.
- *
- * The element is scrolled into view first: vertical scrolling is ordinary phone
- * behaviour, so only the resting geometry after that scroll is the claim. A
- * control that still sits outside the box afterwards is genuinely untappable.
- *
- * On failure the measured edges are reported, so a regression says how far off
- * the control is rather than just that it is.
+ * Assert one control is fully inside the viewport box.
+ * {@link assertNoHorizontalOverflow} measures document scroll width and is blind
+ * to a position-fixed surface (dialog, portalled sheet) overflowing on its own,
+ * so controls inside one need this direct check. Scrolled into view first —
+ * vertical scrolling is normal on a phone; only the resting geometry is claimed.
  */
 export async function expectFullyWithinViewport(
   page: Page,
   locator: Locator,
   label: string,
 ): Promise<void> {
-  // 1px matches assertNoHorizontalOverflow — absorbs sub-pixel layout rounding.
+  // matches assertNoHorizontalOverflow: sub-pixel layout rounding
   const TOLERANCE = 1;
 
   const viewport = page.viewportSize();

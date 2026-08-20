@@ -1,16 +1,10 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/actions/cancelDistribution.server.ts`
- * (security-boundary-migration wave 3.4).
- *
- * Tests cover:
- *   - 404 when the distribution doc doesn't exist
- *   - 409 (no_cancellable_targets) when every target is terminal
- *   - target-level status flips on mixed-status targets
- *   - parent-status recompute when all targets become terminal
- *   - purge of queued `distribute_project` commands from machine pending docs
- *   - fan-out of `cancel_distribution` to short-circuit mid-fetch agents
+ * `web/lib/actions/cancelDistribution.server.ts`: 404 on a missing doc, 409
+ * (no_cancellable_targets) when every target is terminal, target-status flips on
+ * mixed targets, parent-status recompute, purge of queued `distribute_project`
+ * commands, and `cancel_distribution` fan-out to short-circuit mid-fetch agents.
  */
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
@@ -124,9 +118,7 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-/* -------------------------------------------------------------------------- */
-/*  error paths                                                               */
-/* -------------------------------------------------------------------------- */
+/* error paths */
 
 describe('cancelDistribution — error paths', () => {
   it('returns not_found when distribution doc does not exist', async () => {
@@ -156,9 +148,7 @@ describe('cancelDistribution — error paths', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  happy paths — mixed status                                                */
-/* -------------------------------------------------------------------------- */
+/* happy paths — mixed status */
 
 describe('cancelDistribution — mixed-status targets', () => {
   it('cancels pre-flight targets and leaves terminal targets untouched', async () => {
@@ -178,8 +168,7 @@ describe('cancelDistribution — mixed-status targets', () => {
     if (!result.ok) return;
     expect(result.cancelled).toBe(2);
     expect(result.machine_ids).toEqual(['m1', 'm2']);
-    // m3 was completed, not all-terminal yet because nextStatus calc
-    // sees a mix of cancelled + completed → 'partial'.
+    // Not all-terminal: cancelled + completed mix resolves to 'partial'.
     expect(result.status).toBe('partial');
 
     const distUpdate = updates.find((u) =>
@@ -240,9 +229,7 @@ describe('cancelDistribution — mixed-status targets', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  side effects                                                              */
-/* -------------------------------------------------------------------------- */
+/* side effects */
 
 describe('cancelDistribution — side effects', () => {
   it('purges queued distribute_project commands from each cancellable machine', async () => {

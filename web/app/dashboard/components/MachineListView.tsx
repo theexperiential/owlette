@@ -1,18 +1,6 @@
 /**
- * MachineListView Component
- *
- * Table display of machines with expandable process rows.
- * Hidden on mobile, toggleable with card view on desktop.
- *
- * Features:
- * - Tabular layout with sortable columns
- * - Expandable rows for process details
- * - Process controls (autolaunch, edit, restart, kill)
- * - Create add process button
- * - Memoized table header for performance
- * - Sparkline charts behind metric cells
- *
- * Used by: Dashboard page for list view display
+ * Machines table with expandable process rows. Hidden on mobile; the dashboard toggles it
+ * against card view on desktop.
  */
 
 'use client';
@@ -53,10 +41,7 @@ import { useAllSparklineData } from '@/hooks/useSparklineData';
 import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
 
-/**
- * Per-kind device id union across all visible machines. Used to populate
- * the shared column-header dropdowns in the list view.
- */
+/** Per-kind device id union across visible machines; populates the column-header dropdowns. */
 export interface DeviceUnion {
   cpus: string[];
   disks: string[];
@@ -123,12 +108,8 @@ function DeviceColumnHeader({
   );
 }
 
-/**
- * Legacy no-dropdown header, kept for callers (demo page, dashboard page)
- * that render the list-view table directly and don't need column-header
- * device selectors. Renders plain column labels identical to the pre-v2
- * layout so existing pages keep working without wiring deviceUnion through.
- */
+/** Plain-label header for callers (demo, dashboard) that render the table directly and
+ * don't wire `deviceUnion` through. */
 export const MemoizedTableHeader = memo(function MemoizedTableHeader() {
   return (
     <TableHeader className="sticky top-0 z-10 bg-card-header">
@@ -155,10 +136,8 @@ interface MachineTableHeaderProps {
   setListPref: (kind: DeviceKind, id: string | null) => void;
 }
 
-// Memoized table header to prevent flickering on data updates. Memo compares
-// the prop bag by reference; callers pass stable refs for listPref/setListPref
-// and a memoized deviceUnion/showDropdown so the header only re-renders when
-// the device set or user selection actually changes — not on every metrics tick.
+// Memoized against metrics-tick flicker. Memo compares props by reference, so callers must
+// pass stable listPref/setListPref and a memoized deviceUnion/showDropdown.
 export const MachineTableHeader = memo(function MachineTableHeader({
   deviceUnion,
   showDropdown,
@@ -219,9 +198,6 @@ export const MachineTableHeader = memo(function MachineTableHeader({
   );
 });
 
-/**
- * Individual machine row component with sparkline support
- */
 interface MachineRowProps {
   machine: Machine;
   isExpanded: boolean;
@@ -246,12 +222,8 @@ interface MachineRowProps {
   onScreenshot?: () => void;
   onLiveView?: () => void;
   showLocalClock?: boolean;
-  /**
-   * User's column-dropdown selection for this view (cpu/disk/gpu/nic). When
-   * omitted (legacy callers) or a kind is unset, the row falls back to the
-   * machine's reported primary device — which also matches "auto (most
-   * active)" in the column-header selector.
-   */
+  /** Column-dropdown selection (cpu/disk/gpu/nic). Unset kinds fall back to the machine's
+   * reported primary device, which is also what "auto (most active)" selects. */
   listPref?: DeviceSelection;
 }
 
@@ -281,17 +253,12 @@ export function MachineRow({
   showLocalClock,
   listPref,
 }: MachineRowProps) {
-  // Keep the expanded row mounted through the close animation. The grid-rows
-  // transition on the inner wrapper animates in/out; the held flag prevents
-  // unmounting before the close animation completes.
-  //
-  // `animOpen` lags `isExpanded` by one animation frame on open so the row
-  // mounts at `grid-rows-[0fr]` and CSS sees a transition to `grid-rows-[1fr]`
-  // (without the lag, both initial renders see `1fr` and no transition fires).
+  // Held keeps the row mounted through the close animation.
+  // `animOpen` lags `isExpanded` by one frame on open so the row mounts at grid-rows-[0fr]
+  // and CSS sees a transition to [1fr] — without the lag both renders see 1fr and nothing
+  // animates.
   const [heldExpanded, setHeldExpanded] = useState(isExpanded);
-  // Seeded false so a freshly-mounted-as-expanded row still gets a real
-  // 0fr → 1fr transition. The raf in the effect below flips it true on the
-  // next frame.
+  // False at seed so a mounted-as-expanded row still gets a real 0fr → 1fr transition.
   const [animOpen, setAnimOpen] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   if (isExpanded && !heldExpanded) {
@@ -302,9 +269,8 @@ export function MachineRow({
       clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
     }
-    // Defer the open/close flip to the next frame so the previous (mount)
-    // frame's grid-rows class commits first — the CSS transition then has a
-    // from-state to interpolate against.
+    // Next frame, so the mount frame's grid-rows class commits and the transition has a
+    // from-state.
     const raf = requestAnimationFrame(() => setAnimOpen(isExpanded));
     if (!isExpanded && heldExpanded) {
       closeTimerRef.current = setTimeout(() => setHeldExpanded(false), 220);
@@ -324,10 +290,8 @@ export function MachineRow({
   const gpuDevice = resolveDevice(machine.devices?.gpus, pref.gpu, primary?.gpu);
   const nicDevice = resolveDevice(machine.devices?.nics, pref.nic, primary?.nic);
 
-  // Memory has no per-device fan-out; `totalGb` isn't reported on the v2
-  // MemoryMetric, so derive it from (usedGb / percent) when both are present.
-  // When percent is 0/missing, we can't derive total reliably — fall back to
-  // showing the used value alone.
+  // v2 MemoryMetric doesn't report `totalGb`; derive it from usedGb/percent, and show used
+  // alone when percent is 0/missing.
   const memoryPercent = machine.metrics?.memory?.percent ?? 0;
   const memoryUsedGb = machine.metrics?.memory?.usedGb;
   const memoryTotalGb =
@@ -339,14 +303,11 @@ export function MachineRow({
   const isMuted = fullPrefs.mutedMachines.includes(machine.machineId);
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
-  // Display drift indicator (amber dot next to the monitor icon). The agent
-  // computes this every heartbeat and writes it under `metrics.displayDriftCount`
-  // — reading from the machine doc avoids spinning up per-row subscriptions to
-  // the displayProfiles + displayAssignments docs just to render the dot.
+  // Drift dot reads the heartbeat's `metrics.displayDriftCount` instead of opening per-row
+  // subscriptions to displayProfiles + displayAssignments.
   const displayDriftCount = machine.metrics?.displayDriftCount ?? 0;
 
-  // Format heartbeat time. The display tz is resolved per-machine according
-  // to the user's chosen `timeDisplayMode` (preferences) — see getDisplayTimezone.
+  // Display tz is per-machine, from the user's `timeDisplayMode` — see getDisplayTimezone.
   const displayTz = getDisplayTimezone(
     fullPrefs.timeDisplayMode || 'machine',
     fullPrefs.timezone,
@@ -357,10 +318,8 @@ export function MachineRow({
   const isStale = !machine.online || !!machine.rebooting;
   const staleClass = isStale ? ' opacity-40' : '';
 
-  // Live-updating local clock for this machine's own timezone (under hostname).
-  // Subscribing to the shared wall-clock minute tick re-renders this row
-  // once per minute (in lockstep with every other machine row) so the
-  // formatted clock string below stays current. One interval, app-wide.
+  // Machine-local clock under the hostname. The shared minute tick re-renders every row in
+  // lockstep off a single app-wide interval.
   useMinuteTick();
   const localClock = formatMachineLocalClock(machine.machineTimezone, siteTimeFormat);
   const localTzShort = formatTimezoneShortName(machine.machineTimezone);

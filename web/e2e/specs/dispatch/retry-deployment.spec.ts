@@ -1,19 +1,17 @@
 /**
- * Dispatch — retry failed deployment (D4.4)
+ * Dispatch — retry failed deployment.
  *
  * "Retry failed" retries IN PLACE via POST
- * /api/sites/{siteId}/deployments/{deploymentId}/retry (it no longer clones
- * a "(Retry)" deployment). End-state:
- *   - The SAME deployment doc flips to 'in_progress'; the failed target
- *     resets to 'pending' with its error dropped and `retriedAt` stamped.
- *   - One new install_software command (retry_attempt: true) in
- *     commands/pending, carrying the deployment's sha256_checksum.
+ * /api/sites/{siteId}/deployments/{deploymentId}/retry — it no longer clones a
+ * "(Retry)" deployment. The SAME doc flips to 'in_progress', the failed target
+ * resets to 'pending' with its error dropped and `retriedAt` stamped, and one
+ * new install_software command (retry_attempt: true) lands in commands/pending
+ * carrying the deployment's sha256_checksum.
  *
- * Two entry points share the flow: the row dropdown ("retry failed" — all
- * failed targets) and the per-target retry icon (single machine, body
- * `machines` filter). The seed carries a sha256_checksum so the server's
- * legacy self-heal (which would fetch the installer URL) stays out of the
- * loop — deterministic in the emulator env.
+ * Both entry points share the flow: the row dropdown (all failed targets) and
+ * the per-target retry icon (body `machines` filter). The seed carries a
+ * sha256_checksum so the server's legacy self-heal (which would fetch the
+ * installer URL) stays out of the loop — deterministic in the emulator.
  */
 
 import { test, expect } from '@playwright/test';

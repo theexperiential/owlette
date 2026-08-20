@@ -1,72 +1,36 @@
 /**
- * Hoot turn store — stream doc lifecycle
- * (hoot-async-turns wave 1.1).
+ * Hoot turn store — the durable record of an in-flight turn at
+ * `chats/{chatId}/stream/current`. A turn runs detached from the HTTP request,
+ * so its state must survive a dead stream.
  *
- * A hoot chat turn (LLM loop + tool execution) now runs detached from the
- * HTTP request, so its live state must survive a dead stream. This module
- * owns the single durable record of an in-flight turn:
- *
- *   `chats/{chatId}/stream/current`
- *
- * One doc per chat — a new turn *replaces* the previous one (that overwrite
- * IS the supersede: the old runner's writes then no-op via turnId mismatch,
- * and clients watching the doc see the new running turn immediately).
- *
- * Lifecycle:
- *   1. `acquireTurnLock` — transactional claim. Rejects with `TurnActiveError`
- *      while another turn is running and fresh (heartbeat < TURN_STALE_MS),
- *      unless `supersede: true` (user sent a new message mid-turn) — then the
- *      old doc is flipped to a fresh `running` doc for the new turn. A stale
- *      running doc (runner killed by a deploy) is always claimable.
- *   2. `writeSnapshot` — throttled (≥SNAPSHOT_THROTTLE_MS apart) persistence
- *      of the in-progress assistant UIMessage, so a reattaching client can
- *      render the turn from Firestore alone.
- *   3. `touch` — heartbeat `updatedAt` bump during long tool polls (keeps the
- *      turn from being declared stale while no message content changes).
- *   4. `recordToolCommand` — `toolCallId → machineId → {commandId}` recovery
- *      index (nested so a site-wide tool call, which fans one toolCallId out to
- *      many machines, records EVERY machine's command instead of the last write
- *      clobbering the rest), so a later turn can splice in a real agent result
- *      by commandId even if this runner dies.
- *   5. `finishTurn` — terminal status (`complete` / `error` / `cancelled` /
- *      `superseded`).
+ * One doc per chat; a new turn OVERWRITES the previous one and that overwrite
+ * IS the supersede — the old runner's guarded writes then no-op on turnId
+ * mismatch and watchers see the new turn immediately.
  *
  * Every post-acquire write is guarded by a transactional turnId check and
- * NEVER throws into the runner — once superseded (or on any Firestore
- * hiccup), writes become silent no-ops and report `false`. Messages are
- * JSON-cloned before write because Firestore rejects nested `undefined`
- * (mirrors the client persist path in `web/hooks/useHoot.ts`).
+ * never throws into the runner. Messages are JSON-cloned before write because
+ * Firestore rejects nested `undefined` (mirrors `web/hooks/useHoot.ts`).
  *
- * IMPORTANT: Server-side only — never import this in client components.
+ * Server-side only — never import this in client components.
  */
 
 import crypto from 'crypto';
 import { FieldPath, FieldValue, type Timestamp } from 'firebase-admin/firestore';
 import type { UIMessage } from 'ai';
 
-/* -------------------------------------------------------------------------- */
-/*  types + constants                                                         */
-/* -------------------------------------------------------------------------- */
-
 export type TurnStatus = 'running' | 'complete' | 'error' | 'superseded' | 'cancelled';
 
 export type TerminalTurnStatus = Exclude<TurnStatus, 'running'>;
 
-/**
- * One recorded agent command for a tool call — the value stored at
- * `toolCommands[toolCallId][machineId]`. `machineId` is the map KEY now (a
- * site-wide tool call fans one toolCallId out to many machines), so the value
- * carries only the `commandId`.
- */
+/** Value at `toolCommands[toolCallId][machineId]`; machineId is the key, so only the commandId is stored. */
 export interface TurnToolCommand {
   commandId: string;
 }
 
 /**
- * Recovery index: `toolCallId → machineId → { commandId }`. Nested so a
- * site-wide tool call (one toolCallId, N machines) records every machine's
- * command — a flat `toolCallId → command` map would let the last machine's
- * write clobber the rest (uncancellable + wrong-shape recovery).
+ * Recovery index `toolCallId → machineId → { commandId }`. Nested so a
+ * site-wide tool call (one toolCallId, N machines) records every machine —
+ * a flat map would let the last write clobber the rest.
  */
 export type TurnToolCommandMap = Record<string, Record<string, TurnToolCommand>>;
 
@@ -86,15 +50,10 @@ export interface TurnStreamDoc {
 }
 
 /**
- * The heartbeat's ownership signal, distinguishing a genuine loss from a
- * transient failure so a single Firestore blip can't kill a healthy turn:
- *   - `owned` : the doc is still ours + running (write landed).
- *   - `lost`  : the read SUCCEEDED and the turn genuinely no longer owns the
- *               doc (missing / turnId mismatch / already terminal) — a real
- *               supersede or stop. The runner must abort.
- *   - `error` : the transaction THREW (network blip, contention, outage) —
- *               ownership is INDETERMINATE; the runner keeps going (the next
- *               heartbeat re-checks) rather than aborting on a blip.
+ * Heartbeat ownership signal; tri-state so a Firestore blip can't kill a
+ * healthy turn. `owned` = write landed. `lost` = read succeeded and the doc is
+ * gone/mismatched/terminal (real supersede or stop) — runner must abort.
+ * `error` = the transaction threw, ownership indeterminate — keep going.
  */
 export type TurnOwnership = 'owned' | 'lost' | 'error';
 
@@ -129,18 +88,11 @@ export function generateTurnId(): string {
   return `turn_${crypto.randomBytes(18).toString('base64url')}`;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  internals                                                                 */
-/* -------------------------------------------------------------------------- */
-
 function streamRef(db: FirebaseFirestore.Firestore, chatId: string) {
   return db.collection('chats').doc(chatId).collection('stream').doc('current');
 }
 
-/**
- * Firestore rejects payloads containing nested `undefined`; a JSON round-trip
- * strips them (same pattern as the message serialization in useHoot.ts).
- */
+/** Firestore rejects nested `undefined`; a JSON round-trip strips it (as useHoot.ts does). */
 function jsonClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -154,31 +106,18 @@ export function _resetThrottleForTests(): void {
 }
 
 /**
- * Outcome of a turnId-guarded write. Distinguishes a genuine loss of ownership
- * from a transient transaction failure — collapsing both into `false` (the old
- * behavior) let a single network blip's `false` abort a healthy, still-owned
- * turn via the heartbeat:
- *   - `written`   : the doc still belongs to `turnId` AND is `running`; the
- *                   patch landed.
- *   - `not-owned` : the read SUCCEEDED and the doc is missing, superseded
- *                   (turnId mismatch), or already terminal — a live runner has
- *                   genuinely lost ownership (supersede OR stop/cancel).
- *   - `error`     : `runTransaction` THREW (blip / contention / outage). The
- *                   write did NOT land, but ownership is INDETERMINATE — this
- *                   is NOT genuine loss.
+ * Outcome of a turnId-guarded write. Tri-state, not boolean: collapsing
+ * `error` into `not-owned` let one network blip abort a healthy turn.
+ * `written` = doc still ours and running. `not-owned` = read succeeded, doc
+ * missing/mismatched/terminal. `error` = transaction threw, indeterminate.
  */
 type GuardedWriteOutcome = 'written' | 'not-owned' | 'error';
 
 /**
  * Transactionally run `applyWrite` iff the stream doc still belongs to `turnId`
- * AND is still `running`, reporting the tri-state outcome above. NEVER throws —
- * post-acquire writes must be safe to fire from the runner without wrapping.
- *
- * NOTE: `acquireTurnLock`'s claim uses `txn.set` directly (not this helper),
- * so a fresh claim over a terminal doc is unaffected. `finishTurn` is a
- * running→terminal transition, so the doc is still `running` at read time and
- * the write lands; a second terminal write then reports `not-owned`
- * (terminal→terminal).
+ * AND is still `running`. Never throws — the runner fires these unwrapped.
+ * `acquireTurnLock` bypasses this helper (`txn.set`) so a fresh claim over a
+ * terminal doc still works; a second terminal write reports `not-owned`.
  */
 async function guardedTurnWrite(
   db: FirebaseFirestore.Firestore,
@@ -201,9 +140,7 @@ async function guardedTurnWrite(
       return 'written';
     });
   } catch {
-    // The transaction threw — a lost snapshot/heartbeat is recoverable and a
-    // thrown error would kill the runner mid-turn. Report `error` (NOT
-    // `not-owned`) so a transient blip is never mistaken for genuine loss.
+    // `error`, never `not-owned`: a blip must not be read as genuine loss.
     return 'error';
   }
 }
@@ -220,22 +157,14 @@ function guardedTurnUpdate(
   });
 }
 
-/* -------------------------------------------------------------------------- */
-/*  lifecycle api                                                             */
-/* -------------------------------------------------------------------------- */
-
 /**
  * Claim the per-chat turn lock by (over)writing `stream/current` as a fresh
- * `running` doc. Rejects with `TurnActiveError` when another turn is running
- * with a fresh heartbeat, unless `meta.supersede` is set — the overwrite is
- * the supersede (the old runner's guarded writes no-op from then on). Stale
- * running docs (`updatedAt` older than TURN_STALE_MS — runner killed by a
- * deploy) are always claimable.
+ * `running` doc. Throws `TurnActiveError` when another turn is running with a
+ * fresh heartbeat unless `meta.supersede`. Stale running docs (older than
+ * TURN_STALE_MS — runner killed by a deploy) are always claimable.
  *
- * Returns the PRIOR doc's `toolCommands` recovery index (or `null` when there
- * was no prior doc) read inside the same transaction — so the caller never has
- * to issue a separate pre-lock `get()` (which would be a TOCTOU read against
- * the overwrite this claim performs).
+ * Returns the PRIOR `toolCommands` index, read in the same transaction: a
+ * separate pre-lock `get()` would be a TOCTOU read against this overwrite.
  */
 export async function acquireTurnLock(
   db: FirebaseFirestore.Firestore,
@@ -289,10 +218,9 @@ export async function acquireTurnLock(
 }
 
 /**
- * Persist the in-progress assistant UIMessage. Throttled to at most one
- * write per SNAPSHOT_THROTTLE_MS per chat; every accepted write bumps
- * `updatedAt`. No-ops (returns `false`) when throttled, superseded, or the
- * message can't be serialized — never throws.
+ * Persist the in-progress assistant UIMessage; at most one write per
+ * SNAPSHOT_THROTTLE_MS per chat. Returns `false` (never throws) when
+ * throttled, superseded, or unserializable.
  */
 export async function writeSnapshot(
   db: FirebaseFirestore.Firestore,
@@ -313,20 +241,14 @@ export async function writeSnapshot(
   }
 
   const outcome = await guardedTurnUpdate(db, chatId, turnId, { message: cloned });
-  // A transient `error` is treated the same as a skip here — the snapshot is
-  // best-effort and a later one recovers; only a landed write updates the
-  // throttle window.
+  // Snapshots are best-effort; only a landed write moves the throttle window.
   if (outcome === 'written') lastSnapshotWriteAt.set(chatId, now);
   return outcome === 'written';
 }
 
 /**
- * Heartbeat: bump `updatedAt` so a long tool poll (no new message content)
- * doesn't get declared stale. Not throttled — callers already pace it.
- *
- * Returns the tri-state ownership signal (see `TurnOwnership`): the runner
- * aborts on `lost` (genuine supersede/stop) but NOT on `error` (a transient
- * Firestore failure must not kill a healthy, still-owned turn).
+ * Heartbeat: bump `updatedAt` so a long tool poll isn't declared stale. Not
+ * throttled — callers pace it. Runner aborts on `lost`, never on `error`.
  */
 export async function touch(
   db: FirebaseFirestore.Firestore,
@@ -338,10 +260,9 @@ export async function touch(
 }
 
 /**
- * Record the `toolCallId → machineId → {commandId}` mapping the moment a tool
- * command is queued — the recovery index that lets a later turn splice in the
- * real agent result even if this runner dies. A site-wide tool call fans one
- * `toolCallId` out to many machines and calls this once per machine.
+ * Record `toolCallId → machineId → {commandId}` when a tool command is queued,
+ * so a later turn can splice in the real agent result if this runner dies.
+ * Called once per machine for a site-wide fan-out.
  */
 export async function recordToolCommand(
   db: FirebaseFirestore.Firestore,
@@ -352,13 +273,10 @@ export async function recordToolCommand(
   machineId: string,
 ): Promise<boolean> {
   const outcome = await guardedTurnWrite(db, chatId, turnId, (txn, ref) => {
-    // Use a FieldPath — NOT a dotted string `toolCommands.${toolCallId}.${machineId}`.
-    // Real machineIds contain hyphens (e.g. 'INF-PROJECTION-WALL'), which are
-    // invalid in Firestore's unquoted dotted field-path mini-language and would
-    // throw at runtime. FieldPath segments are taken literally, and this nested
-    // update replaces ONLY the `[toolCallId][machineId]` leaf — sibling machine
-    // entries under the same toolCallId are preserved (no last-write-wins across
-    // a site-wide fan-out).
+    // FieldPath, never a dotted string: machineIds contain hyphens (e.g.
+    // 'INF-PROJECTION-WALL'), invalid in Firestore's dotted path syntax and a
+    // runtime throw. Segments are literal, and only the [toolCallId][machineId]
+    // leaf is replaced, so sibling machines survive a site-wide fan-out.
     txn.update(
       ref,
       new FieldPath('toolCommands', toolCallId, machineId),
@@ -385,14 +303,10 @@ export async function finishTurn(
     status,
     ...(error !== undefined ? { error } : {}),
   });
-  // Only a landed terminal write reports ownership to the caller. A transient
-  // `error` here means the terminal write did NOT persist, so we must report
-  // `false` — otherwise the runner would proceed to write its final message
-  // array after a failed finalize (persist corruption). `not-owned` (a
-  // supersede won the doc) is likewise `false`.
+  // `error` must report false too: the terminal write did not persist, and the
+  // runner writing its final message array after a failed finalize corrupts it.
   const written = outcome === 'written';
-  // Owned terminal transition: the turn is over — drop its throttle bookkeeping
-  // so the map can't grow one stale entry per finished chat.
+  // Turn is over — drop throttle state so the map can't leak one entry per chat.
   if (written) lastSnapshotWriteAt.delete(chatId);
   return written;
 }

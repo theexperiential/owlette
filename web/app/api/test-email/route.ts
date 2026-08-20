@@ -15,9 +15,7 @@ const ADMIN_EMAIL = isProduction
   ? process.env.ADMIN_EMAIL_PROD
   : process.env.ADMIN_EMAIL_DEV;
 
-/* ------------------------------------------------------------------ */
-/*  Template types                                                     */
-/* ------------------------------------------------------------------ */
+/* Template types */
 
 export const EMAIL_TEMPLATES = [
   { id: 'test', label: 'test email', description: 'generic config verification' },
@@ -33,9 +31,7 @@ export const EMAIL_TEMPLATES = [
 
 export type EmailTemplateId = (typeof EMAIL_TEMPLATES)[number]['id'];
 
-/* ------------------------------------------------------------------ */
-/*  Sample data builders                                               */
-/* ------------------------------------------------------------------ */
+/* Sample data builders */
 
 function buildTemplateEmail(templateId: string): { subject: string; html: string } {
   const ts = emailTimestamp(new Date(), 'America/New_York');
@@ -263,9 +259,7 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
   }
 }
 
-/* ------------------------------------------------------------------ */
-/*  Route handler                                                      */
-/* ------------------------------------------------------------------ */
+/* Route handler */
 
 export async function POST(request: NextRequest) {
   try {

@@ -1,31 +1,24 @@
 /**
- * Built-in talon presets — the templates every site starts with.
+ * Built-in talon presets — the templates every site starts with. Plain data,
+ * merged client-side over `config/{siteId}/talon_presets`. CLIENT-SAFE: no
+ * server imports, no Firestore. Parallel to `@/lib/restartDefaults` et al.
  *
- * Parallel to `@/lib/restartDefaults`, `@/lib/scheduleDefaults` and
- * `@/lib/projectDistributionDefaults`: a plain data module, merged client-side
- * over the site's own `config/{siteId}/talon_presets` docs. CLIENT-SAFE — no
- * server imports, no Firestore — so the editor and the preset routes can both
- * read it.
+ * Every `template` goes straight to `validateTalonPresetInput`; templates.test.ts
+ * proves each passes. Ship nothing that does not.
  *
- * Every `template` here is fed straight to `validateTalonPresetInput`, and
- * `templates.test.ts` proves each one passes. Ship nothing that does not.
- *
- * Two rules, both load-bearing:
- *   - `name` is an IDENTITY. `builtInId()` derives `builtin-<slug>` from it, so
- *     renaming one orphans every site's override of it into the "custom"
- *     bucket. Change the description, never the name.
- *   - No `scope`, no `enabled`, and no `processId` on a command output — see
- *     `TalonPresetTemplate`. All three are per-site, per-instance decisions.
+ * Two load-bearing rules:
+ *   - `name` is IDENTITY — `builtInId()` derives `builtin-<slug>` from it, so a
+ *     rename orphans every site's override into the "custom" bucket.
+ *   - No `scope`, `enabled`, or command-output `processId`: all per-instance.
  */
 import type { TalonPresetRequirement, TalonPresetTemplate } from './types';
 
 /**
- * `requires` is machine-checked, not documentation: the test asserts that a
- * template declaring `process_target` fails validation on exactly that path,
- * and that one declaring nothing passes outright. `llm_key` is the author's own
- * key (`users/{uid}/settings/llm`) the store checks at create, update and
- * enable; `process_target` is a field the template deliberately leaves blank
- * because a process id does not travel between sites.
+ * `requires` is machine-checked: the test asserts a template declaring
+ * `process_target` fails validation on exactly that path. `llm_key` is the
+ * author's own key (`users/{uid}/settings/llm`), checked by the store on create,
+ * update and enable; `process_target` is left blank because a process id does
+ * not travel between sites.
  */
 export interface TalonTemplateDefinition {
   /** Deterministic `builtin-<slug>`, matching `useRestartPresets`' `builtInId()`. */
@@ -44,21 +37,18 @@ export interface TalonTemplateDefinition {
 const EVERY_DAY = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 
 /**
- * The wall-check expectation. The vision prompt already treats black screens,
- * the desktop, error dialogs and "no signal" cards as failures, so spelling
- * them out changes no behaviour — it is here because the operator reads and
- * edits this sentence, and a concrete one is easier to adapt than an abstract
- * one.
+ * Wall-check expectation. Redundant with the vision prompt, which already treats
+ * these as failures — spelled out because the operator reads and edits it.
  */
 const WALL_EXPECTATION =
   'the screen should be showing the content loop. it should not show the windows ' +
   'desktop or taskbar, an error dialog, a black or blank screen, or a "no signal" card.';
 
 /**
- * Cooldown convention. A cooldown is global to the TALON, not per machine, so a
- * fleet-wide event template with a long one silently drops the second machine's
- * event — those get 5 minutes. Schedule templates carry the 60-minute default,
- * which is inert for them (`nextRunAt` already spaces the runs).
+ * Cooldown is global to the TALON, not per machine, so a long one on a
+ * fleet-wide event template silently drops the second machine's event — hence 5
+ * minutes there. The 60-minute default is inert for schedules (`nextRunAt`
+ * already spaces those runs).
  */
 const EVENT_COOLDOWN_MINUTES = 5;
 const DEFAULT_COOLDOWN_MINUTES = 60;
@@ -96,9 +86,8 @@ export const BUILT_IN_TALON_PRESETS: TalonTemplateDefinition[] = [
       outputs: [
         {
           type: 'cortex',
-          // Deliberately forbids acting: this template does not opt into
-          // `allowActions`, so the turn only has read-only tools and an
-          // instruction to restart something would just fail confusingly.
+          // No `allowActions`, so the turn has read-only tools only — an
+          // instruction to restart anything would just fail confusingly.
           directive:
             'a monitored process just went down on this machine. work out why: check the ' +
             'windows event log around the crash, recent cpu, memory and gpu load, free disk ' +
@@ -126,10 +115,8 @@ export const BUILT_IN_TALON_PRESETS: TalonTemplateDefinition[] = [
       outputs: [
         {
           type: 'cortex',
-          // Every item maps to a tool an unattended (tier-1) turn actually has:
-          // get_disk_usage, get_event_logs, check_pending_reboot, and
-          // get_service_status for wuauserv. Nothing here asks for a tier-2+
-          // capability, so the report can never come back half-empty.
+          // Every item maps to a tier-1 tool the unattended turn actually has,
+          // so the report can never come back half-empty.
           directive:
             'write a short health report for this machine in plain language, for someone who ' +
             'is not a windows administrator. cover: free disk space on every drive, recent ' +
@@ -168,10 +155,8 @@ export const BUILT_IN_TALON_PRESETS: TalonTemplateDefinition[] = [
       trigger: {
         type: 'event',
         eventTypes: ['process_restarted'],
-        // The reason delays exist: a screenshot taken the instant a process
-        // restarts catches a splash screen, and a slow-starting show app reads
-        // as a failure. Three minutes is past that and well inside the window
-        // where a genuinely dead wall is still news.
+        // A screenshot taken the instant a process restarts catches a splash
+        // screen and reads as a failure; three minutes clears that.
         delayMinutes: 3,
       },
       condition: {
@@ -202,11 +187,9 @@ export const BUILT_IN_TALON_PRESETS: TalonTemplateDefinition[] = [
       outputs: [
         {
           type: 'cortex',
-          // Ships un-armed like every built-in: the tools this directive names
-          // (manage_windows_update, suppress_setup_screens) are tier 2, so the
-          // talon only fixes drift once a site admin turns on "let hoot act".
-          // The directive's first instruction makes the un-armed state
-          // self-explaining instead of a confusing half-failure.
+          // Ships un-armed: the tools named here are tier 2, so it only fixes
+          // drift once an admin turns on "let hoot act". The directive's first
+          // instruction makes that state self-explaining, not a half-failure.
           directive:
             'keep windows update and its setup screens from ever interrupting the exhibit. ' +
             'if the manage_windows_update and suppress_setup_screens tools are not available ' +

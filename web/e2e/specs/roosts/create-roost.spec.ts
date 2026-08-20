@@ -1,21 +1,12 @@
 /**
- * Roosts — create-roost dialog (task 1.1).
+ * Roosts — create-roost dialog: name validation, and POST /api/roosts writing
+ * the empty-shell doc that useRoosts renders reactively. No version push.
  *
- * Exercises (a) name validation in the new-roost dialog (empty +
- * whitespace-only keep submit disabled and surface the inline error)
- * and (b) POST /api/roosts writes the empty-shell roost doc with the
- * documented shape, dashboard reactively renders the new row via
- * useRoosts onSnapshot.
- *
- * data plane: none — empty shell, no version push.
- *
- * NOTE — UI gap: the dialog's submit gates on name + folder + target,
- * and the dashboard does NOT call `POST /api/roosts` today — the
- * upload pipeline at web/lib/roostUpload.ts only hits
- * `/api/roosts/{id}/versions`, which writes the roost as a side effect
- * of publishing v1. Test case B therefore drives `POST /api/roosts`
- * directly from the browser's authenticated session. Update once the
- * modal grows a "save without publishing" path.
+ * UI GAP: nothing in the dashboard calls `POST /api/roosts` today — the upload
+ * pipeline only hits `/api/roosts/{id}/versions`, which writes the roost as a
+ * side effect of publishing v1. The second case therefore drives the endpoint
+ * from the browser's authenticated session. Revisit if the modal grows a
+ * "save without publishing" path.
  */
 
 import { test, expect } from '@playwright/test';
@@ -53,25 +44,22 @@ test('submit stays disabled until the roost name is non-empty', async ({ page })
   await expect(dialog).toBeVisible();
 
   const nameInput = dialog.locator('#distribution-name');
-  // Submit's accessible name varies by selected-machine count.
+  // The accessible name varies with the selected-machine count.
   const submit = dialog.getByRole('button', { name: /^upload and distribute to \d+ machines?$/i });
 
-  // Empty name → disabled, no inline error (error only renders once the
-  // user has typed and then cleared back to whitespace).
+  // Empty: disabled, and no inline error until the user types then clears.
   await expect(nameInput).toHaveValue('');
   await expect(submit).toBeDisabled();
   await expect(dialog.getByText('roost name is required')).toBeHidden();
 
-  // Whitespace-only → still disabled, AND inline error fires because the
-  // value is non-empty but trim() === ''. aria-invalid flips to true.
+  // Whitespace-only: non-empty but trim() === '', so the error does fire.
   await nameInput.fill(' ');
   await expect(submit).toBeDisabled();
   await expect(dialog.getByText('roost name is required')).toBeVisible();
   await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
 
-  // Real name clears the inline error. Submit remains disabled because
-  // the dialog also gates on a target machine + dropped folder, but
-  // those gates live in separate specs (new-version / upload-gated).
+  // Still disabled: the dialog also gates on a target machine and a dropped
+  // folder, both covered by separate specs.
   await nameInput.fill('test-roost-name-only');
   await expect(dialog.getByText('roost name is required')).toBeHidden();
   await expect(nameInput).toHaveAttribute('aria-invalid', 'false');
@@ -83,8 +71,7 @@ test('POST /api/roosts creates an empty roost shell and the dashboard refreshes'
 
   const roostName = `test-roost-${Date.now()}`;
 
-  // Drive POST /api/roosts from the browser's authenticated session — see
-  // the spec's leading NOTE on why we don't go through the dialog submit.
+  // Direct call — see the UI GAP note at the top.
   const responsePromise = page.waitForResponse(
     (res) =>
       res.url().endsWith('/api/roosts') && res.request().method() === 'POST',
@@ -107,7 +94,7 @@ test('POST /api/roosts creates an empty roost shell and the dashboard refreshes'
   const newRoostId = result.body.roostId as string;
   expect(newRoostId).toMatch(/^rst_[a-f0-9]{18}$/);
 
-  // Firestore shape — the empty-shell contract from web/app/api/roosts/route.ts.
+  // The empty-shell contract from web/app/api/roosts/route.ts.
   const db = getAdminDb();
   const snap = await db
     .collection('sites').doc(SITE_ID).collection('roosts').doc(newRoostId).get();
@@ -120,9 +107,9 @@ test('POST /api/roosts creates an empty roost shell and the dashboard refreshes'
   expect(data.currentVersionId ?? null).toBeNull();
   expect(data.createdBy).toBe(TEST_USERS.admin.uid);
 
-  // Dashboard reacts via useRoosts onSnapshot — the new row materializes.
+  // useRoosts onSnapshot materializes the row.
   const newRow = page.locator(`[data-roost-row="${newRoostId}"]`);
   await expect(newRow).toContainText(roostName);
-  // No version published → version badge is absent.
+  // No version published, so no version badge.
   await expect(newRow.locator('[aria-label^="current version"]')).toHaveCount(0);
 });

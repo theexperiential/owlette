@@ -1,19 +1,8 @@
 """``roost.installer`` — agent installer binary management (superadmin).
 
-Drives the wave-1B routes:
-
-  GET    /api/installer
-  GET    /api/installer/latest
-  POST   /api/installer/upload          — request signed upload url
-  PUT    /api/installer/upload          — finalize upload (verify + write metadata)
-  POST   /api/installer/{version}/set-latest
-  DELETE /api/installer/{version}
-
-``upload()`` is the canonical 3-step flow: it asks the server for a
-signed PUT url, streams the binary up to that url, then PUTs back the
-finalize call. The same ``Idempotency-Key`` is used on both server API
-calls so request/finalize retries replay cleanly while the signed upload URL
-is still valid.
+Wraps ``/api/installer*``. ``upload()`` is the canonical 3-step flow: request a
+signed PUT url, stream the binary to it, finalize. One ``Idempotency-Key``
+spans request+finalize so retries replay while the signed url is still valid.
 """
 
 from __future__ import annotations
@@ -63,13 +52,11 @@ def _parse_version(raw: dict[str, Any]) -> InstallerVersion:
 
 
 class Installer:
-    """Installer binary metadata + upload flow (wave 1B, superadmin-only)."""
+    """Installer binary metadata + upload flow (superadmin-only)."""
 
     def __init__(self, client: "RoostClient") -> None:
         self._client = client
-        # Test hook — assign an httpx.AsyncBaseTransport instance to route
-        # the signed-url PUT through a MockTransport. Production code never
-        # touches this.
+        # Test hook: set an httpx.AsyncBaseTransport to intercept the signed-url PUT.
         self._upload_transport: httpx.AsyncBaseTransport | None = None
 
     async def list(
@@ -117,14 +104,9 @@ class Installer:
         set_as_latest: bool = True,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Upload an installer binary in 3 steps:
+        """Upload an installer binary: POST for a signed url → PUT bytes → PUT finalize.
 
-        1. POST /api/installer/upload  → signed PUT url + uploadId
-        2. PUT  <signed url>           → binary bytes
-        3. PUT  /api/installer/upload  → finalize (server verifies + writes metadata)
-
-        Same ``Idempotency-Key`` is used on the POST + finalize PUT so
-        server-side retries replay while the signed upload URL is still valid.
+        One ``Idempotency-Key`` covers the POST and the finalize PUT.
         """
         path = Path(file_path)
         binary = path.read_bytes()
@@ -134,7 +116,7 @@ class Installer:
 
         idem = idempotency_key or f"py-sdk-installer-upload-{uuid.uuid4()}"
 
-        # ── step 1: request signed upload url ─────────────────────────────
+        # step 1: request signed upload url
         start_body: dict[str, Any] = {
             "version": version,
             "fileName": file_name,
@@ -156,10 +138,8 @@ class Installer:
             msg = "installer.upload: server response missing uploadUrl or uploadId"
             raise RuntimeError(msg)
 
-        # ── step 2: PUT binary to signed url (no auth header) ─────────────
-        # We use a one-shot httpx.AsyncClient so we don't pollute the SDK
-        # client's default Authorization / Roost-Version headers — the
-        # signed url is pre-authenticated and rejects extra headers.
+        # step 2: PUT bytes. One-shot client so the SDK's Authorization /
+        # Roost-Version headers don't leak — the signed url rejects extras.
         client_kwargs: dict[str, Any] = {}
         if self._upload_transport is not None:
             client_kwargs["transport"] = self._upload_transport
@@ -179,7 +159,7 @@ class Installer:
             )
             raise RuntimeError(msg)
 
-        # ── step 3: finalize ──────────────────────────────────────────────
+        # step 3: finalize
         finalize_resp = await self._client.request(
             "/api/installer/upload",
             method="PUT",
@@ -208,8 +188,7 @@ class Installer:
         *,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        # Preserve a resource-specific prefix rather than the core client's
-        # generic py-sdk DELETE key.
+        # Resource-specific prefix, not the core client's generic py-sdk key.
         idem = idempotency_key or f"py-sdk-installer-delete-{uuid.uuid4()}"
         resp = await self._client.request(
             f"/api/installer/{version}",

@@ -403,33 +403,24 @@ describe('withIdempotency wrapper', () => {
   });
 
   /**
-   * KNOWN BUG (round-1 audit, unfixed): idempotency.ts line ~138-140 reads
-   * the cache doc and proceeds when missing. Two parallel requests with the
-   * same key both observe `exists: false` (the first hasn't written yet)
-   * and both fall through to `proceed`, both run the handler, and both
-   * persist a cache entry. The second cache write clobbers the first.
-   *
-   * Fix would be a Firestore transaction in checkIdempotency that reads +
-   * creates a sentinel "in-flight" doc, with the second concurrent call
-   * either replaying once the sentinel is committed or returning 409.
-   *
-   * Skipping until the fix lands. The test below exercises the race and
-   * SHOULD fail today (handler called twice).
+   * KNOWN BUG (unfixed): checkIdempotency reads the cache doc and proceeds when missing, so
+   * two parallel requests with the same key both see `exists: false`, both run the handler,
+   * and the second cache write clobbers the first. Fix is a transaction that reads and creates
+   * an "in-flight" sentinel, with the second call replaying or returning 409.
+   * Skipped until then — this test exercises the race and SHOULD fail today.
    */
   it.skip('TWO parallel calls with same key invoke the handler exactly ONCE [KNOWN UNFIXED RACE — idempotency.ts:138]', async () => {
-    // Both parallel reads see "not exists" until the first save runs.
+    // Both parallel reads see "not exists" until the first save lands.
     let getCallCount = 0;
     mocks.get.mockImplementation(async () => {
       getCallCount++;
-      // Both initial reads see no cache hit (race window).
       return { exists: false };
     });
 
     let handlerInvocations = 0;
     const handler = jest.fn(async () => {
       handlerInvocations++;
-      // Simulate handler taking some time so the parallel call is
-      // definitely in flight when we resolve.
+      // Slow the handler so the parallel call is definitely in flight.
       await new Promise((resolve) => setTimeout(resolve, 10));
       return NextResponse.json({ ok: true, n: handlerInvocations }, { status: 201 });
     });
@@ -439,10 +430,9 @@ describe('withIdempotency wrapper', () => {
       withIdempotency(reqWithKey('idem-race'), CTX, '{"a":1}', handler),
     ]);
 
-    // The actual contract we WANT once the race is fixed:
     expect(handlerInvocations).toBe(1);
-    // Both responses should reflect the SAME run result (the second is
-    // replayed from cache, with header Idempotent-Replayed:true).
+    // Once fixed: both responses reflect the same run, the second replayed from cache with
+    // Idempotent-Replayed:true.
     const replayedHeader = [a, b].map((r) => r.headers.get('Idempotent-Replayed'));
     expect(replayedHeader.filter((h) => h === 'true').length).toBe(1);
 

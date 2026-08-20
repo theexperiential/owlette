@@ -1,16 +1,10 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/auditLog.server.ts`.
- *
- * NOTE on test infra: wave 1.7 sets up the firestore-emulator harness
- * (`__tests__/rules/harness.ts`). Until that lands, these tests run
- * against a hand-rolled mock of `getAdminDb` so they can ship now and
- * unblock the rest of wave 1. The mock mirrors the same set/doc/collection
- * surface the writer touches; once 1.7 is in, this file should be
- * upgraded to drive a real emulator instance — the public assertions
- * (write happens at the right path, payload shape, kill-switch warn,
- * fire-and-forget vs blocking semantics) are emulator-portable as-is.
+ * Unit tests for `web/lib/auditLog.server.ts`, driven through a hand-rolled
+ * `getAdminDb` mock covering the set/doc/collection surface the writer touches.
+ * The assertions are emulator-portable, so this can move onto
+ * `__tests__/rules/harness.ts` unchanged.
  */
 
 import {
@@ -23,11 +17,10 @@ import {
   type AuditActor,
 } from '@/lib/auditLog.server';
 
-// --- mocks ----------------------------------------------------------------
+// mocks
 
-// Capture every call to .set() with the path it was made on so each test can
-// assert (a) the doc lives under the right site, (b) the right collection,
-// and (c) the payload shape.
+// Capture every .set() with its path so tests can assert site, collection and
+// payload shape.
 type SetCall = { path: string; payload: Record<string, unknown> };
 const setCalls: SetCall[] = [];
 let setShouldReject: Error | null = null;
@@ -57,8 +50,8 @@ function makeDoc(path: string): unknown {
   };
 }
 
-// Sentinel marker so we can recognise a serverTimestamp() field-value in the
-// captured payload without depending on the real firebase-admin internals.
+// Sentinel so a serverTimestamp() field-value is recognisable without depending
+// on firebase-admin internals.
 const SERVER_TIMESTAMP_SENTINEL = '__serverTimestamp__';
 
 jest.mock('firebase-admin/firestore', () => ({
@@ -90,7 +83,7 @@ beforeEach(() => {
   infoSpy.mockClear();
 });
 
-// --- helpers --------------------------------------------------------------
+// helpers
 
 const SITE = 'site-a';
 
@@ -120,7 +113,7 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-// --- generateCorrelationId ------------------------------------------------
+// generateCorrelationId
 
 describe('generateCorrelationId', () => {
   it('returns a 22-char hex string', () => {
@@ -135,7 +128,7 @@ describe('generateCorrelationId', () => {
   });
 });
 
-// --- writeAuditEntryBlocking ---------------------------------------------
+// writeAuditEntryBlocking
 
 describe('writeAuditEntryBlocking', () => {
   it('writes to sites/{siteId}/audit_log/{entryId}', async () => {
@@ -278,7 +271,7 @@ describe('writeAuditEntryBlocking', () => {
   });
 });
 
-// --- writeAuditEntry (fire-and-forget) -----------------------------------
+// writeAuditEntry (fire-and-forget)
 
 describe('writeAuditEntry (fire-and-forget)', () => {
   it('returns void synchronously', () => {
@@ -314,7 +307,7 @@ describe('writeAuditEntry (fire-and-forget)', () => {
   });
 });
 
-// --- correlationId stability across related writes -----------------------
+// correlationId stability across related writes
 
 describe('correlationId stability', () => {
   it('the same correlationId can be reused across multiple audit writes', async () => {
@@ -330,7 +323,7 @@ describe('correlationId stability', () => {
   });
 });
 
-// --- ttl cleanup placeholder ---------------------------------------------
+// ttl cleanup placeholder
 
 describe('cleanupExpiredAuditEntries (placeholder)', () => {
   it('logs the deferred-implementation marker and resolves', async () => {

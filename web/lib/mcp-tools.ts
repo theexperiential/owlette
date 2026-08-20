@@ -1,14 +1,9 @@
 /**
- * MCP Tool definitions for the Owlette chat interface.
+ * MCP tool definitions, shared by the chat API route (as model tool defs) and
+ * the chat UI (for tool-call cards).
  *
- * These schemas are shared between:
- * - The chat API route (passed to Claude/OpenAI as tool definitions)
- * - The chat UI (for rendering tool call cards)
- *
- * Tools are organized into tiers:
- * - Tier 1: Read-only (auto-approved)
- * - Tier 2: Process management (auto-approved, wraps existing commands)
- * - Tier 3: Privileged (require user confirmation in chat UI)
+ * Tier 1 read-only and tier 2 process management are auto-approved; tier 3 is
+ * privileged and requires in-chat user confirmation.
  */
 
 export type ToolTier = 1 | 2 | 3;
@@ -30,7 +25,7 @@ export interface McpToolDefinition {
   };
 }
 
-// ─── Tier 1: Read-Only Tools ────────────────────────────────────────────────
+// Tier 1: Read-Only Tools
 
 const tier1Tools: McpToolDefinition[] = [
   {
@@ -234,7 +229,7 @@ const tier1Tools: McpToolDefinition[] = [
   },
 ];
 
-// ─── Tier 2: Process Management ─────────────────────────────────────────────
+// Tier 2: Process Management
 
 const processScheduleBlocksSchema = {
   type: 'object',
@@ -316,13 +311,10 @@ const processConfigFields: McpToolDefinition['parameters']['properties'] = {
 };
 
 /**
- * One entry of a talon's `outputs` array, as JSON Schema.
- *
- * Field names are the talon wire names (`commandType`, `directive`) — this is
- * handed straight to `validateTalonInput`, which rejects unknown top-level
- * fields, so the tool schema and the validator must agree exactly. Declared
- * out here because `McpToolDefinition` only types `items` as `unknown`; the
- * nested shape lives in the data, not the type.
+ * One entry of a talon's `outputs` array, as JSON Schema. Field names are the
+ * talon WIRE names — this goes straight to `validateTalonInput`, which rejects
+ * unknown top-level fields, so schema and validator must agree exactly.
+ * Declared out here because `McpToolDefinition` types `items` as `unknown`.
  */
 const talonOutputItemSchema = {
   type: 'object',
@@ -1050,7 +1042,7 @@ LIMITS: 20 talons per site. name 80 characters or fewer, description 500 or fewe
   },
 ];
 
-// ─── Tier 3: Privileged Tools ───────────────────────────────────────────────
+// Tier 3: Privileged Tools
 
 const tier3Tools: McpToolDefinition[] = [
   {
@@ -1294,8 +1286,6 @@ WHEN TO ASK THE USER:
   },
 ];
 
-// ─── Exports ────────────────────────────────────────────────────────────────
-
 export const allTools: McpToolDefinition[] = [
   ...tier1Tools,
   ...tier2Tools,
@@ -1310,10 +1300,7 @@ export function getToolByName(name: string): McpToolDefinition | undefined {
   return allTools.find((t) => t.name === name);
 }
 
-/**
- * Convert our tool definitions to the format expected by the Vercel AI SDK.
- * The AI SDK uses a slightly different schema format.
- */
+/** Convert to the Vercel AI SDK's schema format. */
 export function toAISDKTools(tools: McpToolDefinition[]) {
   const result: Record<string, { description: string; parameters: unknown }> = {};
   for (const tool of tools) {
@@ -1325,18 +1312,13 @@ export function toAISDKTools(tools: McpToolDefinition[]) {
   return result;
 }
 
-/**
- * Check if a tool requires user confirmation before execution.
- */
+/** Does this tool require user confirmation before execution? */
 export function requiresConfirmation(toolName: string): boolean {
   const tool = getToolByName(toolName);
   return tool ? tool.tier >= 3 : true; // Unknown tools require confirmation
 }
 
-/**
- * Tier 2 tools that map to existing Owlette command types.
- * These are handled directly by the existing command system, not mcp_tools.py.
- */
+/** Tier 2 tools handled by the existing command system, not mcp_tools.py. */
 export const EXISTING_COMMAND_MAPPINGS: Record<string, string> = {
   restart_process: 'restart_process',
   kill_process: 'kill_process',

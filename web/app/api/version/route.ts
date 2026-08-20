@@ -1,17 +1,9 @@
-/**
- * GET /api/version
- *     → The roost api version catalog. Unauthenticated — safe for clients
- *       to probe before they've provisioned a key.
- *
- * roost public api wave 3.9.
- */
+/** GET /api/version — the roost api version catalog. Unauthenticated, so clients can probe
+ * before provisioning a key. */
 import { NextResponse } from 'next/server';
 
-/**
- * Current dated version string. Bump on every breaking shape change, not
- * on additive changes. Coordinate with the `Roost-Version` request-header
- * middleware (task 3.11) so clients can pin exactly.
- */
+/** Bump on breaking shape changes only, never additive ones, and in step with the
+ * `Roost-Version` request-header middleware so clients can pin exactly. */
 export const CURRENT_ROOST_VERSION = '2026-04-22';
 
 /** Versions the server currently accepts in `Roost-Version` headers. */

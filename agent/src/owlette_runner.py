@@ -14,33 +14,26 @@ import threading
 import time
 import signal
 
-# Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import shared_utils
 
-# Global reference to service instance for signal handler
+# read by signal_handler and the console control handler
 _service_instance = None
 
 def signal_handler(signum, frame):
     """Handle Ctrl+C and other termination signals.
 
-    NSSM used to deliver a stop this way — by attaching to the application's
-    console and generating a Control-C event, then terminating the process tree
-    ~4.5s later whether or not the event was ever delivered. It was therefore
-    best-effort, and on 2026-08-13 it silently was not delivered at all: the
-    machine was terminated without flushing presence and sat on the dashboard as
-    online. owlette-host does not attempt that trick; it reports STOP_PENDING and
-    waits, which is what the SCM stop watcher below is looking for.
-
-    This handler stays for every other source of a console event — an operator
-    running the runner by hand, a system shutdown, Ctrl+Break — and the real work
-    lives in OwletteService.graceful_shutdown(), which the SCM stop watcher calls
-    as well: whichever notices the stop first does it, exactly once.
+    Not the service-stop path: owlette-host reports STOP_PENDING and waits, which
+    the SCM stop watcher below picks up. (NSSM's Control-C trick was best-effort
+    and on 2026-08-13 silently never fired — the machine was killed without
+    flushing presence and sat on the dashboard as online.) This covers every other
+    console event: manual runs, system shutdown, Ctrl+Break. Real work is in
+    OwletteService.graceful_shutdown(), which both callers share — first one wins,
+    exactly once.
     """
     global _service_instance
 
-    # Log to both logger and stderr for visibility
     try:
         sig_name = signal.Signals(signum).name
     except (ValueError, AttributeError):
@@ -50,7 +43,6 @@ def signal_handler(signum, frame):
     logging.critical(msg)
     print(msg, file=sys.stderr, flush=True)
 
-    # Check if service instance exists
     if _service_instance is None:
         logging.critical("[SIGNAL HANDLER] ERROR: _service_instance is None - cannot perform graceful shutdown")
         print("[SIGNAL HANDLER] ERROR: _service_instance is None", file=sys.stderr, flush=True)
@@ -66,10 +58,9 @@ def signal_handler(signum, frame):
         logging.error(f"[SIGNAL HANDLER] graceful_shutdown failed: {e}")
         print(f"[SIGNAL HANDLER] graceful_shutdown failed: {e}", file=sys.stderr, flush=True)
 
-    # Exit immediately — the shutdown work is done and the host is waiting.
+    # the host is waiting on us
     sys.exit(0)
 
-# Initialize Firebase and Auth imports
 FIREBASE_AVAILABLE = False
 FIREBASE_IMPORT_ERROR = None
 try:
@@ -80,41 +71,36 @@ except ImportError as e:
     FIREBASE_IMPORT_ERROR = str(e)
 
 if __name__ == '__main__':
-    # Initialize logging
     log_level = shared_utils.get_log_level_from_config()
     shared_utils.initialize_logging("service", level=log_level)
 
-    # Initialize Sentry error monitoring (after logging, before exception hooks)
+    # after logging, before the exception hooks
     import sentry_utils
     sentry_utils.initialize_sentry(shared_utils.read_config(), shared_utils.APP_VERSION)
 
-    # Wire global exception hooks (after logging is configured)
     from owlette_service import _handle_unhandled_exception, _handle_thread_exception
     sys.excepthook = _handle_unhandled_exception
     threading.excepthook = _handle_thread_exception
 
     logging.info("Running under owlette-host (not win32serviceutil)")
 
-    # Import the OwletteService class just to access its main() method
     from owlette_service import OwletteService
 
-    # Create a minimal mock service object with just what main() needs
+    # Mirrors OwletteService.__init__ — every new self.* attribute there MUST be
+    # added here too or the runner dies with AttributeError under the host.
     class MockService:
         def __init__(self):
             self._service_start_time = time.time()
 
-            # Initialize results file if it doesn't exist
             import os
             if not os.path.exists(shared_utils.RESULT_FILE_PATH):
                 from owlette_service import Util
                 Util.initialize_results_file()
                 logging.info("Initialized new app_states.json file")
 
-            # Upgrade config to latest version
             logging.info(f"Config path: {shared_utils.CONFIG_PATH}")
             shared_utils.upgrade_config()
 
-            # --- STARTUP HEALTH PROBE ---
             try:
                 from health_probe import HealthProbe
                 _api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
@@ -132,17 +118,12 @@ if __name__ == '__main__':
             self._auth_manager = None
             self._api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
 
-            # Initialize all attributes from OwletteService.__init__
             self.is_alive = True
             self._restart_exit_code = 0
             self.tray_icon_pid = None
-            # Reboot-prompt suppression deadline (mirror OwletteService.__init__);
-            # without it reached_max_relaunch_attempts raises AttributeError the
-            # first time a process exceeds its relaunch budget under the host.
+            # reboot-prompt suppression deadline; read by reached_max_relaunch_attempts
             self._restart_prompt_until = 0.0
-            # "desktop app not found" log de-spam flag (mirror
-            # OwletteService.__init__); launch_desktop_app_as_user reads it on
-            # the very first tray launch attempt, which happens here too.
+            # "desktop app not found" log de-spam; read by launch_desktop_app_as_user
             self._desktop_exe_missing_logged = False
             self.relaunch_attempts = {}
             self.first_start = True
@@ -158,10 +139,7 @@ if __name__ == '__main__':
             self._skip_launch_delay = set()
             self._last_seen_launch_modes = {}
             self._last_seen_launch_schedules = {}
-            # Per-process launch locks (mirror OwletteService.__init__).
-            # handle_process_launch and kill_and_relaunch_process take these on
-            # every launch — without them the runner dies with AttributeError
-            # the first time it starts a process.
+            # taken by handle_process_launch / kill_and_relaunch_process on every launch
             self._launch_locks = {}
             self._launch_locks_guard = threading.Lock()
             self._cached_site_timezone = None
@@ -171,20 +149,17 @@ if __name__ == '__main__':
             self._display_check_counter = 0
             self._cached_display_hash = None
             self._cached_display_profile = None
-            # Auto-restore drift-persistence gate (mirror OwletteService.__init__).
+            # auto-restore drift-persistence gate
             self._drift_pending_tick_count = 0
             self._shutting_down = False
             self._live_view_active = False
             self._live_view_stop_time = 0
             self.cortex_pid = None
-            # roost periodic scrub state (mirror OwletteService.__init__).
-            # without these the main-loop scrub hook crashes with AttributeError.
+            # roost periodic scrub state, read by the main-loop scrub hook
             self._roost_scrub_check_counter = 0
             self._roost_scrub_thread = None
 
-            # CommandRouter for roost v2 handlers (mirror OwletteService.__init__).
-            # MUST be set up here too — handle_firebase_command checks
-            # self._command_router.has_handler() before falling through.
+            # handle_firebase_command checks has_handler() before falling through
             from command_router import CommandRouter
             self._command_router = CommandRouter()
             try:
@@ -202,27 +177,18 @@ if __name__ == '__main__':
                 _register_process_handlers(self._command_router)
             except Exception as e:
                 logging.warning(f"Failed to register process-control handlers: {e}")
-            # Throttle state for _write_service_status() — OwletteService has
-            # a hasattr() guard, but mirror here so the safety net never has
-            # to fire under the host.
+            # _write_service_status() throttle (OwletteService's hasattr guard is a backstop)
             self._last_status_signature = None
             self._last_status_write_time = 0.0
-            # Case-4 recovery throttle (mirror OwletteService.__init__).
-            # The main loop reads it whenever Firebase is enabled but no
-            # running client is serving it.
+            # case-4 recovery throttle: Firebase enabled but no running client
             self._firebase_reinit_not_before = 0.0
-            # Once-only guard for graceful_shutdown() (mirror
-            # OwletteService.__init__). The console control handler and the SCM
-            # stop watcher both call it for the same stop; without the lock and
-            # the trigger marker they would race the Firestore offline write and
-            # log agent_stopped twice.
+            # Once-only guard: the console handler and the SCM stop watcher both fire
+            # on one stop and would otherwise double-write offline / agent_stopped.
             self._shutdown_lock = threading.Lock()
             self._shutdown_trigger = None
-            # ConnectionManager the status-file listener is bound to (mirror
-            # OwletteService.__init__), so a Firebase re-init re-wires it.
+            # ConnectionManager the status-file listener is bound to; re-wired on Firebase re-init
             self._connection_status_manager = None
 
-            # Initialize Firebase client
             self.firebase_client = None
             logging.info(f"Firebase check - Available: {FIREBASE_AVAILABLE}")
 
@@ -244,18 +210,13 @@ if __name__ == '__main__':
                         logging.info(f"Firebase config - site_id: {site_id}, project_id: {project_id}")
                         logging.info(f"Firebase API base: {api_base}")
 
-                        # Network-ready gate. A cold boot reaches service start
-                        # before the NIC has a route; constructing AuthManager /
-                        # FirebaseClient in that window burns the first token
-                        # refresh and arms a backoff for nothing. Bounded (90s)
-                        # and non-fatal — we always proceed.
+                        # Cold boot reaches service start before the NIC has a route;
+                        # building AuthManager there burns the first token refresh and
+                        # arms a backoff for nothing. Bounded 90s, non-fatal.
                         try:
                             from health_probe import wait_for_network, reprobe_if_network_error
                             if wait_for_network(api_base or self._api_base):
-                                # The startup probe ran before this gate, so on
-                                # a cold boot its network_error verdict predates
-                                # the NIC coming up. Refresh it so the early
-                                # status write below publishes the truth.
+                                # the probe's network_error verdict predates the NIC; refresh it
                                 self._health_state = reprobe_if_network_error(
                                     self._health_state,
                                     shared_utils.CONFIG_PATH,
@@ -264,7 +225,6 @@ if __name__ == '__main__':
                         except Exception as e:
                             logging.warning(f"Network gate error (proceeding anyway): {e}")
 
-                        # Initialize AuthManager
                         auth_manager = AuthManager(api_base=api_base)
 
                         if not auth_manager.is_authenticated():
@@ -288,37 +248,32 @@ if __name__ == '__main__':
             logging.info("Service initialization complete")
 
     try:
-        # Create mock service with required attributes FIRST
-        # (before registering signal handlers so they can access it)
+        # before the signal handlers, which need _service_instance
         mock_service = MockService()
 
-        # Borrow the main() method from OwletteService
-        # We need to bind it to our mock service instance
+        # bind OwletteService.main() to the mock instance
         _service_instance = object.__new__(OwletteService)
         _service_instance.__dict__.update(mock_service.__dict__)
 
-        # Write early health status so tray can show alerts before Firebase connects
+        # so the tray can show alerts before Firebase connects
         try:
             _service_instance._write_service_status_early()
         except Exception as e:
             logging.error(f"Failed to write early service status: {e}")
 
-        # The Firebase client reached CONNECTED inside MockService above, before
-        # anything was listening. Wire the listener and publish that state now
-        # rather than leaving the tray's badge red until main() gets here.
+        # The client reached CONNECTED inside MockService with nobody listening;
+        # publish it now or the tray badge stays red until main() gets here.
         try:
             _service_instance._wire_connection_status_listener()
         except Exception as e:
             logging.error(f"Failed to wire the connection status listener: {e}")
 
-        # NOW register signal handlers (after _service_instance exists)
         signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
         signal.signal(signal.SIGTERM, signal_handler)  # Termination request
         signal.signal(signal.SIGBREAK, signal_handler) # Ctrl+Break (Windows)
         logging.info("Signal handlers registered for graceful shutdown")
 
-        # On Windows a console stop arrives as a console control event, not a
-        # POSIX signal, so register a Windows console control handler too.
+        # a Windows console stop is a control event, not a POSIX signal
         if sys.platform == 'win32':
             try:
                 import win32api
@@ -335,7 +290,6 @@ if __name__ == '__main__':
                     logging.critical(f"[WINDOWS HANDLER] Received {ctrl_name}")
                     print(f"[WINDOWS HANDLER] Received {ctrl_name}", file=sys.stderr, flush=True)
 
-                    # Call the same cleanup logic
                     signal_handler(ctrl_type, None)
                     return True  # Indicate we handled it
 
@@ -346,10 +300,8 @@ if __name__ == '__main__':
             except Exception as e:
                 logging.error(f"Failed to register Windows control handler: {e}")
 
-        # The console handler above covers console events. This is the signal
-        # that cannot be missed: owlette-host reports STOP_PENDING the moment a
-        # stop is accepted and then waits 20s for this process to exit on its
-        # own, so the watcher below always gets there first.
+        # The stop that cannot be missed: owlette-host reports STOP_PENDING on
+        # accept and waits 20s for us to exit, so this watcher always gets there first.
         try:
             _service_instance.start_scm_stop_watcher()
         except Exception as e:
@@ -358,20 +310,15 @@ if __name__ == '__main__':
         logging.info("Starting main service loop...")
         _service_instance.main()
 
-        # Check if service requested a restart (exit code 42/43 — the host
-        # relaunches immediately on either; see agent/host/src/supervisor.rs)
+        # 42/43 = the host relaunches immediately (agent/host/src/supervisor.rs)
         exit_code = getattr(_service_instance, '_restart_exit_code', 0)
 
-        # Cleanup before exiting
         logging.info("Main loop exited - performing cleanup...")
         if _service_instance.firebase_client:
-            # Only stop if still running (main()'s finally block and the signal
-            # handler both stop it first on their respective paths — this is the
-            # fallback for when one of them failed part-way through).
+            # fallback: main()'s finally and the signal handler normally stop it first
             if hasattr(_service_instance.firebase_client, 'running') and _service_instance.firebase_client.running:
                 try:
-                    # Owlette-initiated restart (42/43) comes straight back —
-                    # skip the offline flush so presence doesn't flap.
+                    # a 42/43 restart comes straight back; skip the offline flush so presence doesn't flap
                     _service_instance.firebase_client.stop(intentional=bool(exit_code))
                     logging.info("Firebase client stopped")
                 except Exception as e:

@@ -1,31 +1,22 @@
 #!/usr/bin/env node
 /**
- * Firestore Rules Matrix Test — three-role permission model
+ * Firestore rules matrix for the member / admin / superadmin model, across
+ * every collection the permission split touched:
  *
- * Exercises the full member / admin / superadmin matrix against every
- * collection the permission-model-split touched (waves 0.2.1–0.2.3):
+ *   sites/{siteId}                        read canAccessSite
+ *   sites/{siteId}/settings/{id}          read canAccessSite, write isSiteAdmin
+ *   sites/{siteId}/webhooks/{id}          read canAccessSite, write isSiteAdmin
+ *   users/{userId}                        read self|superadmin, write superadmin;
+ *                                         self-update ok but role/email/sites frozen
+ *   installer_metadata/{doc}              read public, write isSuperadmin
+ *   system_presets/{presetId}             read authed, write isSuperadmin
  *
- *   - sites/{siteId}                          read gated by canAccessSite
- *   - sites/{siteId}/settings/{settingId}     read canAccessSite, write isSiteAdmin
- *   - sites/{siteId}/webhooks/{webhookId}     read canAccessSite, write isSiteAdmin
- *   - users/{userId}                          read self|superadmin, write superadmin,
- *                                             self-update allowed but role/email/sites frozen
- *   - installer_metadata/{doc}                read public, write isSuperadmin
- *   - system_presets/{presetId}               read authenticated, write isSuperadmin
- *
- * Run via firebase emulators:exec so the emulator lifecycle is managed:
+ * Needs a managed emulator lifecycle:
  *
  *   firebase emulators:exec --only firestore --project demo-permission-split \
  *     'node scripts/test-rules.mjs'
  *
- * Seeds:
- *   users/member-uid   { role: 'member',     sites: ['site-A'] }
- *   users/admin-uid    { role: 'admin',      sites: ['site-A'] }
- *   users/super-uid    { role: 'superadmin', sites: [] }
- *   sites/site-A       { owner: 'someone-else' }
- *   sites/site-B       { owner: 'someone-else' }
- *
- * Exits non-zero on any divergence from the plan's success criteria.
+ * Exits non-zero on any divergence.
  */
 
 import { createRequire } from 'module';
@@ -42,8 +33,7 @@ const { doc, getDoc, setDoc } = require('firebase/firestore');
 
 const { initializeTestEnvironment, assertFails, assertSucceeds } = rulesUnit;
 
-// ---- setup ------------------------------------------------------------------
-
+// setup
 const rules = readFileSync(join(ROOT, 'firestore.rules'), 'utf8');
 
 const env = await initializeTestEnvironment({
@@ -71,7 +61,7 @@ const SUPER_DOC = {
   sites: [],
 };
 
-// Seed data bypassing rules.
+// Seeded with rules bypassed.
 await env.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
   await setDoc(doc(db, 'users/member-uid'), MEMBER_DOC);
@@ -86,8 +76,7 @@ const adminDb = env.authenticatedContext('admin-uid').firestore();
 const superDb = env.authenticatedContext('super-uid').firestore();
 const anonDb = env.unauthenticatedContext().firestore();
 
-// ---- matrix helpers ---------------------------------------------------------
-
+// matrix helpers
 const results = [];
 
 async function pass(name, op) {
@@ -112,8 +101,7 @@ async function fail(name, op) {
   }
 }
 
-// ---- matrix -----------------------------------------------------------------
-
+// matrix
 console.log('\n=== sites/{siteId} — baseline site access (canAccessSite) ===');
 await pass('member reads site-A (assigned)',         () => getDoc(doc(memberDb, 'sites/site-A')));
 await fail('member reads site-B (unassigned)',       () => getDoc(doc(memberDb, 'sites/site-B')));
@@ -178,8 +166,7 @@ await fail('admin creates system_presets',           () => setDoc(doc(adminDb,  
 await pass('superadmin creates system_presets',      () => setDoc(doc(superDb,  'system_presets/td'), presetDoc));
 await pass('superadmin updates system_presets',      () => setDoc(doc(superDb,  'system_presets/td'), { ...presetDoc, order: 2 }));
 
-// ---- teardown ---------------------------------------------------------------
-
+// teardown
 await env.cleanup();
 
 const failed = results.filter((r) => r.outcome === 'FAIL');

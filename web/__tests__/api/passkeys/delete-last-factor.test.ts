@@ -1,24 +1,21 @@
 /** @jest-environment node */
 
 /**
- * Tests for `/api/passkeys/[credentialId]` — removal of a passkey factor.
+ * `/api/passkeys/[credentialId]` — removing a passkey factor.
  *
- * Removing the LAST factor is an approved outcome, never a refusal: the account
- * drops back to `mfaEnrolled: false` and `requiresMfaSetup: true` (re-armed by
- * `applyMfaFactorChange`, the single writer) rather than being held hostage by
- * a credential the user no longer has. Because the account is momentarily
- * factor-less, every trusted-device record is purged the same way
- * `/api/mfa/disable` purges them — otherwise a later re-enroll would inherit
- * trust granted against the credential that was just deleted — and the client
- * cookie is expired alongside it.
+ * Removing the LAST factor is approved, never refused: the account re-arms to
+ * `mfaEnrolled: false` + `requiresMfaSetup: true` rather than being held
+ * hostage by a credential the user no longer has. Because it is momentarily
+ * factor-less, every trusted-device record is purged (as `/api/mfa/disable`
+ * does) and the cookie expired — otherwise a later re-enroll would inherit
+ * trust granted against the deleted credential.
  *
  * `lib/mfaFactors.server.ts` is deliberately NOT mocked: the assertions are
- * about the fields that actually land on the user document, so the real single
- * writer runs against the in-memory admin-SDK mock (the same store-backed
- * `getAdminDb` chain as `__tests__/lib/mfaFactors.test.ts`).
+ * about fields that actually land on the user doc, so the real single writer
+ * runs against the in-memory admin-SDK mock.
  */
 
-// --- Mutable state backing the mocked admin SDK (reset in beforeEach). ---
+// Mutable state backing the mocked admin SDK; reset in beforeEach.
 let users: Map<string, Record<string, unknown>>;
 let passkeys: Map<string, string[]>;
 
@@ -41,8 +38,8 @@ jest.mock('@/lib/withRateLimit', () => ({
 }));
 
 jest.mock('@/lib/apiAuth.server', () => {
-  // Defined inline because the factory is hoisted ABOVE module-scope code
-  // by jest — top-level classes aren't yet initialised here.
+  // Inline: jest hoists the factory above module scope, so a top-level class
+  // isn't initialised yet.
   class ApiAuthError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -62,8 +59,7 @@ jest.mock('@/lib/webauthn.server', () => ({
   renamePasskey: (...a: unknown[]) => mockRenamePasskey(...a),
 }));
 
-// Mirrors `__tests__/api/mfa/disable.test.ts`: the cookie values match the real
-// module so the expiry assertions are meaningful.
+// Cookie values match the real module, or the expiry assertions mean nothing.
 jest.mock('@/lib/deviceTrust.server', () => ({
   revokeAllTrustedDevices: (...a: unknown[]) => mockRevokeAllTrustedDevices(...a),
   DEVICE_TRUST_COOKIE: 'owlette_device_trust',
@@ -153,8 +149,7 @@ beforeEach(() => {
 
   mockRequireSessionUser.mockResolvedValue(UID);
   mockAssertActiveUser.mockImplementation(async () => users.get(UID) ?? {});
-  // Mirror the real `deletePasskey`: the credential leaves the subcollection,
-  // which is what `recountPasskeys` reads back.
+  // As real `deletePasskey` does — `recountPasskeys` reads the subcollection.
   mockDeletePasskey.mockImplementation(async (uid: string, credentialId: string) => {
     passkeys.set(uid, (passkeys.get(uid) ?? []).filter((id) => id !== credentialId));
   });
@@ -183,7 +178,7 @@ describe('DELETE /api/passkeys/[credentialId] — last factor', () => {
     // The credential is gone from the subcollection.
     expect(passkeys.get(UID)).toEqual([]);
 
-    // Inventory re-armed by the single writer — not by this route.
+    // Re-armed by the single writer, not by this route.
     const write = inventoryWrite();
     expect(write).toBeTruthy();
     expect(write!.payload).toMatchObject({

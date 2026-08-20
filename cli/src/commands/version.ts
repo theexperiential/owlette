@@ -1,17 +1,6 @@
 /**
- * `owlette version`.
- *
- * Drives:
- *   GET /api/version
- *
- * Prints the cli's own package version alongside the server's current
- * API date and the full list of server-supported dates.
- * Default output (one line):
- *
- *     cli X.Y.Z  |  server A.B.C  |  supported versions: D1, D2, ...
- *
- * `--json` emits the full record so scripts can compare without parsing.
- *
+ * `owlette version` — GET /api/version. Prints the cli package version, the
+ * server's current API date, and every supported date; `--json` for scripts.
  * The endpoint is unauthenticated, so a missing token is not fatal.
  */
 
@@ -22,18 +11,12 @@ import { loadConfig } from '../config';
 import { fetchWithTimeout } from '../lib/http';
 import { isJson } from '../lib/output';
 
-/**
- * Resolve the cli's own package version by walking up from this file
- * until we hit a `package.json`. Works identically whether we're running
- * from `src/` (ts-node, dev) or `dist/` (compiled, prod) because both
- * tree shapes share the same nearest-package.json ancestor (`cli/`).
- */
+/** Walks up to `cli/package.json` — same ancestor from `src/` and `dist/`. */
 let cachedCliVersion: string | null = null;
 function readCliVersion(): string {
   if (cachedCliVersion !== null) return cachedCliVersion;
   let dir = __dirname;
-  // Hard cap on traversal depth so a misconfigured install can't loop
-  // forever (`/` keeps returning itself from `dirname`).
+  // Depth cap: `dirname('/')` returns itself, so an odd install could loop.
   for (let i = 0; i < 10; i++) {
     const candidate = join(dir, 'package.json');
     try {

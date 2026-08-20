@@ -1,33 +1,22 @@
 /**
- * POST /api/hoot/cancel-tool — cancel an in-flight hoot tool call
- * (hoot-async-turns wave 2.4).
+ * POST /api/hoot/cancel-tool — cancel an in-flight hoot tool call.
  *
- * Body: `{ siteId, machineId, chatId, commandId }` where `commandId` is the
- * agent command id of the running `mcp_tool_call` (from the chat's
- * `stream/current.toolCommands` recovery index).
+ * Body: `{ siteId, machineId, chatId, commandId }`; `commandId` is the running
+ * `mcp_tool_call`'s agent command id, from `stream/current.toolCommands`.
  *
- * Authorization (in order):
- *   1. `resolveAuth` — session, ID token, or scoped API key (401 otherwise).
- *   2. `requireScope(chat=<siteId>:write)` — enforced for api-key callers only.
- *   3. `verifyUserSiteAccess` — caller must have access to the site.
- *   4. Chat ownership — the chat must exist on `siteId` and belong to the
- *      caller (cancels are chat-scoped; owner-only).
- *   5. `commandId` must appear in the chat's nested `stream/current.toolCommands`
- *      index (`toolCallId → machineId → { commandId }`) AND the request's
- *      machineId must equal the machine key it was recorded under — a caller
- *      can only cancel commands their own turn actually dispatched, never
- *      arbitrary machine commands.
+ * Authorization, in order: resolveAuth (401) → requireScope(chat=<siteId>:write), api-key
+ * callers only → verifyUserSiteAccess → chat must exist on `siteId` and belong to the
+ * caller → `commandId` must appear in that chat's `toolCommands` index AND the request's
+ * machineId must match the key it was recorded under. The last check is what stops a caller
+ * cancelling arbitrary machine commands through a chat they happen to own.
  *
- * Dispatch runs on the USER-actor path via `executeMachineCommand` (never
- * `invokeAsSystem` — actor type is load-bearing for audit; see
- * `dev/active/security-boundary-migration/reference/hoot-integration.md`).
- * The agent-side handler is `_handle_cancel_mcp_tool` in
- * `agent/src/firebase_client.py`: it kills the target's process tree, writes
- * the target's terminal `cancelled` entry, and acks the cancel command itself.
+ * Dispatch is the USER-actor path (`executeMachineCommand`, never `invokeAsSystem` — actor
+ * type is load-bearing for audit). Agent side is `_handle_cancel_mcp_tool` in
+ * agent/src/firebase_client.py: kills the process tree, writes the target's terminal
+ * `cancelled` entry, acks the cancel.
  *
- * Response: 200 with the agent's ack when it lands within ~10s, otherwise
- * 202 `{ accepted: true }` — the tool card resolves via the stream doc
- * either way.
+ * 200 with the ack when it lands within ~10s, else 202 `{ accepted: true }` — the tool card
+ * resolves via the stream doc either way.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -43,12 +32,8 @@ import {
 import { getUserIdFromSession, withRateLimit } from '@/lib/withRateLimit';
 import type { Actor, Role } from '@/lib/capabilities';
 
-/**
- * Nested cancel index as stored on `stream/current.toolCommands`:
- * `toolCallId → machineId → { commandId }`. Declared locally rather than
- * imported from the server-only turn store so this route stays decoupled from
- * that module's type surface.
- */
+/** `stream/current.toolCommands`: toolCallId → machineId → { commandId }. Declared locally
+ * to keep this route off the server-only turn store's type surface. */
 type ToolCommandsIndex = Record<string, Record<string, { commandId: string }>>;
 
 /** How long to wait for the agent's cancel ack before returning 202. */
@@ -69,11 +54,9 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 /**
- * Poll the machine's `commands/completed` doc for the CANCEL command's own
- * ack. Checks immediately, then every second up to the deadline. Entries
- * with `status: 'running'` are the agent's in-flight marker (wave-1
- * cross-side contract) — non-terminal, keep polling. Consumed acks are
- * deleted best-effort so the completed doc doesn't grow unbounded.
+ * Poll `commands/completed` for the CANCEL command's own ack: immediately, then every second
+ * to the deadline. `status: 'running'` is the agent's in-flight marker — non-terminal, keep
+ * polling. Consumed acks are deleted best-effort so the doc doesn't grow unbounded.
  */
 async function pollForCancelAck(
   db: FirebaseFirestore.Firestore,
@@ -128,9 +111,7 @@ async function handleCancelTool(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Scope check is only enforced for api-key callers; session/ID-token
-    // auth bypasses (site access is checked below). Throws 403
-    // scope_insufficient on mismatch.
+    // api-key callers only; session/ID-token auth is covered by the site-access check below.
     requireScope(auth, 'chat', siteId, 'write');
 
     const db = getAdminDb();
@@ -145,8 +126,7 @@ async function handleCancelTool(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Cancels are chat-scoped and owner-only: the chat must exist on this
-    // site and belong to the caller.
+    // Chat-scoped and owner-only.
     const chatSnap = await db.collection('chats').doc(chatId).get();
     const chatData = chatSnap.data();
     if (!chatSnap.exists || chatData?.siteId !== siteId) {
@@ -156,11 +136,9 @@ async function handleCancelTool(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'you do not own this chat' }, { status: 403 });
     }
 
-    // The commandId must be one this chat's current turn actually dispatched
-    // (recorded in the nested stream/current.toolCommands index, keyed by
-    // toolCallId → machineId) and the request's machineId must equal the
-    // machine key it was recorded under — prevents cancelling arbitrary machine
-    // commands through a chat the caller happens to own.
+    // The commandId must be one this chat's current turn dispatched, and machineId must
+    // match the key it was recorded under — otherwise a chat the caller owns becomes a
+    // lever on arbitrary machine commands.
     const streamSnap = await db
       .collection('chats')
       .doc(chatId)
@@ -168,7 +146,7 @@ async function handleCancelTool(request: NextRequest): Promise<NextResponse> {
       .doc('current')
       .get();
     const toolCommands = (streamSnap.data()?.toolCommands ?? {}) as ToolCommandsIndex;
-    // Locate which machine key recorded this commandId across every tool call.
+    // Which machine key recorded this commandId, across every tool call.
     let recordedMachineId: string | null = null;
     for (const perMachine of Object.values(toolCommands)) {
       if (!perMachine || typeof perMachine !== 'object') continue;
@@ -193,8 +171,7 @@ async function handleCancelTool(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // USER-actor dispatch (mirrors the public commands route shim — never
-    // invokeAsSystem for user-initiated work).
+    // USER-actor dispatch — never invokeAsSystem for user-initiated work.
     const role: Role =
       access.role === 'superadmin' || access.role === 'admin' ? access.role : 'member';
     const actor: Actor = {
@@ -237,8 +214,7 @@ async function handleCancelTool(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ accepted: true, commandId: queued.commandId, ack });
     }
 
-    // Ack is slow — the agent will still process the cancel; the tool card
-    // resolves via the stream doc when the target flips to cancelled.
+    // Slow ack: the agent still processes the cancel and the stream doc resolves the card.
     return NextResponse.json(
       { accepted: true, commandId: queued.commandId },
       { status: 202 },

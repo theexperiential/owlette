@@ -1,12 +1,6 @@
 'use client';
 
-/**
- * MetricsDetailPanel Component
- *
- * Expanded chart view for detailed metric analysis.
- * Replaces the top stats cards when a sparkline is clicked.
- * Supports per-NIC network metrics with TX/RX utilization lines.
- */
+/** Expanded chart view that replaces the top stats cards when a sparkline is clicked. */
 
 import { Fragment, useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
@@ -51,29 +45,20 @@ interface MetricsDetailPanelProps {
   siteId: string;
   initialMetric?: MetricType;
   onClose: () => void;
-  /** Static GPU profile entries keyed by UUID — used to render friendly
-   *  names in toggle labels, chart lines, stats grid, and tooltip while
-   *  keeping the UUID as the stable chart-data key. */
+  /** GPU profile keyed by UUID — supplies friendly labels; UUID stays the chart-data key. */
   gpus?: ReadonlyArray<{ id: string; name?: string }>;
-  /** All machines in the current site. When provided and the count exceeds
-   *  MACHINE_SWITCHER_MIN, the panel title becomes a dropdown so the user can
-   *  jump between machines without scrolling down to the machines list. */
+  /** Site machines; past MACHINE_SWITCHER_MIN the title becomes a switcher dropdown. */
   machines?: ReadonlyArray<{ machineId: string; online: boolean }>;
   /** Invoked when a different machine is picked from the title dropdown. */
   onSwitchMachine?: (machineId: string) => void;
 }
 
-// The title-bar machine switcher only appears once a site has more than this
-// many machines — with just a handful, scrolling to the machines list is no
-// burden and the plain-text title stays out of the way.
+// Below this machine count the plain-text title stays — scrolling the list is cheap.
 const MACHINE_SWITCHER_MIN = 5;
-// Past this count the switcher dropdown grows a filter input so a long fleet
-// can be narrowed by typing instead of scrolled.
+// Past this count the switcher grows a filter input.
 const MACHINE_SWITCHER_FILTER_MIN = 8;
 
-/** Title-bar dropdown for jumping between machines in the open detail panel.
- *  Rendered in place of the plain machine name when a site has enough
- *  machines that scrolling the page list to switch becomes tedious. */
+/** Title-bar dropdown for switching machines without leaving the panel. */
 function MachineSwitcher({
   currentId,
   label,
@@ -172,33 +157,24 @@ function MachineSwitcher({
   );
 }
 
-// Pure tab-state helpers (serializeTabs / deserializeTabs / initialMetricToState)
-// and the DiskIOChannel / TabSelection types live in ./metricsTabs so the
-// dashboard can import them without pulling Recharts into the main bundle.
+// Tab-state helpers + types live in ./metricsTabs so the dashboard can import them
+// without pulling Recharts into the main bundle.
 
-// Reserved horizontal space for the Recharts YAxis. Also used as left padding
-// on the stats grid so the stat cards align flush with the chart's plot area
-// (the "0" on the x-axis) for a crisp visual edge.
+// Recharts YAxis width; also the stats-grid left padding so cards align with the plot area.
 const CHART_Y_AXIS_WIDTH = 40;
 
 // Right-side bytes axis width — wider than the left to fit "1.2 MB/s" ticks.
 const CHART_BYTES_AXIS_WIDTH = 56;
 
-// When any selected byte-rate series' peak in the visible data range reaches
-// this % of its max rate (disk-IO max bandwidth / NIC link speed), the lines
-// flip from the auto-scaled bytes axis (right) onto the 0-100% default axis
-// (left) so approach-to-saturation is legible. Below the threshold, bytes
-// mode keeps low-activity lines from flatlining near zero. Chosen at 70 to
-// give clear headroom for "getting close to maxed out" without triggering on
-// routine bursts. Shared by disk IO and NIC so both categories make the same
-// percent-vs-bytes decision independently from the same signal.
+// Once a visible peak hits this % of max rate (disk bandwidth / NIC link speed) the
+// series flip from the auto-scaled bytes axis to the 0-100% axis so saturation is
+// legible; below it, bytes mode keeps low-activity lines off the floor. Disk IO and
+// NIC apply it independently.
 const BYTES_MODE_PCT_THRESHOLD = 70;
 
-// Shared className for every metric/disk/GPU/NIC toggle button. Mirrors the
-// TimeRangeSelector styling: `variant="ghost"` at the call site (no variant
-// border — the outline variant's `dark:border-input` beats `border-border`
-// on specificity in dark mode, producing invisible borders) and an explicit
-// `border border-border` here for the unselected state.
+// Shared toggle-button className. Call sites use variant="ghost" plus the explicit
+// border here: the outline variant's `dark:border-input` outranks `border-border` in
+// dark mode and renders invisible borders.
 function toggleButtonClass(isSelected: boolean): string {
   return cn(
     'text-xs h-8 px-3 transition-colors',
@@ -222,26 +198,20 @@ function sameStringArray(a: readonly string[], b: readonly string[]): boolean {
   return true;
 }
 
-/** Drive-letter shape: `C:`, `L:`, etc. Filters out raw `HarddiskVolumeN`
- *  partitions that have no drive-letter mapping. */
+/** Drive-letter shape (`C:`); filters out unmapped `HarddiskVolumeN` partitions. */
 function isDriveLetter(id: string): boolean {
   return /^[A-Z]:$/.test(id);
 }
 
-/** Returns the temperature sibling metric for a base metric, if any. CPU pairs
- *  with CPU temperature and GPU with GPU temperature — the toggle buttons
- *  flip both in lock-step so the usage and temperature lines always appear
- *  together (mirrors the disk-IO read+write pairing). */
+/** Temperature sibling for a base metric; toggles flip both in lock-step. */
 function tempSiblingOf(metric: MetricType): MetricType | null {
   if (metric === 'cpu') return 'cpuTemp';
   if (metric === 'gpu') return 'gpuTemp';
   return null;
 }
 
-/** Resolve the starting TabSelection for a machine. An explicit entry in
- *  graphTabs — even an empty array — is honored as "user's current choice"
- *  (so a deliberate deselect-all stays deselected across remounts). Only when
- *  the entry is entirely absent do we fall back to the initial-metric default. */
+/** Starting TabSelection. An explicit graphTabs entry — even an empty one — wins, so a
+ *  deliberate deselect-all survives remounts; only an absent entry falls back. */
 function resolveSelection(
   persistedIds: string[] | undefined,
   initialMetric: MetricType,
@@ -263,21 +233,15 @@ export function MetricsDetailPanel({
 
   const { userPreferences, updateUserPreferences } = useAuth();
 
-  // On /demo the panel is self-contained: it must NOT read the signed-in
-  // user's persisted graph tabs / time range (those reference their real
-  // machines, not the demo's synthetic ones — and a stale entry would seed an
-  // empty selection and blank the chart) nor write back to them (which would
-  // pollute real preferences with demo machine ids, or throw a "must be signed
-  // in" toast for logged-out visitors). All selection + range state stays
-  // local. Outside demo mode (`demo` is null — no provider) this is a no-op.
+  // Demo mode keeps selection + range local: reading real graphTabs would seed an
+  // empty selection from foreign machine ids, and writing back would pollute real
+  // preferences (or toast "must be signed in"). No-op outside demo (`demo` is null).
   const demo = useDemoContext();
   const isDemo = demo != null;
   const graphTabs = isDemo ? undefined : userPreferences.graphTabs;
 
-  // Seed from persisted selection on first render so there's no flash between
-  // the default and the restored selection. The dashboard click handler writes
-  // the fresh click intent to graphTabs before activeGraphPanel is set, so by
-  // the time we mount the persisted list already reflects the clicked metric.
+  // Seed from persisted selection on first render — no default-then-restored flash.
+  // The dashboard writes click intent to graphTabs before this panel mounts.
   const [selectedMetrics, setSelectedMetrics] = useState<MetricType[]>(
     () => resolveSelection(graphTabs?.[machineId], initialMetric).metrics,
   );
@@ -297,14 +261,10 @@ export function MetricsDetailPanel({
     () => (isDemo ? undefined : userPreferences.graphTimeRange) || '1h',
   );
 
-  // When the user hovers a stat card, the matching line in the chart stays at
-  // full opacity + thicker stroke and every other line dims. Null = no hover,
-  // all lines render at normal weight. Card `key` matches Line `dataKey` 1:1.
+  // Hovered stat card highlights its line and dims the rest. Card `key` === Line `dataKey`.
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
 
-  // Keep local state in sync if another tab/device updates the preference.
-  // Skipped in demo mode — the range is local-only there, so an external
-  // preference change must not yank the demo chart's window.
+  // Sync when another tab/device changes the preference; skipped in demo (range is local).
   useEffect(() => {
     if (isDemo) return;
     const next = userPreferences.graphTimeRange || '1h';
@@ -321,8 +281,7 @@ export function MetricsDetailPanel({
 
   const { data, loading, error } = useHistoricalMetrics(siteId, machineId, timeRange);
 
-  // Stable empty-array reference when data is null so downstream useMemo
-  // dependencies don't thrash on every render while loading.
+  // Stable empty-array ref so downstream useMemo deps don't thrash while loading.
   const chartData = useMemo(() => data ?? [], [data]);
 
   // Extract unique device names from chart data by suffix convention
@@ -357,10 +316,8 @@ export function MetricsDetailPanel({
       }
     }
     const arr = Array.from(names);
-    // Stable order: prefer hardware-profile order from the gpus prop (which
-    // mirrors PCI bus / hardware-profile order), then alphabetical for any
-    // ids that aren't in the profile. Toggle rendering and "GPU 1 / GPU 2"
-    // numbering both depend on this list, so order stability matters.
+    // Profile order (PCI bus) first, then alphabetical for unknown ids. "GPU 1/2"
+    // numbering depends on this order staying stable.
     if (gpus && gpus.length > 0) {
       const orderIndex = new Map(gpus.map((g, i) => [g.id, i]));
       arr.sort((a, b) => {
@@ -375,11 +332,8 @@ export function MetricsDetailPanel({
     return arr;
   }, [chartData, gpus]);
 
-  // "GPU" when there's a single device on the machine, "GPU 1" / "GPU 2" /
-  // ... when multiple. Index follows the sorted gpuNames order so each
-  // physical card keeps a stable label across renders. Toggle buttons,
-  // chart legend, stats cards, and ChartTooltip all share this convention
-  // so the user-facing label for a GPU is consistent everywhere.
+  // "GPU" when single, "GPU N" when multiple; index follows sorted gpuNames.
+  // Toggles, legend, stats cards, and ChartTooltip all use this label.
   const gpuDisplayLabel = useCallback(
     (id: string): string => {
       if (gpuNames.length <= 1) return 'GPU';
@@ -389,18 +343,14 @@ export function MetricsDetailPanel({
     [gpuNames],
   );
 
-  // Map of chart-key id → display label, passed to ChartTooltip so hover
-  // rows render as "GPU" / "GPU N" matching the toggle row instead of the
-  // raw chart-key (which is the cloud function's gpu.name).
+  // chart-key → display label for ChartTooltip; the raw key is the cloud function's gpu.name.
   const gpuLabels = useMemo(() => {
     const m = new Map<string, string>();
     for (const id of gpuNames) m.set(id, gpuDisplayLabel(id));
     return m;
   }, [gpuNames, gpuDisplayLabel]);
 
-  // Discover available volume ids from the flat `{volumeId}_io_{channel}` chart
-  // keys. Any sample that carries at least one IO key contributes its volume.
-  // Sorted for stable toggle-row ordering.
+  // Volume ids from the flat `{volumeId}_io_{channel}` keys; sorted for stable toggle order.
   const volumeIds = useMemo(() => {
     const ids = new Set<string>();
     for (const d of chartData) {
@@ -414,10 +364,7 @@ export function MetricsDetailPanel({
     return Array.from(ids).sort();
   }, [chartData]);
 
-  // Union of drive identifiers seen in either storage (diskNames) or activity
-  // (volumeIds) data, sorted. Toggles iterate this list so each drive's
-  // storage + activity buttons render next to each other (C storage, C
-  // activity, L storage, L activity) rather than grouped by type.
+  // Union of storage + activity drive ids, sorted, so each drive's two toggles sit adjacent.
   const driveOrder = useMemo(() => {
     const all = new Set<string>();
     for (const d of diskNames) all.add(d);
@@ -425,18 +372,12 @@ export function MetricsDetailPanel({
     return Array.from(all).sort();
   }, [diskNames, volumeIds]);
 
-  // Mirror persisted selection into local state. The click handler at the
-  // dashboard level (see handleMetricClick) merges click intent into graphTabs
-  // at click time, so the persisted list is already the source of truth.
-  // Falling back to the initialMetric default only applies when graphTabs has
-  // no entry for this machine yet (first-ever open); an empty-array entry is
-  // honored as an explicit deselect-all.
+  // Mirror persisted selection; graphTabs is the source of truth (the dashboard merges
+  // click intent at click time). An empty array is an explicit deselect-all, not "unset".
   useEffect(() => {
     const next = resolveSelection(graphTabs?.[machineId], initialMetric);
 
-    // Reconciling local selection state with external (persisted) selection is
-    // a legitimate sync-external-source case; the guarded setters no-op when
-    // nothing changed so no cascading renders occur.
+    // Sync from external persisted state; guarded setters no-op when nothing changed.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedMetrics((prev) => (sameStringArray(prev, next.metrics) ? prev : next.metrics));
     setSelectedNics((prev) => (sameStringArray(prev, next.nics) ? prev : next.nics));
@@ -445,22 +386,14 @@ export function MetricsDetailPanel({
     setSelectedDiskIO((prev) => (sameStringArray(prev, next.diskIO) ? prev : next.diskIO));
   }, [machineId, initialMetric, graphTabs]);
 
-  // Opening the panel on a generic 'disk' / 'gpu' metric for a machine that has
-  // per-device history: expand to every per-device line once chart data lands,
-  // so the chart isn't blank. (The generic 'disk' / 'gpu' line is filtered out
-  // of the toggle row — see `effectiveMetrics` / `availableMetrics` — when
-  // per-device data exists, so without this nothing would be selected.) The
-  // dashboard's click handler pre-seeds graphTabs with the per-device ids, so
-  // this is a no-op there; it covers callers like /demo that pass
-  // `initialMetric` without writing graphTabs. One-shot per (machine, metric):
-  // never overrides a persisted selection or a subsequent user toggle, but
-  // re-arms when the panel switches machines (title switcher) or metrics so the
-  // new context expands fresh instead of inheriting the prior selection.
+  // Opening on a generic 'disk'/'gpu' for a machine with per-device history: expand to
+  // every per-device line once data lands, or the chart is blank (generics are filtered
+  // out of the toggle row when per-device data exists). One-shot per (machine, metric),
+  // never overriding a persisted selection or a later toggle; covers callers like /demo
+  // that pass `initialMetric` without writing graphTabs.
   const didExpandInitialDevice = useRef(false);
-  // Re-arm on machine / metric change only — NOT on graphTabs, or a deliberate
-  // user deselect (which writes graphTabs) would get clobbered by a re-expand.
-  // Declared before the expand effect so the reset lands first on the render
-  // where machineId/initialMetric changes.
+  // Re-arm on machine/metric change only — re-arming on graphTabs would let a re-expand
+  // clobber a deliberate deselect. Declared before the expand effect so the reset lands first.
   useEffect(() => {
     didExpandInitialDevice.current = false;
   }, [machineId, initialMetric]);
@@ -478,10 +411,8 @@ export function MetricsDetailPanel({
     }
   }, [chartData, graphTabs, machineId, initialMetric, diskNames, gpuNames]);
 
-  // Generic 'disk' / 'gpu' / 'gpuTemp' are hidden from the toggle UI when
-  // per-device data exists, but they may still be present in selectedMetrics
-  // (from old persisted state or click intent). Filter at render time so they
-  // don't draw invisible duplicate lines without affecting persisted state.
+  // Stale generics can linger in selectedMetrics; filter at render time (not in persisted
+  // state) so they don't draw invisible duplicate lines.
   const effectiveMetrics = useMemo(() => {
     let m = selectedMetrics;
     if (diskNames.length > 0) m = m.filter((x) => x !== 'disk');
@@ -489,20 +420,14 @@ export function MetricsDetailPanel({
     return m;
   }, [selectedMetrics, diskNames.length, gpuNames.length]);
 
-  // Filter out volumes no longer present in chart data — the persisted
-  // selection may still reference a volume from an earlier active period.
-  // Following the effectiveMetrics pattern: don't mutate persisted state,
-  // just render only what the chart currently supports.
+  // Drop volumes absent from current chart data; render-time only, persisted state untouched.
   const effectiveDiskIO = useMemo(
     () => selectedDiskIO.filter((v) => volumeIds.includes(v)),
     [selectedDiskIO, volumeIds],
   );
 
-  // Pick the disk IO chart mode from the visible data:
-  //   - "percent" when any selected volume's peak hits the pct-mode threshold
-  //     (lines bind to the shared 0-100 axis so saturation is obvious)
-  //   - "bytes"   otherwise (lines bind to an auto-scaled right axis with
-  //     KB/MB/GB ticks so sub-%-of-max activity is still legible)
+  // "percent" (shared 0-100 axis, saturation obvious) once a visible peak hits the
+  // threshold, else "bytes" (auto-scaled right axis, sub-%-of-max still legible).
   const diskIOMode: 'percent' | 'bytes' = useMemo(() => {
     if (effectiveDiskIO.length === 0) return 'bytes';
     let peakPct = 0;
@@ -519,11 +444,8 @@ export function MetricsDetailPanel({
     return peakPct >= BYTES_MODE_PCT_THRESHOLD ? 'percent' : 'bytes';
   }, [effectiveDiskIO, chartData]);
 
-  // Per-NIC analogue of diskIOMode. Same 70%-of-link-speed threshold: if any
-  // selected NIC's TX or RX utilization peak reaches the threshold, the NIC
-  // lines stay on the shared 0-100% axis (saturation visibility); otherwise
-  // they flip to the auto-scaled bytes axis so a 1 MB/s stream on a 1 Gbps
-  // link reads as "1 MB/s" instead of flatlining at "0.9%".
+  // Per-NIC analogue of diskIOMode against link speed: bytes mode keeps 1 MB/s on a
+  // 1 Gbps link readable instead of flatlining at 0.9%.
   const networkMode: 'percent' | 'bytes' = useMemo(() => {
     if (selectedNics.length === 0) return 'bytes';
     let peakPct = 0;
@@ -540,9 +462,7 @@ export function MetricsDetailPanel({
     return peakPct >= BYTES_MODE_PCT_THRESHOLD ? 'percent' : 'bytes';
   }, [selectedNics, chartData]);
 
-  // Total number of selected lines across all categories. Each disk IO
-  // toggle contributes 2 lines (read + write), matching the visual count
-  // in the chart.
+  // Selected line count; each disk-IO toggle counts 2 (read + write).
   const totalSelected =
     effectiveMetrics.length + selectedNics.length + selectedDisks.length + selectedGpus.length + effectiveDiskIO.length * 2;
 
@@ -562,9 +482,7 @@ export function MetricsDetailPanel({
     ).catch(() => { /* fire-and-forget; matches statsExpanded pattern */ });
   }, [isDemo, selectedMetrics, selectedNics, selectedDisks, selectedGpus, selectedDiskIO, graphTabs, machineId, updateUserPreferences]);
 
-  // Toggle a base metric together with its optional temperature sibling. When
-  // clicking the CPU button, both `cpu` and `cpuTemp` flip together so the
-  // usage line never appears without the temperature line (and vice versa).
+  // Flip a base metric and its temperature sibling in lock-step.
   const togglePairedMetric = (base: MetricType, temp: MetricType | null) => {
     setSelectedMetrics((prev) => {
       const isOn = prev.includes(base);
@@ -624,19 +542,13 @@ export function MetricsDetailPanel({
     });
   };
 
-  // NOTE: per-device auto-select lives in the dashboard click handler now —
-  // clicking a generic 'disk' / 'gpu' cell expands to all devices on that
-  // machine at click time. Doing it at mount time here previously clobbered
-  // user intent after an explicit clear (toggle-all-off), because the persisted
-  // empty-disks state is indistinguishable from "first-ever open" at this layer.
+  // Per-device auto-select lives in the dashboard click handler: doing it at mount
+  // clobbered an explicit toggle-all-off, indistinguishable from first-ever open here.
 
   const hour12 = (userPreferences.timeFormat || '12h') === '12h';
 
-  // Memoized so Recharts' XAxis/Tooltip don't re-mount on every parent render.
-  // Ticks are denser than labels on the 1d/1m ranges (a gridline per hour/day)
-  // — returning '' keeps the gridline but suppresses the label so the axis
-  // doesn't overcrowd. CartesianGrid draws a vertical line at every tick
-  // regardless of label text.
+  // Memoized so Recharts' XAxis/Tooltip don't remount each parent render. Returning ''
+  // keeps the gridline (CartesianGrid draws one per tick) but drops the crowded label.
   const formatXAxisTick = useCallback((timestamp: number): string => {
     const date = new Date(timestamp);
     switch (timeRange) {
@@ -669,29 +581,20 @@ export function MetricsDetailPanel({
     return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12 });
   }, [hour12]);
 
-  // Latch "now" in state so the time domain is a pure function of state.
-  // Refresh on every new data array (chartData identity) AND on range change
-  // so the right edge tracks wall-clock as new metrics arrive. Watching the
-  // array ref instead of its length ensures a refetch that returns the same
-  // downsampled count (e.g. MAX_POINTS cap) still bumps nowTs.
-  // setState-in-effect is intentional: Date.now() is impure and can't be called
-  // during render, so we have to sync the external clock here.
+  // Latch "now" so the time domain is a pure function of state. Keyed on the chartData
+  // array identity, not its length — a refetch capped at MAX_POINTS returns the same
+  // count but must still advance the right edge. setState-in-effect is deliberate:
+  // Date.now() is impure and can't run during render.
   const [nowTs, setNowTs] = useState<number>(() => Date.now());
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setNowTs(Date.now());
   }, [timeRange, chartData]);
 
-  // Recharts' ResponsiveContainer uses ResizeObserver to measure its container,
-  // but ResizeObserver and rAF are throttled while the tab is hidden. When the
-  // tab becomes visible again the chart sometimes holds a stale width — the
-  // plot area renders offset to the right with empty space on the left. Forcing
-  // a window resize event triggers all ResponsiveContainers to re-measure.
-  //
-  // Snap nowTs to wall-clock here too so the time axis right-edge updates
-  // immediately on refocus, before the async refetch in useHistoricalMetrics
-  // lands. Without this the axis stays frozen at the old mount-time "now"
-  // and freshly-fetched samples render outside the window.
+  // ResizeObserver/rAF are throttled while the tab is hidden, so ResponsiveContainer can
+  // hold a stale width on refocus (plot offset right); a synthetic resize forces
+  // re-measure. Snapping nowTs keeps the axis right edge from staying frozen at the
+  // mount-time "now" until the refetch lands, which would render new samples off-window.
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -703,7 +606,6 @@ export function MetricsDetailPanel({
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, []);
 
-  // Calculate the time domain based on selected range
   const timeDomain = useMemo((): [number, number] => {
     const now = nowTs;
     switch (timeRange) {
@@ -729,20 +631,15 @@ export function MetricsDetailPanel({
     }
   }, [timeRange, chartData, nowTs]);
 
-  // Whether the right-side bytes axis should be rendered at all — true when
-  // any bytes-mode category has at least one selected series to draw.
+  // Render the right bytes axis only when some bytes-mode series is selected.
   const bytesAxisActive =
     (diskIOMode === 'bytes' && effectiveDiskIO.length > 0) ||
     (networkMode === 'bytes' && selectedNics.length > 0);
 
-  // Explicit ticks at nice round throughput values (250 KB/s, 500 KB/s,
-  // 1 MB/s, etc.) for the bytes-mode right axis. Recharts' default tick
-  // picker divides the data max by 4 and lands on awkward values like
-  // "585.9 KB/s". Scans samples in the visible time domain for max bytes/sec
-  // across every series currently bound to the bytes axis (disk IO read/write
-  // in bytes mode + NIC tx/rx in bytes mode) so one shared scale covers both
-  // categories. Null when no data falls in range — recharts then falls back
-  // to its auto scale.
+  // Explicit round ticks (250 KB/s, 1 MB/s, …): Recharts' default divides the data max
+  // by 4 and lands on values like "585.9 KB/s". Scans the visible domain across every
+  // bytes-axis series so disk IO and NIC share one scale. Null when no data is in range,
+  // which falls back to recharts' auto scale.
   const bytesAxis = useMemo(() => {
     if (!bytesAxisActive) return null;
     const [start, end] = timeDomain;
@@ -769,10 +666,8 @@ export function MetricsDetailPanel({
     return computeNiceByteTicks(max);
   }, [bytesAxisActive, diskIOMode, effectiveDiskIO, networkMode, selectedNics, chartData, timeDomain]);
 
-  // Explicit ticks keep the x-axis clean: one gridline per natural unit
-  // (hour / date / month), no repeats, and no auto-generated gaps where the
-  // data is sparse. Ticks can be denser than labels — formatXAxisTick returns
-  // '' for the in-between ones (1d labels every 2h, 1m labels at month starts).
+  // One tick per natural unit (hour/date/month) — no repeats, no gaps on sparse data.
+  // formatXAxisTick blanks the labels in between.
   const xTicks = useMemo((): number[] | undefined => {
     const [start, end] = timeDomain;
     if (timeRange === '1h') return undefined; // let recharts auto-tick
@@ -811,13 +706,10 @@ export function MetricsDetailPanel({
     return ticks;
   }, [timeRange, timeDomain]);
 
-  // When per-device data exists, hide generic Disk/GPU from metric toggles
-  // to avoid redundant lines (scalar primary = one of the per-device entries).
+  // Hide generic Disk/GPU when per-device data exists — the scalar is one of those devices.
   const availableMetrics: MetricType[] = useMemo(() => {
     const base: MetricType[] = ['cpu', 'memory'];
-    // Only show generic Disk if no per-device disk data
     if (diskNames.length === 0) base.push('disk');
-    // Only show generic GPU/GPU° if no per-device GPU data
     if (gpuNames.length === 0) {
       if (chartData.some((d) => d.gpu != null && d.gpu > 0)) base.push('gpu');
       if (chartData.some((d) => d.gpuTemp !== undefined)) base.push('gpuTemp');
@@ -839,9 +731,7 @@ export function MetricsDetailPanel({
     effectiveDiskIO.length === volumeIds.length;
 
   const toggleAll = () => {
-    // True on/off: when everything is selected, flipping clears every toggle;
-    // otherwise selects all. Matches the ToggleRight/ToggleLeft icon grammar
-    // and pairs with the ability to individually deselect down to zero.
+    // True on/off: all-selected clears every toggle, otherwise select all.
     const nextMetrics: MetricType[] = allSelected ? [] : [...availableMetrics];
     const nextNics = allSelected ? [] : [...nicNames];
     const nextDisks = allSelected ? [] : [...diskNames];
@@ -855,11 +745,9 @@ export function MetricsDetailPanel({
     persistSelections({ metrics: nextMetrics, nics: nextNics, disks: nextDisks, gpus: nextGpus, diskIO: nextDiskIO });
   };
 
-  // Build the list of all active Line dataKeys and their display info.
-  // `hidden: true` means the line renders with transparent stroke (tooltip-only
-  // data access). `axis: 'bytes'` binds the line to the auto-scaled right
-  // bytes axis (used by disk IO in bytes mode) so its byte/sec values don't
-  // blow out the shared 0-100% scale.
+  // Active Line dataKeys. `hidden` renders a transparent stroke (tooltip-only data);
+  // `axis: 'bytes'` binds to the right auto-scaled axis so byte/sec doesn't blow out
+  // the shared 0-100% scale.
   const activeLines = useMemo(() => {
     const lines: { key: string; color: string; label: string; hidden?: boolean; axis?: 'default' | 'hidden' | 'bytes' }[] = [];
 
@@ -871,14 +759,9 @@ export function MetricsDetailPanel({
       }
     }
 
-    // Per-NIC lines. Mirrors the disk-IO dual-family routing:
-    //   - percent mode: `_tx_util` / `_rx_util` visible on the default 0-100%
-    //     axis; `_tx` / `_rx` bytes keys ride as hidden lines so the tooltip
-    //     can append the throughput value in parens.
-    //   - bytes   mode: `_tx` / `_rx` visible on the right auto-scaled bytes
-    //     axis so low-utilization traffic (e.g. 1 MB/s on a 1 Gbps link) is
-    //     legible instead of flatlining near zero. No hidden siblings needed
-    //     — the tooltip reads entry.value directly.
+    // Per-NIC lines, same dual-family routing as disk IO: percent mode draws
+    // `_tx_util`/`_rx_util` with hidden `_tx`/`_rx` bytes siblings for the tooltip;
+    // bytes mode draws `_tx`/`_rx` on the right axis and needs no siblings.
     for (const nicName of selectedNics) {
       const nicIdx = nicNames.indexOf(nicName);
       const colors = getNicColors(nicIdx >= 0 ? nicIdx : 0);
@@ -909,14 +792,8 @@ export function MetricsDetailPanel({
       lines.push({ key: `${gpuName}_temp`, color: colors.temp, label });
     }
 
-    // Per-volume disk IO activity: 2 visible lines per selected volume
-    // (read + write). Which data family is visible depends on diskIOMode:
-    //   - percent mode: `_pct` on the default 0-100 axis, with the bytes
-    //     siblings present as hidden lines so the tooltip can still display
-    //     human-readable MB/KB/GB (mirrors the NIC `_tx_util` + hidden `_tx`
-    //     pairing).
-    //   - bytes mode: bytes keys on the right auto-scaled bytes axis. No
-    //     hidden sibling needed since the tooltip reads entry.value directly.
+    // Per-volume disk IO: 2 visible lines (read + write) per volume. percent mode draws
+    // `_pct` with hidden bytes siblings for the tooltip; bytes mode draws the bytes keys.
     for (const volumeId of effectiveDiskIO) {
       if (diskIOMode === 'percent') {
         lines.push({ key: `${volumeId}_io_read_pct`, color: DISK_IO_COLORS.read, label: `${volumeId} read` });
@@ -932,24 +809,14 @@ export function MetricsDetailPanel({
     return lines;
   }, [effectiveMetrics, selectedNics, nicNames, networkMode, selectedDisks, diskNames, selectedGpus, gpuNames, effectiveDiskIO, diskIOMode, gpuDisplayLabel]);
 
-  // Collect all selected metric/NIC/disk/GPU/disk-IO keys for stats summary.
-  // `format: 'throughput'` switches the grid cell to byte-rate formatting
-  // (e.g. "1.5 MB/s") instead of the default "{value}{unit}" percent display.
-  // `valueKey` overrides the chart-data source for avg/max/min (defaults to
-  // `key`); used by disk-IO cards so hover still matches the visible `_pct`
-  // chart line while stats are computed from the sibling bytes/sec key.
+  // Stats-grid cards. `format: 'throughput'` renders byte rates; `valueKey` overrides the
+  // avg/max/min source, so disk-IO cards hover the visible `_pct` line but report bytes.
   const statsKeys = useMemo(() => {
     const keys: { key: string; label: string; color: string; isNetwork: boolean; unit?: string; format?: 'throughput'; valueKey?: string; showThermometer?: boolean; direction?: 'tx' | 'rx' }[] = [];
 
-    // Order must mirror the toggle-button row so users can associate a button
-    // with its card at a glance:
-    //   metrics (base + temp sibling adjacent) → drives (storage + IO
-    //   interleaved per drive) → GPUs (usage + temp per GPU) → NICs (TX + RX
-    //   per NIC).
+    // Order mirrors the toggle-button row: metrics → drives → GPUs → NICs.
 
-    // Metric cards — iterate availableMetrics so order is deterministic and
-    // bases come before their temps. For each base, inject its temp sibling
-    // immediately after (mirrors togglePairedMetric's lock-step pairing).
+    // Iterate availableMetrics for deterministic order; inject each temp sibling after its base.
     const seenMetrics = new Set<MetricType>();
     const pushMetricCard = (metric: MetricType) => {
       if (seenMetrics.has(metric)) return;
@@ -961,8 +828,7 @@ export function MetricsDetailPanel({
         label: config.label,
         color: config.color,
         isNetwork: false,
-        // cpuTemp/gpuTemp share their base label ("CPU"/"GPU") — the
-        // thermometer icon is what differentiates the two cards visually.
+        // cpuTemp/gpuTemp share the base label; the thermometer icon distinguishes them.
         showThermometer: metric === 'cpuTemp' || metric === 'gpuTemp',
       });
     };
@@ -972,12 +838,10 @@ export function MetricsDetailPanel({
       const temp = tempSiblingOf(metric);
       if (temp && effectiveMetrics.includes(temp)) pushMetricCard(temp);
     }
-    // Safety net: any standalone temp in effectiveMetrics whose base isn't in
-    // availableMetrics (shouldn't happen, but preserves old behavior).
+    // Safety net: a standalone temp whose base isn't in availableMetrics.
     for (const metric of effectiveMetrics) pushMetricCard(metric);
 
-    // Drive cards — same loop shape as the toggle-button row in driveOrder:
-    // for each drive, emit storage card then its read/write IO cards.
+    // Drive cards mirror the toggle row: storage card, then read/write IO.
     for (const drive of driveOrder) {
       if (selectedDisks.includes(drive)) {
         const diskIdx = diskNames.indexOf(drive);
@@ -985,9 +849,8 @@ export function MetricsDetailPanel({
         keys.push({ key: `${drive}_pct`, label: drive, color, isNetwork: false, unit: '%' });
       }
       if (effectiveDiskIO.includes(drive)) {
-        // Card `key` matches the visible chart line (varies by mode) so
-        // hover dimming hits the right Line; `valueKey` always points to
-        // bytes so avg/max/min are in KB/MB/GB regardless of mode.
+        // `key` matches the mode-dependent visible line so hover dimming hits it;
+        // `valueKey` is always bytes so avg/max/min stay in KB/MB/GB.
         const readKey = diskIOMode === 'percent' ? `${drive}_io_read_pct` : `${drive}_io_read`;
         const writeKey = diskIOMode === 'percent' ? `${drive}_io_write_pct` : `${drive}_io_write`;
         keys.push({
@@ -1018,15 +881,9 @@ export function MetricsDetailPanel({
       keys.push({ key: `${gpuName}_temp`, label, color: colors.temp, isNetwork: false, unit: '°C', showThermometer: true });
     }
 
-    // NIC cards — TX + RX per NIC, in the same order as the NIC toggles.
-    // Direction is an arrow icon (↑/↓) appended to the bare NIC name rather
-    // than a " TX"/" RX" suffix, mirroring the thermometer pattern.
-    //
-    // Card `key` matches the visible chart line so hover-to-highlight hits
-    // the right Line (util key in percent mode, raw bytes key in bytes mode).
-    // In bytes mode we drop the `isNetwork` percent-with-throughput-in-parens
-    // formatting and switch to the throughput-only format used by disk IO
-    // cards so avg/max/min render as "1 MB/s" instead of "0.9%".
+    // NIC cards: TX + RX per NIC, direction shown as an arrow icon rather than a
+    // " TX"/" RX" suffix. `key` matches the mode-dependent visible line so hover hits it;
+    // bytes mode swaps the percent-with-throughput format for throughput-only.
     for (const nicName of selectedNics) {
       const nicIdx = nicNames.indexOf(nicName);
       const colors = getNicColors(nicIdx >= 0 ? nicIdx : 0);
@@ -1326,8 +1183,7 @@ export function MetricsDetailPanel({
                 <ReferenceLine y={0} stroke="oklch(0.35 0.08 250)" strokeDasharray="3 3" />
                 {activeLines.map((line) => {
                   if (line.hidden) {
-                    // Invisible lines for tooltip-only data (e.g. NIC raw bps)
-                    // Bound to separate Y-axis so raw byte values don't blow out the 0-100% scale
+                    // Tooltip-only lines on their own axis so raw bytes don't blow out the 0-100% scale.
                     return (
                       <Line
                         key={line.key}
@@ -1343,10 +1199,7 @@ export function MetricsDetailPanel({
                       />
                     );
                   }
-                  // Visible line — bind to explicit axis:
-                  //   'bytes'   → right auto-scaled bytes axis (disk IO in bytes mode)
-                  //   'hidden'  → hidden axis (kept off the 0-100% scale)
-                  //   default  → standard percent axis shared by cpu/memory/disk/gpu
+                  // axis: 'bytes' → right auto-scaled, 'hidden' → off-scale, default → shared percent.
                   const yAxisId = line.axis === 'bytes' ? 'bytes' : line.axis === 'hidden' ? 'hidden' : 'default';
                   const isHovered = hoveredKey === line.key;
                   const isDimmed = hoveredKey !== null && !isHovered;
@@ -1402,8 +1255,7 @@ export function MetricsDetailPanel({
 
               const unit = explicitUnit ?? (isNetwork ? '%' : (metricConfig[key as MetricType]?.unit ?? '%'));
 
-              // Byte-rate series (disk IO read/write) use formatDiskIO for all
-              // three stats — the raw number has no sensible percent/°C unit.
+              // Byte-rate series have no percent/°C unit — formatDiskIO for all three stats.
               const isThroughput = format === 'throughput';
               const fmtAvg = isThroughput ? formatDiskIO(avg) : `${avg.toFixed(1)}${unit}`;
               const fmtMax = isThroughput ? formatDiskIO(max) : `${max.toFixed(1)}${unit}`;

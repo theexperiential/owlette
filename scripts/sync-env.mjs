@@ -1,29 +1,24 @@
 #!/usr/bin/env node
 /**
- * sync-env.mjs — manage Owlette web env vars across Railway (dev + prod) and the
- * Vercel failover origin, against the canonical registry in env-manifest.json.
+ * sync-env.mjs — manage Owlette web env vars across Railway (dev + prod) and the Vercel
+ * failover origin, against the canonical registry in env-manifest.json.
  *
- * Values NEVER pass through this script's output. status/check/diff use key
- * NAMES only; sync pipes values provider→provider via stdin without printing
- * them. The manifest stores keys + metadata, never values.
+ * Values NEVER pass through this script's output: status/check/diff use key NAMES only,
+ * and sync pipes values provider→provider via stdin. The manifest stores keys + metadata.
  *
- * Commands:
- *   node scripts/sync-env.mjs                 status matrix (✓/✗ grid + drift)
- *   node scripts/sync-env.mjs check           exit 1 on any drift (CI / pre-deploy gate)
- *   node scripts/sync-env.mjs diff A B         key-presence diff between two targets
- *   node scripts/sync-env.mjs sync TARGET      dry run — show what would sync
- *   node scripts/sync-env.mjs sync TARGET --apply   actually write to the target
+ *   node scripts/sync-env.mjs                       status matrix (✓/✗ grid + drift)
+ *   node scripts/sync-env.mjs check                 exit 1 on any drift (CI gate)
+ *   node scripts/sync-env.mjs diff A B              key-presence diff between targets
+ *   node scripts/sync-env.mjs sync TARGET           dry run
+ *   node scripts/sync-env.mjs sync TARGET --apply   write to the target
  *
- * Targets: railway-dev | railway-prod | vercel-prod  (defined in env-manifest.json)
+ * Targets: railway-dev | railway-prod | vercel-prod (defined in env-manifest.json).
+ * Prereqs: `railway` authed (services addressed by flag), `vercel` linked to the owlette
+ * project (.vercel lives in web/).
  *
- * Prereqs: `railway` authed (any link state — services are addressed by flag),
- * `vercel` linked to the owlette project (.vercel lives in web/).
- *
- * Vercel caveat: secrets are stored "sensitive" and cannot be read back, so this
- * tool detects COVERAGE drift (a var missing from a target) but cannot compare
- * secret VALUES across providers. Value parity for the railway-prod↔vercel-prod
- * mirror is guaranteed by re-running `sync vercel-prod --apply` (idempotent), not
- * by read-back. See .claude/skills/env-management.md.
+ * Vercel caveat: sensitive secrets cannot be read back, so this detects COVERAGE drift
+ * but not VALUE drift. Parity for railway-prod↔vercel-prod comes from re-running
+ * `sync vercel-prod --apply` (idempotent). See .claude/skills/env-management.md.
  */
 import { readFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -45,7 +40,7 @@ function fail(message) {
   process.exit(1);
 }
 
-// ── live readers (NAMES only) ──────────────────────────────────────────────
+// live readers (NAMES only)
 
 function railwayKeys(target) {
   const out = execFileSync(
@@ -80,7 +75,7 @@ function liveKeys(target) {
   }
 }
 
-// ── analysis ───────────────────────────────────────────────────────────────
+// analysis
 
 /** For each target: which manifest vars are declared, present, missing, undeclared. */
 function analyze(manifest) {
@@ -105,7 +100,7 @@ function hasDrift({ targetIds, missing, undeclared }) {
   return targetIds.some((id) => missing[id].length || undeclared[id].length);
 }
 
-// ── commands ─────────────────────────────────────────────────────────────
+// commands
 
 function cmdStatus(manifest) {
   const a = analyze(manifest);
@@ -246,7 +241,7 @@ function cmdSync(manifest, targetId, apply) {
   if (failed.length) fail(`failed: ${failed.join(', ')}`);
 }
 
-// ── entry ────────────────────────────────────────────────────────────────
+// entry
 
 function main() {
   const manifest = loadManifest();

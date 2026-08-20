@@ -23,13 +23,10 @@ import { inAppDiagnostics, isPopupUnavailableError } from '@/lib/inAppBrowser';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { toast } from '@/lib/toast';
 import * as Sentry from '@sentry/nextjs';
-// Type-only import: `lib/mfaFactors.server.ts` is Admin-SDK code and must never
-// reach the client bundle. `import type` is erased at compile time, so this
-// borrows the shape without the module — the same trick `hooks/useMfaFactors.ts`
-// uses for `PasskeyInfo`.
+// Type-only: mfaFactors.server.ts is Admin-SDK code that must never reach the
+// client bundle; `import type` is erased at compile time.
 import type { MfaFactorInventory } from '@/lib/mfaFactors.server';
 
-// Shallow-compare two arrays by value (for string arrays like userSites)
 function arraysEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -38,12 +35,10 @@ function arraysEqual(a: string[], b: string[]): boolean {
   return true;
 }
 
-// Auth error codes that mean the Firebase credential itself is gone, rather
-// than the attempted operation having failed. The SDK signs the user out
-// before surfacing these (`_logoutIfInvalidated` in @firebase/auth), so the
-// auth listener below owns the user-facing message — a per-operation toast
-// would blame the wrong thing ("Photo Update Failed") for a dead session, and
-// the Sentry report would be noise rather than a defect.
+// Codes meaning the credential is gone, not that the operation failed. The SDK
+// signs out before surfacing these (`_logoutIfInvalidated`), so the auth
+// listener owns the message — a per-operation toast would blame the wrong thing
+// ("Photo Update Failed") and the Sentry report would be noise.
 const SESSION_ENDED_CODES = new Set(['auth/user-token-expired', 'auth/invalid-user-token']);
 
 function isSessionEndedError(error: unknown): boolean {
@@ -51,7 +46,6 @@ function isSessionEndedError(error: unknown): boolean {
   return code !== undefined && SESSION_ENDED_CODES.has(code);
 }
 
-// Shallow-compare two flat objects (for lastMachineIds)
 function shallowEqual(a: Record<string, string>, b: Record<string, string>): boolean {
   const keysA = Object.keys(a);
   const keysB = Object.keys(b);
@@ -62,11 +56,8 @@ function shallowEqual(a: Record<string, string>, b: Record<string, string>): boo
   return true;
 }
 
-// Structural deep-equal for preference snapshot diffing. Used instead of
-// JSON.stringify because Firestore does not guarantee object key order, so
-// stringify-based equality produces spurious mismatches (and reference churn
-// downstream) when the server returns the same logical object with a
-// different key order.
+// Not JSON.stringify: Firestore does not guarantee key order, so stringify
+// equality produces spurious mismatches and reference churn downstream.
 function isDeepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === null || b === null || typeof a !== typeof b) return false;
@@ -91,25 +82,16 @@ function isDeepEqual(a: unknown, b: unknown): boolean {
   return true;
 }
 
-// The inventory of an account with no second factor. Deliberately a local
-// literal rather than an import of `EMPTY_MFA_FACTORS`: that constant lives in
-// a `.server` module, and importing its VALUE would drag the Admin SDK into the
-// client bundle. Frozen for the same reason its server twin is — it is shared
-// by the default context value and the initial state, so a consumer mutating
-// it would corrupt every subsequent reader.
+// Local literal, not an import of `EMPTY_MFA_FACTORS`: importing that VALUE
+// from a `.server` module would drag the Admin SDK into the client bundle.
+// Frozen because it is shared by the default context value and initial state.
 const NO_MFA_FACTORS: MfaFactorInventory = Object.freeze({ totp: false, passkeys: 0 });
 
 /**
- * Read the second-factor tally off a user document.
- *
- * `users/{uid}.mfaFactors` is written only by `lib/mfaFactors.server.ts`, which
- * keeps it in step with the `passkeys` subcollection transactionally. It
- * replaced the legacy `passkeyEnrolled` boolean this context used to read;
- * documents written before the switch still carry that field, but nothing reads
- * it, so a stale value there is inert.
- *
- * Parsed defensively because the field is genuinely absent on accounts that
- * predate it, and a malformed value must read as "no factors" rather than
+ * Read the second-factor tally off a user document. `users/{uid}.mfaFactors` is
+ * written only by `lib/mfaFactors.server.ts`, transactionally with the
+ * `passkeys` subcollection. Parsed defensively: the field is absent on older
+ * accounts, and a malformed value must read as "no factors" rather than
  * accidentally satisfying a "has a passkey" check.
  */
 function readMfaFactorsFromDoc(userData: Record<string, unknown>): MfaFactorInventory {
@@ -125,7 +107,6 @@ function readMfaFactorsFromDoc(userData: Record<string, unknown>): MfaFactorInve
   };
 }
 
-// Helper functions for server-side session management
 const createSessionCookie = async (userId: string, idToken: string): Promise<void> => {
   try {
     const response = await fetch('/api/auth/session', {
@@ -169,9 +150,8 @@ const bootstrapUserDocument = async (
   user: User,
   displayName: string,
   /**
-   * Turnstile token from the register form. Omitted by the auth-state
-   * listener path (Google sign-in / recovery), where the server skips the
-   * challenge for non-password providers.
+   * Turnstile token from the register form. Omitted on the auth-state listener
+   * path (Google / recovery) — the server skips the challenge there.
    */
   turnstileToken?: string
 ): Promise<{ alreadyExists: boolean }> => {
@@ -199,19 +179,14 @@ const bootstrapUserDocument = async (
 
 export type UserRole = 'member' | 'admin' | 'superadmin';
 
-/**
- * Pure helper: is the user a platform-wide superadmin?
- * Extracted (and exported) so it's unit-testable without mounting AuthProvider.
- */
+/** Platform-wide superadmin? Exported so it's testable without AuthProvider. */
 export function computeIsSuperadmin(role: UserRole | null): boolean {
   return role === 'superadmin';
 }
 
 /**
- * Pure helper: is the user a site-admin for the given site?
- * Superadmins pass for every siteId (god-mode fall-through); admins pass only
- * when siteId is in their assigned `userSites[]`. Everyone else is false.
- * Extracted (and exported) so it's unit-testable without mounting AuthProvider.
+ * Site-admin for `siteId`? Superadmins pass for every site; admins only for
+ * their `userSites[]`. Exported so it's testable without AuthProvider.
  */
 export function computeIsSiteAdmin(
   role: UserRole | null,
@@ -225,13 +200,10 @@ export interface UserPreferences {
   temperatureUnit: 'C' | 'F'; // Default: 'C'
   timezone: string; // IANA timezone (e.g. 'America/New_York'). Default: browser-detected. Used as the display reference frame when timeDisplayMode === 'user'.
   timeFormat: '12h' | '24h'; // Time display format. Default: '12h'
-  /** Which timezone reference frame to use when rendering absolute timestamps
-   * (heartbeats, activity logs, etc) on the dashboard:
-   *   - 'user'    → render in `timezone` above (single reference frame for all machines)
-   *   - 'machine' → render each machine's timestamps in that machine's own local timezone (best for distributed kiosks)
-   *   - 'site'    → render in the site's configured timezone (legacy/single-team behavior)
-   * Schedule editors are unaffected — they always use the machine's local timezone with an explicit chip label.
-   * Default: 'machine'. */
+  /** Reference frame for absolute timestamps on the dashboard. 'user' = the
+   * `timezone` above; 'machine' = each machine's own tz (default, best for
+   * distributed kiosks); 'site' = the site's configured tz. Schedule editors
+   * ignore this — always machine-local with an explicit chip label. */
   timeDisplayMode: 'user' | 'machine' | 'site';
   healthAlerts: boolean; // Receive email alerts when machines go offline. Default: true
   processAlerts: boolean; // Receive email alerts when processes crash or fail to start. Default: true
@@ -245,30 +217,21 @@ export interface UserPreferences {
   statsExpanded: boolean; // Whether stats section is expanded in card view. Default: false
   processesExpanded: boolean; // Whether process list is expanded in card view. Default: false
   displaysExpanded?: boolean; // Whether displays section is expanded in card view. Default: false
-  /** Remembered graph tab selection for each machine's MetricsDetailPanel.
-   * Keyed by machineId → array of namespaced tab ids (e.g. 'metric:cpu', 'nic:Ethernet 2', 'gpu:0').
-   * Unknown namespaces are ignored on read, so new entity types slot in without migration. */
+  /** machineId → namespaced tab ids ('metric:cpu', 'nic:Ethernet 2', 'gpu:0').
+   * Unknown namespaces are ignored on read, so new entity types need no migration. */
   graphTabs?: Record<string, string[]>;
-  /** Which machine's MetricsDetailPanel is currently open, and the metric that opened it.
-   * Null/absent when no panel is open. Persisted so the panel reappears after reload. */
+  /** Open MetricsDetailPanel + the metric that opened it; null when closed.
+   * Persisted so the panel reappears after reload. */
   activeGraphPanel?: { machineId: string; metric: string } | null;
-  /** Selected time range for the MetricsDetailPanel (global, not per-machine).
-   * One of: '1h' | '1d' | '1w' | '1m' | '1y' | 'all'. Default: '1h'. */
+  /** MetricsDetailPanel range, global not per-machine: '1h'|'1d'|'1w'|'1m'|'1y'|'all'. Default '1h'. */
   graphTimeRange?: '1h' | '1d' | '1w' | '1m' | '1y' | 'all';
 }
 
 /**
- * Outcome of a Google sign-in.
- *
- * Google OAuth does not distinguish signing up from signing in — the same
- * popup does both — so a user who already has an account and lands on
- * /register is simply signed in. Without this flag the page cannot tell, and
- * /register told everyone "account created with Google!" whether or not one
- * was. `isNewUser` comes from Firebase's own `getAdditionalUserInfo`.
- *
- * Deliberately a small domain object rather than the raw `UserCredential`:
- * pages need one bit, and leaking the Firebase type into them would make it
- * that much harder to move off the client SDK later.
+ * Outcome of a Google sign-in. One popup does both signup and signin, so
+ * without `isNewUser` (from `getAdditionalUserInfo`) /register claimed "account
+ * created with Google!" for returning users. A small domain object rather than
+ * the raw `UserCredential` to keep the Firebase type out of pages.
  */
 export interface GoogleSignInResult {
   isNewUser: boolean;
@@ -279,15 +242,15 @@ interface AuthContextType {
   loading: boolean;
   /** User's role from Firestore; null until the user doc loads (pre-auth, missing doc, or listener error). */
   role: UserRole | null;
-  /** True when role === 'superadmin' — platform-wide god-mode. Use for installer uploads, role management, cross-site admining. */
+  /** role === 'superadmin'. Installer uploads, role management, cross-site admining. */
   isSuperadmin: boolean;
-  /** True when the user is an admin or superadmin of the given site. Superadmins pass for every siteId; admins pass only for sites in their userSites[]. Use for site-level elevated operations (delete machines, edit stored layouts, site webhooks/settings). */
+  /** Admin or superadmin of `siteId`. Gates site-level elevated ops (delete machines, stored layouts, site webhooks/settings). */
   isSiteAdmin: (siteId: string) => boolean;
   userSites: string[]; // Sites the user has access to
   lastSiteId: string | null; // Last active site (synced to Firestore)
   lastMachineIds: Record<string, string>; // Last active machine per site (synced to Firestore)
   requiresMfaSetup: boolean; // Whether user needs to complete 2FA setup
-  /** Second factors this account holds, mirrored live from the user document. `passkeys > 0` answers "does this account have a passkey"; `totp || passkeys > 0` is the same fact as `mfaEnrolled`. */
+  /** Second factors, mirrored live from the user doc. `totp || passkeys > 0` === `mfaEnrolled`. */
   mfaFactors: MfaFactorInventory;
   userPreferences: UserPreferences; // User preferences (temperature unit, etc.)
   signIn: (email: string, password: string) => Promise<void>;
@@ -297,7 +260,7 @@ interface AuthContextType {
   updateUserProfile: (firstName: string, lastName: string) => Promise<void>;
   updateUserPhoto: (photoBlob: Blob | null) => Promise<void>;
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
-  /** Send a Firebase password-reset email. Resolves even for unknown addresses (email-enumeration protection) — callers must show a generic confirmation, never confirm/deny account existence. */
+  /** Resolves even for unknown addresses (enumeration protection) — callers must show a generic confirmation. */
   sendPasswordReset: (email: string, turnstileToken?: string) => Promise<void>;
   updateUserPreferences: (preferences: Partial<UserPreferences>, options?: { silent?: boolean }) => Promise<void>;
   updateLastSite: (siteId: string) => void;
@@ -347,24 +310,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
   const [mfaFactors, setMfaFactors] = useState<MfaFactorInventory>(NO_MFA_FACTORS);
   const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
-  // Mirror userPreferences in a ref so updateUserPreferences can read the
-  // current value without putting userPreferences in its useCallback deps —
-  // putting it in deps caused stale closures to overwrite recent changes
-  // when callers stacked rapid updates (e.g. cell-click + sparkline-toggle).
+  // Ref mirror so updateUserPreferences reads current prefs without listing
+  // them in its deps — that caused stale closures to clobber rapid stacked
+  // updates (cell-click + sparkline-toggle).
   const userPreferencesRef = useRef(userPreferences);
   useEffect(() => { userPreferencesRef.current = userPreferences; }, [userPreferences]);
-  // A sign-out is deliberate when it comes from `signOut` or from deleting the
-  // account; anything else means the credential was revoked underneath us and
-  // the user is owed an explanation. Only the auth listener can tell them,
-  // because the SDK signs out from inside whichever call happened to notice.
+  // Deliberate = from `signOut` or account deletion; anything else means the
+  // credential was revoked underneath us and the listener owes an explanation
+  // (the SDK signs out from inside whichever call happened to notice).
   const intentionalSignOutRef = useRef(false);
-  // `onAuthStateChanged` also fires with null on first load, so an involuntary
+  // `onAuthStateChanged` fires null on first load too, so an involuntary
   // sign-out only counts for a session that was actually signed in.
   const hadUserRef = useRef(false);
   const [lastSiteId, setLastSiteId] = useState<string | null>(null);
   const [lastMachineIds, setLastMachineIds] = useState<Record<string, string>>({});
 
-  // Helper function to send user creation notification
   const sendUserCreatedNotification = async (
     email: string,
     displayName: string,
@@ -404,7 +364,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('Failed to send user creation notification:', error);
       }
     } catch (error) {
-      // Don't fail user creation if notification fails
+      // Notification failure must not fail user creation.
       console.error('Error sending user creation notification:', error);
     }
   };
@@ -420,14 +380,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
 
-      // Set Sentry user context for error attribution
       if (user) {
         Sentry.setUser({ id: user.uid, email: user.email || undefined });
       } else {
         Sentry.setUser(null);
       }
 
-      // Clean up previous user document listener
       if (userDocUnsubscribe) {
         userDocUnsubscribe();
         userDocUnsubscribe = null;
@@ -435,7 +393,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (user) {
         hadUserRef.current = true;
-        // User is logged in - create server-side session with HTTPOnly cookie
+        // Mint the HTTPOnly session cookie.
         try {
           const idToken = await user.getIdToken();
           await createSessionCookie(user.uid, idToken);
@@ -443,11 +401,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.error('[Session] Failed to get ID token:', error);
         }
 
-        // Listen to user document for real-time updates
         if (db) {
           const userDocRef = doc(db, 'users', user.uid);
 
-          // Set up real-time listener for user document
           userDocUnsubscribe = onSnapshot(
             userDocRef,
             async (docSnap) => {
@@ -464,7 +420,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 const newLastSiteId = userData.lastSiteId || null;
                 const newLastMachineIds: Record<string, string> = userData.lastMachineIds || {};
 
-                // Only update state when values actually change to avoid unnecessary re-renders
+                // Identity-preserving setters: avoid re-renders on equal values.
                 setRole(prev => prev === newRole ? prev : newRole);
                 setUserSites(prev => arraysEqual(prev, newSites) ? prev : newSites);
                 setRequiresMfaSetup(prev => prev === newRequiresMfa ? prev : newRequiresMfa);
@@ -476,9 +432,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setLastSiteId(prev => prev === newLastSiteId ? prev : newLastSiteId);
                 setLastMachineIds(prev => shallowEqual(prev, newLastMachineIds) ? prev : newLastMachineIds);
 
-                // Load user preferences (with defaults if missing)
                 const preferences = userData.preferences || {};
-                // Validate timeDisplayMode (string union — fall back to 'machine' for unknown/missing)
+                // Unknown/missing timeDisplayMode falls back to 'machine'.
                 const rawTdm = preferences.timeDisplayMode;
                 const timeDisplayMode: 'user' | 'machine' | 'site' =
                   rawTdm === 'user' || rawTdm === 'site' ? rawTdm : 'machine';
@@ -504,11 +459,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   graphTimeRange: preferences.graphTimeRange || undefined,
                 };
                 setUserPreferences(prev => {
-                  // Per-field reference preservation: when a field's content
-                  // hasn't changed, keep prev's reference. This prevents
-                  // downstream consumers (e.g. MetricsDetailPanel's
-                  // reconciliation effect) from re-firing on identity changes
-                  // and reverting unrelated state.
+                  // Keep prev's reference for unchanged fields — identity churn
+                  // re-fires MetricsDetailPanel's reconciliation effect and
+                  // reverts unrelated state.
                   const graphTabsEqual = isDeepEqual(prev.graphTabs ?? null, newPrefs.graphTabs ?? null);
                   const activeGraphPanelEqual = isDeepEqual(prev.activeGraphPanel ?? null, newPrefs.activeGraphPanel ?? null);
                   const mutedEqual = arraysEqual(prev.mutedMachines, newPrefs.mutedMachines);
@@ -531,8 +484,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     prev.graphTimeRange === newPrefs.graphTimeRange;
                   if (allEqual) return prev;
 
-                  // At least one field changed — build next, preserving stable
-                  // refs for unchanged object/array fields.
+                  // Something changed: rebuild, keeping refs for unchanged fields.
                   return {
                     ...newPrefs,
                     graphTabs: graphTabsEqual ? prev.graphTabs : newPrefs.graphTabs,
@@ -544,14 +496,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
                 setLoading(false);
               } else {
-                // Create user document if it doesn't exist (new user)
                 console.log('⚠️ User document missing, creating now...');
                 try {
                   const displayName = user.displayName || '';
                   const bootstrap = await bootstrapUserDocument(user, displayName);
                   console.log('✅ User document created by listener');
 
-                  // Send user creation notification (likely Google sign-in)
                   if (!bootstrap.alreadyExists) {
                     sendUserCreatedNotification(
                       user.email || '',
@@ -560,7 +510,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     );
                   }
 
-                  // Don't set loading to false yet - wait for the listener to fire again
+                  // Leave loading true — the listener fires again with the new doc.
                 } catch (bootstrapError: unknown) {
                   const err = bootstrapError as { message?: string } | null;
                   console.error('listener failed to bootstrap document:', bootstrapError);
@@ -584,7 +534,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setLoading(false);
         }
       } else {
-        // User is logged out - destroy server-side session and reset role
         const involuntary = hadUserRef.current && !intentionalSignOutRef.current;
         hadUserRef.current = false;
         intentionalSignOutRef.current = false;
@@ -640,19 +589,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
 
-      // Set display name if first/last name provided
       if (firstName || lastName) {
         const displayName = [firstName, lastName].filter(Boolean).join(' ');
         await updateProfile(userCredential.user, { displayName });
       }
 
-      // Immediately bootstrap the user document server-side.
+      // Bootstrap the user document server-side immediately.
       try {
         const displayName = [firstName, lastName].filter(Boolean).join(' ') || '';
         const bootstrap = await bootstrapUserDocument(userCredential.user, displayName, turnstileToken);
         console.log('✅ User document created in Firestore:', userCredential.user.uid);
 
-        // Send user creation notification
         if (!bootstrap.alreadyExists) {
           sendUserCreatedNotification(
             userCredential.user.email || '',
@@ -664,20 +611,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const err = bootstrapError as { message?: string } | null;
         console.error('failed to bootstrap user document:', bootstrapError);
         console.error('Error message:', err?.message);
-        // Don't throw - let the user continue even if Firestore fails
-        // The onAuthStateChanged listener will retry
+        // Don't throw: the onAuthStateChanged listener retries the bootstrap.
       }
 
       toast.success('Account Created', {
         description: 'Your account has been created successfully. You can now sign in.',
       });
     } catch (error: unknown) {
-      // /register renders inline remediation for this one — the sentence plus
-      // routes to sign in or reset the password — so a toast here would only
-      // repeat it in a different voice and then expire. Same precedent as the
-      // popup-unavailable branch in signInWithGoogle below: when the page owns
-      // the presentation, the context stays quiet but still reports, because
-      // this is how we learned real users hit it (OWLETTE-WEB-46).
+      // /register renders inline remediation for this, so no toast — but still
+      // report it: OWLETTE-WEB-46 is how we learned real users hit it.
       if ((error as { code?: unknown } | null)?.code === 'auth/email-already-in-use') {
         logError(error, 'signup-email-already-in-use');
         throw error;
@@ -703,31 +645,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const provider = new GoogleAuthProvider();
       const credential = await signInWithPopup(auth, provider);
-      // `additionalUserInfo` is absent on some replayed/edge credentials; a
-      // missing flag means we cannot claim an account was created, so treat it
-      // as a returning user. The wrong guess here costs a slightly generic
-      // greeting, whereas the opposite claims a signup that did not happen.
+      // `additionalUserInfo` is absent on some replayed credentials; default to
+      // returning user — a generic greeting beats claiming a signup that wasn't.
       return { isNewUser: getAdditionalUserInfo(credential)?.isNewUser ?? false };
     } catch (error: unknown) {
       const code = (error as { code?: string } | null)?.code;
-      // The user dismissed the popup themselves. Not a failure — no toast, and
-      // nothing worth reporting.
+      // User dismissed the popup. Not a failure — no toast, no report.
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         throw error;
       }
 
-      // The environment cannot open a sign-in popup at all — overwhelmingly an
-      // in-app browser, where no Firebase configuration or redirect fallback
-      // can rescue the flow (see lib/inAppBrowser for why).
-      //
-      // No toast: /login and /register catch this and render inline
-      // remediation that actually tells the user what to do next, so a toast
-      // here would stack a second, contentless message on top of it.
-      //
-      // It must still reach Sentry, and with the raw user-agent attached: this
-      // is the only signal for how often the signup funnel dies this way, and
-      // Sentry's parsed browser family collapses every unrecognised iOS
-      // webview to one label that doesn't name the host app.
+      // No popup possible — almost always an in-app browser, unrescuable by any
+      // Firebase config or redirect fallback (see lib/inAppBrowser). No toast:
+      // /login and /register render inline remediation. Still reported, with
+      // the raw UA — Sentry's parsed browser family collapses every
+      // unrecognised iOS webview to one label that doesn't name the host app.
       if (isPopupUnavailableError(error)) {
         logError(error, 'google-signin-popup-blocked', inAppDiagnostics());
         throw error;
@@ -790,16 +722,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       await updateProfile(auth.currentUser, { displayName });
 
-      // Force a refresh of the user object. Spreading a null `currentUser`
-      // would yield a truthy `{}` that every `!user` guard waves through.
+      // Spreading a null `currentUser` would yield a truthy `{}` that every
+      // `!user` guard waves through.
       setUser(auth.currentUser ? { ...auth.currentUser } : null);
 
       toast.success('Profile Updated', {
         description: 'Your profile has been updated successfully.',
       });
     } catch (error: unknown) {
-      // The session ended mid-update: the listener already told the user, and
-      // this is an expected condition rather than a defect worth reporting.
+      // Session ended mid-update — the listener already told the user; not a defect.
       if (isSessionEndedError(error)) {
         throw error;
       }
@@ -828,11 +759,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const downloadUrl = await getDownloadURL(avatarRef);
         await updateProfile(auth.currentUser, { photoURL: downloadUrl });
       } else {
-        // Remove: best-effort delete the object, then clear photoURL
         try {
           await deleteObject(avatarRef);
         } catch (err: unknown) {
-          // Object may not exist — only re-throw unexpected errors
+          // Object may not exist — re-throw only unexpected errors.
           const code = (err as { code?: string } | null)?.code;
           if (code !== 'storage/object-not-found') {
             throw err;
@@ -850,7 +780,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
     } catch (error: unknown) {
       // Session ended mid-upload — see updateUserProfile. Blaming the photo
-      // here is what made this surface as an unexplained failure in Sentry.
+      // made this surface as an unexplained failure in Sentry.
       if (isSessionEndedError(error)) {
         throw error;
       }
@@ -874,26 +804,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const userDocRef = doc(db, 'users', auth.currentUser.uid);
 
-      // Always read the latest userPreferences via ref so rapid stacked
-      // updates don't overwrite each other with stale closure values.
+      // Read via ref so rapid stacked updates don't clobber each other.
       const current = userPreferencesRef.current;
       const merged = { ...current, ...preferences };
 
-      // Strip undefined values — Firestore rejects them with
-      // `Function setDoc() called with invalid data. Unsupported field value:
-      // undefined`. Optional fields that have never been set (e.g.
-      // activeGraphPanel before the user opens a graph) sit in `current` as
-      // undefined and would otherwise propagate into every preference write.
+      // Firestore rejects undefined values outright, and never-set optional
+      // fields (e.g. activeGraphPanel) sit in `current` as undefined.
       const sanitized: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(merged)) {
         if (value !== undefined) sanitized[key] = value;
       }
 
-      // Merge with existing preferences in Firestore
       await setDoc(userDocRef, { preferences: sanitized }, { merge: true });
 
-      // Update local state via functional setter so concurrent setUserPreferences
-      // calls (e.g. from the Firestore snapshot listener) compose correctly.
+      // Functional setter so concurrent writes (e.g. the snapshot listener) compose.
       setUserPreferences((prev) => ({ ...prev, ...preferences }));
 
       if (!options?.silent) {
@@ -912,9 +836,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const updateLastSite = useCallback((siteId: string) => {
     setLastSiteId(siteId);
-    // Also keep localStorage for fast same-browser access
+    // localStorage is the fast same-browser read; Firestore is the source of
+    // truth, written fire-and-forget for responsiveness.
     localStorage.setItem('owlette_current_site', siteId);
-    // Write to Firestore (fire-and-forget for responsiveness)
     if (auth?.currentUser && db) {
       const userDocRef = doc(db, 'users', auth.currentUser.uid);
       setDoc(userDocRef, { lastSiteId: siteId }, { merge: true }).catch((err) =>
@@ -951,7 +875,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw error;
       }
 
-      // Re-authenticate user with current password
       const credential = EmailAuthProvider.credential(
         auth.currentUser.email,
         currentPassword
@@ -959,7 +882,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       await reauthenticateWithCredential(auth.currentUser, credential);
 
-      // Update to new password
       await firebaseUpdatePassword(auth.currentUser, newPassword);
 
       toast.success('Password Updated', {
@@ -967,7 +889,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
     } catch (error: unknown) {
       const code = (error as { code?: string } | null)?.code;
-      // Handle specific re-authentication errors
       if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
         toast.error('Update Failed', {
           description: 'Current password is incorrect.',
@@ -987,12 +908,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const sendPasswordReset = useCallback(async (email: string, turnstileToken?: string) => {
-    // Routes through our own server endpoint, which mints the reset link via
-    // the Admin SDK and sends a BRANDED email through Resend — instead of
-    // Firebase's plain built-in template. The route is enumeration-safe (200
-    // whether or not an account exists), so on success we stay silent and let
-    // the /forgot-password page render its generic confirmation. Mirrors
-    // signIn: the method owns error toasts, the page owns the success path.
+    // Our endpoint (branded Resend email via Admin SDK), not Firebase's plain
+    // template. Enumeration-safe: 200 whether or not the account exists, so
+    // success is silent and /forgot-password renders the generic confirmation.
     let res: Response;
     try {
       res = await fetch('/api/auth/forgot-password', {
@@ -1044,7 +962,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const userId = auth.currentUser.uid;
 
-      // Re-authenticate user with password
       if (auth.currentUser.email) {
         const credential = EmailAuthProvider.credential(
           auth.currentUser.email,
@@ -1053,9 +970,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await reauthenticateWithCredential(auth.currentUser, credential);
       }
 
-      // The server revokes tokens and deletes the Auth record, so the SDK will
-      // sign this session out on its own — that is intended, not a session
-      // dying underneath the user.
+      // The server revokes tokens and deletes the Auth record, so the SDK signs
+      // this session out on its own — intended, not a session dying on us.
       intentionalSignOutRef.current = true;
       const response = await fetch('/api/users/me', {
         method: 'DELETE',
@@ -1065,15 +981,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error(await readApiError(response, 'Failed to delete account data'));
       }
 
-      // Firebase Auth user revocation + deletion is performed server-side
-      // by the action core (see web/lib/actions/deleteOwnAccount.server.ts).
-      // The client used to call auth.deleteUser() here, but that race window
-      // is now closed: the server has already revoked tokens and deleted
-      // the Auth record before this response returns. Calling it again
-      // would either no-op with `auth/user-not-found` or fail with
-      // `auth/user-token-expired`. Just sign the local session out.
-
-      // Destroy server-side session
+      // No client-side auth.deleteUser(): deleteOwnAccount.server.ts already
+      // revoked tokens and deleted the Auth record before this response.
       await destroySessionCookie();
 
       toast.success('Account Deleted', {
@@ -1083,7 +992,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // The account survived, so a later sign-out is not this one.
       intentionalSignOutRef.current = false;
       const code = (error as { code?: string } | null)?.code;
-      // Handle specific errors
       if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
         toast.error('Deletion Failed', {
           description: 'Password is incorrect.',

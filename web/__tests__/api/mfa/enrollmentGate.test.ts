@@ -1,25 +1,19 @@
 /** @jest-environment node */
 
 /**
- * The factor-enrollment gate on the TOTP routes (`/api/mfa/setup` and
- * `/api/mfa/verify-setup`).
+ * The factor-enrollment gate on `/api/mfa/setup` and `/api/mfa/verify-setup`.
  *
- * `/api/*` is not MFA-gated — `proxy.ts` returns early for any `/api` path and
- * `requireSessionUser` only checks uid equality. Once a freshly enrolled
- * factor can satisfy the MFA gate (universal 2FA), that makes every enrollment
- * route an MFA bypass for anyone holding the victim's `__session` cookie: add
- * an attacker-controlled factor, then step up with it.
+ * `/api/*` is not MFA-gated, so without this gate a stolen `__session` cookie
+ * could enroll its own factor and step up with it.
  *
- * The rule these tests pin down:
- *   - zero factors  -> enrollment OPEN (the mandatory-setup path; a user who
- *     has never enrolled can never hold `mfaVerified`, so gating here would
- *     deadlock them out of ever enrolling).
- *   - any factor    -> `mfaVerified === true` required, else 403
- *     `mfa_challenge_required`.
+ * The rule pinned here:
+ *   - zero factors -> enrollment OPEN. A user who never enrolled can never hold
+ *     `mfaVerified`, so gating would deadlock them out of enrolling at all.
+ *   - any factor   -> `mfaVerified === true`, else 403 `mfa_challenge_required`.
  *
- * Plus the per-factor rule that replaced verify-setup's old blanket
- * `mfaEnrolled === true` 409: a passkey-only account may ADD TOTP, but a live
- * TOTP secret is never overwritten in place (disable-then-enroll only).
+ * Plus the per-factor rule that replaced verify-setup's blanket 409: a
+ * passkey-only account may ADD TOTP, but a live TOTP secret is never
+ * overwritten in place — disable, then enroll.
  */
 
 const mockRequireSessionUser = jest.fn();
@@ -46,8 +40,8 @@ jest.mock('@/lib/withRateLimit', () => ({
 }));
 
 jest.mock('@/lib/apiAuth.server', () => {
-  // Defined inline because the factory is hoisted ABOVE module-scope code
-  // by jest — top-level classes aren't yet initialised here.
+  // Inline: jest hoists the factory above module scope, so a top-level class
+  // isn't initialised yet.
   class ApiAuthError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -67,10 +61,9 @@ jest.mock('@/lib/sessionManager.server', () => ({
   markSessionMfaVerified: (...a: unknown[]) => mockMarkSessionMfaVerified(...a),
 }));
 
-// The inventory module is stubbed here on purpose: these tests are about the
-// GATE's decision, not the denormalization (covered by mfaFactors.test.ts and,
-// end-to-end through a route, by disable.test.ts). `deriveMfaEnrolled` keeps
-// its real one-line semantics so the gate isn't tested against a fiction.
+// Stubbed on purpose: these tests are about the GATE, not the denormalization
+// (mfaFactors.test.ts covers that). `deriveMfaEnrolled` keeps its real
+// semantics so the gate isn't tested against a fiction.
 jest.mock('@/lib/mfaFactors.server', () => ({
   deriveMfaEnrolled: (inv: { totp: boolean; passkeys: number }) =>
     inv.totp || inv.passkeys > 0,
@@ -126,8 +119,7 @@ const USER_ID = 'user-1';
 beforeEach(() => {
   jest.clearAllMocks();
 
-  // Default posture: brand-new account, session that has NOT cleared a
-  // challenge. Each test tightens whichever leg it is about.
+  // Brand-new account, session that has NOT cleared a challenge.
   mockRequireSessionUser.mockResolvedValue(USER_ID);
   mockAssertActiveUser.mockResolvedValue({});
   mockGetSessionData.mockResolvedValue({ userId: USER_ID });
@@ -167,9 +159,8 @@ function verifySetupReq() {
 
 describe('POST /api/mfa/setup — enrollment gate', () => {
   it('is open for an account with no factor, even on an unverified session', async () => {
-    // No pending secret yet — this is the real "starting setup" state. The
-    // beforeEach seeds one for the verify-setup cases below, and leaving it in
-    // place here would exercise the idempotent-reuse path instead of the mint.
+    // The real "starting setup" state; beforeEach's seeded secret would send
+    // this down the idempotent-reuse path instead of the mint.
     pendingDoc = null;
 
     const res = await SETUP(setupReq());
@@ -177,11 +168,10 @@ describe('POST /api/mfa/setup — enrollment gate', () => {
     expect(mockPendingSet).toHaveBeenCalledTimes(1);
   });
 
-  // The route is idempotent by design: `app/setup-2fa/page.tsx` calls it from an
-  // effect, so a refresh or remount issues a second POST. Minting a new secret
-  // per call lets the LAST write win in `mfa_pending` while the user is looking
-  // at a QR from an EARLIER response — verify-setup then rejects a code they
-  // read correctly. That race made the setup-2fa e2e spec fail ~50% of runs.
+  // Idempotent by design: setup-2fa calls it from an effect, so a remount
+  // POSTs again. Minting per call let the last write win while the user read a
+  // QR from an earlier response — verify-setup then rejected a correct code.
+  // That race failed the setup-2fa e2e spec ~50% of runs.
   it('reuses an unexpired pending secret instead of minting a new one', async () => {
     const res = await SETUP(setupReq());
 
@@ -211,7 +201,7 @@ describe('POST /api/mfa/setup — enrollment gate', () => {
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.code).toBe('mfa_challenge_required');
-    // No pending secret is minted — the flow stops before any side effect.
+    // The flow stops before any side effect.
     expect(mockPendingSet).not.toHaveBeenCalled();
   });
 
@@ -235,10 +225,9 @@ describe('POST /api/mfa/verify-setup — enrollment gate', () => {
   });
 
   it('returns 403 for a passkey-only account on an unverified session', async () => {
-    // THE BYPASS THIS CLOSES: without the gate, narrowing the old blanket 409
-    // to a per-factor check would let a stolen session bolt an
-    // attacker-controlled TOTP factor onto any passkey-only account and then
-    // step up with it.
+    // THE BYPASS THIS CLOSES: narrowing the blanket 409 to a per-factor check
+    // would otherwise let a stolen session bolt its own TOTP onto a
+    // passkey-only account and step up with it.
     mockReadMfaFactors.mockResolvedValue({ totp: false, passkeys: 1 });
 
     const res = await VERIFY_SETUP(verifySetupReq());
@@ -256,8 +245,8 @@ describe('POST /api/mfa/verify-setup — enrollment gate', () => {
     const res = await VERIFY_SETUP(verifySetupReq());
     expect(res.status).toBe(200);
 
-    // The route hands the inventory module the factor delta plus the payload
-    // to write atomically with it — and NEVER the two derived flags.
+    // The route passes the factor delta plus its payload — never the two
+    // derived flags.
     const [userId, change, ctx] = mockApplyMfaFactorChange.mock.calls[0];
     expect(userId).toBe(USER_ID);
     expect(change).toEqual({ totp: true });
@@ -283,11 +272,9 @@ describe('POST /api/mfa/verify-setup — enrollment gate', () => {
 });
 
 describe('POST /api/mfa/verify-setup — backup codes', () => {
-  // First enrollment is the ONE issuance that needs no separate proof of
-  // possession: the TOTP code verified moments earlier IS the proof, and the
-  // gate above already refused any account that holds a factor on an
-  // unverified session. Every other issuance goes through
-  // /api/mfa/backup-codes, which demands live proof.
+  // The one issuance needing no separate proof of possession: the TOTP code
+  // just verified IS the proof, and the gate already refused any account
+  // holding a factor. Every later issuance goes through /api/mfa/backup-codes.
   it('mints the sheet server-side when the client sends none', async () => {
     const req = createMockRequest('http://localhost/api/mfa/verify-setup', {
       method: 'POST',
@@ -301,7 +288,7 @@ describe('POST /api/mfa/verify-setup — backup codes', () => {
     expect(body.backupCodes).toHaveLength(10);
     expect(new Set(body.backupCodes).size).toBe(10);
 
-    // Only the hashes are stored, and they line up with the returned sheet.
+    // Only hashes are stored, and they match the returned sheet.
     const [, , ctx] = mockApplyMfaFactorChange.mock.calls[0];
     expect(ctx.extraUpdate.backupCodes).toEqual(
       (body.backupCodes as string[]).map((c) => `hash(${c})`),
@@ -317,9 +304,8 @@ describe('POST /api/mfa/verify-setup — backup codes', () => {
   });
 
   it('still honours a client-supplied sheet and echoes it back', async () => {
-    // Transitional: `app/setup-2fa/page.tsx` generates in the browser and is
-    // already displaying those codes, so storing a different set would leave
-    // the user holding ten strings that unlock nothing.
+    // Transitional: setup-2fa generates in the browser and is already showing
+    // those codes — storing a different set hands the user ten dead strings.
     const res = await VERIFY_SETUP(verifySetupReq());
     expect(res.status).toBe(200);
     expect((await res.json()).backupCodes).toEqual(['AAAA-BBBB']);

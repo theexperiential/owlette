@@ -1,12 +1,8 @@
 /**
- * roost upload orchestrator (wave 3.1).
- *
- * Chain: hash → /api/chunks/check → /api/chunks/upload-urls → parallel
- * PUTs via uploadQueue → /api/roosts/{id}/versions.
- *
- * Uses the wave-3 primitives we've already built — no Uppy, no tus.
- * The IndexedDB-backed upload queue gives us tab-close recovery; the
- * chunker is off-main-thread; pre-upload + dedup happen at the check step.
+ * roost upload orchestrator.
+ * hash → /api/chunks/check → /api/chunks/upload-urls → parallel PUTs via uploadQueue →
+ * /api/roosts/{id}/versions. No Uppy, no tus: the IndexedDB-backed queue gives tab-close
+ * recovery, the chunker is off-main-thread, and dedup happens at the check step.
  */
 
 import { type VersionFileEntry, type NamedBlob, VERSION_MEDIA_TYPE } from './chunking';
@@ -75,21 +71,15 @@ export class RoostUploadError extends Error {
   }
 }
 
-/**
- * Run the full upload pipeline. Resolves with the persisted version
- * pointer on success; rejects with `RoostUploadError` on any phase failure.
- */
+/** Resolves with the persisted version pointer; rejects with `RoostUploadError` per phase. */
 export async function uploadFolder(
   opts: UploadFolderOptions,
 ): Promise<UploadResult> {
   const fetchFn = opts.fetchFn ?? globalThis.fetch.bind(globalThis);
   const report = (p: UploadProgress) => opts.onProgress?.(p);
 
-  // ── 1. hash ─────────────────────────────────────────────────────
-  // Runs in a Web Worker (see versionBuilder.ts) so a 100 GB folder's
-  // hashing doesn't freeze the dashboard. Main thread only handles
-  // progress ticks. Pre-worker-wiring the UI would visibly jank during
-  // any meaningful upload.
+  // 1. hash — in a Web Worker (versionBuilder.ts); hashing a 100 GB folder on the main
+  // thread visibly janks the dashboard. Main thread only takes progress ticks.
   report({ phase: 'hashing', message: 'reading + hashing your roost' });
   let entries: VersionFileEntry[];
   try {
@@ -130,11 +120,9 @@ export async function uploadFolder(
     }
   }
 
-  // ── 2. check ────────────────────────────────────────────────────
-  // Server-side cap is 1000 hashes per request (MAX_HASHES_PER_REQUEST in
-  // web/app/api/_shared.ts). Anything over that gets 400. Batch at 500 to
-  // leave headroom + keep individual requests small enough that one
-  // transient failure only costs a retry of that batch, not everything.
+  // 2. check — server caps at 1000 hashes/request (MAX_HASHES_PER_REQUEST in
+  // web/app/api/_shared.ts, 400 beyond that). 500 leaves headroom and keeps a transient
+  // failure to one batch.
   report({ phase: 'checking', message: 'checking what is already uploaded' });
   let missing: string[];
   try {
@@ -163,12 +151,12 @@ export async function uploadFolder(
     );
   }
 
-  // ── 3. upload the missing chunks ────────────────────────────────
+  // 3. upload the missing chunks.
   let uploadedBytes = 0;
   if (missing.length > 0) {
     let urls: Record<string, string>;
     try {
-      // Same batching story as /check above.
+      // Same batching as /check above.
       const urlBatches = await batchedHashRequest(missing, async (batch) => {
         const res = await fetchFn('/api/chunks/upload-urls', {
           method: 'POST',
@@ -193,9 +181,8 @@ export async function uploadFolder(
       );
     }
 
-    // Seed the upload queue with a task per missing chunk. The task's
-    // payload carries both the signed URL and the chunk bytes we sliced
-    // out of the original blobs — no re-hashing on retry, no re-seek.
+    // One task per missing chunk, carrying the signed URL and the already-sliced bytes —
+    // a retry needs no re-hash and no re-seek.
     const store =
       opts.queueStore ??
       openIndexedDBStore(`roost-upload-${opts.siteId}-${opts.roostId}`);
@@ -266,7 +253,7 @@ export async function uploadFolder(
     }
   }
 
-  // ── 4. finalize ─────────────────────────────────────────────────
+  // 4. finalize.
   report({ phase: 'finalizing', message: 'publishing version' });
   const versionBody = buildOciVersion(entries);
   let body: {
@@ -321,16 +308,8 @@ export async function uploadFolder(
   };
 }
 
-/* --------------------------------------------------------------------- */
-/*  Helpers                                                              */
-/* --------------------------------------------------------------------- */
-
-/**
- * Given the input files + the computed version entries, slice the exact
- * bytes for `hash` out of the original blob without re-hashing. Walks
- * the entry list in order — the first entry+chunk with a matching hash
- * wins (dedup means the same bytes may appear in multiple entries).
- */
+/** Slice the bytes for `hash` out of the original blob without re-hashing. First match wins —
+ * dedup means the same bytes can appear in several entries. */
 export function locateChunkBytes(
   files: readonly NamedBlob[],
   entries: readonly VersionFileEntry[],
@@ -353,18 +332,11 @@ export function locateChunkBytes(
 }
 
 function buildOciVersion(entries: VersionFileEntry[]) {
-  // Content-addressed: version body contains ONLY content-identifying
-  // fields. `createdAt` / `createdBy` / `siteId` / `name` previously
-  // lived in `config` but they're metadata, not content — and embedding
-  // a wall-clock timestamp in the hashed body meant byte-identical
-  // uploads produced different version IDs, defeating dedup at the
-  // version level. Those fields are already stored on the Firestore
-  // version subdoc (see web/app/api/roosts/[roostId]/versions/route.ts),
-  // so removing them here is a pure de-duplication without any loss
-  // of metadata.
-  //
-  // `config: {}` satisfies agent-side sync_version validation, which
-  // requires `config` to be a dict but doesn't inspect its contents.
+  // Content-identifying fields ONLY. createdAt/createdBy/siteId/name used to sit in
+  // `config`, and a wall-clock timestamp in the hashed body gave byte-identical uploads
+  // different version IDs, defeating version-level dedup. They already live on the
+  // Firestore version subdoc. `config: {}` satisfies agent-side sync_version validation,
+  // which only requires a dict.
   return {
     schemaVersion: 2,
     mediaType: VERSION_MEDIA_TYPE,
@@ -373,12 +345,8 @@ function buildOciVersion(entries: VersionFileEntry[]) {
   };
 }
 
-/**
- * Parse an RFC 7807 problem+json body from a failed response and wrap
- * the detail into a plain Error. Roost routes return this envelope
- * (wave 2a.8) — surfacing the `detail` field gives callers actionable
- * copy instead of "HTTP 400".
- */
+/** Unwrap an RFC 7807 problem+json body into an Error, so callers see `detail` instead of
+ * "HTTP 400". */
 async function toProblem(res: Response, context: string): Promise<Error> {
   try {
     const ct = res.headers.get('content-type') ?? '';
@@ -401,22 +369,14 @@ function isAbort(err: unknown): boolean {
   );
 }
 
-/**
- * Batch size for hash-list API calls. Server cap is
- * MAX_HASHES_PER_REQUEST=1000 (see web/app/api/_shared.ts); we stay well
- * under so a future cap reduction doesn't regress us, and so one failed
- * batch only requires retrying ~500 hashes worth of work.
- */
+/** Server cap is MAX_HASHES_PER_REQUEST=1000 (web/app/api/_shared.ts); half that leaves room
+ * for a future cap reduction and limits the cost of one failed batch. */
 const HASH_BATCH_SIZE = 500;
 
 /**
- * Run `fn` on slices of `items` of up to `HASH_BATCH_SIZE`, sequentially.
- * Sequential (not parallel) because the server-side operations that
- * consume these batches — presign URL mint, R2 HEAD for /chunks/check —
- * are CPU/IO-proportional to batch count and we don't want to swamp the
- * edge with 20 concurrent presign bursts on a large roost. The batches
- * themselves are cheap; total wall time for 10k hashes is ~5-10s on a
- * warm connection.
+ * Run `fn` over `HASH_BATCH_SIZE` slices SEQUENTIALLY: presign mint and the R2 HEADs behind
+ * /chunks/check scale with batch count, and a large roost would otherwise hit the edge with
+ * ~20 concurrent presign bursts. ~5-10s wall time for 10k hashes.
  */
 async function batchedHashRequest<R>(
   items: readonly string[],

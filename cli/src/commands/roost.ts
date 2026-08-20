@@ -1,18 +1,10 @@
 /**
- * `owlette roost list | get | diff | versions`.
+ * `owlette roost list | get | diff | versions` over GET /api/roosts[/{id}
+ * [/versions[/{versionRef}/diff]]].
  *
- * Drives:
- *   GET /api/roosts?siteId=...&limit=...&cursor=...
- *   GET /api/roosts/{id}?siteId=...
- *   GET /api/roosts/{id}/versions/{versionRef}/diff?siteId=...&against=...
- *   GET /api/roosts/{id}/versions?siteId=...&limit=...&cursor=...
- *
- * Each command renders a plain-ascii table by default and emits
- * structured JSON when `--json` is passed at the program level.
- *
- * The list + versions commands walk the server's cursor pagination
- * until exhausted (or `--limit` reaches zero), unless `--page-size N`
- * caps a single page.
+ * Plain-ascii tables by default, structured JSON under the program-level
+ * `--json`. list + versions walk cursor pagination until exhausted (or `--limit`
+ * hits zero), unless `--page-size N` caps a single page.
  */
 
 import { Command } from 'commander';
@@ -107,8 +99,8 @@ export function registerRoostInspectCommands(program: Command): void {
     (program.commands.find((c) => c.name() === 'roost') as Command | undefined) ??
     program.command('roost').description('manage roosts + versions');
 
-  // Overwrite any earlier stub description so the help text stays
-  // canonical regardless of registration order.
+  // Overwrite earlier stub descriptions so help text stays canonical whatever
+  // the registration order.
   roost.description('manage roosts + versions');
 
   // Remove any stubs left by earlier file-load ordering.
@@ -121,7 +113,7 @@ export function registerRoostInspectCommands(program: Command): void {
     }
   }
 
-  /* -------------------- list -------------------- */
+  // list
 
   roost
     .command('list')
@@ -189,7 +181,7 @@ export function registerRoostInspectCommands(program: Command): void {
       process.stdout.write(renderTable(['id', 'name', 'current', 'targets', 'status', 'updated'], rows));
     });
 
-  /* -------------------- get -------------------- */
+  // get
 
   roost
     .command('get <roostId>')
@@ -217,7 +209,7 @@ export function registerRoostInspectCommands(program: Command): void {
       process.stdout.write(formatRoostDetail(data));
     });
 
-  /* -------------------- diff -------------------- */
+  // diff
 
   roost
     .command('diff <roostId>')
@@ -232,7 +224,7 @@ export function registerRoostInspectCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      // Resolve the "to" version ref: explicit flag, or the current version.
+      // "to" ref: explicit flag, else the current version.
       let toRef = opts.version as string | undefined;
       if (!toRef) {
         const qs = new URLSearchParams({ siteId: opts.site });
@@ -274,7 +266,7 @@ export function registerRoostInspectCommands(program: Command): void {
       process.stdout.write(formatDiff(data));
     });
 
-  /* -------------------- versions -------------------- */
+  // versions
 
   roost
     .command('versions <roostId>')
@@ -342,9 +334,7 @@ export function registerRoostInspectCommands(program: Command): void {
     });
 }
 
-/* --------------------------------------------------------------------- */
-/*  formatters                                                           */
-/* --------------------------------------------------------------------- */
+// formatters
 
 function formatRoostDetail(r: RoostDetail): string {
   const out: string[] = [];
@@ -409,9 +399,7 @@ function formatDiff(d: DiffResponse): string {
   return out.join('\n') + '\n';
 }
 
-/* --------------------------------------------------------------------- */
-/*  util                                                                 */
-/* --------------------------------------------------------------------- */
+// util
 
 function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json: boolean } {
   const { apiUrl, token } = loadConfig({ profile: cmd.optsWithGlobals().profile });

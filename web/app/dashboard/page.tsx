@@ -29,9 +29,8 @@ import { ScreenshotDialog } from '@/components/ScreenshotDialog';
 import { LiveViewModal } from '@/components/LiveViewModal';
 import { PageHeader } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-// Pure tab-state helpers — imported directly from the lightweight module so
-// the dashboard bundle doesn't have to resolve @/components/charts' barrel
-// (which re-exports Recharts-heavy components like MetricsDetailPanel).
+// Imported from the lightweight module, not @/components/charts' barrel, which would
+// pull Recharts-heavy components into the dashboard bundle.
 import { deserializeTabs, initialMetricToState, serializeTabs } from '@/components/charts/metricsTabs';
 import type { MetricType } from '@/components/charts/ChartTooltip';
 import ScheduleEditor, { ScheduleBlocksEditor } from '@/components/ScheduleEditor';
@@ -49,12 +48,9 @@ import { FallingFeather } from '@/components/FallingFeather';
 import type { Process } from '@/hooks/useFirestore';
 import { useScrollFade } from '@/hooks/useScrollFade';
 
-// Code-split the two heavy detail panels out of the dashboard bundle. Both
-// subtrees are only needed after the user clicks a metric/display cell, so
-// deferring their parse + compile avoids a frame-budget spike during the
-// grid-template-rows slide animation that reveals them. `ssr: false` keeps
-// them out of server rendering entirely — the panels are client-only (they
-// subscribe to live Firestore state) so there's no SSR benefit to pay for.
+// Code-split: deferring parse+compile of the detail panels until a cell is clicked keeps
+// the grid-template-rows slide animation inside its frame budget. `ssr: false` because
+// both subscribe to live Firestore state — nothing to server-render.
 const MetricsDetailPanel = dynamic(
   () => import('@/components/charts/MetricsDetailPanel').then((m) => ({ default: m.MetricsDetailPanel })),
   { ssr: false, loading: () => null },
@@ -66,7 +62,6 @@ const DisplayLayoutPanel = dynamic(
 
 type ViewType = 'card' | 'list';
 
-// State for metrics detail panel
 interface DetailPanelState {
   machineId: string;
   machineName: string;
@@ -74,34 +69,31 @@ interface DetailPanelState {
 }
 
 export default function DashboardPage() {
-  // The process form dissolves under the dialog header rather than being cut
-  // by it; with the schedule section open it easily outgrows a laptop viewport.
+  // The form dissolves under the dialog header instead of being cut by it — with the
+  // schedule section open it outgrows a laptop viewport.
   const processFormRef = useScrollFade<HTMLDivElement>();
 
   const router = useRouter();
   const { user, loading, isSuperadmin, isSiteAdmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences, updateUserPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
   const { version, downloadUrl } = useInstallerVersion();
-  // Trial / lockout state for the banner + read-only signage below. One fetch
-  // per dashboard mount (the hook never polls), gated on auth resolving so it
-  // doesn't fire a request the session cookie can only 401.
+  // One fetch per mount (the hook never polls), gated on auth resolving so it doesn't
+  // fire a request the session cookie can only 401.
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [viewType, setViewType] = useState<ViewType>('card');
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
 
-  // Add-machine modal control for the zero-machine "getting started" card.
-  // Lifted so the card-header "+" (opens on the "enter code" tab) and step 3's
-  // "generate code" link can drive the same modal on different tabs.
+  // Lifted so the card-header "+" and step 3's "generate code" link drive the same modal
+  // on different tabs.
   const [addMachineOpen, setAddMachineOpen] = useState(false);
   const [addMachineTab, setAddMachineTab] = useState<'enter' | 'generate'>('enter');
-  // Inline "enter the 3-word phrase" authorize for the getting-started card —
-  // shares its implementation with AddMachineButton's "enter code" tab.
+  // Inline 3-word-phrase authorize; shares AddMachineButton's "enter code" implementation.
   const emptyStateAuthorize = useDeviceCodeAuthorize(currentSiteId);
 
 
-  // Schedule Editor dialog state (single instance, opened by gear icon on any process)
+  // Single editor instance, opened by the gear icon on any process.
   const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
   const [scheduleEditorTarget, setScheduleEditorTarget] = useState<{ machineId: string; process: Process } | null>(null);
 
@@ -132,7 +124,6 @@ export default function DashboardPage() {
     toast.success(`Preset "${name}" saved`);
   };
 
-  // Process Dialog state (supports both create and edit modes)
   const [processDialogOpen, setProcessDialogOpen] = useState(false);
   const [processDialogMode, setProcessDialogMode] = useState<'create' | 'edit'>('edit');
   const [editingMachineId, setEditingMachineId] = useState<string>('');
@@ -156,16 +147,13 @@ export default function DashboardPage() {
     launch_mode: 'off',
     schedules: null,
   });
-  // Disclosure for the dialog's schedule section. The schedule is editable in
-  // every launch mode (same rule the desktop app ships): from `off`/`always on`
-  // this is pre-configuring — the windows are written on save and the mode stays
-  // where it was. In `scheduled` the section is pinned open, so this flag only
-  // drives the other two modes.
+  // The schedule is editable in every launch mode (matching the desktop app): from
+  // off/always this pre-configures windows without changing the mode. In `scheduled` the
+  // section is pinned open, so this flag only drives the other two.
   const [scheduleSectionOpen, setScheduleSectionOpen] = useState(false);
   const scheduleSectionVisible = editProcessForm.launch_mode === 'scheduled' || scheduleSectionOpen;
-  // Prefill with the default windows when the process has none stored — the
-  // summary bar and the editor must show the same thing. Nothing is written to
-  // the form until the user actually edits a block.
+  // Prefill defaults when nothing is stored so the summary bar and editor agree; nothing
+  // is written to the form until the user edits a block.
   const scheduleBlocks = editProcessForm.schedules && editProcessForm.schedules.length > 0
     ? editProcessForm.schedules
     : DEFAULT_SCHEDULE;
@@ -189,12 +177,10 @@ export default function DashboardPage() {
   const { checkMachineHasActiveDeployment } = useDeployments(currentSiteId);
   const { removeMachineFromSite, removing: isRemovingMachine } = useMachineOperations(currentSiteId);
 
-  // Per-row expand state for list view
   const [expandedMachineIds, setExpandedMachineIds] = useState<Set<string>>(() => new Set());
 
-  // Sync expanded set when machines change (expand new machines if global pref is expanded).
-  // Depend on machines.length (not `machines`) so we only re-run when the list grows/shrinks,
-  // not on every metrics snapshot that mutates an existing machine's fields.
+  // Keyed on machines.length, not `machines` — otherwise every metrics snapshot that
+  // mutates an existing machine re-runs this.
   useEffect(() => {
     if (userPreferences.processesExpanded) {
       setExpandedMachineIds(new Set(machines.map(m => m.machineId)));
@@ -202,33 +188,26 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [machines.length, userPreferences.processesExpanded]);
 
-  // Remove Machine Dialog state
   const [removeMachineDialogOpen, setRemoveMachineDialogOpen] = useState(false);
   const [machineToRemove, setMachineToRemove] = useState<{ id: string; name: string; isOnline: boolean } | null>(null);
 
-  // Kill Process Confirmation state
   const [killConfirmOpen, setKillConfirmOpen] = useState(false);
   const [killTarget, setKillTarget] = useState<{ machineId: string; processId: string; processName: string } | null>(null);
 
-  // Restart Process Confirmation state
   const [restartConfirmOpen, setRestartConfirmOpen] = useState(false);
   const [restartTarget, setRestartTarget] = useState<{ machineId: string; processId: string; processName: string } | null>(null);
   const [restartInFlight, setRestartInFlight] = useState(false);
 
-  // Screenshot Dialog state
   const [screenshotDialogOpen, setScreenshotDialogOpen] = useState(false);
   const [screenshotTarget, setScreenshotTarget] = useState<{ machineId: string; machineName: string; isOnline: boolean } | null>(null);
 
-  // Live View Modal state
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   const [liveViewTarget, setLiveViewTarget] = useState<{ machineId: string; machineName: string } | null>(null);
 
-  // Live "clear all" keeps an already-open panel open (showing its in-panel
-  // "no metrics selected" state) — but an empty selection *restored from a
-  // previous session* must NOT reopen the panel, or it reserves an empty slide
-  // that pushes the machines list down below the page header. This ref draws
-  // the line: it flips true only after the panel has been open this session, so
-  // a fresh load with an empty persisted selection stays collapsed (no gap).
+  // A live "clear all" keeps the panel open, but an empty selection restored from a
+  // previous session must NOT reopen it — that reserves an empty slide and pushes the
+  // machines list below the page header (recurring regression). This ref flips true only
+  // once the panel has been open this session.
   const panelOpenedThisSessionRef = useRef(false);
 
   const detailPanel = useMemo<DetailPanelState | null>(() => {
@@ -241,25 +220,20 @@ export default function DashboardPage() {
       if (persisted !== undefined) {
         const sel = deserializeTabs(persisted);
         const hasAny = sel.metrics.length || sel.nics.length || sel.disks.length || sel.gpus.length || sel.diskIO.length;
-        // Empty selection: only keep the panel mounted if it was opened live
-        // this session (clear-all). On first load it stays closed — no slide.
+        // Empty selection stays mounted only if opened live this session (clear-all).
         if (!hasAny && !panelOpenedThisSessionRef.current) return null;
       }
     }
     return { machineId: p.machineId, machineName: p.machineId, metric: p.metric as MetricType };
   }, [userPreferences.activeGraphPanel, userPreferences.graphTabs, machines]);
 
-  // Mark the panel as having been open this session once it resolves non-null,
-  // so a subsequent live clear-all keeps it open (the guard above flips off).
+  // Mark open-this-session once it resolves non-null, so a later clear-all keeps it open.
   useEffect(() => {
     if (detailPanel) panelOpenedThisSessionRef.current = true;
   }, [detailPanel]);
 
-  // Animate the panel's open/close (and machine-swap) with a height
-  // slide. Tab switches within the same panel (CPU → Memory → GPU)
-  // and panel-kind swaps (display ↔ metric on the same machine) are
-  // handled silently / via reflow — see `useSlidePanel` for the
-  // imperative dance.
+  // Height slide on open/close and machine swap. Tab switches and display↔metric swaps
+  // are silent / reflow-driven — see `useSlidePanel`.
   const {
     wrapperRef: slideWrapperRef,
     contentRef: slideContentRef,
@@ -271,7 +245,6 @@ export default function DashboardPage() {
     reflowKey: (p) => (p.metric === 'display' ? 'display' : 'metric'),
   });
 
-  // Multilingual welcome messages with language info (memoized to avoid recreation)
   const welcomeMessages = useMemo(() => [
     // English (heavy)
     { text: "Welcome back", language: "English", translation: "Welcome back" },
@@ -357,7 +330,6 @@ export default function DashboardPage() {
     { text: "Fáilte ar ais", language: "Irish", translation: "Welcome back" },
   ], []);
 
-  // Random cheesy tech jokes (memoized)
   const techJokes = useMemo(() => [
 "Your pixels are in good hands",
 "Keeping your GPUs well-fed and happy",
@@ -431,7 +403,6 @@ export default function DashboardPage() {
     updateUserPreferences({ displaysExpanded: !userPreferences.displaysExpanded }, { silent: true });
   }, [userPreferences.displaysExpanded, updateUserPreferences]);
 
-  // Global expand/collapse all (stats + processes + displays)
   const allExpanded = expandedMachineIds.size === machines.length && machines.length > 0;
 
   const toggleAllExpanded = useCallback(() => {
@@ -444,7 +415,6 @@ export default function DashboardPage() {
     }
   }, [allExpanded, machines, updateUserPreferences]);
 
-  // Per-machine expand toggle for list view
   const toggleMachineExpanded = useCallback((machineId: string) => {
     setExpandedMachineIds(prev => {
       const next = new Set(prev);
@@ -512,14 +482,13 @@ export default function DashboardPage() {
   };
 
   const handleSetLaunchMode = async (machineId: string, processId: string, processName: string, mode: 'off' | 'always' | 'scheduled', exePath: string, schedules?: ScheduleBlock[] | null, schedulePresetId?: string | null, successMessage?: string) => {
-    // Validate exe_path before enabling
     if (mode !== 'off' && (!exePath || exePath.trim() === '')) {
       toast.error(`cannot enable launch mode for "${processName}": executable path is not set. please edit the process and set a valid executable path.`);
       return;
     }
 
     try {
-      // When activating scheduled mode without schedules, use default (M-F 9-5)
+      // Scheduled mode with no schedules falls back to M-F 9-5.
       const effectiveSchedules = mode === 'scheduled' && (!schedules || schedules.length === 0)
         ? DEFAULT_SCHEDULE
         : schedules;
@@ -538,7 +507,7 @@ export default function DashboardPage() {
     setEditingMachineId(machineId);
     setEditingProcessId(process.id);
 
-    // Map legacy visibility values to new options (backward compatibility)
+    // Legacy visibility values map onto the current options.
     let visibilityValue = process.visibility || 'Normal';
     if (visibilityValue === 'Show') {
       visibilityValue = 'Normal';
@@ -555,8 +524,8 @@ export default function DashboardPage() {
       visibility: visibilityValue,
       time_delay: process.time_delay || '0',
       time_to_init: process.time_to_init || '10',
-      // 0 means unlimited relaunches; `|| '3'` would show the operator a 3
-      // they never set and save it back on the next edit.
+      // 0 means unlimited relaunches; `|| '3'` would show a 3 the operator never set and
+      // write it back on the next edit.
       relaunch_attempts:
         process.relaunch_attempts === undefined ||
         process.relaunch_attempts === null ||
@@ -575,7 +544,6 @@ export default function DashboardPage() {
     setProcessDialogMode('create');
     setEditingMachineId(machineId);
     setEditingProcessId(''); // No process ID for new process
-    // Reset form to defaults
     setEditProcessForm({
       name: '',
       exe_path: '',
@@ -615,7 +583,6 @@ export default function DashboardPage() {
   useAgentAlertToasts(currentSiteId, handleUseSuggestedExePath);
 
   const handleSaveProcess = async () => {
-    // Validation
     if (!editProcessForm.name || !editProcessForm.name.trim()) {
       toast.error('process name is required');
       return;
@@ -628,11 +595,9 @@ export default function DashboardPage() {
 
     try {
       if (processDialogMode === 'create') {
-        // Create new process
         await createProcess(editingMachineId, editProcessForm);
         toast.success(`Process "${editProcessForm.name}" created successfully!`);
       } else {
-        // Update existing process
         await updateProcess(editingMachineId, editingProcessId, editProcessForm);
         toast.success(`Process "${editProcessForm.name}" updated successfully!`);
       }
@@ -644,9 +609,8 @@ export default function DashboardPage() {
   };
 
   const handleDuplicateProcess = async (machineId: string, process: Process) => {
-    // Suffix the name so it clears the server's per-machine unique-name check,
-    // and clone with launch_mode 'off' so the copy never auto-launches a
-    // second instance of the same executable.
+    // Suffix the name to clear the server's per-machine unique-name check; launch_mode
+    // 'off' so the copy never auto-launches a second instance of the same exe.
     const machine = machines.find((m) => m.machineId === machineId);
     const existingNames = machine?.processes?.map((p) => p.name) ?? [];
     const newName = nextDuplicateName(process.name, existingNames);
@@ -703,10 +667,8 @@ export default function DashboardPage() {
     }
   };
 
-  // Read view preference from localStorage before first paint to avoid card→list flash.
-  // useLayoutEffect runs synchronously after DOM mutations but BEFORE the browser
-  // paints, so the user only sees the final view. useEffect would paint the default
-  // 'card' first, then re-render to 'list' — visible flash on returning users.
+  // useLayoutEffect, not useEffect: it runs before paint, so returning users never see
+  // the default 'card' view flash before 'list' is restored.
   useLayoutEffect(() => {
     const savedView = localStorage.getItem('owlette_view_type');
     if (savedView === 'card' || savedView === 'list') {
@@ -714,15 +676,14 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // Save view preference to localStorage
   const handleViewChange = (view: ViewType) => {
     setViewType(view);
     localStorage.setItem('owlette_view_type', view);
   };
 
-  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback).
-  // setState in effect is intentional: depends on async-loaded `sites` + `lastSiteId`
-  // which aren't available synchronously at mount, so a lazy initializer won't work.
+  // Saved site from Firestore (cross-browser) or localStorage (same-browser fallback).
+  // setState-in-effect is deliberate: `sites` + `lastSiteId` load async, so a lazy
+  // initializer can't see them at mount.
   useEffect(() => {
     if (!sitesLoading && sites.length > 0 && !currentSiteId) {
       const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
@@ -739,23 +700,12 @@ export default function DashboardPage() {
     updateLastSite(siteId);
   };
 
-  // Gate the "getting started" empty-state card on being CERTAIN there's
-  // nothing to display. Do not simplify — this condition is load-bearing and
-  // every simplification attempted so far has reintroduced the "step 1: create
-  // your first site" flicker on reload.
-  //
-  // Why it's tricky: useMachines('') sets machinesLoading=false immediately
-  // when there's no currentSiteId yet, so `!machinesLoading` is TRUE during
-  // the initial render — before sites have even come back from Firestore.
-  // Using `!machinesLoading` (or anything that doesn't also gate on
-  // `!sitesLoading`) flashes the empty-state card for one paint on every
-  // reload.
-  //
-  // Valid empty states to show the card:
-  //   (a) User truly has no sites: sitesLoading=false && sites.length === 0
-  //   (b) User has sites and a selected site with zero machines:
-  //       sitesLoading=false && currentSiteId && machinesLoading=false && machines.length === 0
-  // Everything else = still loading → render null.
+  // DO NOT SIMPLIFY — every attempt has reintroduced the "step 1: create your first site"
+  // flicker on reload. useMachines('') sets machinesLoading=false immediately when there is
+  // no currentSiteId, so `!machinesLoading` alone is true on the very first render; the
+  // `!sitesLoading` gate is what suppresses the one-paint flash.
+  // Show the card only for: (a) no sites at all, or (b) a selected site whose machines have
+  // finished loading and is empty. Everything else renders null.
   const showGettingStarted = useMemo(() => {
     if (sitesLoading) return false;
     if (sites.length === 0) return true;
@@ -763,21 +713,17 @@ export default function DashboardPage() {
     return !!currentSiteId && !machinesLoading && machines.length === 0;
   }, [sitesLoading, sites.length, currentSiteId, machinesLoading, machines.length]);
 
-  // Lightweight machine list for the detail panel's in-header switcher — only
-  // the id + online status it needs, memoized so the heavy panel doesn't
-  // re-render on every dashboard paint.
+  // id + online only, memoized so the heavy panel doesn't re-render on every dashboard paint.
   const switcherMachines = useMemo(
     () => machines.map((m) => ({ machineId: m.machineId, online: m.online })),
     [machines],
   );
 
-  // Handle metric click to open detail panel (persisted).
-  // Each click SWAPS the panel's selection to the clicked metric — overwriting
-  // any existing graphTabs for this machine — rather than merging, so clicking
-  // different cells behaves like switching tabs, not like accumulating them.
+  // A click SWAPS the panel selection (overwrites this machine's graphTabs) rather than
+  // merging, so clicking cells behaves like switching tabs, not accumulating them.
   const handleMetricClick = (machineId: string, metric: MetricType) => {
-    // 'display' is a panel route, not a chart tab — skip graphTabs write to avoid
-    // polluting persisted preferences with entries deserializeTabs will drop on read.
+    // 'display' is a panel route, not a chart tab — writing it would persist entries
+    // deserializeTabs drops on read.
     if (metric === 'display') {
       updateUserPreferences(
         { activeGraphPanel: { machineId, metric } },
@@ -786,10 +732,8 @@ export default function DashboardPage() {
       return;
     }
 
-    // Build the fresh click intent. Clicking a generic 'disk' / 'gpu' cell
-    // (or a NIC util cell) expands to every per-device id on that machine so
-    // the user sees all devices of that type at once — not just the one that
-    // happened to be in the cell they clicked.
+    // A generic 'disk'/'gpu' (or NIC util) click expands to every per-device id on the
+    // machine, not just the device that happened to be in the clicked cell.
     const clickIds = serializeTabs(initialMetricToState(metric));
     const machine = machines.find((m) => m.machineId === machineId);
     if (machine?.devices) {
@@ -798,8 +742,7 @@ export default function DashboardPage() {
       } else if (metric === 'gpu') {
         for (const g of machine.devices.gpus) clickIds.push(`gpu:${g.id}`);
       } else if (metric.endsWith('_tx_util') || metric.endsWith('_rx_util')) {
-        // NIC util click already seeded the clicked NIC in clickIds via
-        // initialMetricToState — dedupe so we don't add it twice.
+        // initialMetricToState already seeded the clicked NIC — dedupe.
         const seen = new Set(clickIds);
         for (const n of machine.devices.nics) {
           const id = `nic:${n.id}`;
@@ -817,14 +760,12 @@ export default function DashboardPage() {
     ).catch(() => { /* fire-and-forget, matches graphTabs pattern */ });
   };
 
-  // Switch the open detail panel to a different machine, keeping the current
-  // metric (re-expanded for the new machine's devices via handleMetricClick).
+  // Switch machines, keeping the metric (re-expanded for the new devices).
   const handleSwitchMachine = (machineId: string) => {
     if (!heldDetailPanel || heldDetailPanel.metric === 'display') return;
     handleMetricClick(machineId, heldDetailPanel.metric);
   };
 
-  // Close detail panel and return to stats cards
   const handleCloseDetailPanel = () => {
     updateUserPreferences(
       { activeGraphPanel: null },
@@ -838,7 +779,7 @@ export default function DashboardPage() {
     }
   }, [user, loading, router]);
 
-  // 2FA Guard: Redirect users who need to complete 2FA setup
+  // Redirect users who still owe 2FA setup.
   useEffect(() => {
     if (!loading && user && requiresMfaSetup) {
       router.push('/setup-2fa');
@@ -890,7 +831,7 @@ export default function DashboardPage() {
         onUpdateSite={updateSite}
         onDeleteSite={async (siteId) => {
           await deleteSite(siteId);
-          // If we deleted the current site, switch to another one
+          // Deleting the current site: switch to another.
           if (siteId === currentSiteId) {
             const remainingSites = sites.filter(s => s.id !== siteId);
             if (remainingSites.length > 0) {
@@ -1130,11 +1071,9 @@ export default function DashboardPage() {
 
             {/* List View — only rendered when active */}
             {viewType === 'list' && (
-              /* `overflow-x-auto` (not `hidden`) so the table primitive's own
-                 horizontal scroller has somewhere to go — a fixed-layout table
-                 that outgrows a narrow viewport becomes scrollable rather than
-                 silently clipped. `overflow-y-hidden` keeps the rounded corners
-                 clipping the first/last rows as before. */
+              /* overflow-x-auto (not hidden) gives the fixed-layout table's own scroller
+                 somewhere to go instead of clipping; overflow-y-hidden keeps the rounded
+                 corners clipping the first/last rows. */
               <div className="rounded-xl border border-border/60 bg-card-sunken overflow-x-auto overflow-y-hidden animate-in fade-in duration-300">
                 <Table style={{ contain: 'layout', tableLayout: 'fixed' }}>
                   <MachineTableHeader

@@ -1,25 +1,17 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/actions/triggerUninstall.server.ts`
- * (security-boundary-migration wave 3.5).
+ * Unit tests for `web/lib/actions/triggerUninstall.server.ts`: input parsing,
+ * the action against a fake firestore, and command-shape parity with the
+ * legacy `useUninstall.ts:createUninstall` write so the agent's
+ * `uninstall_software` handler treats both identically.
  *
- * Covers:
- *   - input parsing + validation (`parseTriggerUninstallInput`)
- *   - end-to-end action against a fake firestore (`triggerUninstall`)
- *   - command shape parity with the legacy client-side write in
- *     `web/hooks/useUninstall.ts:createUninstall` so the agent's existing
- *     `cmd_type == 'uninstall_software'` handler processes it identically.
- *
- * Authorization (capability + scope) is enforced by `authorizedSiteHandler`
- * in the route shim — those tests live in `authorizedHandler.test.ts` and
- * the integration test for the route.
+ * Authorization lives in the route shim (`authorizedHandler.test.ts`).
  */
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
-// `triggerUninstall` resolves the default db once at import time; even
-// though every test injects an explicit `db`, the import path is taken.
+// The default db resolves at import time, even though every test injects one.
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({ collection: () => ({ doc: () => ({}) }) }),
 }));
@@ -29,8 +21,6 @@ import {
   parseTriggerUninstallInput,
   TriggerUninstallError,
 } from '@/lib/actions/triggerUninstall.server';
-
-/* ── fake firestore ───────────────────────────────────────────────────── */
 
 interface SetCall {
   path: string;
@@ -122,8 +112,6 @@ function buildFakeDb(): FakeDbState {
     db,
   };
 }
-
-/* ── parseTriggerUninstallInput ───────────────────────────────────────── */
 
 describe('parseTriggerUninstallInput', () => {
   it('accepts a minimal valid payload (software_name only)', () => {
@@ -228,8 +216,6 @@ describe('parseTriggerUninstallInput', () => {
     expect(Object.prototype.hasOwnProperty.call(out, 'timeout_seconds')).toBe(false);
   });
 });
-
-/* ── triggerUninstall (action core) ───────────────────────────────────── */
 
 describe('triggerUninstall — input guards', () => {
   it('throws when siteId is empty', async () => {
@@ -380,13 +366,13 @@ describe('triggerUninstall — command write shape (parity with useUninstall.ts)
     expect(commandId).toBe(result.commandId);
 
     const entry = call.payload[commandId] as Record<string, unknown>;
-    // Every legacy field from useUninstall.ts must be present + identical.
+    // Every legacy field from useUninstall.ts, identical.
     expect(entry.type).toBe('uninstall_software');
     expect(entry.software_name).toBe('TouchDesigner 2025');
     expect(entry.uninstall_command).toBe('"C:/td/unins000.exe"');
     expect(entry.installer_type).toBe('inno');
     expect(entry.verify_paths).toEqual(['C:/Program Files/TouchDesigner']);
-    // `timestamp` is the legacy serverTimestamp() sentinel kept for back-compat.
+    // Legacy serverTimestamp() sentinel, kept for back-compat.
     expect(entry.timestamp).toBeInstanceOf(
       Object.getPrototypeOf(FieldValue.serverTimestamp()).constructor,
     );

@@ -1,15 +1,12 @@
 //! Tauri command surface.
 //!
-//! Thin adapters only: every command resolves its arguments, delegates to a
-//! Tauri-free module, and maps errors to strings for the IPC boundary. Keeping
-//! the logic out of here is what lets the seam be unit tested without an app
-//! handle.
+//! Thin adapters only: resolve args, delegate to a Tauri-free module, map errors
+//! to strings. Keeping logic out of here is what makes the seam unit-testable
+//! without an app handle.
 //!
-//! All commands are declared `#[tauri::command(async)]`. They are synchronous
-//! bodies, so each one runs to completion on a single async-runtime worker
-//! thread — which both keeps the main thread free during a mutex wait and
-//! preserves the "acquire and release on the same thread" rule Windows mutex
-//! ownership requires.
+//! Every command is `#[tauri::command(async)]` with a synchronous body, so it
+//! runs to completion on one worker thread — keeps the main thread free during a
+//! mutex wait and satisfies Windows' acquire/release-on-the-same-thread rule.
 
 use std::time::Duration;
 
@@ -25,11 +22,9 @@ use crate::service_ctl::{self, ServiceCommandOutcome, ServiceStatus};
 use crate::shell_open;
 use crate::window_state::LayoutState;
 
-/// Absolute path of the owlette data root (`%PROGRAMDATA%\Owlette`).
-///
-/// The frontend addresses seam files by their relative paths; this exists for
-/// the flows that must spawn the bundled interpreter or show the operator where
-/// the tree lives.
+/// Absolute path of the owlette data root (`%PROGRAMDATA%\Owlette`). The frontend
+/// otherwise uses relative paths; this is for spawning the bundled interpreter or
+/// showing the operator where the tree lives.
 #[tauri::command(async)]
 pub fn owlette_data_root() -> String {
   paths::data_root().to_string_lossy().into_owned()
@@ -37,12 +32,10 @@ pub fn owlette_data_root() -> String {
 
 /// argv this process was launched with, including argv[0].
 ///
-/// The service starts the app with `--tray` (supply a tray icon, no window) or
-/// `--restart-prompt` (a process has exceeded its relaunch budget and the
-/// operator has to be asked about a reboot). Neither is visible to the frontend
-/// otherwise. A *second* launch does not reach here — the single-instance plugin
-/// forwards its argv on `owlette://second-instance` instead, so a UI that reacts
-/// to these flags has to handle both.
+/// The service passes `--tray` (tray icon, no window) or `--restart-prompt` (a
+/// process blew its relaunch budget). A *second* launch never reaches here — the
+/// single-instance plugin forwards argv on `owlette://second-instance`, so a UI
+/// reacting to these flags must handle both.
 #[tauri::command(async)]
 pub fn launch_args() -> Vec<String> {
   std::env::args().collect()
@@ -120,11 +113,9 @@ pub fn terminate_pid(
   process_ctl::terminate_pid(pid, &expected_exe, timeout)
 }
 
-/// Run one of the agent's headless modes, streaming its output.
-///
-/// `mode` is a name from `agent_cli::MODES`, never a command line. Returns the
-/// run id to match against `owlette://agent-cli` events; the run is finished
-/// when its `exit` event arrives.
+/// Run one of the agent's headless modes, streaming its output. `mode` is a name
+/// from `agent_cli::MODES`, never a command line. Returns the run id to match
+/// against `owlette://agent-cli` events; `exit` means finished.
 #[tauri::command(async)]
 pub fn agent_cli_start(
   app: AppHandle,
@@ -141,21 +132,18 @@ pub fn agent_cli_cancel(runs: State<'_, Runs>, run: String) -> Result<bool, Stri
   agent_cli::cancel(&runs, &run)
 }
 
-/// Longest frontend log line kept. A step label is a few dozen characters and
-/// an error message a few hundred; past this it is a runaway stack trace, and
+/// Longest frontend log line kept — past this it is a runaway stack trace, and
 /// truncating keeps one bad run from filling the operator's log file.
 const MAX_LOG_MESSAGE_BYTES: usize = 4096;
 
 /// Record a line from the frontend in the app's log file.
 ///
 /// A release build has no console and no devtools, so a multi-step flow that
-/// went wrong on a machine in another building leaves nothing behind unless it
-/// says so here. The leave-site teardown is the case that proved it: it stopped
-/// the service, the app died mid-sequence, and the only evidence of how far it
-/// had got was that nothing had been written.
+/// failed on a remote machine leaves no evidence unless it logs here (proved by
+/// leave-site teardown: it stopped the service, the app died mid-sequence, and
+/// nothing had been written).
 ///
-/// Anything unrecognised in `level` is recorded at info — a mislabelled line is
-/// worth more than a dropped one.
+/// An unrecognised `level` is recorded at info — mislabelled beats dropped.
 #[tauri::command(async)]
 pub fn log_event(level: String, message: String) {
   let message = truncate_on_boundary(&message, MAX_LOG_MESSAGE_BYTES);
@@ -193,28 +181,23 @@ pub fn open_external_url(url: String) -> Result<(), String> {
 
 /// The icon Windows draws for `path`, as a base64 PNG.
 ///
-/// `None` covers every ordinary way there is no icon to give — the path is
-/// blank, the file is gone, the target has none — because the list draws a
-/// fallback glyph for all of them. An `Err` is a Win32 call that failed, which
-/// the frontend also falls back on but which is worth having in the log.
+/// `None` = no icon to give for any ordinary reason (blank path, missing file,
+/// target has none); the list draws a fallback glyph. `Err` is a failed Win32
+/// call — same fallback, but worth having in the log.
 #[tauri::command(async)]
 pub fn exe_icon(path: String) -> Result<Option<String>, String> {
   exe_icon::icon_base64(&path)
 }
 
-/// Width the process-list sidebar should open at, in logical pixels.
-///
-/// Comes from the same per-user layout file the window size lives in, so the
-/// two halves of the shell are remembered together.
+/// Width the process-list sidebar should open at, in logical pixels. Shares the
+/// per-user layout file with the window size so both are remembered together.
 #[tauri::command(async)]
 pub fn sidebar_width(layout: State<'_, LayoutState>) -> f64 {
   layout.sidebar_width()
 }
 
-/// Store the sidebar width, returning the value actually kept.
-///
-/// The host clamps: the divider applies the same bounds while dragging, but a
-/// width that reached here out of range would otherwise be remembered forever.
+/// Store the sidebar width, returning the value actually kept. The host clamps
+/// too — an out-of-range width reaching here would be remembered forever.
 #[tauri::command(async)]
 pub fn set_sidebar_width(layout: State<'_, LayoutState>, width: f64) -> Result<f64, String> {
   layout.set_sidebar_width(width)
@@ -226,10 +209,8 @@ pub fn sidebar_collapsed(layout: State<'_, LayoutState>) -> bool {
   layout.sidebar_collapsed()
 }
 
-/// Remember whether the process list is collapsed.
-///
-/// Stored beside the width rather than instead of it, so expanding again lands
-/// on the width the operator had dragged to before they collapsed it.
+/// Remember whether the process list is collapsed. Stored beside the width, not
+/// instead of it, so expanding restores the operator's dragged width.
 #[tauri::command(async)]
 pub fn set_sidebar_collapsed(
   layout: State<'_, LayoutState>,

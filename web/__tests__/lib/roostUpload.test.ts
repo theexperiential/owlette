@@ -1,10 +1,9 @@
 /**
  * @jest-environment node
  *
- * tests for web/lib/roostUpload.ts — the client-side upload orchestrator
- * (roost wave 3.1). Mocks the roost routes (chunks/check, chunks/upload-urls,
- * roosts/{id}/versions) via an injected `fetchFn`, and mocks the
- * IndexedDB-backed queue via an in-memory `QueueStore`.
+ * web/lib/roostUpload.ts — the client-side upload orchestrator. Roost routes
+ * (chunks/check, chunks/upload-urls, roosts/{id}/versions) are mocked through an
+ * injected `fetchFn`; the IndexedDB queue through an in-memory `QueueStore`.
  */
 
 import {
@@ -16,7 +15,7 @@ import {
 import type { QueueStore, UploadTask } from '@/lib/uploadQueue';
 import type { NamedBlob, VersionFileEntry } from '@/lib/chunking';
 
-// -------- blob fake -------------------------------------------------
+// blob fake
 
 function blobOf(bytes: Buffer): NamedBlob['blob'] {
   const size = bytes.byteLength;
@@ -37,7 +36,7 @@ function named(path: string, bytes: Buffer): NamedBlob {
   return { path, blob: blobOf(bytes) };
 }
 
-// -------- memory store ---------------------------------------------
+// memory store
 
 function memoryStore(): QueueStore {
   const m = new Map<string, UploadTask>();
@@ -52,7 +51,7 @@ function memoryStore(): QueueStore {
   };
 }
 
-// -------- fake fetch ------------------------------------------------
+// fake fetch
 
 interface FakeRoute {
   match: (url: string, init: RequestInit | undefined) => boolean;
@@ -79,7 +78,7 @@ const OK = (body: unknown, init?: ResponseInit) =>
     ...init,
   });
 
-// -------- tests -----------------------------------------------------
+// tests
 
 describe('uploadFolder — happy path', () => {
   it('runs hash → check → upload-urls → PUTs → finalize', async () => {
@@ -97,7 +96,7 @@ describe('uploadFolder — happy path', () => {
         match: (u, i) => u.endsWith('/api/chunks/check') && i?.method === 'POST',
         respond: async (_u, i) => {
           checkBody = JSON.parse(i!.body as string);
-          // pretend server has nothing — everything is missing.
+          // server has nothing — every chunk is missing.
           return OK({ missing: (checkBody!.hashes as string[]) });
         },
       },

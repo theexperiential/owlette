@@ -22,8 +22,7 @@ export interface RestartPreset {
   id: string;
   name: string;
   description?: string;
-  /** Whether the schedule is active when this preset is applied. Optional for
-   * back-compat with presets written before this field existed. */
+  /** Active on apply. Optional: presets predating this field omit it. */
   enabled?: boolean;
   entries: RestartScheduleEntry[];
   isBuiltIn: boolean;
@@ -44,21 +43,18 @@ export interface UseRestartPresetsReturn {
 }
 
 /**
- * Hook to manage restart schedule presets scoped to a site.
+ * Per-site restart schedule presets. Built-ins are merged client-side from
+ * BUILT_IN_RESTART_PRESETS; an edited built-in is saved to Firestore and its
+ * override wins on the next read. Mirrors useSchedulePresets.
  *
- * Storage note: the Firestore collection and API path keep the legacy `reboot`
- * spelling on purpose — `config/{siteId}/reboot_presets/{presetId}` and
- * `/api/sites/{siteId}/presets/reboot`. These are wire/storage contracts shared
- * with deployed agents and the public API; only the UI and code identifiers were
- * renamed to "restart". Do not rename them without a coordinated migration.
- *
- * Mirrors the pattern in useSchedulePresets — built-in presets are merged
- * client-side from BUILT_IN_RESTART_PRESETS. If a user edits a built-in, the
- * override is saved to Firestore and takes precedence on next read.
+ * The `reboot` spelling in `config/{siteId}/reboot_presets` and
+ * `/api/sites/{siteId}/presets/reboot` is DELIBERATE — wire/storage contracts
+ * shared with deployed agents and the public API. Only UI and code identifiers
+ * were renamed to "restart"; renaming these needs a coordinated migration.
  */
 export function useRestartPresets(siteId: string | null): UseRestartPresetsReturn {
-  // loadedSiteId pins the loaded presets to the site they came from so that
-  // loading can be derived at render (no sync setState in the effect body).
+  // loadedSiteId pins presets to their site so `loading` derives at render
+  // instead of needing a sync setState in the effect body.
   const [state, setState] = useState<{
     firestorePresets: RestartPreset[];
     loadedSiteId: string | null;
@@ -92,12 +88,11 @@ export function useRestartPresets(siteId: string | null): UseRestartPresetsRetur
     return () => unsubscribe();
   }, [siteId]);
 
-  // Surface only data that matches the currently-requested site; derive loading.
+  // Only data for the currently-requested site.
   const firestorePresets = state.loadedSiteId === siteId ? state.firestorePresets : EMPTY_RESTART_PRESETS;
   const loading = !!db && !!siteId && state.loadedSiteId !== siteId;
   const error = state.error;
 
-  // Merge built-in defaults with Firestore overrides + custom presets
   const presets = useMemo(() => {
     const firestoreById = new Map(firestorePresets.map(p => [p.id, p]));
 

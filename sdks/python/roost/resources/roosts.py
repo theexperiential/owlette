@@ -176,8 +176,6 @@ class Roosts:
     def __init__(self, client: "RoostClient") -> None:
         self._client = client
 
-    # ----- paginated helpers -------------------------------------------------
-
     async def list_page(
         self,
         *,
@@ -323,8 +321,6 @@ class Roosts:
         )
         return _deploy_result(resp.data if isinstance(resp.data, dict) else {})
 
-    # ----- flagship: push ----------------------------------------------------
-
     async def push(
         self,
         dir_path: str | Path,
@@ -390,8 +386,6 @@ class Roosts:
             previous_version_id=result.get("previousVersionId"),
             stats=PushStats(**{**stats, "uploaded_chunks": uploaded_chunks}),
         )
-
-    # ----- internal helpers --------------------------------------------------
 
     async def _check_missing(self, site_id: str, hashes: Sequence[str]) -> list[str]:
         missing: list[str] = []
@@ -555,10 +549,6 @@ class Roosts:
         msg = "version publish failed after retries"
         raise RuntimeError(msg)
 
-
-# --------------------------------------------------------------------- #
-#  parsers                                                              #
-# --------------------------------------------------------------------- #
 
 def _roost_summary(data: dict[str, Any]) -> RoostSummary:
     return RoostSummary(

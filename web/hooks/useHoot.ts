@@ -1,14 +1,9 @@
 /**
- * Chat state management hook for the Owlette AI chat interface.
- *
- * Wraps the Vercel AI SDK v6 useChat hook with Owlette-specific logic:
- * - Machine/site targeting
- * - Conversation history management
- * - Async-turn recovery (hoot-async-turns): live subscription to the
- *   durable turn doc `chats/{chatId}/stream/current`, reattach after a dead
- *   HTTP stream / page reload, supersede-on-send, tool cancellation, and
- *   stale-turn detection. Final chat persistence is server-owned (the turn
- *   runner in web/lib/hoot/turnRunner.server.ts is the persist authority).
+ * Chat state for the hoot UI: wraps AI SDK v6 useChat with machine/site targeting,
+ * conversation history, and async-turn recovery — subscribes to the durable turn doc
+ * `chats/{chatId}/stream/current` for reattach after a dead stream, supersede-on-send,
+ * tool cancel and stale detection.
+ * Final persistence is server-owned by web/lib/hoot/turnRunner.server.ts.
  */
 
 'use client';
@@ -57,12 +52,10 @@ export interface ChatConversation {
 const PAGE_SIZE = 40;
 
 /**
- * A single dispatched-command entry mirrored from the live turn doc
- * (`chats/{chatId}/stream/current.toolCommands`), which is now nested as
- * `toolCallId → machineId → { commandId }`. Nesting per-machine lets a
- * site-wide fan-out record EVERY machine's command (the old flat shape was
- * last-write-wins — only the final machine's command survived). Shape must stay
- * in sync with `turnStore.server.ts` (server-only module — not importable here).
+ * Dispatched commands mirrored from `chats/{chatId}/stream/current.toolCommands`,
+ * nested `toolCallId -> machineId -> { commandId }` so a site-wide fan-out records every
+ * machine (the old flat shape was last-write-wins). Keep in sync with turnStore.server.ts
+ * (server-only module — not importable here).
  */
 export interface TurnToolCommand {
   commandId: string;
@@ -71,18 +64,15 @@ export interface TurnToolCommand {
 /** `toolCallId → machineId → { commandId }` — the per-chat cancel index. */
 export type TurnToolCommands = Record<string, Record<string, TurnToolCommand>>;
 
-// Mirrors TURN_STALE_MS in web/lib/hoot/turnStore.server.ts: a `running`
-// stream doc whose heartbeat is older than this is a dead runner (killed by a
-// deploy) — surfaced to the UI as `turnStale`.
+// Mirrors TURN_STALE_MS in web/lib/hoot/turnStore.server.ts: a `running` doc whose
+// heartbeat is older is a dead runner (deploy-killed) — surfaced as `turnStale`.
 const TURN_STALE_MS = 45_000;
 
-// `updatedAt` going stale doesn't emit a Firestore snapshot by itself, so
-// staleness is re-checked on an interval while a running doc is held.
+// A stale `updatedAt` emits no snapshot — re-check on an interval while running.
 const TURN_STALE_RECHECK_MS = 15_000;
 
-// Delay before resubscribing after a stream-doc listener error (onSnapshot
-// terminates the listener when its error callback fires). permission-denied
-// is expected for brand-new chats — see the subscription effect.
+// Resubscribe delay after a stream-doc listener error (onSnapshot kills the listener
+// when its error callback fires). permission-denied is expected for brand-new chats.
 const STREAM_RESUBSCRIBE_MS = 15_000;
 
 interface UseChatOptions {
@@ -104,10 +94,8 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
   const [chatLoadError, setChatLoadError] = useState<ChatLoadError | null>(null);
   const loadChatRequestRef = useRef(0);
   const isMountedRef = useRef(true);
-  // The current unpersisted "new conversation" row. Held in a ref so a Firestore
-  // snapshot refire (which rebuilds `conversations` from persisted docs) doesn't
-  // erase the optimistic entry before the first message is saved. Cleared once
-  // its doc shows up in a snapshot, or when it's discarded/deleted.
+  // Unpersisted "new conversation" row, held in a ref so a Firestore snapshot refire
+  // doesn't erase the optimistic entry before the first message is saved.
   const draftConvoRef = useRef<ChatConversation | null>(null);
 
   useEffect(() => {
@@ -118,22 +106,18 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     };
   }, []);
 
-  // Pagination state
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMoreUser, setHasMoreUser] = useState(false);
   const [hasMoreAuto, setHasMoreAuto] = useState(false);
   const lastUserDocRef = useRef<QueryDocumentSnapshot<DocumentData> | null>(null);
   const lastAutoDocRef = useRef<QueryDocumentSnapshot<DocumentData> | null>(null);
 
-  // Search state
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Async turn state, mirrored from `chats/{chatId}/stream/current` (the
-  // durable record of an in-flight turn, written by the server-side runner).
+  // Async turn state mirrored from `chats/{chatId}/stream/current`.
   const [toolCommands, setToolCommands] = useState<TurnToolCommands>({});
   const [turnStale, setTurnStale] = useState(false);
-  // Bumped to resubscribe after a stream-doc listener error (Firestore kills
-  // the listener once its error callback fires).
+  // Bumped to resubscribe after a listener error (Firestore kills it on error).
   const [streamSubAttempt, setStreamSubAttempt] = useState(0);
 
   // Use refs so the transport closure always reads the latest values
@@ -148,42 +132,29 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
   chatIdRef.current = chatId;
   onChatPersistedRef.current = onChatPersisted;
 
-  // Live "the stream doc says a turn is running" flag — read inside the
-  // transport closure to decide supersede (React state would be stale there).
+  // Live "a turn is running" flag — read in the transport closure, where state is stale.
   const streamRunningRef = useRef(false);
-  // Latest toolCommands map — cancelTool reads a tool call's per-machine
-  // commandIds from it (site-wide chats fan a single call out to every machine).
+  // Latest toolCommands; cancelTool reads a call's per-machine commandIds from it.
   const toolCommandsRef = useRef<TurnToolCommands>({});
-  // One-shot supersede flag: set when a send is issued while our own HTTP
-  // stream is live (or by the 409 turn_active auto-retry); consumed once per
-  // request build in prepareSendMessagesRequest.
+  // One-shot supersede flag, consumed per request in prepareSendMessagesRequest.
   const forceSupersedeRef = useRef(false);
-  // Loop guard for the automatic 409 turn_active retry — re-armed on the next
-  // completed turn (onFinish).
+  // Loop guard for the 409 turn_active auto-retry — re-armed in onFinish.
   const turnActiveRetriedRef = useRef(false);
-  // Id of the turn the stream doc currently reports as `running` (null when
-  // idle). Read by stop() to POST /api/hoot/stop for a real server cancel.
+  // Id of the running turn (null when idle); stop() POSTs it to /api/hoot/stop.
   const currentTurnIdRef = useRef<string | null>(null);
-  // One-shot: set when the user presses stop, so the reattach branch of the
-  // stream subscription does NOT resurrect the in-progress assistant message
-  // in the window between pressing stop and the doc flipping to `cancelled`.
-  // Cleared once the stream doc reaches a terminal status (or is absent).
+  // One-shot: set on user stop so the reattach branch doesn't resurrect the in-progress
+  // message before the doc flips to `cancelled`. Cleared on any terminal status.
   const userStoppedRef = useRef(false);
 
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: '/api/hoot',
-        // Send the full UIMessages (text + file + tool/approval parts). The
-        // server reconstructs ModelMessages via `convertToModelMessages`, which
-        // is what lets a tier-3 approval round-trip carry the pending tool call
-        // and the approve/deny decision back so streamText can resume.
+        // Send full UIMessages; the server rebuilds ModelMessages via convertToModelMessages,
+        // which is what lets a tier-3 approval round-trip resume streamText.
         prepareSendMessagesRequest: ({ messages }) => {
-          // Supersede when this send races an in-flight turn: either our own
-          // HTTP stream was live at send time (handleSend/editMessage set the
-          // one-shot flag, as does the 409 turn_active auto-retry) or the
-          // durable stream doc says a turn is running (reattached client with
-          // no local stream). The one-shot flag is consumed per request so an
+          // Supersede when this send races an in-flight turn: our own live stream, the 409
+          // auto-retry, or a reattached client. The one-shot flag is consumed per request so an
           // automatic approval re-send doesn't inherit it.
           const supersede = forceSupersedeRef.current || streamRunningRef.current;
           forceSupersedeRef.current = false;
@@ -205,38 +176,26 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
   const chat = useAIChat({
     id: chatId,
     transport,
-    // Once the user has answered every pending tier-3 approval on the last
-    // assistant message, automatically re-send so the SDK resumes (executes
-    // approved tools, feeds denials back to the model).
+    // Once every pending tier-3 approval is answered, re-send so the SDK resumes.
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
     onFinish: () => {
-      // The server-side turn runner is the persist authority: it writes the
-      // final messages to `chats/{chatId}` and triggers categorize for new
-      // conversations (web/lib/hoot/turnRunner.server.ts) — persisting here
-      // would race it (and used to persist even aborted turns). The client
-      // only fires the URL-replace callback once the turn completes.
+      // The server-side runner is the persist authority (turnRunner.server.ts) — persisting
+      // here would race it, and used to persist aborted turns.
       turnActiveRetriedRef.current = false; // turn completed — re-arm the 409 auto-retry
       onChatPersistedRef.current?.(chatIdRef.current);
     },
   });
 
-  // Ref mirror of the chat object so Firestore snapshot callbacks (async,
-  // outside render) can read the live status and call setMessages.
+  // Ref mirror of the chat so async Firestore callbacks can read live status.
   const chatRef = useRef(chat);
   chatRef.current = chat;
 
-  // Auto-retry once when a send lost the turn-lock race: the server returns
-  // 409 `{code:'turn_active'}` while another fresh turn holds the lock, and
-  // DefaultChatTransport surfaces the response body as the error message.
-  // Force supersede and re-send. The ref guard prevents retry loops (it
-  // re-arms on the next completed turn in onFinish); with supersede forced a
-  // second turn_active is impossible, so one retry is sufficient.
+  // Auto-retry once when a send lost the turn-lock race (server 409 `turn_active`): force
+  // supersede and re-send. The ref guard prevents loops; with supersede forced a second
+  // turn_active is impossible, so one retry suffices.
   useEffect(() => {
     if (chat.status !== 'error' || !chat.error) return;
-    // The 409 body is `{error, code:'turn_active'}`, which DefaultChatTransport
-    // surfaces as `Error(responseText)`. Prefer a structural check on the parsed
-    // `code`; fall back to the substring heuristic for any non-JSON body (or a
-    // body whose code lives elsewhere) so the match is a superset of before.
+    // Prefer the parsed `code`; fall back to substring for non-JSON bodies.
     const rawMessage = String(chat.error.message ?? '');
     let isTurnActive: boolean;
     try {
@@ -254,12 +213,9 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     });
   }, [chat.status, chat.error]);
 
-  // Live turn subscription — `chats/{chatId}/stream/current` is the durable
-  // record of an in-flight turn, written by the server-side runner. It powers:
-  //   - `toolCommands`: cancel targets for running tool calls,
-  //   - reattach: rendering a turn we have no HTTP stream for (page reload
-  //     mid-turn, or the stream died at a proxy),
-  //   - `turnStale`: running doc with a dead heartbeat (runner killed).
+  // Live turn subscription — `chats/{chatId}/stream/current`, written by the server-side
+  // runner. Powers cancel targets (`toolCommands`), reattach when we hold no HTTP stream
+  // (reload mid-turn, or the stream died at a proxy), and `turnStale`.
   useEffect(() => {
     // Reset per-chat turn state before (re)subscribing.
     streamRunningRef.current = false;
@@ -274,11 +230,9 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     const streamDocRef = doc(db, 'chats', chatId, 'stream', 'current');
     // `updatedAt` (ms) of the currently running doc — staleness input.
     let runningUpdatedAtMs: number | null = null;
-    // True once we've merged Firestore snapshots for a turn we have no HTTP
-    // stream for; the next terminal status then lands the persisted history.
+    // True once we merged snapshots for a turn we hold no HTTP stream for.
     let reattached = false;
-    // Id of the in-progress assistant message we merged from snapshots —
-    // used to detect whether the runner's final persist has landed yet.
+    // Id of the merged in-progress assistant message — detects if the final persist landed.
     let mergedMessageId: string | null = null;
     let staleInterval: ReturnType<typeof setInterval> | null = null;
     let landRetryTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -292,18 +246,14 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       );
     };
 
-    // After a reattached turn goes terminal, land the runner-persisted
-    // authoritative history. The runner marks the stream terminal BEFORE its
-    // final persist lands (and errored turns aren't persisted at all), so if
-    // the fetched history doesn't contain the message we merged, retry once
-    // for the persist race and otherwise keep the merged view — history
-    // repair recovers on the next send.
+    // After a reattached turn goes terminal, land the runner-persisted history. The runner
+    // marks terminal BEFORE its final persist (errored turns never persist), so retry once
+    // if the merged message is missing, else keep the merged view — repair recovers on send.
     const landFinalMessages = async (attempt: number) => {
       if (!db) return;
       try {
         const snap = await getDoc(doc(db, 'chats', chatId));
-        // Don't clobber: the chat may have changed, unmounted, or started a
-        // new live HTTP turn while the fetch was in flight.
+        // Chat may have changed, unmounted or started a live turn during the fetch.
         if (!isMountedRef.current || chatIdRef.current !== chatId) return;
         const status = chatRef.current.status;
         if (status === 'streaming' || status === 'submitted') return;
@@ -331,9 +281,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         const running = data?.status === 'running';
 
         streamRunningRef.current = running;
-        // Track the running turn's id so stop() can address it; clear the
-        // user-stop guard once the doc is terminal/absent (its purpose — one-shot
-        // resurrection suppression — is spent the moment the turn stops running).
+        // Track the running turn id for stop(); clear the user-stop guard once terminal.
         currentTurnIdRef.current =
           running && typeof data?.turnId === 'string' ? data.turnId : null;
         if (!running) userStoppedRef.current = false;
@@ -342,8 +290,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
             ? (data.updatedAt.toMillis() as number)
             : null;
         recomputeStale();
-        // `updatedAt` going stale doesn't emit a snapshot by itself — poll
-        // while a running doc is held.
+        // A stale `updatedAt` emits no snapshot — poll while a running doc is held.
         if (running && staleInterval === null) {
           staleInterval = setInterval(recomputeStale, TURN_STALE_RECHECK_MS);
         } else if (!running && staleInterval !== null) {
@@ -362,18 +309,14 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         const hasLiveHttpStream = chatStatus === 'streaming' || chatStatus === 'submitted';
 
         if (hasLiveHttpStream) {
-          // We own a live HTTP stream — NEVER merge Firestore snapshots over
-          // it (they lag behind and would clobber the streamed message).
+          // We own a live HTTP stream — never merge lagging Firestore snapshots over it.
           reattached = false;
           mergedMessageId = null;
         } else if (running) {
-          // No live HTTP stream for a running turn (page reload mid-turn, or
-          // the stream died): reattach and watch the turn via Firestore.
+          // No live stream for a running turn (reload / dead stream): reattach via Firestore.
           reattached = true;
-          // ...unless the user just pressed stop: don't resurrect the
-          // in-progress message in the window before the doc flips to
-          // 'cancelled'. The terminal transition (running→false) clears the
-          // guard, and landFinalMessages then lands the persisted history.
+          // ...unless the user just pressed stop: don't resurrect the in-progress message before
+          // the doc flips to 'cancelled'. The terminal transition clears the guard.
           const message = userStoppedRef.current ? null : (data?.message as UIMessage | null);
           if (message && typeof message === 'object' && typeof message.id === 'string') {
             mergedMessageId = message.id;
@@ -392,11 +335,9 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         }
       },
       (error) => {
-        // The listener is dead once this fires. permission-denied is expected
-        // for a brand-new chat: stream reads authorize via the parent chat doc
-        // (owner lookup in firestore.rules), which the runner only creates on
-        // its first final persist. Schedule a resubscribe so turn state comes
-        // live once the chat exists; log anything else.
+        // The listener is dead once this fires. permission-denied is expected for a brand-new
+        // chat (stream reads authorize via the parent chat doc, which the runner creates on its
+        // first persist) — resubscribe so turn state goes live; log anything else.
         const code = (error as { code?: string } | null)?.code;
         if (code !== 'permission-denied') {
           console.error('Failed to subscribe to turn stream:', error);
@@ -427,13 +368,9 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     };
   }, [user, chatId, streamSubAttempt]);
 
-  // Cancel a running tool call across EVERY machine it dispatched to: the agent
-  // kills each command's process tree and the tool card resolves to "cancelled
-  // by user" via the stream doc. `toolCallId` comes from the message part; the
-  // per-machine commandId + machineId come from `toolCommands[toolCallId]` (a
-  // site-wide fan-out records one entry per machine, so a single cancel targets
-  // them all — in a single-machine chat this iterates exactly one entry). The
-  // POSTs fire in parallel; individual failures are logged, never thrown.
+  // Cancel a running tool call across every machine it dispatched to (the agent kills each
+  // process tree; the card resolves to "cancelled by user"). Per-machine commandIds come
+  // from `toolCommands[toolCallId]`. POSTs fire in parallel; failures logged, never thrown.
   const cancelTool = useCallback(async (toolCallId: string) => {
     const perMachine = toolCommandsRef.current[toolCallId];
     if (!perMachine) return;
@@ -461,13 +398,10 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     );
   }, []);
 
-  // Stop = real server cancel. `chat.stop()` alone only aborts our local HTTP
-  // branch; the detached server-side runner keeps executing its tool loop and
-  // the reattach subscription would resurrect the response within ~1s. So when
-  // the stream doc reports a running turn, POST /api/hoot/stop to flip it to
-  // `cancelled` (which aborts the runner's tool loop), set the one-shot
-  // resurrection guard, and still tear down the local HTTP stream. Same-origin
-  // session auth (mirrors the categorize/cancel-tool fetches). Never throws.
+  // Stop = real server cancel. `chat.stop()` only aborts our local HTTP branch; the
+  // detached runner keeps executing and reattach would resurrect the response within ~1s.
+  // So POST /api/hoot/stop, set the resurrection guard, then tear down the local stream.
+  // Same-origin session auth. Never throws.
   const stop = useCallback(async () => {
     const turnId = currentTurnIdRef.current;
     const running = streamRunningRef.current;
@@ -501,7 +435,6 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
 
     const chatsRef = collection(db, 'chats');
 
-    // User's own chats
     const userQuery = query(
       chatsRef,
       where('userId', '==', user.uid),
@@ -521,11 +454,10 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     let userConvos: ChatConversation[] = [];
     let autoConvos: ChatConversation[] = [];
     let userLoaded = false;
-    let autoLoaded = !autoQuery; // If no autoQuery, mark as loaded
+    let autoLoaded = !autoQuery;
 
     function mergeAndSet() {
       if (!userLoaded || !autoLoaded) return;
-      // Merge, deduplicate by id, sort by updatedAt desc
       const all = [...userConvos, ...autoConvos];
       const seen = new Set<string>();
       const deduped = all.filter(c => {
@@ -570,7 +502,6 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       userQuery,
       (snapshot) => {
         userConvos = snapshot.docs.map(parseConvo).filter((c): c is ChatConversation => c !== null);
-        // Track cursor and hasMore for pagination
         const docs = snapshot.docs;
         lastUserDocRef.current = docs.length > 0 ? docs[docs.length - 1] : null;
         setHasMoreUser(docs.length === PAGE_SIZE);
@@ -619,14 +550,13 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     setPendingImages([]);
     setChatLoadError(null);
 
-    // Use overrides if provided (handles race condition when machine selector changes in same handler)
+    // Overrides cover the machine-selector-changed-in-the-same-handler race.
     const effectiveMachineId = overrides?.machineId ?? machineIdRef.current;
     const effectiveMachineName = overrides?.machineName ?? machineNameRef.current;
     const isSiteMode = effectiveMachineId === SITE_TARGET_ID;
 
-    // Add optimistic entry to the sidebar. Track it by id (in a ref) so the
-    // snapshot listener can preserve it; drop only the *previous* draft by id
-    // (not every "new conversation"-titled row, which could be a real chat).
+    // Optimistic sidebar entry tracked by id so the snapshot listener preserves it; drop
+    // only the previous draft by id, not every row titled "new conversation".
     const previousDraftId = draftConvoRef.current?.id;
     const draft: ChatConversation = {
       id: newId,
@@ -655,7 +585,6 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       const chatsRef = collection(db, 'chats');
       const newConvos: ChatConversation[] = [];
 
-      // Load more user conversations
       if (hasMoreUser && lastUserDocRef.current) {
         const moreUserQuery = query(
           chatsRef,
@@ -689,7 +618,6 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         setHasMoreUser(snapshot.docs.length === PAGE_SIZE);
       }
 
-      // Load more autonomous conversations
       if (hasMoreAuto && lastAutoDocRef.current && siteId) {
         const moreAutoQuery = query(
           chatsRef,
@@ -724,7 +652,6 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         setHasMoreAuto(snapshot.docs.length === PAGE_SIZE);
       }
 
-      // Append and deduplicate
       if (newConvos.length > 0) {
         setConversations((prev) => {
           const seen = new Set(prev.map((c) => c.id));
@@ -752,7 +679,6 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       setChatLoadError(null);
       chat.setMessages([]);
 
-      // Fetch persisted messages from Firestore
       if (db) {
         try {
           const chatDoc = await getDoc(doc(db, 'chats', conversationId));
@@ -772,10 +698,8 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
           }
         } catch (error) {
           if (!isMountedRef.current || requestId !== loadChatRequestRef.current) return;
-          // permission-denied is expected when the URL points at a chat the user
-          // doesn't own (or an autonomous chat for a site they can't access) —
-          // firestore.rules correctly denies it. Surface as not_found without
-          // logging noise; only log genuinely unexpected failures.
+          // permission-denied is expected when the URL points at a chat the user can't access
+          // (firestore.rules) — surface as not_found without logging noise.
           const code = (error as { code?: string } | null)?.code;
           if (code !== 'permission-denied') {
             console.error('Failed to load chat messages:', error);
@@ -792,12 +716,10 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     async (conversationId: string) => {
       loadChatRequestRef.current += 1;
 
-      // Check if this is an unpersisted "new conversation" (no messages sent yet)
       const isEmptyNew = conversations.find(
         (c) => c.id === conversationId && c.title === UNTITLED_CHAT_TITLE
       );
 
-      // Remove from local list immediately (handles both persisted and optimistic entries)
       setConversations((prev) => prev.filter((c) => c.id !== conversationId));
       if (draftConvoRef.current?.id === conversationId) {
         draftConvoRef.current = null;
@@ -816,7 +738,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         }
       }
 
-      // Try to delete from Firestore (will silently succeed even if doc doesn't exist)
+      // Firestore delete is a no-op when the doc was never persisted.
       if (db) {
         try {
           await deleteDoc(doc(db, 'chats', conversationId));
@@ -833,12 +755,10 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       const trimmed = newTitle.trim();
       if (!trimmed) return;
 
-      // Update locally immediately
       setConversations((prev) =>
         prev.map((c) => (c.id === conversationId ? { ...c, title: trimmed } : c))
       );
 
-      // Persist to Firestore
       if (db) {
         try {
           await setDoc(doc(db, 'chats', conversationId), { title: trimmed }, { merge: true });
@@ -850,12 +770,10 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     []
   );
 
-  // Sending while our own HTTP stream is live supersedes the running turn:
-  // flag the request (prepareSendMessagesRequest also covers the reattached
-  // case via streamRunningRef) and abort the local stream first — the SDK
-  // supports one active response per chat, and the aborted request's teardown
-  // would otherwise clear the new one's state. The macrotask yield lets that
-  // teardown (fetch rejection → catch/finally) complete before the next send.
+  // Sending while our own stream is live supersedes the running turn: flag the request and
+  // abort the local stream first — the SDK allows one active response per chat, and the
+  // aborted request's teardown would clear the new one's state. The macrotask yield lets
+  // that teardown complete before the next send.
   const supersedeLiveStream = useCallback(async () => {
     if (chatRef.current.status !== 'streaming' && chatRef.current.status !== 'submitted') return;
     forceSupersedeRef.current = true;
@@ -885,18 +803,15 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     setChatLoadError(null);
   }, [inputValue, pendingImages, chat, supersedeLiveStream]);
 
-  // Edit a prior user message and re-send from that point: drop the edited
-  // message and everything after it, then send the new text as a fresh turn.
-  // This branches the conversation linearly — the discarded tail is replaced
-  // by the new assistant response and overwritten by the runner's server-side
-  // persist. Any images on the original message are carried over.
+  // Edit a prior user message and re-send from there: drop it and everything after, then
+  // send the new text as a fresh turn. Linear branch — the runner's persist overwrites the
+  // discarded tail. Images on the original carry over.
   const editMessage = useCallback(
     async (messageId: string, newText: string) => {
       const trimmed = newText.trim();
       if (!trimmed) return;
 
-      // Abort/supersede a live turn first so the message list is settled
-      // before we branch it (the abort keeps any generated tokens).
+      // Abort/supersede a live turn first so the list is settled before branching.
       await supersedeLiveStream();
 
       const messages = chatRef.current.messages;
@@ -925,7 +840,6 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     async (blob: Blob) => {
       if (!user) return;
 
-      // Create a local preview URL immediately
       const previewUrl = URL.createObjectURL(blob);
       const placeholderIndex = pendingImages.length;
 
@@ -945,7 +859,6 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         );
       } catch (error) {
         console.error('Failed to upload chat image:', error);
-        // Remove the failed upload
         setPendingImages((prev) => prev.filter((_, i) => i !== placeholderIndex));
         URL.revokeObjectURL(previewUrl);
       }
@@ -963,14 +876,13 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
 
   const isLoading = chat.status === 'streaming' || chat.status === 'submitted';
 
-  // Patch categories into local state (for conversations outside snapshot window)
+  // Patch categories for conversations outside the snapshot window.
   const updateConversationCategories = useCallback((results: Record<string, string>) => {
     setConversations((prev) =>
       prev.map((c) => (results[c.id] ? { ...c, category: results[c.id] } : c))
     );
   }, []);
 
-  // Compute displayed conversations (filtered by search if active)
   const displayedConversations = useMemo(() => {
     if (!searchQuery.trim()) return conversations;
     const lower = searchQuery.toLowerCase();
@@ -978,46 +890,37 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
   }, [conversations, searchQuery]);
 
   return {
-    // Messages
     messages: chat.messages,
     isLoading,
     error: chat.error,
     setMessages: chat.setMessages,
-    // Real server-side cancel (POSTs /api/hoot/stop, then aborts the local
-    // HTTP stream) — not the raw SDK stop, which would let the runner continue.
+    // Real server-side cancel (POST /api/hoot/stop), not the raw SDK stop.
     stop,
     status: chat.status,
-    // Re-run the last turn — used to recover from a dropped/failed stream
-    // (clears the stuck in-flight tool card and regenerates the response).
+    // Re-run the last turn — recovers from a dropped/failed stream.
     regenerate: chat.regenerate,
     // Edit a prior user message and branch the conversation from there.
     editMessage,
 
-    // Tier-3 tool approval (human-in-the-loop). Pass the approvalId from a
-    // tool part in `approval-requested` state. `sendAutomaticallyWhen` resumes
-    // the stream once every pending approval on the message is answered.
+    // Tier-3 tool approval; the SDK resumes once every pending approval is answered.
     addToolApprovalResponse: chat.addToolApprovalResponse,
 
     // Async turn state (chats/{chatId}/stream/current).
     // `toolCallId → machineId → { commandId }` for the running turn ({} when none).
     toolCommands,
-    // Cancel a running tool call by its toolCallId — fans out to every machine
-    // the call dispatched to.
+    // Cancel a running tool call across every machine it dispatched to.
     cancelTool,
     // Running turn whose heartbeat is >45s old — runner likely killed by a deploy.
     turnStale,
 
-    // Input management
     input: inputValue,
     setInput: setInputValue,
     handleSend,
 
-    // Image management
     pendingImages,
     handlePasteImage,
     removePendingImage,
 
-    // Conversation management
     chatId,
     chatLoadError,
     conversations: displayedConversations,
@@ -1027,15 +930,12 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     deleteChat,
     renameChat,
 
-    // Pagination
     hasMoreConversations,
     loadingMore,
     loadMoreConversations,
 
-    // Category management
     updateConversationCategories,
 
-    // Search
     searchQuery,
     setSearchQuery,
   };

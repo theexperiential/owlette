@@ -1,13 +1,9 @@
 /**
  * @jest-environment node
  *
- * tests for web/lib/chunking.ts (roost wave 3.2).
- *
- * Pure-logic coverage — no DOM Worker. Node 20's built-in Web Crypto
- * (`globalThis.crypto.subtle`) satisfies the SubtleCryptoLike surface
- * and `File` from `node:buffer` satisfies BlobLike. The worker wrapper
- * in versionBuilder.ts is thin glue — left for integration tests when
- * wave 1.6 infrastructure lands.
+ * Pure-logic coverage of web/lib/chunking.ts — no DOM Worker. Node's Web Crypto
+ * satisfies SubtleCryptoLike and `node:buffer` File satisfies BlobLike. The
+ * worker wrapper in versionBuilder.ts is thin glue, left for integration tests.
  */
 
 import { createHash } from 'crypto';
@@ -20,13 +16,8 @@ import {
   type NamedBlob,
 } from '@/lib/chunking';
 
-/* --------------------------------------------------------------------- */
-/*  Node 20 Blob as BlobLike                                             */
-/* --------------------------------------------------------------------- */
-
 function blobOf(bytes: Buffer | Uint8Array): NamedBlob['blob'] {
-  // in-memory BlobLike — satisfies { size, slice, arrayBuffer } without
-  // depending on either browser Blob or node:buffer.Blob type quirks.
+  // In-memory BlobLike, dodging browser-Blob vs node:buffer.Blob type quirks.
   const size = bytes.byteLength;
   return {
     get size() { return size; },
@@ -50,10 +41,6 @@ function reference_sha256_hex(bytes: Buffer | Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-/* --------------------------------------------------------------------- */
-/*  bufferToHex                                                          */
-/* --------------------------------------------------------------------- */
-
 describe('bufferToHex', () => {
   it('pads single-digit bytes with leading zero', () => {
     const ab = new Uint8Array([0x00, 0x01, 0x0f, 0xa0, 0xff]).buffer;
@@ -64,10 +51,6 @@ describe('bufferToHex', () => {
     expect(bufferToHex(new ArrayBuffer(0))).toBe('');
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  hashOneFile                                                          */
-/* --------------------------------------------------------------------- */
 
 describe('hashOneFile', () => {
   it('hashes a small file as exactly one chunk', async () => {
@@ -90,7 +73,7 @@ describe('hashOneFile', () => {
   });
 
   it('chunk sizes sum to file size', async () => {
-    // unusual but valid size — 3 chunks with a partial last one.
+    // Odd but valid size: 3 chunks, last one partial.
     const size = CHUNK_SIZE_BYTES * 2 + 1234;
     const data = Buffer.alloc(size, 0x7f);
     const entry = await hashOneFile(named('x', data));
@@ -99,8 +82,8 @@ describe('hashOneFile', () => {
   });
 
   it('chunk hashes match a reference SHA-256 over the exact byte range', async () => {
-    // two-chunk file — each chunk hash must match Node's crypto on the
-    // corresponding slice. regression for "hashed wrong bytes" bugs.
+    // Each chunk hash must match Node's crypto on the matching slice —
+    // regression guard for "hashed the wrong bytes".
     const fullSize = CHUNK_SIZE_BYTES + 100;
     const data = Buffer.alloc(fullSize);
     for (let i = 0; i < fullSize; i++) data[i] = i & 0xff;
@@ -143,10 +126,6 @@ describe('hashOneFile', () => {
     await expect(promise).rejects.toHaveProperty('name', 'AbortError');
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  buildVersionEntries                                                 */
-/* --------------------------------------------------------------------- */
 
 describe('buildVersionEntries', () => {
   it('returns empty array for empty input', async () => {
@@ -191,7 +170,7 @@ describe('buildVersionEntries', () => {
   });
 
   it('scales to 1 000 files (sanity smoke test)', async () => {
-    // tiny files — the point is counting correctness, not throughput.
+    // Tiny files — counting correctness, not throughput.
     const files: NamedBlob[] = [];
     for (let i = 0; i < 1_000; i++) {
       files.push(named(`f-${i}.bin`, Buffer.from(String(i))));
@@ -203,11 +182,9 @@ describe('buildVersionEntries', () => {
     expect(summary.totalChunks).toBeGreaterThanOrEqual(1_000);
   }, 30_000);
 
-  // Generous budget on purpose: this is a scaling sanity check (does 10k
-  // files complete and produce 10k entries), not a latency assertion. Under
-  // full-suite worker contention the same work that takes ~2-4s standalone
-  // has been observed past 60s, which made this the suite's one flake —
-  // failing --bail pre-commit runs on green code.
+  // Deliberately generous: a scaling sanity check, not a latency assertion.
+  // Under full-suite contention this 2-4s standalone work has run past 60s and
+  // was the suite's one flake, failing --bail pre-commit runs on green code.
   it('scales to 10 000 files (sanity smoke test)', async () => {
     const files: NamedBlob[] = [];
     for (let i = 0; i < 10_000; i++) {
@@ -218,13 +195,9 @@ describe('buildVersionEntries', () => {
   }, 180_000);
 });
 
-/* --------------------------------------------------------------------- */
-/*  summariseVersion                                                    */
-/* --------------------------------------------------------------------- */
-
 describe('summariseVersion', () => {
   it('counts files, bytes, chunks, and unique chunks', async () => {
-    // two files that share content → dedup shows as uniqueChunks < totalChunks
+    // Shared content → dedup shows as uniqueChunks < totalChunks.
     const entries = await buildVersionEntries([
       named('a', Buffer.from('same bytes')),
       named('b', Buffer.from('same bytes')),

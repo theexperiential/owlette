@@ -1,33 +1,16 @@
 /**
- * User soft-delete cascade helper.
+ * User soft-delete cascade for `DELETE /api/users/{uid}`:
  *
- * Performs the side-effects required when a superadmin deletes a user via
- * `DELETE /api/users/{uid}`:
- *
- *   1. Refuse if the user owns sites and no `successorUid` was supplied.
- *      Owned sites would otherwise be orphaned (unrouted membership reads,
- *      stuck rules checks). Caller passes a successor uid to transfer
- *      ownership atomically; this function verifies the successor exists
- *      and is at least admin-role before transferring.
- *   2. Revoke every api key the user owns. Sets `revokedAt` on each entry
- *      in both `users/{uid}/api_keys/*` and the matching top-level
+ *   1. Refuse if the user owns sites without a `successorUid` — owned sites would be orphaned.
+ *      The successor must exist and be at least admin-role.
+ *   2. Revoke every api key: `revokedAt` on `users/{uid}/api_keys/*` AND the top-level
  *      `api_keys/{keyHash}` lookup doc, so cached lookups stop succeeding.
- *   3. Cancel pending commands the user issued (best-effort, non-blocking
- *      — the cancellation runs as a background sweep so a slow command
- *      collection scan doesn't gate the response). The scan is bounded
- *      to the user's currently-assigned sites + owned sites.
- *   4. Set `users/{uid}.deletedAt`. The user doc is preserved (audit /
- *      historical reads still work) but excluded from default list reads.
- *   5. Revoke the user's Firebase Auth refresh tokens AND disable the
- *      Auth user record. The user can no longer mint new ID tokens, and
- *      any outstanding tokens are invalidated within the standard
- *      revocation window. We DON'T `deleteUser()` here — soft-delete
- *      semantics imply auditability, and keeping the Auth record around
- *      preserves the email→uid mapping for forensic queries. Hard-delete
- *      via the Auth admin SDK is reserved for the self-delete path.
- *
- * Returns a structured result so the route handler can emit the right
- * audit attributes + http response.
+ *   3. Cancel pending commands the user issued — background sweep, so a slow command scan doesn't
+ *      gate the response. Bounded to the user's assigned + owned sites.
+ *   4. Set `users/{uid}.deletedAt`. Doc is preserved for audit, excluded from default list reads.
+ *   5. Revoke Firebase Auth refresh tokens and disable the Auth record. No `deleteUser()` —
+ *      keeping the record preserves the email→uid mapping for forensics; hard delete belongs to
+ *      the self-delete path.
  */
 
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
@@ -50,18 +33,13 @@ export type UserDeleteOutcome =
       revokedKeyIds: string[];
       transferredSites: string[];
       /**
-       * Whether the Firebase Auth user was successfully revoked + disabled.
-       * Best-effort: a transient Auth API failure does NOT roll back the
-       * Firestore soft-delete (the rules already gate access via
-       * `deletedAt`), but the flag surfaces to the caller for audit.
+       * Auth user revoked + disabled. Best-effort: a transient Auth failure does NOT roll back
+       * the Firestore soft-delete (rules already gate on `deletedAt`), but is surfaced for audit.
        */
       authDisabled: boolean;
     };
 
-/**
- * Fetch the sites this user owns. Used by the route handler to surface the
- * orphan-sites guard before any mutation runs.
- */
+/** Sites this user owns — the route handler surfaces the orphan guard before any mutation. */
 export async function findOwnedSites(uid: string): Promise<string[]> {
   const db = getAdminDb();
   const ownedSnap = await db
@@ -82,7 +60,6 @@ export async function performUserDeleteCascade(
 ): Promise<UserDeleteOutcome> {
   const db = getAdminDb();
 
-  // 1. Read the user doc.
   const userRef = db.collection('users').doc(uid);
   const userSnap = await userRef.get();
   if (!userSnap.exists) {
@@ -95,7 +72,7 @@ export async function performUserDeleteCascade(
     return { kind: 'already_deleted', deletedAt: userData.deletedAt };
   }
 
-  // 2. Owned-site check. Refuse without a successor.
+  // Owned-site check: refuse without a successor.
   const ownedSites = await findOwnedSites(uid);
   const successorUid =
     typeof options.successorUid === 'string' && options.successorUid.length > 0
@@ -106,10 +83,8 @@ export async function performUserDeleteCascade(
     return { kind: 'orphan_sites', ownedSites };
   }
 
-  // 3. If a successor was supplied, verify it exists, isn't soft-deleted,
-  //    and has at least 'admin' role (member-tier successors would inherit
-  //    ownership but lack admin-surface access on the dashboard, breaking
-  //    the site).
+  // Successor must be live and >= admin: a member-tier owner inherits the site but lacks the
+  // admin dashboard surface, which breaks it.
   if (successorUid) {
     const successorRef = db.collection('users').doc(successorUid);
     const successorSnap = await successorRef.get();
@@ -126,12 +101,8 @@ export async function performUserDeleteCascade(
     }
   }
 
-  // 4. Transfer owned sites. Each site doc gets its `owner` field reset
-  //    to the successor uid; the successor's `users.sites[]` is also
-  //    extended via arrayUnion so they can read the site through the
-  //    canonical membership model. The departing user's `sites[]` will
-  //    be cleared in the final update below (the whole field stays, but it doesn't
-  //    matter — the user is soft-deleted and excluded from member reads).
+  // Transfer owned sites: reset `owner` and arrayUnion the site into the successor's `sites[]`,
+  // the canonical membership model. The departing user's `sites[]` is cleared in the final update.
   const transferredSites: string[] = [];
   if (successorUid && ownedSites.length > 0) {
     for (const siteId of ownedSites) {
@@ -155,23 +126,21 @@ export async function performUserDeleteCascade(
     }
   }
 
-  // 5. Revoke api keys: subcollection entries + top-level lookup docs.
+  // Revoke api keys: subcollection entries + top-level lookup docs.
   const revokedKeyIds: string[] = [];
   try {
     const keysSnap = await userRef.collection('api_keys').get();
     const now = Date.now();
     for (const keyDoc of keysSnap.docs) {
       const keyData = keyDoc.data() ?? {};
-      // Skip already-revoked keys so we don't bump revokedAt unnecessarily.
+      // Don't bump revokedAt on already-revoked keys.
       if (typeof keyData.revokedAt === 'number') continue;
 
       try {
         await keyDoc.ref.update({ revokedAt: now });
         revokedKeyIds.push(keyDoc.id);
 
-        // Mirror revocation onto the top-level lookup doc so the auth path
-        // (api_keys/{keyHash}) sees the revocation immediately. The lookup
-        // doc id is the keyHash; we store it on the subcollection doc.
+        // Mirror onto api_keys/{keyHash} so the auth path sees the revocation immediately.
         const keyHash =
           typeof keyData.keyHash === 'string' ? keyData.keyHash : null;
         if (keyHash) {
@@ -197,10 +166,8 @@ export async function performUserDeleteCascade(
     );
   }
 
-  // 6. Revoke passkeys: delete discoverable credentials stored under the
-  //    user's passkey subcollection. The final user update below zeroes
-  //    `mfaFactors` even if some credential deletes fail, so the account
-  //    cannot be left claiming factors it no longer has.
+  // Revoke passkeys. The final update zeroes `mfaFactors` even if some deletes fail, so the
+  // account cannot be left claiming factors it no longer has.
   try {
     const passkeysSnap = await userRef.collection('passkeys').get();
     for (const passkeyDoc of passkeysSnap.docs) {
@@ -222,10 +189,8 @@ export async function performUserDeleteCascade(
     );
   }
 
-  // Revoke device-trust records: delete every hashed-token doc under the
-  // user's trustedDevices subcollection so a stale device-trust cookie can
-  // no longer skip the MFA challenge after the account is gone. Best-effort
-  // (mirrors the passkeys sweep) — a failure here must not abort the cascade.
+  // Revoke device-trust records so a stale trust cookie can no longer skip the MFA challenge.
+  // Best-effort — a failure here must not abort the cascade.
   try {
     const trustedDevicesSnap = await userRef.collection('trustedDevices').get();
     for (const trustedDeviceDoc of trustedDevicesSnap.docs) {
@@ -247,8 +212,7 @@ export async function performUserDeleteCascade(
     );
   }
 
-  // 7. Drop any pending MFA setup challenge. Stored MFA state is cleared
-  //    atomically with the soft-delete stamp below.
+  // Drop any pending MFA setup challenge; stored MFA state is cleared with the stamp below.
   try {
     await db.collection('mfa_pending').doc(uid).delete();
   } catch (err) {
@@ -259,13 +223,9 @@ export async function performUserDeleteCascade(
     );
   }
 
-  // 8. Cancel pending commands the user issued. Best-effort, non-blocking
-  //    on the response — fired-and-forgotten via setImmediate so the
-  //    DELETE returns promptly even when the user has many sites/machines.
-  //    The scope is bounded to the user's owned + assigned sites; cross-
-  //    site commands (where a superadmin issued on a site they don't own)
-  //    are not swept here, which is acceptable since the issuer record
-  //    survives on the command doc for audit trails.
+  // Cancel pending commands, fire-and-forget via setImmediate so DELETE returns promptly even for
+  // a user with many sites. Scoped to owned + assigned sites; cross-site commands aren't swept —
+  // the issuer record survives on the command doc for audit.
   const userSites = Array.isArray(userData.sites)
     ? (userData.sites as string[]).filter((s) => typeof s === 'string')
     : [];
@@ -276,44 +236,30 @@ export async function performUserDeleteCascade(
     });
   }
 
-  // 7. Mark the user doc soft-deleted. Last write — earlier failures
-  //    above are best-effort and shouldn't block the user from being
-  //    flagged deleted (any orphaned api keys can be swept separately).
+  // Last write: earlier best-effort failures must not block the deleted flag (orphaned api keys
+  // can be swept separately).
   const deletedAt = Date.now();
   await userRef.update({
     sites: [],
     mfaEnrolled: false,
-    // Zero the denormalized factor inventory alongside `mfaEnrolled`. Leaving
-    // a well-formed `{ totp: true, passkeys: 2 }` behind isn't cosmetic:
-    // `normalizeMfaFactors` TRUSTS a well-formed stored inventory, so the next
-    // recompute would read those stale legs and resurrect `mfaEnrolled: true`
-    // on a deleted account. Shape mirrors `EMPTY_MFA_FACTORS` in
-    // `lib/mfaFactors.server.ts`.
+    // Zero the inventory too: `normalizeMfaFactors` TRUSTS a well-formed stored value, so leaving
+    // `{ totp: true, passkeys: 2 }` would resurrect `mfaEnrolled: true` on the next recompute.
+    // Shape mirrors `EMPTY_MFA_FACTORS` in lib/mfaFactors.server.ts.
     mfaFactors: { totp: false, passkeys: 0 },
     mfaSecret: FieldValue.delete(),
     backupCodes: [],
     mfaEnrolledAt: FieldValue.delete(),
-    // DELIBERATE EXCEPTION to the single-writer rule in
-    // `lib/mfaFactors.server.ts`: the cascade writes `mfaEnrolled`,
-    // `mfaFactors` and `requiresMfaSetup` directly instead of calling
-    // `applyMfaFactorChange`. That module derives `requiresMfaSetup` in both
-    // directions and would therefore write `true` here — re-arming mandatory
-    // 2FA setup on an account that has just been soft-deleted. A deleted user
-    // must never be nagged to enroll, so this one call site owns the write.
-    // Don't "fix" this by routing it through the module.
+    // DELIBERATE EXCEPTION to the single-writer rule in lib/mfaFactors.server.ts: routing through
+    // `applyMfaFactorChange` would derive `requiresMfaSetup: true`, re-arming mandatory 2FA on a
+    // just-deleted account. Don't "fix" this by routing it through the module.
     requiresMfaSetup: false,
     deletedAt,
     deletedBy: 'superadmin', // route handler doesn't pass actor here; auditLog has it
   });
 
-  // 8. Revoke + disable the Firebase Auth user. The Firestore rules
-  //    (`isNotDeletedUser`) gate session reads on `deletedAt`, but
-  //    outstanding ID tokens remain technically valid until their natural
-  //    expiry (~1h) unless we explicitly revoke. `disabled: true` blocks
-  //    new sign-ins and short-circuits any custom-token mint flows.
-  //    Best-effort: we don't roll back the Firestore soft-delete on Auth
-  //    failure — the Firestore flag is already authoritative for
-  //    authorization, and the Auth disable can be retried separately.
+  // Rules (`isNotDeletedUser`) gate on `deletedAt`, but outstanding ID tokens stay valid for ~1h
+  // unless revoked; `disabled: true` also blocks new sign-ins and custom-token mints. Best-effort:
+  // no rollback of the soft-delete on Auth failure — Firestore is authoritative for authz.
   let authDisabled = false;
   try {
     const adminAuth = getAdminAuth();
@@ -335,8 +281,7 @@ export async function performUserDeleteCascade(
     } catch (err) {
       const code = (err as { code?: string } | null)?.code;
       if (code === 'auth/user-not-found') {
-        // No Auth record (e.g. user was hard-deleted via self-delete path
-        // earlier); treat as success — there's nothing to disable.
+        // No Auth record (hard-deleted via self-delete earlier) — nothing to disable.
         authDisabled = true;
       } else {
         console.warn(
@@ -347,9 +292,8 @@ export async function performUserDeleteCascade(
       }
     }
   } catch (err) {
-    // getAdminAuth() can throw if env vars are missing (test mode without
-    // mocks). Treat as soft failure — the Firestore soft-delete already
-    // gates access via rules.
+    // getAdminAuth() throws when env vars are missing (test mode without mocks). Soft failure —
+    // the Firestore soft-delete already gates access via rules.
     console.warn(
       `[userDeleteCascade] admin auth unavailable for ${uid}: ${
         (err as Error).message
@@ -366,12 +310,7 @@ export async function performUserDeleteCascade(
   };
 }
 
-/**
- * Cancel pending commands the user issued, scoped to the given sites.
- * Each site is scanned for machines whose pending-commands subcollection
- * contains entries with `issuedBy === uid`. Cancellation is a best-effort
- * write of `cancelled: true` + `cancelledAt`.
- */
+/** Best-effort `cancelled: true` on every pending command with `issuedBy === uid` in `siteIds`. */
 async function cancelUserCommands(uid: string, siteIds: string[]): Promise<void> {
   const db = getAdminDb();
   const now = Date.now();
@@ -398,7 +337,7 @@ async function cancelUserCommands(uid: string, siteIds: string[]): Promise<void>
               .catch(() => {});
           }
         } catch {
-          // Some machines may not have the nested commands shape; tolerate.
+          // Some machines lack the nested commands shape.
         }
       }
     } catch (err) {
@@ -412,12 +351,8 @@ async function cancelUserCommands(uid: string, siteIds: string[]): Promise<void>
 }
 
 /**
- * Cancel pending commands a user issued on a specific list of sites.
- *
- * Used by `POST /api/users/{uid}/remove-sites` — when an admin un-assigns
- * a user from a site, any commands they queued there should also be
- * voided. Returns the number of commands cancelled (best-effort metric;
- * partial failures are logged + counted as not-cancelled).
+ * Void a user's queued commands when `POST /api/users/{uid}/remove-sites` un-assigns them.
+ * Returns the count cancelled; partial failures are logged and counted as not-cancelled.
  */
 export async function cancelUserCommandsOnSites(
   uid: string,
@@ -457,7 +392,7 @@ export async function cancelUserCommandsOnSites(
             }
           }
         } catch {
-          // Tolerate machines without the nested shape.
+          // Some machines lack the nested commands shape.
         }
       }
     } catch (err) {

@@ -1,21 +1,16 @@
 /**
- * Action core: set the display layout (and related auto-restore controls)
- * on a machine's config doc.
+ * Set the display layout and auto-restore controls on a machine's config doc.
+ * One action, discriminated by `op`:
  *
- * Discriminated input — one action handles three operations:
+ *   capture          → assigned monitor topology + audit metadata under
+ *                      `displays.assigned` (what the machine should look like
+ *                      after a reboot or driver refresh)
+ *   set_auto_restore → toggle `displays.autoRestore.enabled`; enable also stamps
+ *                      enabledBy/enabledAt, disable leaves history intact
+ *   reset_breaker    → clear the circuit breaker (tripped:false, failures:0)
  *
- *   - `op: 'capture'`        → write the assigned monitor topology + audit
- *                              metadata under `displays.assigned`. This is
- *                              what the machine should look like after
- *                              reboot or driver refresh.
- *   - `op: 'set_auto_restore'` → toggle `displays.autoRestore.enabled`. On
- *                                enable also stamps `enabledBy` + `enabledAt`.
- *                                On disable leaves history fields intact.
- *   - `op: 'reset_breaker'`   → clear the auto-restore circuit breaker
- *                                (`tripped: false`, `failures: 0`).
- *
- * All three writes are merge-writes against `config/{siteId}/machines/{machineId}`
- * so sibling fields are preserved.
+ * All three are merge-writes against `config/{siteId}/machines/{machineId}`, so
+ * sibling fields survive.
  */
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -24,11 +19,8 @@ import logger from '@/lib/logger';
 import { ActionInputError, type ActionContext } from './createProcess.server';
 
 export interface DisplayMonitorInput {
-  /**
-   * The monitor record. Shape matches `MonitorInfo` in `useDisplayState`.
-   * Validated server-side as a non-null object — full schema validation is
-   * delegated to the agent (the source of truth for display geometry).
-   */
+  /** Shape matches `MonitorInfo` in `useDisplayState`. Only checked here as a
+   *  non-null object; the agent owns display geometry and validates it. */
   [key: string]: unknown;
 }
 

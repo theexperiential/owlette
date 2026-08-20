@@ -74,8 +74,8 @@ jest.mock('@/lib/auditLogClient', () => ({
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
 
-// Track shared state across mock-tx invocations so we can simulate two
-// sequential publishes against the same roost without a real Firestore.
+// Shared across mock-tx invocations: lets two sequential publishes against the
+// same roost be simulated without a real Firestore.
 const txState = {
   versionCounter: 0,
   currentVersionId: null as string | null,
@@ -143,8 +143,7 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminAuth: () => ({ verifyIdToken: jest.fn().mockRejectedValue(new Error('n/a')) }),
 }));
 
-// Stub R2 helpers so `verifyChunksPresent` always reports all chunks present
-// + signed-url helpers don't try to talk to a real bucket.
+// All chunks present, and no signed-url call reaches a real bucket.
 jest.mock('@/lib/r2Client.server', () => ({
   hasChunk: jest.fn().mockResolvedValue(true),
   bucketFor: jest.fn(() => 'test-bucket'),
@@ -174,9 +173,8 @@ const ROOST = 'rst_test_0000000001';
 const CHUNK_HASH = 'a'.repeat(64);
 
 function buildVersionEnvelope(hash = CHUNK_HASH): Record<string, unknown> {
-  // Minimal valid OCI-shaped version body. The route validates schemaVersion
-  // + mediaType + config object + non-empty files[] with hash (64-char
-  // lowercase hex) + positive size on every chunk.
+  // Minimal body that passes the route's validation: schemaVersion, mediaType,
+  // config object, non-empty files[] each with a 64-hex hash and positive size.
   return {
     schemaVersion: 2,
     mediaType: 'application/vnd.owlette.version.v1+json',
@@ -215,9 +213,7 @@ beforeEach(() => {
   mocks.update.mockResolvedValue(undefined);
 });
 
-/* ========================================================================== */
-/*  POST /api/roosts/{id}/versions — monotonic versionNumber                  */
-/* ========================================================================== */
+// POST /api/roosts/{id}/versions — monotonic versionNumber
 
 describe('POST /versions — version-number monotonicity', () => {
   async function publish(
@@ -302,9 +298,7 @@ describe('POST /versions — version-number monotonicity', () => {
   });
 
   it('the version doc + roost doc are written in the SAME transaction', async () => {
-    // The route runs `tx.set(versionRef, ...)` then `tx.set(roostRef, ...)`
-    // inside the SAME runTransaction callback. A single mockRunTransaction
-    // call should record both writes.
+    // Both `tx.set` calls happen in the SAME runTransaction callback.
     await publish();
     expect(mockRunTransaction).toHaveBeenCalledTimes(1);
     expect(txState.versionWrites).toHaveLength(1);
@@ -312,23 +306,14 @@ describe('POST /versions — version-number monotonicity', () => {
   });
 
   /**
-   * Item 16: concurrent publish race.
-   *
-   * Two parallel publishes against the same roost must serialize: both
-   * `runTransaction` callbacks fire, but Firestore's optimistic CAS
-   * promotes one and forces the other to re-run against the post-commit
-   * snapshot. The version counter ends at exactly 2 (not 1, not 3) and
-   * both calls receive distinct, monotonic versionNumbers.
-   *
-   * The current mockRunTransaction is naïve (no retry simulation), so
-   * we patch it for this test only — same shape, plus a "winner-takes-all"
-   * CAS guard that re-runs the loser callback against the updated
-   * txState.
+   * Concurrent publish race: two parallel publishes must serialize via
+   * Firestore's optimistic CAS — counter ends at exactly 2, both callers get
+   * distinct monotonic versionNumbers. mockRunTransaction has no retry
+   * simulation, so this test patches in a CAS guard that re-runs the loser.
    */
   it('two parallel publishes serialize: counter goes 0→2 exactly once each', async () => {
-    // Swap in a CAS-aware runTransaction. Each invocation reads txState
-    // at entry and gates its commit on the version being unchanged at
-    // commit time.
+    // CAS-aware runTransaction: read txState at entry, gate the commit on the
+    // version being unchanged at commit time.
     mockRunTransaction.mockImplementation(
       async (cb: (tx: unknown) => Promise<unknown>): Promise<unknown> => {
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -358,8 +343,7 @@ describe('POST /versions — version-number monotonicity', () => {
             update: jest.fn(),
           };
           const result = await cb(tx);
-          // CAS check: only commit if txState.versionCounter hasn't moved
-          // since we read it.
+          // Commit only if txState.versionCounter has not moved since entry.
           if (txState.versionCounter === versionCounterAtRead) {
             for (const w of pendingVersionWrites) {
               txState.versionWrites.push(w);
@@ -398,8 +382,7 @@ describe('POST /versions — version-number monotonicity', () => {
     const numbers = [a.body.versionNumber, b.body.versionNumber].sort();
     expect(numbers).toEqual([1, 2]);
 
-    // The roost's versionCounter must have advanced to exactly 2 — not 1
-    // (which would mean one commit overwrote the other) and not 3.
+    // Exactly 2: 1 would mean one commit overwrote the other.
     expect(txState.versionCounter).toBe(2);
 
     // Two writes to each side of the transaction (one per publish).
@@ -559,9 +542,7 @@ describe('POST /versions — version-number monotonicity', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /versions - expectedCurrentVersionId CAS                              */
-/* ========================================================================== */
+// POST /versions - expectedCurrentVersionId CAS
 
 describe('POST /versions - expectedCurrentVersionId CAS', () => {
   async function publish(
@@ -608,8 +589,7 @@ describe('POST /versions - expectedCurrentVersionId CAS', () => {
   });
 
   it('rejects a config-only republish-at-head when expectedCurrentVersionId is stale', async () => {
-    // Republishing the head bytes hits the no-op branch; a config write there
-    // must still honor CAS, not slip past it with a stale expected head.
+    // The no-op branch must still honor CAS, not slip past on a stale head.
     const first = await publish();
     expect(first.status).toBe(201);
     txState.versionCounter = 1;
@@ -632,9 +612,7 @@ describe('POST /versions - expectedCurrentVersionId CAS', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /versions — description round-trip + 500-char cap                    */
-/* ========================================================================== */
+// POST /versions — description round-trip + 500-char cap
 
 describe('POST /versions — description field', () => {
   async function publishWith(description: unknown): Promise<{
@@ -694,9 +672,7 @@ describe('POST /versions — description field', () => {
   });
 });
 
-/* ========================================================================== */
-/*  PATCH /versions/{ref} — description edit + immutability guard             */
-/* ========================================================================== */
+// PATCH /versions/{ref} — description edit + immutability guard
 
 describe('PATCH /versions/{ref} — description edit', () => {
   async function patch(body: Record<string, unknown>): Promise<{
@@ -731,14 +707,12 @@ describe('PATCH /versions/{ref} — description edit', () => {
   });
 
   it('PATCH with sibling field like manifestId (the old name) is rejected', async () => {
-    // Defensive: an SDK or curl using the pre-rename field name should be
-    // told the field is immutable, not silently accepted.
+    // A caller using the pre-rename field name must be told it is immutable,
+    // not silently accepted.
     const res = await patch({ siteId: SITE, manifestId: 'old_name' });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('version_content_immutable');
   });
 });
 
-/* ========================================================================== */
-/*  billing gate — publishing is pro-only (wave 0.6)                          */
-/* ========================================================================== */
+// billing gate — publishing is pro-only (wave 0.6)

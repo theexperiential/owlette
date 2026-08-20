@@ -1,17 +1,11 @@
 /** @jest-environment node */
 
 /**
- * Route-layer tests for POST /api/sites/{siteId}/talons/{talonId}/test — the
- * manual "run now" fire behind the re-run button on `/talons`.
- *
- * The route is a thin shim: the engine (`runTalonManual`) owns the cooldown
- * bypass, the in-flight guard, and every output, and has its own suite. What
- * is asserted here is what the http layer owns — the wrapper wiring that
- * enforces TALON_MANAGE against the path siteId, the talon-id bound, the
- * arguments handed to the engine, the response envelope, and the
- * TalonStoreError -> problem+json map.
- *
- * talons wave 4.2.
+ * Route-layer tests for POST /api/sites/{siteId}/talons/{talonId}/test (the "run now" button
+ * on /talons). The engine (`runTalonManual`) owns cooldown bypass, the in-flight guard, and
+ * outputs, and has its own suite; asserted here is only what the http layer owns: TALON_MANAGE
+ * against the path siteId, the talon-id bound, the engine arguments, the response envelope,
+ * and the TalonStoreError -> problem+json map.
  */
 
 import { NextResponse } from 'next/server';
@@ -38,11 +32,9 @@ jest.mock('@/lib/firebase-admin', () => ({
 }));
 
 /**
- * Wrapper stand-in. It records the options the route registered onto the
- * returned handler (`__options`) so the capability wiring can be asserted, and
- * defers the allow/deny decision to `mockAuthorize` so a test can simulate the
- * wrapper answering 401 before the handler ever runs. The wrapper's own
- * enforcement is unit-tested in `__tests__/lib/authorizedHandler.test.ts`.
+ * Wrapper stand-in: records the registered options on `__options` so capability wiring can be
+ * asserted, and defers allow/deny to `mockAuthorize` so a test can 401 before the handler runs.
+ * The wrapper's own enforcement is covered by __tests__/lib/authorizedHandler.test.ts.
  */
 jest.mock('@/lib/authorizedHandler.server', () => ({
   authorizedSiteHandler:
@@ -84,10 +76,6 @@ jest.mock('@/lib/talons/engine.server', () => ({
 import { TalonStoreError } from '@/lib/talons/store.server';
 import { POST as testPOST } from '@/app/api/sites/[siteId]/talons/[talonId]/test/route';
 
-/* -------------------------------------------------------------------------- */
-/*  fixtures                                                                  */
-/* -------------------------------------------------------------------------- */
-
 function runSummary(overrides: Record<string, unknown> = {}) {
   return {
     runId: 'run-1',
@@ -115,10 +103,6 @@ beforeEach(() => {
   mockRunTalonManual.mockResolvedValue([runSummary()]);
 });
 
-/* -------------------------------------------------------------------------- */
-/*  tests                                                                     */
-/* -------------------------------------------------------------------------- */
-
 describe('POST /api/sites/{siteId}/talons/{talonId}/test', () => {
   it('gates the fire on TALON_MANAGE with write-class scope', () => {
     const options = (testPOST as unknown as { __options: Record<string, unknown> })
@@ -132,8 +116,7 @@ describe('POST /api/sites/{siteId}/talons/{talonId}/test', () => {
         targetIdParam: 'talonId',
       }),
     );
-    // Absent means the wrapper's write-class default — a read-scoped key must
-    // not be able to fire a talon.
+    // Absent = the wrapper's write-class default; a read-scoped key must not fire a talon.
     expect(options.apiKeyPermission).toBeUndefined();
   });
 
@@ -165,8 +148,8 @@ describe('POST /api/sites/{siteId}/talons/{talonId}/test', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ runs: summaries });
-    // The site comes from the wrapper context, never the path string, and the
-    // actor is forwarded so the engine can attribute the manual fire.
+    // Site comes from the wrapper context, never the path string; the actor is forwarded so
+    // the engine can attribute the manual fire.
     expect(mockRunTalonManual).toHaveBeenCalledWith(
       expect.anything(),
       SITE,

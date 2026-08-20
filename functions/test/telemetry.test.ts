@@ -1,6 +1,4 @@
-/**
- * Unit tests for roost telemetry + per-tenant cost attribution (wave 2b.6).
- */
+/** Unit tests for roost telemetry + per-tenant cost attribution. */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,10 +25,6 @@ import {
 } from '../src/telemetry';
 
 const GB = 1024 ** 3;
-
-/* --------------------------------------------------------------------- */
-/*  computeCost                                                          */
-/* --------------------------------------------------------------------- */
 
 describe('computeCost', () => {
   it('zero counters → zero cost', () => {
@@ -97,7 +91,7 @@ describe('computeCost', () => {
   });
 
   it('ops are NOT pro-rated by month fraction', () => {
-    // ops happened — they cost whether the month is 1% or 99% over.
+    // Ops cost the same whether the month is 1% or 99% elapsed.
     const c = computeCost({
       counters: {
         storageBytes: 0,
@@ -124,17 +118,13 @@ describe('computeCost', () => {
       monthFractionElapsed: NaN,
     });
     assert.equal(cNeg.storageUsd, 0);
-    // 99 clamps to 1
+    // 99 clamps to 1.
     assert.ok(
       Math.abs(cBig.storageUsd - R2_STORAGE_USD_PER_GB_MONTH) < 1e-9,
     );
     assert.equal(cNan.storageUsd, 0);
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  monthFractionElapsed                                                 */
-/* --------------------------------------------------------------------- */
 
 describe('monthFractionElapsed', () => {
   it('≈0 at the first second of a month', () => {
@@ -143,21 +133,17 @@ describe('monthFractionElapsed', () => {
   });
 
   it('≈1 at end of month', () => {
-    // 30-day month (april): last microsecond
+    // 30-day month (april), last microsecond.
     const f = monthFractionElapsed(new Date('2026-04-30T23:59:59.999Z'));
     assert.ok(f > 0.999);
   });
 
   it('halfway through → ~0.5', () => {
     const f = monthFractionElapsed(new Date('2026-04-15T12:00:00Z'));
-    // 30-day april: day 15 at noon = 14.5/30 = 0.4833…
+    // 30-day april, day 15 noon = 14.5/30 = 0.4833…
     assert.ok(f > 0.48 && f < 0.49);
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  aggregateCounters                                                    */
-/* --------------------------------------------------------------------- */
 
 function evt(kind: UsageEvent['kind'], count?: number, bytes?: number): UsageEvent {
   return { siteId: 's', kind, count, bytes, timestamp: 0 };
@@ -189,7 +175,7 @@ describe('aggregateCounters', () => {
   });
 
   it('averages storage snapshots (GB-day accounting)', () => {
-    // 100 GB for one snapshot + 1 GB for another = avg 50.5 GB
+    // 100 GB + 1 GB across two snapshots = avg 50.5 GB.
     const c = aggregateCounters([
       evt('storage_snapshot', undefined, 100 * GB),
       evt('storage_snapshot', undefined, 1 * GB),
@@ -202,10 +188,6 @@ describe('aggregateCounters', () => {
     assert.equal(c.storageBytes, 0);
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  OTLP record shapes                                                   */
-/* --------------------------------------------------------------------- */
 
 describe('buildUsageRecord', () => {
   const fixedNow = new Date('2026-04-20T12:00:00Z');
@@ -237,10 +219,6 @@ describe('buildUsageRecord', () => {
     assert.equal(r.attributes.reason, 'no_events_in_window');
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  recordEvent (validation)                                             */
-/* --------------------------------------------------------------------- */
 
 function makeEventStore(): EventStore & { appended: UsageEvent[] } {
   const appended: UsageEvent[] = [];
@@ -304,10 +282,6 @@ describe('recordEvent', () => {
     assert.equal(store.appended[0].timestamp, fixedNow.getTime());
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  aggregateOneSite                                                     */
-/* --------------------------------------------------------------------- */
 
 interface AggState {
   events: UsageEvent[];
@@ -413,10 +387,6 @@ describe('aggregateOneSite', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  getUsageSummary                                                      */
-/* --------------------------------------------------------------------- */
-
 describe('getUsageSummary', () => {
   it('returns null when no data exists', async () => {
     const summaries: SummaryStore = {
@@ -431,7 +401,7 @@ describe('getUsageSummary', () => {
   });
 
   it('projects full-month cost linearly from MTD', async () => {
-    // ~14.5 days into a 30-day month → monthFraction ~ 0.483
+    // ~14.5 days into a 30-day month → monthFraction ~ 0.483.
     const summaries: SummaryStore = {
       async writeDailyRollup() {},
       async readMonthToDate() {
@@ -457,9 +427,9 @@ describe('getUsageSummary', () => {
       now: () => new Date('2026-04-15T12:00:00Z'),
     });
     assert.ok(r);
-    // projected must be >= current MTD (never regressive).
+    // Projected must never regress below current MTD.
     assert.ok(r!.projectedMonthCost.totalUsd >= r!.cost.totalUsd);
-    // roughly 2x MTD for a halfway-through month
+    // Roughly 2x MTD halfway through the month.
     assert.ok(r!.projectedMonthCost.totalUsd > 0.3);
   });
 });

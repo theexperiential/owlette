@@ -7,16 +7,10 @@ import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { apiError } from '@/lib/apiErrorResponse';
 
 /**
- * GET /api/cron/process-alerts
+ * GET /api/cron/process-alerts — drains pending_process_alerts into batched per-site digest
+ * emails. Alerts are held for ACCUMULATION_WINDOW_MS so machines crashing together share one email.
  *
- * HTTP cron endpoint (cron-job.org) that drains the pending_process_alerts queue
- * and sends batched digest emails grouped by site.
- *
- * Alerts are held for ACCUMULATION_WINDOW_MS before sending, allowing
- * multiple machines that crash around the same time to be grouped into
- * a single email per site.
- *
- * Authentication: X-Cron-Secret header must match CRON_SECRET env var.
+ * Auth: X-Cron-Secret must match CRON_SECRET.
  *
  * cron-job.org config (NOT Railway — register once per environment):
  *   Schedule:  * /3 * * * *   (every 3 minutes)
@@ -24,7 +18,7 @@ import { apiError } from '@/lib/apiErrorResponse';
  *   Header:    X-Cron-Secret: <that environment's CRON_SECRET>
  */
 
-// Only process alerts older than this to allow accumulation
+// Alerts younger than this are left to accumulate.
 const ACCUMULATION_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
 
 interface PendingAlert {
@@ -44,7 +38,7 @@ function buildProcessDigestEmail(
   unsubscribeUrl?: string,
   timezone?: string,
 ): string {
-  // Single alert: use a simpler layout matching the old single-process email
+  // Single alert: simpler layout.
   if (alerts.length === 1) {
     const a = alerts[0];
     const eventLabel = a.eventType === 'process_start_failed' ? 'failed to start' : 'crashed';
@@ -68,7 +62,6 @@ function buildProcessDigestEmail(
     });
   }
 
-  // Multiple alerts: digest table
   const rows = alerts
     .map((a, i) => {
       const eventLabel = a.eventType === 'process_start_failed' ? 'failed to start' : 'crashed';
@@ -109,7 +102,7 @@ function buildProcessDigestEmail(
   });
 }
 
-/** Simple key-value row for single-alert emails (matches emailDataTable style). */
+/** Key-value row for single-alert emails; matches emailDataTable style. */
 function alertRow(label: string, value: string, alt: boolean, highlight?: string): string {
   const bg = alt ? `background:${EMAIL_COLORS.altRow};` : '';
   const color = highlight || EMAIL_COLORS.text;
@@ -121,7 +114,6 @@ function alertRow(label: string, value: string, alt: boolean, highlight?: string
 }
 
 export async function GET(request: NextRequest) {
-  // Validate cron secret
   const cronSecret = request.headers.get('x-cron-secret');
   if (!process.env.CRON_SECRET || cronSecret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -131,7 +123,6 @@ export async function GET(request: NextRequest) {
   const cutoff = new Date(Date.now() - ACCUMULATION_WINDOW_MS);
 
   try {
-    // Query alerts older than the accumulation window
     const alertsSnap = await db
       .collection('pending_process_alerts')
       .where('timestamp', '<=', cutoff)
@@ -141,13 +132,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: true, alertsProcessed: 0 });
     }
 
-    // Parse alerts
     const alerts: PendingAlert[] = alertsSnap.docs.map(doc => ({
       docId: doc.id,
       ...(doc.data() as Omit<PendingAlert, 'docId'>),
     }));
 
-    // Group by siteId
     const alertsBySite = new Map<string, PendingAlert[]>();
     for (const alert of alerts) {
       const existing = alertsBySite.get(alert.siteId) ?? [];
@@ -172,14 +161,13 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        // Get timezone from the first machine for display
+        // Display timezone comes from the first machine.
         const tz = await getMachineTimezone(siteId, siteAlerts[0].machineId);
         const siteLabel = await getSiteLabel(siteId);
 
-        // Send per-recipient emails (for individual unsubscribe links)
+        // Per-recipient, so each carries its own unsubscribe link.
         for (const recipient of recipients) {
           try {
-            // Filter out alerts for machines this user has muted
             const userAlerts = siteAlerts.filter(a => !recipient.mutedMachines.includes(a.machineId));
             if (userAlerts.length === 0) continue;
 
@@ -187,7 +175,6 @@ export async function GET(request: NextRequest) {
               ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
               : undefined;
 
-            // Rebuild subject for this user's filtered alerts
             const userSubject = userAlerts.length === 1
               ? `Process ${userAlerts[0].eventType === 'process_start_failed' ? 'failed to start' : 'crashed'}: ${userAlerts[0].processName} on ${userAlerts[0].machineId}`
               : `${userAlerts.length} process event(s) in ${siteLabel}`;
@@ -221,7 +208,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Delete all processed alerts (Firestore batch limit: 500)
+    // Firestore batch limit is 500.
     const docs = alertsSnap.docs;
     for (let i = 0; i < docs.length; i += 500) {
       const batch = db.batch();

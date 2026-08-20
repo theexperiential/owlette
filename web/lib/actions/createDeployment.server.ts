@@ -1,25 +1,12 @@
 /**
- * createDeployment action core (security-boundary-migration wave 3.3).
+ * Shared core behind `POST /api/sites/{siteId}/deployments` and hoot's
+ * `invokeAsSystem`, so both fan out installs identically.
  *
- * Lifted from the api-sprint wave-1 body of
- * `web/app/api/sites/[siteId]/deployments/route.ts` so hoot (`invokeAsSystem`)
- * and the route shim share the same single source of truth. Public contract
- * is preserved bit-for-bit — the route shim continues to surface every
- * existing field exactly as before.
+ * validate → quota-check `sites/{siteId}.deployQuota` → write the deployment
+ * doc pending → fan out `install_software` → flip to in_progress → audit.
  *
- * Behavior:
- *   1. validate body (fail-fast with discriminated `{ ok: false, code }`)
- *   2. read `sites/{siteId}.deployQuota` (default 100), reject 413 if over
- *   3. write the deployment doc with `status: 'pending'` + targets[]
- *   4. fan out `install_software` commands via the wave-2.2 helper
- *   5. flip parent doc to `status: 'in_progress'`
- *   6. emit `deployment_mutated` audit event
- *
- * Wave 4.3 will delete the listener-driven `transaction.set` writes from
- * `useDeployments.ts` — the cloud function `onCommandCompleted`
- * (functions/src/deploymentStatus.ts, triggered on commands/completed) is the
- * authoritative source of deployment status reconciliation. We do NOT
- * replicate that logic here.
+ * Status reconciliation is NOT here: the `onCommandCompleted` cloud function
+ * (functions/src/deploymentStatus.ts) owns it.
  */
 
 import { FieldValue } from 'firebase-admin/firestore';
@@ -34,42 +21,36 @@ export const DEFAULT_DEPLOYMENT_MAX_TARGETS = 100;
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 
 export interface CreateDeploymentInput {
-  /** human-readable label. */
   name: string;
-  /** filename of the installer binary. */
   installer_name: string;
   /** signed download url — must be `https://`. */
   installer_url: string;
-  /** silent-install command-line flags (e.g. `/SILENT /NORESTART`). */
+  /** e.g. `/SILENT /NORESTART`. */
   silent_flags: string;
-  /** optional post-install verification path on disk. */
+  /** post-install verification path on disk. */
   verify_path?: string;
-  /** optional process exe names the agent closes before install. */
+  /** exe names the agent closes before install. */
   close_processes?: string[];
-  /** optional project names/paths the installer should suppress. */
+  /** project names/paths the installer should suppress. */
   suppress_projects?: string[];
-  /** optional 64-char hex sha-256 of the installer binary. */
+  /** 64-char hex sha-256 of the installer binary. */
   sha256_checksum?: string;
-  /** if true, agents may run the installer alongside other tasks. */
+  /** allow the installer to run alongside other tasks. */
   parallel_install?: boolean;
-  /** target machine ids in this site. duplicates are de-duplicated. */
+  /** machine ids in this site; de-duplicated. */
   machines: string[];
 }
 
 export interface CreateDeploymentContext {
   siteId: string;
-  /** Firebase uid of the calling user. Preserves the legacy deployment doc shape. */
+  /** Firebase uid; the legacy deployment doc shape expects it. */
   createdBy: string;
-  /** `user:<uid>` or `apiKey:<keyId>` for audit-log mutation events. */
+  /** `user:<uid>` or `apiKey:<keyId>` for audit events. */
   actorIdentifier: string;
-  /** opaque correlation id woven through audit + commands. */
+  /** woven through audit + commands. */
   correlationId: string;
-  /**
-   * Optional Firestore override for unit tests. Production callers omit
-   * and `getAdminDb()` is used.
-   */
+  /** Test overrides; production omits both. */
   db?: ReturnType<typeof getAdminDb>;
-  /** Override `Date.now()` — unit tests pass a fixed clock. */
   now?: () => number;
 }
 
@@ -275,12 +256,10 @@ function validateInput(
 }
 
 /**
- * Create an installer deployment and fan-out `install_software` commands.
+ * Create an installer deployment and fan out `install_software`.
  *
- * Mirrors `createDistribution` for the deployments surface. The deployment
- * document and per-machine command payloads carry the legacy field names
- * the agent already reads (`installer_url`, `installer_name`, `silent_flags`,
- * `deployment_id`) so v3.0.0 agents accept the writes without modification.
+ * Doc + command payloads keep the legacy field names (`installer_url`,
+ * `installer_name`, `silent_flags`, `deployment_id`) that shipped agents read.
  */
 export async function createDeployment(
   input: CreateDeploymentInput,
@@ -292,8 +271,7 @@ export async function createDeployment(
   const db = ctx.db ?? getAdminDb();
   const now = ctx.now ?? (() => Date.now());
 
-  // Per-site quota check — read `sites/{siteId}.deployQuota`. Missing or
-  // invalid → fall back to the default. Mirrors the distribution path.
+  // Missing or invalid `deployQuota` falls back to the default.
   const siteSnap = await db.collection('sites').doc(ctx.siteId).get();
   const siteData = siteSnap.exists ? (siteSnap.data() ?? {}) : {};
   const quotaRaw = (siteData as Record<string, unknown>).deployQuota;
@@ -342,10 +320,8 @@ export async function createDeployment(
 
   await deploymentRef.set(deploymentData);
 
-  // Fan out `install_software` commands via the wave-2.2 helper. The helper
-  // chunks at FANOUT_CHUNK_SIZE (50) and threads `auditCorrelationId` into
-  // each command's metadata. Underscore-prefixed ids match the legacy hook
-  // shape so the agent's listener sees identical keys to today's writes.
+  // Underscore-prefixed command ids match the legacy hook shape, so the agent's
+  // listener sees the same keys it always has.
   const sanitizedDeploymentId = deploymentId.replace(/-/g, '_');
   const commandIdPrefix = `install_${sanitizedDeploymentId}`;
 
@@ -398,8 +374,7 @@ export async function createDeployment(
       },
     });
   } catch (err) {
-    // emitMutation is fire-and-forget by design, but defensive logging here
-    // catches any sync throw before the network handoff.
+    // Fire-and-forget by design; this only catches a sync throw.
     logger.warn('[createDeployment] mutation emit threw synchronously', {
       context: 'createDeployment',
       data: { err: err instanceof Error ? err.message : String(err) },

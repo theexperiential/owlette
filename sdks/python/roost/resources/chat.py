@@ -1,4 +1,4 @@
-"""``roost.chat`` — hoot AI chat (wave 3A).
+"""``roost.chat`` — hoot AI chat.
 
 Drives the conversation routes:
 
@@ -8,16 +8,13 @@ Drives the conversation routes:
   PATCH  /api/hoot/conversations/{conversationId}      — rename
   DELETE /api/hoot/conversations/{conversationId}      — soft delete
 
-``send()`` is the streaming verb. It returns an async iterator that
-yields the text deltas (utf-8 strings) parsed out of the AI-SDK v3
-line-prefixed protocol the server emits via
+``send()`` is the streaming verb: an async iterator over the utf-8 text deltas
+parsed out of the AI-SDK v3 line-prefixed protocol the server emits via
 ``result.toUIMessageStreamResponse()``:
 
   ``0:"<json-encoded delta>"\\n`` → text delta
   ``d:{...}\\n``                  → end-of-stream marker (ignored)
   ``3:"<error>"\\n``              → upstream error → ``RuntimeError``
-
-Use it like::
 
     async for delta in roost.chat.send(conversation_id, "hello"):
         print(delta, end="", flush=True)
@@ -63,7 +60,7 @@ def _parse_summary(raw: dict[str, Any]) -> ConversationSummary:
 
 
 class Chat:
-    """hoot AI chat (wave 3A)."""
+    """hoot AI chat."""
 
     def __init__(self, client: "RoostClient") -> None:
         self._client = client
@@ -216,9 +213,8 @@ class _SendIterator:
         return await self._iter.__anext__()
 
     async def _stream(self) -> AsyncIterator[str]:
-        # Build the same URL + headers the core client uses, then call
-        # `_http.stream()` directly — `request()` would buffer the full
-        # body before returning, which defeats streaming.
+        # Build the URL + headers the core client uses, then call `_http.stream()`
+        # directly: `request()` buffers the whole body, defeating streaming.
         idem = self._idempotency_key or f"py-sdk-chat-send-{uuid.uuid4()}"
         path = f"/api/hoot/conversations/{self._conversation_id}"
         body = {"role": self._role, "content": self._message}

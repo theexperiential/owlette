@@ -1,11 +1,10 @@
 /**
  * Shared cloud-side helpers for the full-machine e2e harness.
  *
- * All Firestore/Auth admin work + the __session cookie mint live here (Node,
- * reusing web/node_modules/firebase-admin) so the Python controller never has
- * to touch firebase-admin (which the agent is forbidden to import anyway). The
- * controller shells out to the thin CLIs (preauthorize/probe/teardown) that
- * wrap these functions and exchange JSON on stdout.
+ * All Firestore/Auth admin work and the __session cookie mint live here (Node, reusing
+ * web/node_modules/firebase-admin) so the Python controller never touches firebase-admin,
+ * which the agent is forbidden to import. Thin CLIs (preauthorize/probe/teardown) wrap
+ * these and exchange JSON on stdout.
  *
  * Dev-pinned: aborts unless the service account resolves to owlette-dev-3838a.
  */
@@ -134,9 +133,8 @@ export async function probe(machineId) {
   const m = await db.collection('sites').doc(SITE_ID).collection('machines').doc(machineId).get();
   const rt = await db.collection('agent_refresh_tokens').where('siteId', '==', SITE_ID).get();
   const md = m.exists ? m.data() : null;
-  // The agent writes lastHeartbeat as a Firestore SERVER_TIMESTAMP, so it reads
-  // back as a Timestamp object (not a number). Normalize to epoch seconds,
-  // tolerating a raw number too in case a write path ever changes.
+  // lastHeartbeat is written as a SERVER_TIMESTAMP, so it reads back as a Timestamp.
+  // Normalize to epoch seconds, tolerating a raw number if a write path ever changes.
   const hbSec = toEpochSeconds(md?.lastHeartbeat);
   return {
     siteId: SITE_ID,
@@ -180,9 +178,8 @@ export async function teardown({ fullReset = false } = {}) {
     for (const h of hw.docs) { await h.ref.delete(); removed.hardware++; }
     await d.ref.delete(); removed.machines++;
   }
-  // The synced config lives in a separate top-level collection
-  // (config/{siteId}/machines/*), not under sites/ — the Wave 2 add-process
-  // flow writes here, so sweep it too or driven processes leak across runs.
+  // The synced config lives in config/{siteId}/machines/*, not under sites/ — the Wave 2
+  // add-process flow writes here, so sweep it too or driven processes leak across runs.
   const cfgMachines = await db.collection('config').doc(SITE_ID).collection('machines').get();
   for (const d of cfgMachines.docs) { await d.ref.delete(); removed.configDocs++; }
   const rts = await db.collection('agent_refresh_tokens').where('siteId', '==', SITE_ID).get();

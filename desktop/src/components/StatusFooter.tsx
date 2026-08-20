@@ -25,17 +25,14 @@ interface StatusFooterProps {
 }
 
 /**
- * The one line that says whether this machine is being looked after, phrased
- * as a sentence — "TEC-A4D is connected to TEC" — with the status word
- * carrying the tone colour. Right edge: the version of the service that is
- * running, which is the version that matters, not this app's.
+ * One sentence saying whether this machine is looked after — "TEC-A4D is
+ * connected to TEC" — with the status word carrying the tone colour, and the
+ * running SERVICE version (not this app's) on the right.
  *
- * At most one call to action sits beside the sentence, and it is always the
- * thing the state calls for: `start service` when nothing is supervising this
- * machine, `join site` when it is supervised but belongs to no site. The two
- * are mutually exclusive on purpose — a machine with a dead service cannot
- * usefully be paired, and two buttons competing in a status line is how neither
- * gets read.
+ * At most one call to action: `start service` when nothing supervises the
+ * machine, `join site` when it is supervised but unpaired. Mutually exclusive on
+ * purpose — a dead service can't usefully be paired, and two competing buttons
+ * in a status line means neither is read.
  */
 export function StatusFooter({
   status,
@@ -47,8 +44,8 @@ export function StatusFooter({
   onJoin,
 }: StatusFooterProps) {
   const state = deriveFooterState({ status, statusFile, config })
-  // The site's name when the service knows it, its id until then — the footer
-  // is read by operators who know the place as "TEC", not as "default_site".
+  // Name when the service knows it, id until then: operators know the place as
+  // "TEC", not "default_site".
   const site = siteNameOf(config, statusFile)
   const sentence = footerSentence(state, site, hostname ?? null)
   const version = statusFile?.service?.version
@@ -72,9 +69,9 @@ export function StatusFooter({
           {starting ? 'starting…' : 'start service'}
         </Button>
       ) : (
-        // `disabled` and `removed from site` both describe a machine that is
-        // running fine and belongs to nothing. Until this button existed the
-        // only way back was a menu a new operator has no reason to open.
+        // `disabled` and `removed from site` both mean a healthy machine that
+        // belongs to nothing; without this button the only way back is a menu a
+        // new operator has no reason to open.
         isPaired(config) === false && (
           <Button size="sm" variant="secondary" className="h-6 px-2" onClick={onJoin}>
             join site

@@ -1,19 +1,15 @@
 /**
- * Stripe-style webhook signing + verification (wave 6.9).
+ * Stripe-style webhook signing + verification.
  *
- * Web-side copy of the dispatcher's `functions/src/lib/webhookLogic.ts`
- * — we intentionally duplicate the pure-logic code here rather than
- * cross-import between the `functions/` and `web/` packages. The two
- * implementations MUST stay byte-compatible: any test suite that
- * signs in one and verifies in the other is catching drift early.
- *
- * Header format:
+ * Deliberate duplicate of `functions/src/lib/webhookLogic.ts` rather than a
+ * cross-package import. The two MUST stay byte-compatible — sign in one, verify
+ * in the other to catch drift.
  *
  *     Roost-Signature: t=<unix-seconds>,v1=<hex>
  *     v1 = hmac_sha256(secret, "<t>.<canonicalBody>")
  *
- * The timestamp is part of the signed payload — receivers reject any
- * delivery whose `t` is more than 5 minutes from their wall clock.
+ * `t` is inside the signed payload; receivers reject a delivery more than
+ * 5 minutes from their wall clock.
  */
 
 import { createHmac } from 'node:crypto';
@@ -49,12 +45,9 @@ export interface VerifyResult {
 }
 
 /**
- * Verify a `Roost-Signature` header against `canonicalBody` + `secret`.
- * Returns structured outcome so callers can distinguish stale-timestamp
- * from bad-hmac in their logs/metrics.
- *
- * Forward-compatible: unknown scheme prefixes (e.g. future `v2=`) are
- * ignored, not errors — exactly what Stripe recommends.
+ * Verify a `Roost-Signature` against `canonicalBody` + `secret`. Structured
+ * outcome so callers can tell stale-timestamp from bad-hmac. Unknown scheme
+ * prefixes (a future `v2=`) are ignored, not errors — per Stripe's convention.
  */
 export function verifySignature(
   canonicalBody: string,

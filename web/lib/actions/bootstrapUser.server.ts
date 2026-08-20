@@ -1,26 +1,15 @@
 /**
- * bootstrapUser action core (security-boundary-migration wave 3.9).
+ * Creates `users/{uid}` on first sign-in/sign-up, replacing the client-side
+ * setDoc calls in AuthContext so creation is server-mediated and audit-logged
+ * (security-boundary-migration wave 3.9).
  *
- * Creates `users/{uid}` on first sign-in / sign-up. Replaces the
- * client-side `setDoc` calls in `web/contexts/AuthContext.tsx` (line 421
- * unsubscribe-listener path; line 527 signUp path) so user-doc creation
- * is server-mediated and audit-logged.
+ * Idempotent: a second call returns `already_exists`. No capability check —
+ * capabilities only govern other people's resources, and this is the moment the
+ * caller's own record appears; the handler asserts bearer uid == target uid.
  *
- * Idempotent — calling twice for the same uid is a no-op (returns
- * `already_exists`). The route is gated by a session/id-token from the
- * caller's OWN account; capability checks don't apply (capabilities only
- * make sense for actions on someone else's resources, and bootstrap is
- * the moment the caller's user record comes into existence). The handler
- * verifies that the bearer's uid matches the bootstrap target.
- *
- * Defaults baked in match the legacy AuthContext writes exactly:
- *   - `role: 'member'`
- *   - `sites: []`
- *   - `mfaEnrolled: false`, `requiresMfaSetup: true`
- *   - `preferences: { temperatureUnit: 'C', timezone: <input or 'UTC'> }`
- * Plus one field AuthContext never wrote — `mfaFactors: { totp: false,
- * passkeys: 0 }` — so a new account starts with the denormalized factor
- * inventory already present rather than needing a read-time backfill.
+ * Defaults match the legacy AuthContext writes, plus `mfaFactors` (which it
+ * never wrote) so a new account starts with the factor inventory present
+ * instead of needing a read-time backfill.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
@@ -75,9 +64,8 @@ export async function bootstrapUser(
   const db = input.db ?? getAdminDb();
   const userRef = db.collection('users').doc(input.uid);
 
-  // Sanitise the display name at the single write chokepoint — strips link
-  // payloads / emoji-spam / invisible chars regardless of whether the caller
-  // came through the signup form or hit the API directly with a scraped key.
+  // Single write chokepoint: sanitise here so a direct API caller can't bypass
+  // the signup form's stripping of links / emoji-spam / invisible chars.
   const displayName = sanitizeDisplayName(input.displayName);
   const timezone =
     typeof input.timezone === 'string' && isValidTimezone(input.timezone)
@@ -86,10 +74,8 @@ export async function bootstrapUser(
   const nowDate = (input.now ?? (() => new Date()))();
   const createdAtMs = nowDate.getTime();
 
-  // Pre-existence check — bootstrap is idempotent. We can't use a
-  // transaction's create() here because users/{uid} may already exist
-  // from a previous bootstrap call for the same caller (e.g. retry after
-  // network error).
+  // Not transaction create(): a retried bootstrap must return already_exists,
+  // not fail.
   const existing = await userRef.get();
   if (existing.exists) {
     const data = existing.data() ?? {};
@@ -118,13 +104,9 @@ export async function bootstrapUser(
     displayName,
     mfaEnrolled: false,
     requiresMfaSetup: true,
-    // Seed the factor inventory inline rather than via
-    // `applyMfaFactorChange` from `lib/mfaFactors.server.ts`: that module is
-    // the single writer of `mfaEnrolled`/`requiresMfaSetup` everywhere ELSE,
-    // but it reads the user doc first and throws when it is missing — and
-    // bootstrap is precisely the moment before that doc exists. Without this
-    // seed every new account would be born "legacy" and rely on
-    // `normalizeMfaFactors` repairing the inventory on every read.
+    // Seeded inline, not via applyMfaFactorChange (the single writer everywhere
+    // else): it reads the user doc first and throws when missing, which is
+    // exactly the state here. Without the seed every account is born "legacy".
     mfaFactors: { totp: false, passkeys: 0 },
     preferences: {
       temperatureUnit: 'C',

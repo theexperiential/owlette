@@ -1,13 +1,10 @@
 /**
  * The status footer's single source of truth.
  *
- * Three inputs, deliberately: the SCM's view of `OwletteService` and the age of
- * `tmp/service_status.json` (both from the host), the contents of that file,
- * and the `firebase` block of `config.json`. The legacy GUI mixed in a fourth —
- * it opened the encrypted token store to decide whether authentication was the
- * problem — which this app will not do; tokens are the service's business
- * (`owlette_gui.py:2403-2408`). The service already publishes that verdict as a
- * health probe (`health_probe.STATUS_AUTH_ERROR`), so we read it instead.
+ * Three inputs only: SCM state + `tmp/service_status.json` age, that file's
+ * contents, and config.json's `firebase` block. Deliberately NOT the encrypted
+ * token store the legacy GUI opened — tokens are the service's business, and it
+ * already publishes the verdict as `health_probe.STATUS_AUTH_ERROR`.
  */
 
 import { isServiceDown, type ServiceStatus } from '@/lib/ipc'
@@ -25,11 +22,9 @@ export interface ServiceStatusFile {
     connected?: boolean
     site_id?: string
     /**
-     * The site's display name ("TEC"), as the service last read it from
-     * `sites/{site_id}`. Empty whenever the service has not been able to read
-     * it — an older agent, a machine that has never connected, or a token
-     * without site-level read permission — so it is never the only thing a
-     * surface can say about the site.
+     * Display name from `sites/{site_id}`. Empty whenever the service could not
+     * read it (old agent, never connected, token without site read), so it is
+     * never the only thing a surface can say about the site.
      */
     site_name?: string
     last_heartbeat?: number
@@ -98,18 +93,11 @@ export function siteIdOf(config: OwletteConfig | null, statusFile: ServiceStatus
 }
 
 /**
- * What to call this machine's site on screen: its display name when the
- * service has published one, its id otherwise.
+ * On-screen site: the service-published display name, else the id.
  *
- * The id is the truth and stays in every log line, but it is an identifier
- * ("default_site") where the operator's word for the place is a name ("TEC") —
- * the same one the dashboard's manage-sites dialog shows. Only the service can
- * resolve it, so it arrives through `service_status.json`.
- *
- * The published name is used only when it describes the site the machine is
- * actually in. Between a join or a leave and the service's next status write
- * the two disagree — config.json is rewritten first — and a stale name is worse
- * than an id: it would name the site this machine just left.
+ * The name is only used when its `site_id` matches the current one. Between a
+ * join/leave and the next status write they disagree (config.json is rewritten
+ * first) and a stale name would name the site this machine just left.
  */
 export function siteNameOf(
   config: OwletteConfig | null,
@@ -122,12 +110,9 @@ export function siteNameOf(
 }
 
 /**
- * Whether this machine belongs to a site.
- *
- * Read from `config.json` rather than from the service's status file: the
- * config is what the service acts on, and it is what joining and leaving
- * rewrite. Null before the first read lands — neither paired nor unpaired — so
- * that an affordance offered to one of those states does not flash on startup.
+ * Whether this machine belongs to a site. Read from `config.json`, not the
+ * status file — the config is what the service acts on and what join/leave
+ * rewrite. Null before the first read so no affordance flashes on startup.
  */
 export function isPaired(config: OwletteConfig | null): boolean | null {
   if (!config) return null
@@ -136,18 +121,12 @@ export function isPaired(config: OwletteConfig | null): boolean | null {
 }
 
 /**
- * Resolve the footer's state.
- *
- * Order matters and is not the legacy GUI's, because one case outranks
- * everything it used to check: a service that is stopped — or one whose status
- * file has not been rewritten for two minutes, which the tray already treats as
- * stopped (`owlette_tray.read_service_status`) — is not connected to anything,
- * and reporting its last known cloud state would be a green light on a machine
- * nobody is supervising.
+ * Resolve the footer's state. ORDER MATTERS: a stopped service — or one whose
+ * status file is over two minutes stale, which the tray also treats as stopped —
+ * outranks every cloud check, or a green light shows on an unsupervised machine.
  */
 export function deriveFooterState({ status, statusFile, config }: FooterInputs): FooterState {
-  // Before the first SCM query lands there is nothing to report; saying
-  // "disconnected" for those few milliseconds would be a lie that flashes.
+  // Before the first SCM query, "disconnected" would be a lie that flashes.
   if (!status) {
     return { label: 'checking', tone: 'muted', detail: null, serviceDown: false }
   }
@@ -213,15 +192,10 @@ export interface FooterSentence {
 }
 
 /**
- * The muted glue that turns the footer's status word into a sentence:
- * "TEC-A4D is [connected] to TEC". The status word itself keeps its tone
- * colour, so only the words around it are produced here. States that don't fit
- * a sentence fall back to the bare status word, and before the hostname is
- * known the site is appended the old segment way rather than pretending "is
- * connected to" with no subject.
- *
- * `site` is whatever the machine's site should be called on screen — see
- * {@link siteNameOf}. This function does not care which of the two it got.
+ * Muted glue around the footer's status word: "TEC-A4D is [connected] to TEC".
+ * Only the surrounding words — the status word keeps its tone colour. States
+ * that don't fit a sentence get the bare word; before the hostname is known the
+ * site is appended as a segment rather than faking a subject.
  */
 export function footerSentence(state: FooterState, site: string, hostname: string | null): FooterSentence {
   if (!hostname) {

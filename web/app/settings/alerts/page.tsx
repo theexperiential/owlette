@@ -1,14 +1,11 @@
 'use client';
 
 /**
- * /settings/alerts — self-serve alert-email preferences.
- *
- * This is the destination for the "manage alerts" link in every alert email
- * (added in wrapEmailLayout). It lets a recipient toggle individual alert
- * categories on/off instead of only fully unsubscribing. Each toggle saves
- * immediately (optimistic, reverting on failure). The same toggles live
- * in the account-settings dialog's "alerts" section — this page is the
- * deep-linkable, focused view of them.
+ * /settings/alerts — self-serve alert-email preferences, and the destination of
+ * the "manage alerts" link in every alert email (wrapEmailLayout). Recipients
+ * toggle individual categories instead of only fully unsubscribing; each toggle
+ * saves immediately (optimistic, reverting on failure). Same toggles as the
+ * account-settings dialog's "alerts" section — this is the deep-linkable view.
  */
 
 import { useEffect, useState } from 'react';

@@ -22,7 +22,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
-# ─── helpers ──────────────────────────────────────────────────────────
+# helpers
 
 
 def _make_executor_result(output_dir: str, payload_bytes: bytes, filename: str = 'screenshot.png'):
@@ -45,7 +45,7 @@ def _make_executor_result(output_dir: str, payload_bytes: bytes, filename: str =
     }
 
 
-# ─── user-session capture (returns raw PNG; no compression here) ──────
+# user-session capture (returns raw PNG; no compression here)
 
 
 def test_capture_in_user_session_reads_png_from_output_dir(tmp_path):
@@ -104,7 +104,7 @@ def test_capture_in_user_session_no_screenshot_file(tmp_path):
         capture_in_user_session(fake_executor, monitor=0)
 
 
-# ─── service-side JPEG compression ────────────────────────────────────
+# service-side JPEG compression
 
 
 def test_compress_to_jpeg_produces_jpeg_from_real_png():
@@ -147,7 +147,7 @@ def test_compress_to_jpeg_falls_back_to_png_without_pillow(monkeypatch):
     assert content_type == 'image/png'
 
 
-# ─── upload retry behavior ────────────────────────────────────────────
+# upload retry behavior
 
 
 def test_upload_to_signed_url_succeeds_on_first_attempt():
@@ -222,7 +222,7 @@ def test_upload_to_signed_url_exhausts_retries_then_raises():
         assert len(sleep_calls) == 2
 
 
-# ─── upload-url request envelope parsing ──────────────────────────────
+# upload-url request envelope parsing
 
 
 def test_request_upload_url_parses_envelope():
@@ -265,7 +265,7 @@ def test_request_upload_url_raises_on_error_status():
             )
 
 
-# ─── finalize ─────────────────────────────────────────────────────────
+# finalize
 
 
 def test_finalize_screenshot_posts_storage_path_and_size():
@@ -338,7 +338,7 @@ def test_finalize_screenshot_raises_on_missing_url():
             )
 
 
-# ─── full pipeline ────────────────────────────────────────────────────
+# full pipeline
 
 
 def test_capture_and_upload_full_pipeline_happy_path(tmp_path):
@@ -392,9 +392,8 @@ def test_capture_and_upload_full_pipeline_happy_path(tmp_path):
 
     # Compression got the raw PNG the user session produced.
     assert mock_compress.call_args.args[0] == raw_png
-    # Content type flows from compress → upload-url → upload → finalize as
-    # image/jpeg, and the UPLOADED bytes are the compressed JPEG (not the
-    # raw PNG the user session wrote).
+    # Content type flows compress → upload-url → upload → finalize as image/jpeg,
+    # and the UPLOADED bytes are the compressed JPEG, not the raw PNG.
     assert mock_request_url.call_args.kwargs['content_type'] == 'image/jpeg'
     upload_kwargs = mock_upload.call_args.kwargs
     assert upload_kwargs['upload_url'] == 'https://signed.example/write'

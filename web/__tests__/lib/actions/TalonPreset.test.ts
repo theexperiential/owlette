@@ -1,14 +1,10 @@
 /** @jest-environment node */
 
 /**
- * Tests for the talon preset action cores
- * (web/lib/actions/{create,update,delete}TalonPreset.server.ts).
- *
- * Same harness as `RestartPreset.test.ts` — the fifth preset family behaves
- * identically at the storage layer, and the tests say so. What is new here is
- * the delegated validation: the template goes through the real talon
- * validator, so this file also pins that a preset can never store a talon the
- * talons API would refuse.
+ * Tests for `web/lib/actions/{create,update,delete}TalonPreset.server.ts`.
+ * Same harness as `RestartPreset.test.ts` — identical at the storage layer.
+ * What's new is delegated validation: the template runs through the real talon
+ * validator, so a preset can never store a talon the talons API would refuse.
  */
 
 interface MockDoc {
@@ -143,8 +139,8 @@ describe('createTalonPreset', () => {
       presetInput({
         template: template({
           name: '  morning wall check  ',
-          // Out of canonical order and duplicated — the validator de-dupes and
-          // re-orders, and it is that value the preset must store.
+          // Out of order and duplicated: the preset must store the validator's
+          // de-duped, re-ordered value.
           trigger: {
             type: 'event',
             eventTypes: ['process_start_failed', 'process_crash', 'process_crash'],
@@ -188,8 +184,8 @@ describe('createTalonPreset', () => {
   });
 
   it('refuses a command output with no process target', async () => {
-    // The blocker the templates depend on: without it a preset can store a
-    // talon that fails every run until the auto-disable at ten failures.
+    // Without this a preset can store a talon that fails every run until the
+    // auto-disable at ten failures.
     const error = await expectValidationError(
       createTalonPreset(
         ctx,
@@ -307,8 +303,8 @@ describe('talon preset audit emission', () => {
     expect(mockEmitMutation).toHaveBeenCalledTimes(1);
     expect(mockEmitMutation).toHaveBeenCalledWith(
       expect.objectContaining({
-        // Reused, never a new kind: a preset is stored config and never
-        // reaches a machine, so `talon_mutated` would misreport it.
+        // A preset is stored config that never reaches a machine, so
+        // `talon_mutated` would misreport it.
         kind: 'process_mutated',
         siteId: 'site-a',
         actor: 'user:uid_alice',

@@ -1,13 +1,10 @@
 /**
- * Screenshot — control capability card preview (api-sprint wave 4.3).
+ * Screenshot for the landing page's control capability card —
+ * `web/public/landing-screens/control.png` (api-sprint wave 4.3).
  *
- * Output: `web/public/landing-screens/control.png`
- * Used by: the landing page control capability card (wired up by wave 4.5).
- *
- * Drives the dashboard into the `control-process-restarting` scenario: one
- * machine running touchdesigner.exe with status=LAUNCHING (mid-restart), so
- * the process row shows the launching indicator. The processes panel is
- * expanded by default via the seeded user preferences (processesExpanded).
+ * Uses the `control-process-restarting` scenario: touchdesigner.exe at
+ * status=LAUNCHING so the row shows the launching indicator, with the processes
+ * panel pre-expanded by the seeded `processesExpanded` preference.
  */
 import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
@@ -35,12 +32,10 @@ test('control capability card preview', async ({ page }) => {
       .filter({ hasText: ctx.machineId! });
     await expect(card).toBeVisible();
 
-    // The processes panel is expanded by default via the seeded user
-    // preferences (processesExpanded: true). Wait for the touchdesigner row
-    // to render so the LAUNCHING badge/spinner is visible.
+    // wait for the row so the LAUNCHING badge is in the shot
     await expect(card.getByText('touchdesigner.exe', { exact: false })).toBeVisible();
 
-    // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
+    // persistent firestore websockets mean the network never idles; wait for paint
     await page.waitForTimeout(1500);
 
     await page.addStyleTag({

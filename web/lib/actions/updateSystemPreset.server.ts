@@ -1,17 +1,12 @@
 /**
- * updateSystemPreset action core (security-boundary-migration wave 3.11).
+ * updateSystemPreset action core, mirroring `useSystemPresets:updatePreset`.
+ * Partial update of `system_presets/{presetId}`: only provided fields are
+ * written, `updatedAt` gets a server timestamp.
  *
- * Mirrors `useSystemPresets:updatePreset` (web/hooks/useSystemPresets.ts:148-162).
- * Partial update — only fields actually provided are written; `updatedAt`
- * is stamped with a server timestamp.
+ * `update()`, not `set merge: true`, so PATCHing a missing preset raises
+ * `SystemPresetNotFoundError` rather than silently creating one — that's POST.
  *
- * firestore path: `system_presets/{presetId}` (platform-level).
- *
- * Uses `update()` (not `set merge: true`) so an attempt to PATCH a
- * non-existent preset surfaces a `SystemPresetNotFoundError` instead of
- * silently creating one — POST is the correct verb for that.
- *
- * Pure action — does not touch HTTP. Wrapped at the route layer with
+ * Pure action, no HTTP. Wrapped at the route layer with
  * `authorizedPlatformHandler({ capability: 'SYSTEM_PRESET_MANAGE' })`.
  */
 
@@ -73,7 +68,7 @@ export async function updateSystemPreset(
     );
   }
 
-  // ── partial validation (only validate provided fields) ─────────────────
+  // Partial: only provided fields are validated.
   if (input.name !== undefined) {
     if (typeof input.name !== 'string' || input.name.trim().length === 0) {
       throw new SystemPresetValidationError('name', 'name must be a non-empty string');

@@ -1,25 +1,20 @@
 /**
  * Talon document shapes — the automation primitive (trigger → condition →
- * outputs) stored at `sites/{siteId}/talons/{talonId}` with per-execution
- * records at `sites/{siteId}/talon_runs/{runId}`.
+ * outputs) at `sites/{siteId}/talons/{talonId}`, runs at
+ * `sites/{siteId}/talon_runs/{runId}`.
  *
- * Naming: the term is **talon** everywhere. Never "action" (`web/lib/actions/`
- * is an unrelated directory of server mutation cores) and never "automation".
+ * The term is **talon** everywhere — never "action" (`web/lib/actions/` is
+ * unrelated) and never "automation".
  *
- * Dependency-free on purpose — no Firestore imports — so the client editor,
- * the server store, the scheduler, and the run recorder can all import these
- * without dragging an SDK across the boundary. Keep it that way.
+ * Keep dependency-free (no Firestore imports) so client editor, server store,
+ * scheduler and run recorder can all import it without dragging in an SDK.
  */
 
 /**
- * Every shape a Firestore time field can arrive in: an admin- or client-SDK
- * `Timestamp` (both expose `toMillis()`), a `Date` (what we write, and what
- * tests inject), epoch milliseconds, a plain `{seconds}` / `{_seconds}` pair
- * from JSON round-tripping across an API boundary, or an ISO string.
- *
- * Mirrors `BillingTimestamp` in `@/lib/types/customer` rather than importing
- * it — that type belongs to the billing domain, and this module stays free of
- * cross-domain coupling.
+ * Every shape a Firestore time field can arrive in: admin/client SDK
+ * `Timestamp`, `Date`, epoch ms, a `{seconds}` / `{_seconds}` pair from JSON
+ * round-tripping, or ISO string. Mirrors `BillingTimestamp` in
+ * `@/lib/types/customer` rather than importing it — no cross-domain coupling.
  */
 export type TalonTimestamp =
   | Date
@@ -30,10 +25,9 @@ export type TalonTimestamp =
   | { _seconds: number; _nanoseconds?: number };
 
 /**
- * Day-of-week keys. Redeclared rather than imported from
- * `@/components/DayPillSelector` (that module is `'use client'` and would drag
- * React into every server importer) — the union and the canonical week order
- * must stay identical to it and to `ScheduleEditor`'s block days.
+ * Redeclared rather than imported from `@/components/DayPillSelector` (that is
+ * `'use client'` and would drag React into server importers). Must stay
+ * identical to it and to `ScheduleEditor`'s block days.
  */
 export type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 
@@ -41,12 +35,9 @@ export type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 export const DAY_KEYS: readonly DayKey[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
 /**
- * Metrics a threshold trigger can watch.
- *
- * MUST stay in sync with `METRIC_PATHS` in `functions/src/metricsHistory.ts`
- * (~line 106). A metric listed here without a path there has no recorded
- * history, so its threshold could never evaluate; a metric added there stays
- * invisible to talons until it is added here.
+ * Metrics a threshold trigger can watch. MUST stay in sync with `METRIC_PATHS`
+ * in `functions/src/metricsHistory.ts` — a metric here without a path there has
+ * no history to evaluate; one there but not here is invisible to talons.
  */
 export const TALON_METRICS = [
   'cpu_percent',
@@ -67,23 +58,15 @@ export const TALON_OPERATORS = ['>', '<', '>=', '<='] as const;
 export type TalonOperator = (typeof TALON_OPERATORS)[number];
 
 /**
- * Closed catalog of events an event trigger can subscribe to.
+ * Closed catalog of subscribable events. Must track the `display_*` events in
+ * `@/lib/alerts/displayEventRouting` (snake_case agent form; dotted `display.*`
+ * is the webhook wire format, not a subscription key) or talons can never fire.
  *
- * The first five are process/machine lifecycle events; the rest are the
- * `display_*` events registered in `@/lib/alerts/displayEventRouting`
- * (snake_case agent form — the dotted `display.*` names are the webhook wire
- * format, not subscription keys). Adding an event to that routing table means
- * adding it here too, or talons can never fire on it.
- *
- * Where each one is dispatched from (verified 2026-08-14 — see
- * `@/lib/talons/matcher.server`):
- *   - `process_crash`, `process_start_failed`, `exe_missing` — the agent posts
- *     them to `/api/agent/alert`.
- *   - `machine_offline` — synthesized by the health-check cron, never by an
- *     agent: a machine that is offline cannot report that it is.
- *   - `process_restarted` and every `display_*` event — the agent writes them
- *     straight to `sites/{siteId}/logs`, so they reach talons through the
- *     `onTalonLogEventCreated` firestore trigger rather than an http route.
+ * Dispatch paths: `process_crash` / `process_start_failed` / `exe_missing` —
+ * agent POSTs `/api/agent/alert`. `machine_offline` — synthesized by the
+ * health-check cron (an offline machine cannot report itself).
+ * `process_restarted` and all `display_*` — agent writes `sites/{siteId}/logs`,
+ * reaching talons via the `onTalonLogEventCreated` trigger, not an http route.
  */
 export const TALON_EVENT_TYPES = [
   'process_crash',
@@ -105,7 +88,7 @@ export const TALON_EVENT_TYPES = [
 
 export type TalonEventType = (typeof TALON_EVENT_TYPES)[number];
 
-/** Command types a `command` output may queue — a strict subset of `ALLOWED_COMMAND_TYPES`. */
+/** Command types a `command` output may queue — strict subset of `ALLOWED_COMMAND_TYPES`. */
 export const TALON_COMMAND_TYPES = ['restart_process', 'start_process', 'stop_process'] as const;
 
 export type TalonCommandType = (typeof TALON_COMMAND_TYPES)[number];
@@ -115,7 +98,7 @@ export interface TalonScheduleEntry {
   /** Stable client-generated id so editor rows keep identity across edits. */
   id: string;
   days: DayKey[];
-  /** 24-hour `HH:MM`, matching the format `ScheduleEditor` writes. */
+  /** 24-hour `HH:MM`, matching what `ScheduleEditor` writes. */
   time: string;
 }
 
@@ -146,17 +129,13 @@ export interface TalonEventTrigger {
   type: 'event';
   eventTypes: TalonEventType[];
   /**
-   * Minutes to wait between the event landing and the talon running, 1–1440.
+   * Delay between event and run, 1–1440 min. Absent = run immediately; the
+   * validator normalizes an explicit 0 away so no-delay talons persist
+   * identically. Event triggers ONLY — schedules carry their own timing and a
+   * threshold breach is a level, not an edge.
    *
-   * Absent means "run the moment the event arrives" — the validator normalizes
-   * an explicit 0 away, so no-delay talons all persist identically. Meaningful
-   * on event triggers ONLY: a schedule already carries its own timing, and a
-   * threshold breach is a level, not an edge, so waiting on one would just
-   * re-ask a question the next breach answers.
-   *
-   * A delayed match is not executed inline. The matcher writes a `pending`
-   * deferral into `talon_runs` and `/api/cron/talons` fires it once
-   * `runAfterAt` passes — see {@link TalonRunDoc}.
+   * A delayed match is not run inline: the matcher writes a `pending` deferral
+   * to `talon_runs` and `/api/cron/talons` fires it once `runAfterAt` passes.
    */
   delayMinutes?: number;
 }
@@ -179,10 +158,7 @@ export interface TalonVisualCheckCondition {
   type: 'visual_check';
   /** Natural-language statement the screenshot must satisfy. */
   expectation: string;
-  /**
-   * Monitor index, matching the `capture_screenshot` command convention:
-   * 0 (default) = all monitors combined, 1 = primary, 2 = second, and so on.
-   */
+  /** `capture_screenshot` convention: 0 = all monitors combined, 1 = primary, … */
   monitor?: number;
 }
 
@@ -195,10 +171,7 @@ export interface TalonEmailOutput {
   type: 'email';
 }
 
-/**
- * POST the run payload to an external endpoint. The signing secret lives in
- * `talon_secrets`, never on the talon doc.
- */
+/** POST the run payload to an endpoint. Signing secret lives in `talon_secrets`. */
 export interface TalonWebhookOutput {
   type: 'webhook';
   url: string;
@@ -209,16 +182,11 @@ export interface TalonHootOutput {
   type: 'cortex';
   directive: string;
   /**
-   * Let the unattended turn reach tier-2 tools (process control, screenshots,
-   * service management) instead of the read-only tier-1 set. Absent — the
-   * default — keeps the turn read-only, and the validator normalizes an
-   * explicit `false` away so an opted-out talon has ONE representation on the
-   * document.
-   *
-   * Authoring it is a site-admin privilege, gated in `store.server.ts` next to
-   * the `command` output gate: a turn that can restart a process is the same
-   * power class as a talon that queues the restart itself. Tier 3 stays
-   * unreachable on this path whatever the flag says — see `hootOutput.server`.
+   * Let the unattended turn reach tier-2 tools instead of read-only tier-1.
+   * Absent (default) = read-only; the validator drops an explicit `false` so an
+   * opted-out talon has one representation. Authoring is site-admin only,
+   * gated in `store.server.ts` alongside the `command` output gate. Tier 3 stays
+   * unreachable on this path regardless — see `hootOutput.server`.
    */
   allowActions?: boolean;
 }
@@ -248,11 +216,10 @@ export interface TalonScope {
 export type TalonCreatedVia = 'ui' | 'cortex';
 
 /**
- * `running` → `succeeded` / `failed` / `skipped` is the lifecycle of an
- * EXECUTION. `pending` → `fired` / `missed` / `skipped` is the lifecycle of a
- * DEFERRAL — the crumb a delayed event trigger writes while it waits out
- * `delayMinutes`. Both live in `talon_runs`, and `missed` means the same thing
- * on either: the window closed before anything ran.
+ * `running` → `succeeded`/`failed`/`skipped` is an EXECUTION's lifecycle;
+ * `pending` → `fired`/`missed`/`skipped` is a DEFERRAL's (the crumb a delayed
+ * event trigger writes while it waits out `delayMinutes`). Both live in
+ * `talon_runs`; `missed` means the window closed on either.
  */
 export type TalonRunStatus =
   | 'running'
@@ -265,25 +232,15 @@ export type TalonRunStatus =
 
 export type TalonOutputStatus = 'sent' | 'failed' | 'skipped';
 
-/* -------------------------------------------------------------------------- */
-/*  system-disabled reasons                                                   */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Why the SYSTEM switched a talon off. Absent on a talon an operator paused
- * themselves — the toggle clears it, because a human decision needs no stated
- * cause from us.
+ * Why the SYSTEM switched a talon off. Absent when an operator paused it — the
+ * toggle clears it.
  *
- * The four `creator_*` reasons are UNRECOVERABLE: the talon's author can no
- * longer back the run, and no number of retries changes that, so the talon is
- * disabled the first time one is hit rather than after ten wasted firings.
- * `repeated_failures` is the opposite case — transient faults (a machine
- * offline, a rate limit, a provider 500) that only add up to a verdict after
- * `AUTO_DISABLE_AFTER_FAILURES` of them in a row.
+ * The `creator_*` reasons are UNRECOVERABLE (the author can no longer back the
+ * run), so they disable on first hit. `repeated_failures` is the transient case,
+ * needing `AUTO_DISABLE_AFTER_FAILURES` in a row.
  *
- * Stored as a stable code, never as a sentence: the copy below is rewritten
- * whenever the wording improves, and a doc written last month must pick that up
- * instead of preserving the old phrasing forever.
+ * Stored as a stable code, never a sentence, so copy changes apply retroactively.
  */
 export type TalonDisabledReason =
   | 'creator_not_a_user'
@@ -293,15 +250,11 @@ export type TalonDisabledReason =
   | 'repeated_failures';
 
 /**
- * The `creator_*` subset — the reasons a REASSIGNMENT resolves.
+ * The `creator_*` subset — reasons a REASSIGNMENT resolves, re-armed by
+ * `reassignTalons`. `repeated_failures` describes the talon, not its author; a
+ * human-paused talon carries no reason and must stay paused.
  *
- * Handing a talon to a present, keyed author falsifies every one of these, so
- * `reassignTalons` re-arms exactly these and leaves the rest alone:
- * `repeated_failures` describes the talon rather than its author, and a talon a
- * human paused carries no reason at all and must stay paused.
- *
- * Derived from the union by a total record so a new reason cannot be added
- * without deciding, at the type level, which side of that line it falls on.
+ * A total record, so a new reason cannot be added without choosing a side.
  */
 const CREATOR_DISABLED_REASONS: Readonly<Record<TalonDisabledReason, boolean>> = {
   creator_not_a_user: true,
@@ -319,8 +272,8 @@ export function isCreatorDisabledReason(
 }
 
 /**
- * The one place a disable reason becomes words. Lowercase, no jargon, and no
- * count baked into the text — `AUTO_DISABLE_AFTER_FAILURES` is free to change.
+ * The one place a disable reason becomes words. No count baked into the text —
+ * `AUTO_DISABLE_AFTER_FAILURES` is free to change.
  */
 export const TALON_DISABLED_REASON_COPY: Readonly<Record<TalonDisabledReason, string>> = {
   creator_not_a_user:
@@ -368,10 +321,7 @@ export interface TalonDoc {
   lastRunId?: string;
   /** Reset to 0 on any successful run; drives auto-disable backoff. */
   consecutiveFailures: number;
-  /**
-   * Set when the SYSTEM disabled this talon; cleared whenever a human toggles
-   * `enabled` either way. Never present on an enabled talon.
-   */
+  /** SYSTEM-disable only; cleared whenever a human toggles `enabled` either way. */
   disabledReason?: TalonDisabledReason;
 }
 
@@ -397,10 +347,9 @@ export interface TalonRunOutput {
   httpStatus?: number;
   error?: string;
   /**
-   * Set when THIS output's failure is unrecoverable and cost the talon its
-   * enabled state. A run can hold several outputs and only one of them be
-   * fatal, so it is recorded here as well as on the run — this says which
-   * output was the problem, the run-level field says what it cost.
+   * Set when THIS output's failure cost the talon its enabled state — a run can
+   * hold several outputs with only one fatal, so this says which was the problem
+   * and the run-level field says what it cost.
    */
   disabledReason?: TalonDisabledReason;
 }
@@ -408,19 +357,14 @@ export interface TalonRunOutput {
 /**
  * `sites/{siteId}/talon_runs/{runId}`
  *
- * Two kinds of document share this collection and this shape:
+ * Two document kinds share this shape: an EXECUTION (written `running`, then
+ * finalized in place) and a DEFERRAL (written `pending` by the matcher for an
+ * event trigger with `delayMinutes`, resolved by the sweep after `runAfterAt`).
+ * The `runAfterAt`/`createdAt`/`firedAt`/`firedRunIds` fields are deferral-only.
  *
- *   - an EXECUTION, written `running` by the engine and finalized in place;
- *   - a DEFERRAL, written `pending` by the matcher when an event trigger
- *     carries a `delayMinutes`, and resolved by the sweep once `runAfterAt`
- *     passes. The four `runAfterAt` / `createdAt` / `firedAt` / `firedRunIds`
- *     fields below belong to that second kind and are absent on every
- *     execution.
- *
- * A deferral still stamps `startedAt` (equal to `createdAt`): the run history —
- * `useTalonRuns` and the runs api alike — orders by `startedAt`, and Firestore
- * excludes documents missing an ordered field, so a crumb without it would be
- * invisible on the surface it exists to explain.
+ * A deferral still stamps `startedAt` (= `createdAt`): run history orders by it
+ * and Firestore excludes docs missing an ordered field, so a crumb without it
+ * would be invisible on the surface it exists to explain.
  */
 export interface TalonRunDoc {
   talonId: string;
@@ -441,10 +385,7 @@ export interface TalonRunDoc {
   correlationId: string;
   chatId?: string;
   error?: string;
-  /**
-   * Set when this run is the one that disabled the talon — so the run history
-   * explains itself without the reader having to go and read the talon.
-   */
+  /** Set when this run is the one that disabled the talon. */
   disabledReason?: TalonDisabledReason;
   /** True when an operator ran the talon on demand rather than the trigger firing. */
   manual?: boolean;
@@ -458,32 +399,19 @@ export interface TalonRunDoc {
   firedRunIds?: string[];
 }
 
-/* -------------------------------------------------------------------------- */
-/*  talon presets — reusable templates                                        */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Something a template needs before the talon it produces can be created.
- *
- * `llm_key` — a visual-check condition or a hoot output, both of which the
- * store refuses unless the talon's author has an llm key of their own.
- * `process_target` — a `command` output whose process the operator still has to
- * pick, because a process id is per-machine and never travels in a template.
- *
- * Canonical here rather than beside the built-in catalog: the editor, the hook
- * and the catalog all need it, and only the catalog can afford to import data.
+ * Something a template needs before its talon can be created. `llm_key` — a
+ * visual-check condition or hoot output, which the store refuses unless the
+ * author has an llm key. `process_target` — a `command` output whose process id
+ * is per-machine and never travels in a template.
  */
 export type TalonPresetRequirement = 'llm_key' | 'process_target';
 
 /**
  * The talon-shaped payload a preset carries: the caller-owned half of a talon
- * MINUS `scope` and `enabled`.
- *
- * Both omissions are deliberate. `scope.machineIds` holds machine ids that mean
- * nothing in another site — and an empty array is rejected outright — so a
- * template seeds "every machine" and the operator narrows it. `enabled` is the
- * instance's own armed/paused state; a template must not decide whether the
- * talon it produces is live.
+ * MINUS `scope` and `enabled`. Machine ids mean nothing in another site (and an
+ * empty array is rejected), so a template seeds "every machine"; `enabled` is
+ * the instance's own armed/paused state, not the template's call.
  */
 export interface TalonPresetTemplate {
   /** Default name for the talon this preset seeds — NOT the preset's own name. */
@@ -499,13 +427,12 @@ export interface TalonPresetTemplate {
  * `config/{siteId}/talon_presets/{presetId}`
  *
  * Same field vocabulary as the other `config/{siteId}/*_presets` families
- * (`isBuiltIn` / `order` / `createdBy`), so the built-in merge and the shared
- * preset routes behave identically. Doc ids are `talon-{slug}-{epochMs}`,
- * except a built-in override, which pins `builtin-{slug}`.
+ * (`isBuiltIn`/`order`/`createdBy`) so the built-in merge and shared preset
+ * routes behave identically. Ids are `talon-{slug}-{epochMs}`, except a built-in
+ * override which pins `builtin-{slug}`.
  *
- * The talon payload is nested under `template` rather than flattened: flat
- * fields would collide the preset's own `name`/`description` with the ones the
- * talon it creates should start from.
+ * The payload is nested under `template`, not flattened: flat fields would
+ * collide the preset's own `name`/`description` with the talon's.
  */
 export interface TalonPresetDoc {
   name: string;

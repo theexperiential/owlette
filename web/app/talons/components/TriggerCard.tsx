@@ -3,16 +3,14 @@
 /**
  * Stage 1 of the talon pipeline — WHEN the talon fires.
  *
- * Owns its own draft shape (`TriggerDraft`) plus the conversions in and out of
- * the wire form, so `TalonEditorDialog` never has to know that an interval is
- * edited as a number + unit while it persists as flat minutes. The draft keeps
- * every branch's state alive at once: switching schedule → threshold → schedule
- * must not silently discard the entries the user already built.
+ * Owns `TriggerDraft` and the conversions to/from the wire form, so the dialog
+ * needn't know an interval is edited as number + unit but persists as flat
+ * minutes. The draft keeps every branch alive at once: schedule -> threshold ->
+ * schedule must not discard the entries the user already built.
  *
- * The draft is deliberately lenient — numbers live as strings, the metric can
- * be anything the select offers — because `validateTalonInput` is the single
- * rule set (`@/lib/talons/validation`). This card never re-implements a bound;
- * it renders the validator's message next to the field that earned it.
+ * Deliberately lenient (numbers as strings) because `validateTalonInput` is the
+ * single rule set. This card never re-implements a bound; it renders the
+ * validator's message next to the field that earned it.
  */
 
 import { Info, Plus, Trash2 } from 'lucide-react';
@@ -48,10 +46,9 @@ import {
 import { TALON_MAX_DELAY_MINUTES } from '@/lib/talons/validation';
 
 /**
- * Operator-facing explanation per event type, shown as a tooltip in the event
- * grid. Wording aligned with DISPLAY_EVENT_LABEL in emailTemplates.server.ts
- * so the UI and alert emails describe the same event the same way. Keyed
- * exhaustively — adding a catalog entry without a description fails the build.
+ * Tooltip copy per event type. Wording matches DISPLAY_EVENT_LABEL in
+ * emailTemplates.server.ts so UI and alert emails say the same thing. Keyed
+ * exhaustively — a new catalog entry without a description fails the build.
  */
 const TALON_EVENT_INFO: Record<TalonEventType, string> = {
   process_crash: 'a managed process exited on its own — not stopped by an operator or a schedule',
@@ -73,10 +70,6 @@ const TALON_EVENT_INFO: Record<TalonEventType, string> = {
   display_apply_succeeded: 'display apply succeeded — a saved layout applied cleanly',
 };
 
-/* -------------------------------------------------------------------------- */
-/*  draft shape                                                               */
-/* -------------------------------------------------------------------------- */
-
 export type ScheduleMode = 'entries' | 'interval';
 
 export interface TriggerDraft {
@@ -95,11 +88,10 @@ export interface TriggerDraft {
 }
 
 /**
- * Metric labels, local by design. The canonical `METRIC_LABELS` lives in
- * `@/lib/emailTemplates.server`, which imports the Resend client — importing it
- * here would drag server-only code into the client bundle. Keyed by
- * `TalonMetric` so a metric added to `TALON_METRICS` fails the build until it
- * gets a label here.
+ * Local by design: the canonical `METRIC_LABELS` lives in
+ * `@/lib/emailTemplates.server`, which pulls in the Resend client — importing
+ * it here would drag server-only code into the client bundle. Exhaustively
+ * keyed, so a new `TALON_METRICS` entry fails the build until labelled.
  */
 const METRIC_META: Record<TalonMetric, { label: string; unit: string }> = {
   cpu_percent: { label: 'CPU usage', unit: '%' },
@@ -121,8 +113,8 @@ const TRIGGER_TYPE_LABELS: Record<TalonTriggerType, string> = {
 const DEFAULT_ENTRY_DAYS: DayKey[] = ['mon', 'tue', 'wed', 'thu', 'fri'];
 const DEFAULT_ENTRY_TIME = '09:00';
 
-/** Stable row id. `crypto.randomUUID` needs a secure context; the fallback keeps
- * the editor usable on plain-http dev origins and in jsdom. */
+/** `crypto.randomUUID` needs a secure context; the fallback keeps the editor
+ * working on plain-http dev origins and in jsdom. */
 function newEntryId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -160,7 +152,7 @@ export function triggerDraftFromTalon(trigger: TalonTrigger): TriggerDraft {
       draft.entries = trigger.entries.map((entry) => ({ ...entry, days: [...entry.days] }));
     } else {
       draft.scheduleMode = 'interval';
-      // Whole hours read back as hours so "every 2 hours" doesn't reopen as 120.
+      // Whole hours read back as hours, so "every 2 hours" isn't reopened as 120.
       const minutes = trigger.intervalMinutes;
       const useHours = minutes >= 60 && minutes % 60 === 0;
       draft.intervalUnit = useHours ? 'hours' : 'minutes';
@@ -172,8 +164,7 @@ export function triggerDraftFromTalon(trigger: TalonTrigger): TriggerDraft {
     draft.value = String(trigger.value);
   } else {
     draft.eventTypes = [...trigger.eventTypes];
-    // An absent delay and an explicit 0 are the same talon, and the validator
-    // normalizes the one into the other — so both reopen as `0`.
+    // Absent and explicit-0 are the same talon post-validation; both reopen as 0.
     draft.delayValue = String(trigger.delayMinutes ?? 0);
   }
 
@@ -186,10 +177,7 @@ function toNumber(text: string): number {
   return trimmed === '' ? Number.NaN : Number(trimmed);
 }
 
-/**
- * Project the draft onto the trigger the validator expects. Invalid numbers are
- * passed through as `NaN` rather than coerced — the validator owns the message.
- */
+/** Invalid numbers pass through as `NaN`, not coerced — the validator messages. */
 export function triggerDraftToInput(draft: TriggerDraft): TalonTrigger {
   switch (draft.type) {
     case 'schedule':
@@ -212,19 +200,14 @@ export function triggerDraftToInput(draft: TriggerDraft): TalonTrigger {
       };
     case 'event': {
       const delayMinutes = toNumber(draft.delayValue);
-      // An emptied box is "no wait", not a number the user got wrong: the field
-      // is optional, so it is simply not sent. A typed number always is —
-      // including a bad one, which the validator names.
+      // An emptied box means "no wait" and is simply not sent; a typed number
+      // always is, including a bad one the validator will name.
       return Number.isNaN(delayMinutes)
         ? { type: 'event', eventTypes: draft.eventTypes }
         : { type: 'event', eventTypes: draft.eventTypes, delayMinutes };
     }
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/*  next-run preview                                                          */
-/* -------------------------------------------------------------------------- */
 
 const DAY_ORDER_FROM_SUNDAY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 const DAY_LONG_NAMES = [
@@ -239,13 +222,10 @@ const DAY_LONG_NAMES = [
 
 /**
  * Next fire time across all entries, walked day-by-day in calendar tuples.
- *
- * Adapted from `RestartScheduleDialog.getNextScheduledRestart` — `Intl` rather
- * than `Date.setHours`, which silently reinterprets the clock time in the
- * browser's zone. The talon editor has no site timezone to hand (the dialog's
- * props deliberately don't carry one), so this preview is in the VIEWER'S
- * zone and the caller labels it "local time". The scheduler resolves the same
- * entries against the site's zone at fire time.
+ * `Intl`, not `Date.setHours`, which silently reinterprets the clock time in
+ * the browser's zone. The editor has no site timezone, so this preview is in
+ * the VIEWER'S zone and is labelled "local time"; the scheduler resolves the
+ * same entries against the site's zone at fire time.
  */
 function nextRunPreview(entries: TalonScheduleEntry[], timeFormat: '12h' | '24h'): string {
   if (entries.length === 0) return 'no times set';
@@ -297,10 +277,6 @@ function nextRunPreview(entries: TalonScheduleEntry[], timeFormat: '12h' | '24h'
   return `${DAY_LONG_NAMES[best.dayIndex]} at ${timeStr}`;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  card                                                                      */
-/* -------------------------------------------------------------------------- */
-
 interface TriggerCardProps {
   draft: TriggerDraft;
   onChange: (draft: TriggerDraft) => void;
@@ -308,9 +284,8 @@ interface TriggerCardProps {
   minIntervalMinutes: number;
   disabled: boolean;
   /**
-   * Message for one error slot (see `slotForField` in `TalonEditorDialog`).
-   * A slot is rendered by exactly one control, so asking for one here can
-   * never print a message another card is already showing.
+   * Message for one error slot (`slotForField` in `TalonEditorDialog`). Exactly
+   * one control renders each slot, so this can't duplicate another card.
    */
   errorFor: (slot: string) => string | undefined;
 }
@@ -334,11 +309,9 @@ export function TriggerCard({
 
   const allEventsSelected = draft.eventTypes.length === TALON_EVENT_TYPES.length;
 
-  // One lookup per slot this card owns. `trigger.type`, `trigger.metric` and
-  // `trigger.operator` are absent on purpose: those selects constrain their own
-  // values, so a violation there can only arrive from the API, and it surfaces
-  // in the dialog's footer summary rather than against a control the user
-  // cannot have got wrong.
+  // `trigger.type`/`metric`/`operator` are absent on purpose: those selects
+  // constrain their own values, so a violation can only come from the API and
+  // belongs in the footer summary, not against a control the user can't misuse.
   const entriesError = errorFor('trigger.entries');
   const intervalError = errorFor('trigger.intervalMinutes');
   const eventsError = errorFor('trigger.eventTypes');
@@ -588,8 +561,7 @@ export function TriggerCard({
             id="talon-trigger-events"
             className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto border border-border rounded p-2"
           >
-            {/* Local provider so the card works standalone (tests, storybook-style
-                mounts) instead of leaning on the app shell's provider. */}
+            {/* Local provider so the card mounts standalone in tests. */}
             <TooltipProvider delayDuration={200}>
             {TALON_EVENT_TYPES.map((eventType) => (
               <Tooltip key={eventType}>
@@ -623,9 +595,8 @@ export function TriggerCard({
             </p>
           )}
 
-          {/* The wait between the event and the run. A restarted app is not a
-              booted app, and a visual check fired on the splash screen tells
-              you nothing true. */}
+          {/* A restarted app is not a booted app — a visual check on the splash
+              screen tells you nothing true. */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Label htmlFor="talon-trigger-delay" className="text-xs text-muted-foreground">

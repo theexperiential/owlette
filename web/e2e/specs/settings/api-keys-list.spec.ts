@@ -1,14 +1,7 @@
 /**
- * Settings — api keys list (task 5.1)
- *
- * What this exercises:
- *   /settings/api-keys empty-state, the create-key dialog (publisher
- *   preset + custom ttl), the one-time reveal card with the raw owk_live_*
- *   key, copy-to-clipboard, dismiss, and the one-time-reveal contract
- *   (raw key never resurfaces in the list row or after a reload).
- *
- * Data plane: none — POST /api/keys writes to users/{uid}/api_keys and
- * api_keys/{hash}; no chunks, no r2.
+ * Settings — api keys list: empty state, create dialog (publisher preset +
+ * custom ttl), the one-time reveal card, copy, dismiss, and the one-time
+ * contract (the raw key never resurfaces in the row or after a reload).
  */
 
 import { test, expect } from '@playwright/test';
@@ -50,37 +43,30 @@ test('create key reveals raw owk_live_* once, copies to clipboard, then list sho
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
   await page.goto('/settings/api-keys');
-  // The heading only renders after AuthContext finishes hydrating (the page
-  // shows a full-screen Loader2 while `loading || (!user && loading)` is
-  // true). Bumped to 10s so this spec is robust to cold-start hydration when
-  // it runs late in the suite — the default 5s expect timeout occasionally
-  // races the IndexedDB→onAuthStateChanged→user-doc fetch chain.
+  // 10s, not the default 5s: the heading waits on AuthContext hydration, and
+  // the IndexedDB→onAuthStateChanged→user-doc chain can outrun 5s cold.
   await expect(
     page.getByRole('heading', { name: 'api keys', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
 
-  // Empty-state — no keys seeded for this admin.
   await expect(page.getByText('no api keys yet')).toBeVisible();
   await expect(
     page.getByRole('button', { name: /^create your first key$/i }),
   ).toBeVisible();
 
-  // Open the create form via the header action. It is an inline disclosure
-  // now, not a modal — nesting a dialog inside the account-settings dialog
-  // would stack two focus traps, and the same panel serves both surfaces.
+  // Inline disclosure, not a modal — a dialog inside the account-settings
+  // dialog would stack two focus traps, and one panel serves both surfaces.
   await page.getByRole('button', { name: /^create key$/i }).click();
   const dialog = page.getByRole('main');
   await expect(dialog.getByRole('heading', { name: /^create api key$/i })).toBeVisible();
 
   const keyName = `e2e-${Date.now()}`;
   await dialog.getByLabel('name').fill(keyName);
-  // ttl defaults to DEFAULT_TTL_DAYS — override to a short, distinct value
-  // so the assertion below pins to this run's input rather than the default.
+  // Distinct from DEFAULT_TTL_DAYS so the assertion pins this run's input.
   await dialog.getByLabel(/^ttl \(days\)$/i).fill('30');
 
-  // The "scope" select defaults to the publisher preset; the dialog's
-  // initial state is sufficient. Submit, then wait for the response so the
-  // reveal card is guaranteed mounted before we read the raw key.
+  // Scope defaults to publisher. Await the response so the reveal card is
+  // mounted before we read the raw key.
   const responsePromise = page.waitForResponse(
     (res) => res.url().endsWith('/api/keys') && res.request().method() === 'POST',
     { timeout: 10_000 },
@@ -89,18 +75,15 @@ test('create key reveals raw owk_live_* once, copies to clipboard, then list sho
   const response = await responsePromise;
   expect(response.status()).toBe(200);
 
-  // Reveal card — the raw key is rendered exactly once inside a <code>
-  // sibling of the copy button. Anchor on the one-time-reveal banner copy.
+  // The raw key renders exactly once, in a <code> beside the copy button.
   const revealBanner = page.getByText(/key issued — copy it now\. it will not be shown again\./i);
   await expect(revealBanner).toBeVisible();
   const revealCard = revealBanner.locator('xpath=ancestor::*[@data-slot="card"][1]');
   const rawKey = (await revealCard.locator('code').innerText()).trim();
   expect(rawKey).toMatch(/^owk_live_[A-Za-z0-9_-]{43}$/);
 
-  // Copy-to-clipboard — the icon-only copy button is the <code>'s sibling
-  // in the reveal card's flex container. (UI gap: the copy button is
-  // icon-only with no aria-label; we locate it positionally to avoid
-  // depending on the Radix tooltip's accessible description.)
+  // UI gap: the copy button is icon-only with no aria-label, so locate it
+  // positionally rather than via the Radix tooltip's description.
   const copyButton = revealCard
     .locator('code')
     .locator('xpath=parent::div')
@@ -110,13 +93,11 @@ test('create key reveals raw owk_live_* once, copies to clipboard, then list sho
   const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
   expect(clipboardText).toBe(rawKey);
 
-  // Dismiss the reveal card via the X button (aria-label="dismiss").
   await revealCard.getByRole('button', { name: 'dismiss' }).click();
   await expect(revealBanner).toBeHidden();
 
-  // List now contains the row; the prefix-only display ("owk_live_xxx•••") is
-  // deferred behind the row's details disclosure, so expand it first. The raw
-  // key must NOT appear anywhere on the page.
+  // The prefix-only display sits behind the row's details disclosure, so
+  // expand first. The raw key must NOT be anywhere on the page.
   const expectedPrefix = rawKey.slice(0, 15);
   const keyRow = page.getByText(keyName);
   await expect(keyRow).toBeVisible();
@@ -124,8 +105,7 @@ test('create key reveals raw owk_live_* once, copies to clipboard, then list sho
   await expect(page.locator('code', { hasText: expectedPrefix })).toBeVisible();
   await expect(page.getByText(rawKey, { exact: true })).toHaveCount(0);
 
-  // Reload — the one-time-reveal contract holds across navigations. Expansion
-  // state resets with the page, so disclose the row again before asserting.
+  // The contract holds across navigations; expansion state resets on reload.
   await page.reload();
   await expect(
     page.getByRole('heading', { name: 'api keys', exact: true }),
@@ -151,24 +131,20 @@ test('switching to custom carries the selected preset in, rather than resetting 
   const keyName = `e2e-inherit-${Date.now()}`;
   await main.getByLabel('name').fill(keyName);
 
-  // Pick operator. While a named preset is selected the scope <Select> is the
-  // only combobox on the surface — the per-row resource pickers appear with
-  // the custom builder, so this must happen before the switch.
+  // While a preset is selected the scope <Select> is the only combobox; the
+  // per-row pickers appear with the custom builder, so pick operator first.
   await main.getByRole('combobox').click();
   await page.getByRole('option', { name: 'operator' }).click();
-  // The selection must be committed before the next transition: on a cold
-  // server, re-opening the select while the 'operator' pick is still mid-commit
+  // Must commit first: on a cold server, re-opening the select mid-commit
   // silently carries the DEFAULT preset into custom (1 row, not 4).
   await expect(main.getByRole('combobox').first()).toHaveText(/operator/);
 
-  // Now drop into the builder. This is the transition that used to discard the
-  // preset: the rows opened on one hardcoded site scope, so 3 of 4 resources
-  // and 14 of 16 grants vanished while "operator" left the screen at the same
-  // moment — and every validator, client and server, accepted the result.
+  // This transition used to discard the preset — rows opened on one hardcoded
+  // site scope, dropping 3 of 4 resources and 14 of 16 grants, and every
+  // validator accepted the result.
   await main.getByRole('combobox').first().click();
   await page.getByRole('option', { name: 'custom' }).click();
 
-  // Four rows, one per operator resource — not the single seeded row.
   await expect(main.getByPlaceholder('id (or * for all)')).toHaveCount(4);
 
   const responsePromise = page.waitForResponse(
@@ -179,7 +155,7 @@ test('switching to custom carries the selected preset in, rather than resetting 
   const response = await responsePromise;
   expect(response.status()).toBe(200);
 
-  // The wire body is what actually matters: it must still be operator.
+  // The wire body must still be operator.
   const sent = JSON.parse(response.request().postData() ?? '{}');
   expect(sent.scopes).toEqual([
     { resource: 'roost', id: '*', permissions: ['read', 'write', 'deploy', 'rollback'] },

@@ -36,10 +36,6 @@ import {
 import { clearDisplayLayout } from '@/lib/actions/clearDisplayLayout.server';
 import { ActionInputError, type ActionContext } from '@/lib/actions/createProcess.server';
 
-/* -------------------------------------------------------------------------- */
-/*  PUT — capture / set-auto-restore / reset-breaker                          */
-/* -------------------------------------------------------------------------- */
-
 const putWrapped = authorizedSiteHandler<{ siteId: string; machineId: string }>({
   capability: 'MACHINE_CONFIG_WRITE',
   siteIdParam: 'path',
@@ -168,10 +164,6 @@ export const PUT = withRateLimit(putWrapped, {
   identifier: 'ip',
 });
 
-/* -------------------------------------------------------------------------- */
-/*  DELETE — clear assigned layout                                            */
-/* -------------------------------------------------------------------------- */
-
 const deleteWrapped = authorizedSiteHandler<{ siteId: string; machineId: string }>({
   capability: 'MACHINE_CONFIG_WRITE',
   siteIdParam: 'path',
@@ -214,10 +206,6 @@ export const DELETE = withRateLimit(deleteWrapped, {
   strategy: 'api',
   identifier: 'ip',
 });
-
-/* -------------------------------------------------------------------------- */
-/*  Helpers                                                                   */
-/* -------------------------------------------------------------------------- */
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);

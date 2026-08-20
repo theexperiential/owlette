@@ -1,18 +1,12 @@
 //! Control and inspection of the `OwletteService` Windows service.
 //!
-//! Two independent signals decide whether owlette is actually supervising this
-//! machine, and the UI needs both:
+//! Two signals decide whether owlette is really supervising this machine, and
+//! the UI needs both: the SCM state, and the age of `tmp/service_status.json`
+//! (rewritten on a 30 s throttle, stale past 120 s). A running-but-wedged
+//! service looks alive to the SCM but stops refreshing the file.
 //!
-//! * the SCM state of `OwletteService`, and
-//! * the age of `tmp/service_status.json`, which the service rewrites on a
-//!   throttle (`owlette_service.MIN_STATUS_WRITE_INTERVAL = 30`). The tray
-//!   treats the file as meaningless once it is older than 120 s
-//!   (`owlette_tray.read_service_status`, :254-269) — a running-but-wedged
-//!   service looks alive to the SCM but stops refreshing the file.
-//!
-//! Start and stop go through the SCM directly when the app has the rights, and
-//! fall back to an elevated `net start` / `net stop` otherwise, mirroring
-//! `owlette_tray.start_service_elevated`.
+//! Start/stop go through the SCM when this process has the rights, falling back
+//! to an elevated `net start` / `net stop` otherwise.
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -37,8 +31,7 @@ const ERROR_SERVICE_DOES_NOT_EXIST: i32 = 1060;
 const ERROR_SERVICE_ALREADY_RUNNING: i32 = 1056;
 const ERROR_SERVICE_NOT_ACTIVE: i32 = 1062;
 
-/// `ShellExecuteW` returns an HINSTANCE; values above 32 mean the process was
-/// launched (see the Win32 documentation and `start_service_elevated`).
+/// `ShellExecuteW` returns an HINSTANCE; > 32 means the process launched.
 const SHELL_EXECUTE_SUCCESS_FLOOR: isize = 32;
 
 #[derive(Clone, Debug, Serialize)]
@@ -48,17 +41,16 @@ pub struct ServiceStatus {
   pub installed: bool,
   /// True only for `Running`.
   pub running: bool,
-  /// SCM state: `running`, `stopped`, `start_pending`, ... `unknown` when the
+  /// SCM state: `running`, `stopped`, `start_pending`, ...; `unknown` when the
   /// service is not installed.
   pub state: String,
-  /// SCM start type: `auto_start`, `on_demand`, `disabled`, ... A disabled
-  /// service cannot be started, elevated or not.
+  /// SCM start type. A `disabled` service cannot be started, elevated or not.
   pub start_type: String,
   pub status_file: StatusFileInfo,
 }
 
-/// Freshness of `tmp/service_status.json`. The document itself is read through
-/// the JSON commands; this is only about whether it can be trusted.
+/// Freshness of `tmp/service_status.json` — only whether it can be trusted;
+/// the document itself is read through the JSON commands.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusFileInfo {
@@ -76,8 +68,8 @@ pub struct ServiceCommandOutcome {
   /// `scm` (issued directly), `elevated` (UAC-prompted `net` command) or
   /// `noop` (already in the requested state).
   pub method: String,
-  /// SCM state observed before the request. Callers poll [`status`] for the
-  /// result: an elevated launch only tells us the shell accepted the request.
+  /// SCM state before the request. Poll [`status`] for the result — an elevated
+  /// launch only means the shell accepted it.
   pub state_before: String,
 }
 
@@ -91,8 +83,7 @@ pub fn status_file_info(path: &Path, now: SystemTime) -> StatusFileInfo {
   let modified = std::fs::metadata(path).and_then(|metadata| metadata.modified());
   match modified {
     Ok(modified) => {
-      // A clock change can put mtime in the future; treat that as fresh rather
-      // than reporting a nonsense age.
+      // A clock change can put mtime in the future — read that as fresh.
       let age = now.duration_since(modified).unwrap_or(Duration::ZERO);
       StatusFileInfo {
         exists: true,
@@ -137,8 +128,7 @@ pub fn status(status_file: &Path) -> Result<ServiceStatus, String> {
     .map_err(|error| format!("could not query {SERVICE_NAME}: {error}"))?
     .current_state;
 
-  // The start type is advisory (it explains a stopped service), so a failure to
-  // read it must not fail the whole status call.
+  // Advisory only (it explains a stopped service), so don't fail status on it.
   let start_type = match service.query_config() {
     Ok(config) => start_type_name(config.start_type),
     Err(error) => {
@@ -179,8 +169,8 @@ pub fn start() -> Result<ServiceCommandOutcome, String> {
     });
   }
 
-  // `net start` fails with 1058 on a disabled service, so an elevation prompt
-  // here would cost the operator a UAC dialog and achieve nothing.
+  // `net start` fails with 1058 on a disabled service — elevating first would
+  // spend a UAC prompt for nothing.
   if let Ok(config) = inspector.query_config() {
     if config.start_type == ServiceStartType::Disabled {
       return Err(format!(
@@ -257,9 +247,8 @@ pub fn stop() -> Result<ServiceCommandOutcome, String> {
   }
 }
 
-/// Issue an elevated `net` command through the shell's `runas` verb (one UAC
-/// prompt). Success here means the elevated process launched, not that the
-/// service reached the requested state.
+/// Elevated `net` command via the shell's `runas` verb (one UAC prompt).
+/// Success means the process launched, not that the service changed state.
 fn elevated(
   parameters: windows::core::PCWSTR,
   state_before: &str,
@@ -369,8 +358,7 @@ mod tests {
   fn an_old_status_file_reads_as_stale() {
     let path = std::env::temp_dir().join(format!("owlette-old-{}.json", std::process::id()));
     fs::write(&path, "{}").expect("seed");
-    // Evaluate "now" as five minutes after the write instead of back-dating the
-    // file, which needs SetFileTime.
+    // Advance "now" rather than back-date the file, which needs SetFileTime.
     let later = SystemTime::now() + Duration::from_secs(300);
     let info = status_file_info(&path, later);
     assert!(info.stale, "expected stale: {info:?}");

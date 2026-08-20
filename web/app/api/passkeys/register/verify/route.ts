@@ -1,27 +1,20 @@
 /**
- * Passkey Registration Verification API
- *
- * Verifies the WebAuthn registration response and stores the credential.
+ * Passkey registration verification — verifies the WebAuthn response and stores the
+ * credential.
  *
  * POST /api/passkeys/register/verify
  * Request: { userId: string, credential: RegistrationResponseJSON, friendlyName?: string }
  * Response: { success: boolean, credentialId: string }
  *
- * SECURITY — the enrollment gate:
- *   `/api/*` is deliberately NOT MFA-gated (`proxy.ts` returns early for every
- *   `/api` path, and `requireSessionUser` only checks uid equality). Now that a
- *   UV-verified passkey satisfies MFA in a single ceremony, a session that has
- *   not cleared a challenge but CAN enroll a new factor can step straight up
- *   into a verified session — a full MFA bypass from a stolen `__session`
- *   cookie, plus a permanent attacker-controlled credential on the account.
- *   So: enrolling the FIRST factor stays open (that is the mandatory-setup
- *   path), and every enrollment after that requires `mfaVerified`. The gate is
- *   re-checked here rather than trusted from register/options, because nothing
- *   stops a caller from posting a credential straight at this route.
+ * SECURITY — the enrollment gate: `/api/*` is not MFA-gated by proxy.ts, so without a
+ * gate here a stolen `__session` cookie could enroll its own UV passkey and step straight
+ * into a verified session (full MFA bypass + a permanent attacker credential). The FIRST
+ * factor stays open (mandatory-setup path); every later enrollment requires
+ * `mfaVerified`. Re-checked here, not trusted from register/options, because a caller can
+ * POST a credential straight at this route.
  *
- * The inventory (`users/{uid}.mfaFactors`, `mfaEnrolled`, `requiresMfaSetup`)
- * is updated exclusively through `applyMfaFactorChange` — see
- * `lib/mfaFactors.server.ts`; this route must never write those fields itself.
+ * The inventory (`users/{uid}.mfaFactors`, `mfaEnrolled`, `requiresMfaSetup`) is written
+ * exclusively through `applyMfaFactorChange` (lib/mfaFactors.server.ts) — never here.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -60,17 +53,13 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     await requireSessionUser(request, userId);
     await assertActiveUser(userId);
 
-    // THE ENROLLMENT GATE — the same shared implementation the TOTP routes use;
-    // see `lib/mfaEnrollmentGate.server.ts`. Re-checked here rather than trusted
-    // from register/options, because a caller can POST a credential straight at
-    // this route. The gate hands back the inventory it read, and `factorsBefore`
-    // then serves a second purpose: compared against the post-write result below
-    // it tells us whether this passkey is the account's FIRST factor.
+    // THE ENROLLMENT GATE — shared with the TOTP routes (lib/mfaEnrollmentGate.server.ts).
+    // The gate returns the inventory it read; `factorsBefore` is then compared against the
+    // post-write result to tell whether this passkey is the account's FIRST factor.
     const gate = await checkMfaEnrollmentGate(userId);
     if (gate.denied) return gate.denied;
     const factorsBefore = gate.factors;
 
-    // Retrieve and validate challenge
     const challengeData = await getAndDeleteChallenge(userId);
     if (!challengeData) {
       return NextResponse.json(
@@ -83,16 +72,14 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       return NextResponse.json({ error: 'Invalid challenge' }, { status: 400 });
     }
 
-    // Verify registration response
     const verification = await verifyRegistrationResponse({
       response: credential,
       expectedChallenge: challengeData.challenge,
       expectedOrigin: getExpectedOrigins(),
       expectedRPID: getRpId(),
-      // Pinned rather than defaulted, matching the login verify site: a passkey
-      // only counts as a second factor because the authenticator verified the
-      // user (PIN/biometric). A credential enrolled without UV would satisfy
-      // `mfaEnrolled` while failing every UV-required login.
+      // UV pinned rather than defaulted, matching login verify: a passkey only counts as a
+      // second factor because the authenticator verified the user. A credential enrolled
+      // without UV would satisfy `mfaEnrolled` while failing every UV-required login.
       requireUserVerification: true,
     });
 
@@ -109,7 +96,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       registrationInfo.credential.publicKey // Uint8Array -> Base64URLString
     );
 
-    // Store credential in Firestore
     await storePasskey(
       userId,
       {
@@ -123,29 +109,25 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       friendlyName || 'Passkey'
     );
 
-    // Refresh the denormalized factor inventory. `recountPasskeys` — never an
-    // explicit count — is the only value that cannot drift: it is read from the
-    // subcollection inside the same transaction that writes the tally.
+    // Refresh the denormalized inventory. `recountPasskeys` — never an explicit count — is
+    // the only value that can't drift: read from the subcollection inside the same
+    // transaction that writes the tally.
     const factorsAfter = await applyMfaFactorChange(userId, {
       recountPasskeys: true,
     });
 
-    // FIRST factor on the account: promote the session to MFA-verified, exactly
-    // as /api/mfa/verify-setup does after TOTP enrollment. The user just proved
-    // possession of the credential in a UV ceremony, and the write above flipped
-    // `mfaEnrolled` to true — so without this the very next AuthContext
-    // session-create would bounce them to /verify-2fa with nothing to present.
-    // That is a self-inflicted lockout for precisely the passkey-only signup
-    // this feature exists to serve.
+    // FIRST factor: promote the session to MFA-verified, as /api/mfa/verify-setup does after
+    // TOTP enrollment. The write above flipped `mfaEnrolled`, so without this the next
+    // session-create bounces the user to /verify-2fa with nothing to present — a lockout for
+    // exactly the passkey-only signup this feature serves.
     const wasFirstFactor =
       !deriveMfaEnrolled(factorsBefore) && factorsAfter.mfaEnrolled;
     if (wasFirstFactor) {
       await markSessionMfaVerified();
     }
 
-    // Audit. Registering a credential is the cheapest persistent-access move an
-    // attacker with a live session has, so it gets its own row. Platform-tenant
-    // mutation (siteId = '') like the other account-security events.
+    // Audit: registering a credential is the cheapest persistent-access move an attacker with
+    // a live session has. Platform-tenant mutation (siteId = ''), like other security events.
     emitMutation({
       kind: 'user_mutated',
       siteId: '',

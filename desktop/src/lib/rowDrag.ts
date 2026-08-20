@@ -1,14 +1,12 @@
 /**
  * "A process row is being dragged right now."
  *
- * The process list reorders itself with pointer events, and a later wave adds
- * an OS file-drop target over the whole window (Tauri's `onDragDropEvent`).
- * Those are different gestures that look alike from the window's point of view,
- * so the internal one announces itself here and the drop overlay can ignore it.
+ * A pointer-drag reorder of the process list is indistinguishable from an OS
+ * file drop (Tauri `onDragDropEvent`) at the window level, so the internal
+ * gesture flags itself here and the drop overlay skips it.
  *
- * Published two ways on purpose: subscribers for react, and
- * `document.body[data-row-dragging]` for anything that would rather write a css
- * rule or a selector than import a module.
+ * Published twice on purpose: subscribers for react, and
+ * `document.body[data-row-dragging]` for css/selector consumers.
  */
 
 let dragging = false

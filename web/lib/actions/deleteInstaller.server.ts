@@ -1,22 +1,12 @@
 /**
- * deleteInstaller action core (security-boundary-migration wave 3.11).
+ * Soft-deletes an installer version: stamps `deletedAt`/`deletedBy`, leaves the
+ * doc. Hard delete (storage + doc) is a separate admin sweep.
  *
- * Mirrors `useInstallerManagement:deleteVersion`
- * (web/hooks/useInstallerManagement.ts:239-255) and parallels the existing
- * public soft-delete at `DELETE /api/installer/{version}` route
- * (web/app/api/installer/[version]/route.ts).
+ * Refuses to take the active count below MIN_ACTIVE_VERSIONS, checked inside
+ * the transaction so two concurrent deletes can't both see "3 active".
+ * Idempotent — re-deleting returns the existing `deletedAt`, no new audit event.
  *
- * Soft-delete: the version doc remains; only `deletedAt` + `deletedBy` are
- * set. Hard delete (storage + doc removal) is a separate admin sweep.
- *
- * Refuses to drop the active version count below the floor (default 2) —
- * enforced inside a Firestore transaction so concurrent deletes can't both
- * see "3 active" and both succeed.
- *
- * Idempotent: deleting an already-soft-deleted version returns the existing
- * `deletedAt` without re-stamping or emitting another audit event.
- *
- * firestore paths: platform-level (NOT site-scoped).
+ * Firestore paths are platform-level, NOT site-scoped.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
@@ -87,8 +77,7 @@ export async function deleteInstaller(
       };
     }
 
-    // Active-count check inside the txn — racing concurrent deletes can't
-    // both squeeze past the floor.
+    // Inside the txn so racing deletes can't both squeeze past the floor.
     const allSnap = await tx.get(versionsCol);
     const activeCount = allSnap.docs.reduce((n, doc) => {
       const d = doc.data();

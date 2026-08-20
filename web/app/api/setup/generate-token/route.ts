@@ -7,21 +7,14 @@ import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 /**
- * POST /api/setup/generate-token
+ * POST /api/setup/generate-token — mint a registration code for agent OAuth, stored in
+ * Firestore for validation during token exchange.
  *
- * Generates a registration code for agent OAuth authentication.
- * Saves the code to Firestore for validation during token exchange.
- *
- * Request body:
- * - siteId: string - The site ID the agent will be associated with
- * - userId: string - Deprecated (derived from session)
- *
- * Response:
- * - token: string - Registration code to pass to the agent (24h expiry)
+ * Body: `{ siteId, userId (deprecated — derived from session) }`.
+ * Response: `{ token }` — the registration code, 24h expiry.
  */
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
-    // Parse request body
     const body = await request.json();
     const { siteId } = body;
 
@@ -40,7 +33,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const codeBytes = crypto.randomBytes(32);
     const registrationCode = codeBytes.toString('base64url');
 
-    // Save registration code to Firestore
     const expiresAt = Timestamp.fromDate(new Date(Date.now() + 24 * 60 * 60 * 1000)); // 24 hour expiry
 
     await adminDb.value.collection('agent_tokens').doc(registrationCode).set({

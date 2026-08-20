@@ -1,20 +1,16 @@
 """Unit tests for the display_manager helper-mode entrypoints.
 
-Covers `_helper_apply_to_json` and `_helper_revert_from_json` — the JSON-IPC
-shims invoked by the service from Session 0 via CreateProcessAsUser. The
-helpers read a request file, exercise the CCD write sequence (or revert),
-and write a structured response file. These tests run them in-process with
+Covers `_helper_apply_to_json` / `_helper_revert_from_json` — the JSON-IPC shims
+the service invokes from Session 0 via CreateProcessAsUser. Run in-process with
 synthetic request files and stubbed CCD calls.
 
-Invariant under test (helper apply): the revert sentinel is written to disk
-BEFORE SDC_APPLY is called. A crashed apply must leave a recoverable trail.
+Invariants under test:
+  - the revert sentinel hits disk BEFORE SDC_APPLY, so a crashed apply leaves a
+    recoverable trail;
+  - every run writes a response file, success or failure — exit codes only
+    distinguish "never launched" from "ran and reported".
 
-Invariant under test (helper response): every helper run writes a response
-file (success or failure) — the spawner uses exit codes only to distinguish
-"process never launched" from "process ran and reported".
-
-Run with:
-    cd agent && pytest tests/test_display_helper.py -v
+Run with: cd agent && pytest tests/test_display_helper.py -v
 """
 
 import inspect
@@ -27,19 +23,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Add src/ to path so display_manager is importable as a top-level module
-# (the existing agent test suite uses the same pattern via tests/conftest.py
-# but agent/tests/ may also be invoked standalone, so insert here too).
+# agent/tests/ may be invoked standalone, without tests/conftest.py.
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), '..', 'src'),
 )
 
 import display_manager as dm  # noqa: E402
 from display_manager import DisplayErrorCode  # noqa: E402
-
-
-# ---------------------------------------------------------------------------
-# Shared fixtures
 
 
 SAMPLE_DESIRED_LAYOUT = {
@@ -89,9 +79,8 @@ def _stub_ccd_happy_path(monkeypatch, sdc_observer=None):
     call with the flags arg — used by the sidecar-ordering test to capture
     on-disk state at the moment of SDC_APPLY.
     """
-    # Live topology: one fake "path" with the active flag set, and an empty
-    # modes list. _apply_core only iterates `paths` and reads `path.flags` /
-    # `path.targetInfo.{adapterId,id}` — a MagicMock satisfies all of that.
+    # _apply_core only reads `path.flags` and `path.targetInfo.{adapterId,id}`,
+    # so a MagicMock is enough topology.
     mock_path = MagicMock()
     mock_path.flags = dm.DISPLAYCONFIG_PATH_ACTIVE
     monkeypatch.setattr(
@@ -99,12 +88,9 @@ def _stub_ccd_happy_path(monkeypatch, sdc_observer=None):
         lambda: ([mock_path], []),
     )
 
-    # Every live target maps to one of the desired EDID hashes so the
-    # missing-monitors check passes. Two desired monitors but only one live
-    # path is fine — _apply_core only fails when a desired hash is *missing*
-    # from the live set; one path mapped to 'aaaaaaaa' means 'bbbbbbbb' is
-    # missing. For tests that need both present, override this stub or use a
-    # single-monitor desired layout.
+    # _apply_core fails only when a desired hash is *missing* from the live set,
+    # so one path mapped to 'aaaaaaaa' leaves 'bbbbbbbb' missing. Tests needing
+    # both present must override this or use a single-monitor layout.
     monkeypatch.setattr(
         dm, '_edid_hash_for_target',
         lambda *a, **kw: 'aaaaaaaa',
@@ -113,14 +99,12 @@ def _stub_ccd_happy_path(monkeypatch, sdc_observer=None):
         dm, '_apply_desired_to_paths',
         lambda *a, **kw: [{'monitorId': 'aaaaaaaa', 'field': 'primary'}],
     )
-    # Active-paths count: 1 pre-apply, 1 post-apply (avoids ZERO_ACTIVE_PATHS).
+    # 1 pre-apply and post-apply, so ZERO_ACTIVE_PATHS never trips.
     monkeypatch.setattr(dm, '_count_active_paths', lambda paths: 1)
     monkeypatch.setattr(dm, '_snapshot_live_config', lambda: SAMPLE_SNAPSHOT)
 
-    # Stub the ctypes array constructors so we don't need real DEVMODEW /
-    # DISPLAYCONFIG_PATH_INFO struct contents — _SetDisplayConfig is stubbed
-    # so the array contents are never inspected. The constructors get called
-    # with a length argument; a callable factory returning a list works.
+    # _SetDisplayConfig is stubbed, so array contents are never inspected — a
+    # callable factory returning a list satisfies the ctypes constructors.
     monkeypatch.setattr(
         dm, 'DISPLAYCONFIG_PATH_INFO',
         type('_FakePath', (), {'__mul__': lambda self, n: lambda: [None] * n})(),
@@ -130,12 +114,10 @@ def _stub_ccd_happy_path(monkeypatch, sdc_observer=None):
         type('_FakeMode', (), {'__mul__': lambda self, n: lambda: [None] * n})(),
     )
 
-    # `_with_timeout(fn, timeout)` runs `fn` and returns its value; bypass
-    # the futures executor so we can synchronously observe SDC calls.
+    # Bypass the futures executor so SDC calls are synchronously observable.
     monkeypatch.setattr(dm, '_with_timeout', lambda fn, _t: fn())
 
-    # _SetDisplayConfig: succeed for both VALIDATE and APPLY. Optionally
-    # invoke the observer with the flags arg so a test can capture disk state.
+    # Succeeds for VALIDATE and APPLY; the observer sees the flags arg.
     def _fake_sdc(num_paths, paths_arr, num_modes, modes_arr, flags):
         if sdc_observer is not None:
             sdc_observer(flags)
@@ -158,10 +140,6 @@ def _make_failing_sdc(validate_rc=None, apply_rc=None, observer=None):
             return validate_rc if validate_rc is not None else dm.ERROR_SUCCESS
         return apply_rc if apply_rc is not None else dm.ERROR_SUCCESS
     return _fake_sdc
-
-
-# ---------------------------------------------------------------------------
-# Display IPC directory helpers
 
 
 class TestDisplayIpcTempdir:
@@ -268,7 +246,6 @@ class TestDisplayIpcTempdir:
         assert old_unrelated.exists()
 
 
-# ---------------------------------------------------------------------------
 # _helper_apply_to_json — happy path
 
 
@@ -280,8 +257,7 @@ class TestHelperApplyHappyPath:
         self, monkeypatch, req_path, resp_path, sentinel_path,
     ):
         _stub_ccd_happy_path(monkeypatch)
-        # Single-monitor layout — every desired hash is present in the stubbed
-        # live topology, so the missing-monitors check passes cleanly.
+        # Single monitor: every desired hash is in the stubbed live topology.
         _write_request(req_path, {
             'desired_layout': {'monitors': [
                 {'edidHash': 'aaaaaaaa', 'primary': True,
@@ -299,8 +275,8 @@ class TestHelperApplyHappyPath:
         assert resp['ok'] is True
         assert 'changes' in resp
         assert resp['post_active_paths'] == 1
-        # Internal `_snapshot` field is stripped before crossing the IPC
-        # boundary — the sentinel on disk is the snapshot of record.
+        # `_snapshot` is stripped at the IPC boundary — the on-disk sentinel is
+        # the snapshot of record.
         assert '_snapshot' not in resp
 
     def test_sentinel_written_before_sdc_apply(
@@ -313,7 +289,7 @@ class TestHelperApplyHappyPath:
         observed = []
 
         def _observer(flags):
-            # Capture whether the sentinel exists at THIS exact SDC call.
+            # Does the sentinel exist at THIS exact SDC call?
             sentinel_exists = os.path.exists(sentinel_path)
             stage = (
                 'apply' if flags & dm.SDC_APPLY
@@ -336,7 +312,7 @@ class TestHelperApplyHappyPath:
         rc = dm._helper_apply_to_json(req_path, resp_path)
         assert rc == 0
 
-        # Two SDC calls: first VALIDATE (pre-sentinel), second APPLY (post-sentinel).
+        # Call 1 is VALIDATE (pre-sentinel), call 2 APPLY (post-sentinel).
         assert len(observed) == 2, f'expected 2 SDC calls, got {observed}'
         assert observed[0]['stage'] == 'validate'
         assert observed[0]['sentinel_exists'] is False, (
@@ -348,7 +324,7 @@ class TestHelperApplyHappyPath:
             'CRITICAL: sentinel MUST exist at SDC_APPLY — a crashed apply '
             'without a sentinel leaves no recovery trail'
         )
-        # Confirm the sentinel actually lives on disk after the helper returns.
+        # And it survives the helper returning.
         assert os.path.exists(sentinel_path)
 
     def test_sentinel_contents_carry_apply_id_and_snapshot(
@@ -377,7 +353,6 @@ class TestHelperApplyHappyPath:
         ]
 
 
-# ---------------------------------------------------------------------------
 # _helper_apply_to_json — failure paths
 
 
@@ -386,8 +361,8 @@ class TestHelperApplyFailures:
     can route on `code` rather than parsing free-text errors."""
 
     def test_missing_request_file_returns_ipc_failure(self, resp_path, tmp_path):
-        # Request path doesn't exist — the helper should NOT crash; it must
-        # write a structured failure response and return non-zero.
+        # Missing request path must produce a structured failure response and a
+        # non-zero exit, never a crash.
         rc = dm._helper_apply_to_json(str(tmp_path / 'nope.json'), resp_path)
         assert rc == 1
         resp = _read_response(resp_path)
@@ -446,7 +421,7 @@ class TestHelperApplyFailures:
             })
 
         _stub_ccd_happy_path(monkeypatch)
-        # Override the SDC stub to fail at VALIDATE.
+        # Fail at VALIDATE.
         monkeypatch.setattr(
             dm, '_SetDisplayConfig',
             _make_failing_sdc(
@@ -467,11 +442,10 @@ class TestHelperApplyFailures:
         assert rc == 1
         resp = _read_response(resp_path)
         assert resp['ok'] is False
-        # ERROR_BAD_CONFIGURATION at validate stage maps to UNSUPPORTED_MODE
-        # via _ccd_failure_code — the dashboard surfaces this as the
-        # "unsupported mode" toast specifically.
+        # ERROR_BAD_CONFIGURATION at validate maps to UNSUPPORTED_MODE, which the
+        # dashboard shows as the "unsupported mode" toast.
         assert resp['code'] == DisplayErrorCode.UNSUPPORTED_MODE
-        # Only one SDC call happened (VALIDATE), and the sentinel never landed.
+        # VALIDATE only, and no sentinel.
         assert len(observed) == 1
         assert observed[0]['stage'] == 'validate'
         assert observed[0]['sentinel_exists'] is False
@@ -489,8 +463,7 @@ class TestHelperApplyFailures:
         to fire a defensive revert.
         """
         _stub_ccd_happy_path(monkeypatch)
-        # VALIDATE succeeds (pass-through), APPLY fails with rc=87
-        # (ERROR_INVALID_PARAMETER) which maps to APPLY_FAILED.
+        # APPLY fails with rc=87 (ERROR_INVALID_PARAMETER) -> APPLY_FAILED.
         monkeypatch.setattr(
             dm, '_SetDisplayConfig',
             _make_failing_sdc(validate_rc=dm.ERROR_SUCCESS, apply_rc=87),
@@ -528,9 +501,7 @@ class TestHelperApplyFailures:
         """
         _stub_ccd_happy_path(monkeypatch)
 
-        # Make _atomic_write_json fail when called for the sentinel, but
-        # succeed for the response file. Path-discriminate so we don't break
-        # the helper's ability to write its own response.
+        # Fail the sentinel write only — the helper must still write a response.
         real_write = dm._atomic_write_json
 
         def _selective_fail(out_path, payload):
@@ -555,14 +526,14 @@ class TestHelperApplyFailures:
         assert resp['ok'] is False
         assert resp['code'] == DisplayErrorCode.SENTINEL_WRITE_FAILED
         assert 'failed to write revert sentinel' in resp['error']
-        # The sentinel write failed, so the file must not exist on disk.
+        # The sentinel write failed, so no file.
         assert not os.path.exists(sentinel_path)
 
     def test_query_failure_returns_query_failed(
         self, monkeypatch, req_path, resp_path, sentinel_path,
     ):
-        # CCD query returns None (transient driver hiccup). _apply_core bails
-        # before any mutation; sentinel is never written.
+        # None from the CCD query (transient driver hiccup): _apply_core bails
+        # before mutating anything, so no sentinel.
         _stub_ccd_happy_path(monkeypatch)
         monkeypatch.setattr(dm, '_query_active_paths_safe', lambda: None)
         _write_request(req_path, {
@@ -584,7 +555,7 @@ class TestHelperApplyFailures:
     def test_missing_monitors_returns_missing_monitors_code(
         self, monkeypatch, req_path, resp_path, sentinel_path,
     ):
-        # Live topology only has 'aaaaaaaa'; desired layout asks for 'bbbbbbbb'.
+        # Live topology has only 'aaaaaaaa'; the layout wants 'bbbbbbbb'.
         _stub_ccd_happy_path(monkeypatch)
         _write_request(req_path, {
             'desired_layout': SAMPLE_DESIRED_LAYOUT,
@@ -601,7 +572,6 @@ class TestHelperApplyFailures:
         assert not os.path.exists(sentinel_path)
 
 
-# ---------------------------------------------------------------------------
 # _helper_revert_from_json
 
 
@@ -629,8 +599,7 @@ class TestHelperRevert:
     def test_revert_from_sentinel_path_loads_snapshot(
         self, monkeypatch, req_path, resp_path, tmp_path,
     ):
-        # Caller supplies a sentinel_path instead of an inline snapshot — the
-        # helper reads the file and pulls `snapshot` out.
+        # sentinel_path instead of an inline snapshot: the helper reads the file.
         sentinel = tmp_path / 'sentinel.json'
         with open(sentinel, 'w', encoding='utf-8') as f:
             json.dump({'version': 1, 'snapshot': SAMPLE_SNAPSHOT}, f)
@@ -652,8 +621,7 @@ class TestHelperRevert:
     def test_revert_apply_snapshot_failure_returns_apply_failed(
         self, monkeypatch, req_path, resp_path,
     ):
-        # `_apply_snapshot` returns False on SetDisplayConfig failure (it
-        # never raises); the helper must surface APPLY_FAILED.
+        # `_apply_snapshot` returns False rather than raising; surface APPLY_FAILED.
         monkeypatch.setattr(dm, '_apply_snapshot', lambda snapshot: False)
         _write_request(req_path, {'snapshot': SAMPLE_SNAPSHOT})
         rc = dm._helper_revert_from_json(req_path, resp_path)
@@ -666,10 +634,9 @@ class TestHelperRevert:
     def test_revert_apply_snapshot_unexpected_exception_returns_unexpected(
         self, monkeypatch, req_path, resp_path,
     ):
-        # `_apply_snapshot` is documented to never raise — but if a future
-        # refactor ever leaks an exception, the helper's outer try/except
-        # must catch it and surface UNEXPECTED rather than letting the
-        # subprocess crash with no response file.
+        # `_apply_snapshot` should never raise, but if a refactor leaks one the
+        # outer try/except must surface UNEXPECTED rather than crash the
+        # subprocess with no response file.
         def _explode(snapshot):
             raise RuntimeError('boom')
         monkeypatch.setattr(dm, '_apply_snapshot', _explode)
@@ -704,10 +671,8 @@ class TestHelperRevert:
     def test_revert_sentinel_read_failure_returns_sentinel_read_failed(
         self, req_path, resp_path, tmp_path,
     ):
-        # sentinel_path points at a path that doesn't exist; open() raises
-        # OSError, and the helper surfaces SENTINEL_READ_FAILED — distinct
-        # from BAD_REQUEST so the dashboard can show "sentinel missing /
-        # corrupted" specifically.
+        # A missing sentinel_path raises OSError -> SENTINEL_READ_FAILED, distinct
+        # from BAD_REQUEST so the dashboard can say "sentinel missing/corrupted".
         _write_request(req_path, {
             'sentinel_path': str(tmp_path / 'does-not-exist.json'),
         })
@@ -720,8 +685,7 @@ class TestHelperRevert:
     def test_revert_sentinel_without_snapshot_field_returns_no_snapshot(
         self, req_path, resp_path, tmp_path,
     ):
-        # Well-formed sentinel JSON but missing the `snapshot` key — distinct
-        # from a malformed file (caught by SENTINEL_READ_FAILED via ValueError).
+        # Well-formed JSON missing `snapshot` — distinct from a malformed file.
         sentinel = tmp_path / 'sentinel.json'
         with open(sentinel, 'w', encoding='utf-8') as f:
             json.dump({'version': 1, 'apply_id': 'x'}, f)
@@ -743,12 +707,10 @@ class TestHelperRevert:
         assert rc == 1
         resp = _read_response(resp_path)
         assert resp['ok'] is False
-        # ValueError (json decode) is caught by the same except clause as
-        # OSError, so it surfaces under SENTINEL_READ_FAILED.
+        # A json decode ValueError shares the OSError clause -> SENTINEL_READ_FAILED.
         assert resp['code'] == DisplayErrorCode.SENTINEL_READ_FAILED
 
 
-# ---------------------------------------------------------------------------
 # Response-write failure (covers both helpers)
 
 
@@ -761,9 +723,8 @@ class TestHelperResponseWriteFailure:
     def test_apply_response_write_failure_returns_exit_2(
         self, monkeypatch, req_path, resp_path, sentinel_path,
     ):
-        # Force every _atomic_write_json call to fail. The apply helper's
-        # FIRST write attempt is the response (via _respond on the BAD_REQUEST
-        # branch — no sentinel write reached). Exit code 2 signals the
+        # Every _atomic_write_json fails. The apply helper's first write is the
+        # response (BAD_REQUEST branch, no sentinel reached); exit 2 means the
         # response file is missing or stale.
         _write_request(req_path, {})  # missing desired_layout — BAD_REQUEST
         monkeypatch.setattr(

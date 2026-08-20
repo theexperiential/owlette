@@ -1,28 +1,16 @@
 /**
- * Telemetry pipeline + per-tenant cost attribution (roost wave 2b.6).
+ * Telemetry pipeline + per-tenant cost attribution.
  *
- * Three entrypoints:
+ *   recordUsageEvent   — HTTPS. Callers POST a UsageEvent for a billable R2
+ *                        operation; written to the per-site events subcollection.
+ *   aggregateTelemetry — scheduled 04:30 UTC. Folds each site's window into
+ *                        UsageCounters, computes cost, writes a daily rollup doc
+ *                        and emits an OTLP log record.
+ *   getUsageSummary    — HTTPS. Current-month counters + projected cost.
  *
- *   recordUsageEvent    — HTTPS callable. Callers (the upload API, chunk
- *                          verify, etc.) POST a UsageEvent describing a
- *                          billable R2 operation. We write it to the
- *                          per-site events subcollection; the aggregator
- *                          rolls it up nightly.
- *
- *   aggregateTelemetry  — scheduled daily 04:30 UTC. For each site,
- *                          read the events for the window, fold into
- *                          UsageCounters, compute cost, write a daily
- *                          rollup doc + emit an OTLP log record.
- *
- *   getUsageSummary     — HTTPS callable. Dashboard fetches current-month
- *                          counters + projected cost for a site.
- *
- * **Exporter note**: OTLP records are emitted as structured JSON on
- * stderr (`console.error` in GCP wraps it to Cloud Logging with full
- * severity + jsonPayload support). A Cloud Logging → OpenTelemetry
- * collector sidecar then forwards to the eventual OTLP backend. Full
- * OTEL SDK auto-instrumentation is deferred to wave 0.6 where the
- * collector is stood up.
+ * OTLP records go out as structured JSON on stderr (`console.error` in GCP maps to
+ * Cloud Logging with severity + jsonPayload); a collector sidecar (wave 0.6)
+ * forwards them to the eventual OTLP backend.
  */
 
 import { onRequest } from 'firebase-functions/v2/https';
@@ -45,17 +33,10 @@ import {
 
 const FIRESTORE_BATCH_LIMIT = 400;
 
-/* --------------------------------------------------------------------- */
-/*  Dependency interfaces                                                */
-/* --------------------------------------------------------------------- */
-
 export interface EventStore {
   /** Persist a raw usage event. Called by `recordUsageEvent`. */
   append(event: UsageEvent): Promise<void>;
-  /**
-   * Return all events for `siteId` in `[startMs, endMs)` window.
-   * Aggregator iterates this in daily windows.
-   */
+  /** All events for `siteId` in `[startMs, endMs)`; aggregator iterates daily windows. */
   readWindow(
     siteId: string,
     startMs: number,
@@ -85,10 +66,6 @@ export interface SiteDirectory {
 }
 
 export type OtlpExporter = (record: OtlpTelemetryRecord) => void;
-
-/* --------------------------------------------------------------------- */
-/*  Pure orchestrator — event recording                                  */
-/* --------------------------------------------------------------------- */
 
 export interface RecordEventDeps {
   store: EventStore;
@@ -146,10 +123,6 @@ function isUsageEventKind(x: unknown): x is UsageEventKind {
   );
 }
 
-/* --------------------------------------------------------------------- */
-/*  Pure orchestrator — daily aggregation                                */
-/* --------------------------------------------------------------------- */
-
 export interface AggregateDeps {
   directory: SiteDirectory;
   events: EventStore;
@@ -193,9 +166,8 @@ export async function aggregateOneSite(
   );
   const counters = aggregateCounters(events);
 
-  // cost.storage is pro-rated by the month fraction elapsed AT yesterday's
-  // END, so the "cost of yesterday's stored bytes" is the storage fee
-  // allocated to that day (1 / days-in-month).
+  // cost.storage is pro-rated to a single day (1 / days-in-month), so this is the
+  // storage fee allocated to yesterday.
   const storageDaysInMonth = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0),
   ).getUTCDate();
@@ -246,10 +218,6 @@ export async function aggregateAllSites(
   return results;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Pure orchestrator — dashboard fetch                                  */
-/* --------------------------------------------------------------------- */
-
 export interface GetSummaryDeps {
   summaries: SummaryStore;
   now?: () => Date;
@@ -265,9 +233,7 @@ export interface UsageSummaryResponse {
 }
 
 /**
- * Fetch month-to-date usage + costs and a naive linear projection for
- * the full month. Dashboard uses this to show "you're on track to
- * spend $X this month".
+ * Month-to-date usage + costs, plus a naive linear projection for the full month.
  */
 export async function getUsageSummary(
   siteId: string,
@@ -304,10 +270,6 @@ export async function getUsageSummary(
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
-
-/* --------------------------------------------------------------------- */
-/*  Scheduled + HTTPS entrypoints                                        */
-/* --------------------------------------------------------------------- */
 
 export const aggregateTelemetry = onSchedule(
   { schedule: '30 4 * * *', timeoutSeconds: 540, memory: '512MiB' },
@@ -346,15 +308,11 @@ export const recordUsageEvent = onRequest(
 );
 
 /**
- * Per-tenant cost data — must verify the caller can access `siteId` before
- * returning anything. Without this check, any authenticated user (or
- * arbitrary HTTPS caller, since this used to be wide open) could enumerate
- * cost figures for sites they don't belong to. Allowed callers:
- *   - any user whose `users/{uid}.sites[]` includes the requested siteId
- *   - any superadmin (`users/{uid}.role === 'superadmin'`)
- *
- * Single 401 for "no token" and "no access" so the endpoint can't be
- * used to enumerate which siteIds an attacker happens to have access to.
+ * Per-tenant cost data — verify the caller can access `siteId` first, or any HTTPS
+ * caller could enumerate cost figures for sites they don't belong to. Allowed: a
+ * user whose `users/{uid}.sites[]` contains siteId, or a superadmin. A single 401
+ * covers both "no token" and "no access" so the endpoint can't be used to probe
+ * which siteIds an attacker has access to.
  */
 export async function isAuthorizedForSiteUsage(
   authorizationHeader: string | undefined,
@@ -408,10 +366,6 @@ export const getUsageSummaryHttp = onRequest(
   },
 );
 
-/* --------------------------------------------------------------------- */
-/*  Production wiring                                                    */
-/* --------------------------------------------------------------------- */
-
 function getDefaultDirectory(): SiteDirectory {
   const db = admin.firestore();
   return {
@@ -441,9 +395,8 @@ function getDefaultEventStore(): EventStore {
         .get();
       return snap.docs.map((d) => {
         const data = d.data() as UsageEvent;
-        // firestore returns a Timestamp in practice; events we persist via
-        // `append()` always pass through Timestamp.fromMillis. If a legacy
-        // number slipped in, fall back to Number().
+        // Events persisted via `append()` always carry a Timestamp; fall back to
+        // Number() for a legacy numeric value.
         const raw: unknown = (data as unknown as Record<string, unknown>).timestamp;
         const ts =
           raw && typeof (raw as { toMillis?: unknown }).toMillis === 'function'
@@ -532,15 +485,11 @@ function getDefaultSummaryStore(): SummaryStore {
 }
 
 /**
- * OTLP exporter: emit a JSON-line record on stderr. Cloud Logging
- * ingests this with full severity + jsonPayload. An OTEL collector
- * sidecar (deployed in wave 0.6) subscribes to the log sink and
- * forwards OTLP-native to the eventual backend (grafana-tempo,
- * honeycomb, etc. — product choice TBD).
+ * OTLP exporter: one JSON line on stderr. Cloud Logging ingests it with severity
+ * + jsonPayload; an OTEL collector sidecar (wave 0.6) forwards OTLP-native on.
  */
 export function otlpExporterToStderr(record: OtlpTelemetryRecord): void {
-  // severity-appropriate stream + a single-line JSON payload. Cloud
-  // Logging parses the JSON automatically when it's the whole line.
+  // Cloud Logging parses the JSON automatically when it is the whole line.
   const line = JSON.stringify(record);
   if (record.severity === 'ERROR') console.error(line);
   else if (record.severity === 'WARN') console.warn(line);

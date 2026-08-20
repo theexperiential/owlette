@@ -1,10 +1,8 @@
 /**
- * PreToolUse Hook — Pre-Commit Build Check
+ * PreToolUse hook — pre-commit build check.
  *
- * Before git commit/push, checks session-edits.json for recently edited files.
- * Runs TypeScript check for web/ changes, Python syntax check for agent/ changes.
- * Runs Jest tests for web/ changes, pytest for agent/ changes.
- * Blocks the commit if errors are found.
+ * On git commit/push, reads session-edits.json and runs tsc + jest for web/
+ * changes and py_compile + pytest for agent/ changes. Blocks on any error.
  */
 
 import { readFileSync, existsSync } from 'fs'
@@ -16,7 +14,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const SESSION_FILE = join(__dirname, '..', 'session-edits.json')
 const PROJECT_ROOT = join(__dirname, '..', '..')
 
-// Read stdin
 let input = ''
 for await (const chunk of process.stdin) {
   input += chunk
@@ -26,7 +23,6 @@ try {
   const data = JSON.parse(input)
   const toolInput = data.tool_input || {}
 
-  // Only check on git commit and git push commands
   const command = toolInput.command || ''
   const isCommit = /\bgit\s+(commit|push)\b/.test(command)
   if (!isCommit) {
@@ -34,17 +30,14 @@ try {
     process.exit(0)
   }
 
-  // Read recently edited files
   const editedFiles = getEditedFiles()
   if (editedFiles.length === 0) {
     process.stdout.write(JSON.stringify({ decision: 'approve' }))
     process.exit(0)
   }
 
-  // Determine affected areas
   const hasWeb = editedFiles.some(f => /[/\\]web[/\\]/.test(f))
-  // Match the Python agent dir only — NOT web routes that merely live under an
-  // /agent/ path (e.g. web/app/api/agent/*), which are TypeScript, not Python.
+  // The Python agent dir only — web/app/api/agent/* is TypeScript, not Python.
   const hasAgent = editedFiles.some(f => /[/\\]agent[/\\]/.test(f) && !/[/\\]web[/\\]/.test(f))
 
   if (!hasWeb && !hasAgent) {
@@ -54,7 +47,6 @@ try {
 
   const errors = []
 
-  // TypeScript check for web changes
   if (hasWeb) {
     try {
       execSync('npx tsc --noEmit', {
@@ -71,7 +63,6 @@ try {
     }
   }
 
-  // Python syntax check for agent changes
   if (hasAgent) {
     const pyFiles = editedFiles
       .filter(f => /[/\\]agent[/\\]/.test(f) && f.endsWith('.py'))
@@ -91,12 +82,10 @@ try {
     }
   }
 
-  // Jest tests for web changes
   if (hasWeb) {
     try {
-      // 300s: the suite outgrew the original 90s budget during the billing
-      // sprint (~2900 tests, ~100-140s wall-clock warm) — user-approved bump
-      // 2026-08-01. execSync's timeout kill surfaces as a bare "Jest tests
+      // 300s: the suite outgrew 90s during the billing sprint (~2900 tests,
+      // 100-140s warm). An execSync timeout kill surfaces as a bare "Jest tests
       // failed" with no summary, which reads like a red suite when it isn't.
       execSync('npx jest --bail --forceExit', {
         cwd: join(PROJECT_ROOT, 'web'),
@@ -114,7 +103,6 @@ try {
     }
   }
 
-  // Pytest for agent changes
   if (hasAgent) {
     try {
       execSync('python -m pytest agent/tests/ -x -q --tb=line', {
@@ -144,7 +132,7 @@ try {
   }
 
 } catch (err) {
-  // On error, don't block — fail open
+  // Fail open.
   process.stdout.write(JSON.stringify({ decision: 'approve' }))
 }
 

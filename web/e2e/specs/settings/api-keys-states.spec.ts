@@ -1,30 +1,14 @@
 /**
- * Settings — api keys states (task 5.3)
+ * Settings — api keys states: /settings/api-keys with four pre-seeded keys, one
+ * per lifecycle state (active / rotated-in-grace / expired / revoked). Asserts
+ * each row's status-badge text and tone class against KeyCard.tsx keyStatusAt().
  *
- * What this exercises:
- *   /settings/api-keys with four pre-seeded keys, one per lifecycle state
- *   (active / rotated-in-grace / expired / revoked). Asserts each row's
- *   status-badge text + tone class against KeyCard.tsx's keyStatusAt().
+ * Seeded through the Admin SDK (user-subcollection record + top-level
+ * api_keys/{keyHash} lookup), not POST /api/keys.
  *
- * Data plane: none — Admin SDK writes the user-subcollection record + the
- * top-level api_keys/{keyHash} lookup row directly. No /api/keys POST.
- *
- * State-rendering gaps in KeyCard.tsx as of 2026-04-24:
- *   1. expired: GET /api/keys does not project an `expired` boolean and
- *      keyStatusAt() falls through to "expiring soon" whenever expiresAt
- *      is within EXPIRATION_WARNING_MS of now (a past expiresAt qualifies
- *      because expiresAt - now is negative). There is no terminal
- *      "expired" badge for past-due keys.
- *   2. revoked: keyStatusAt() never inspects revokedAt. A key with
- *      revokedAt set still renders as "active" (or "expiring soon" if
- *      expiresAt is near). DELETE /api/keys/{keyId} hard-deletes today,
- *      so the field is not produced through the UI — but the type allows
- *      it and the lookup doc can be written directly. The badge has no
- *      terminal "revoked" treatment.
- *
- * The two "happy" states ship as live assertions. The two gap states ship
- * as test.fixme() — they will start failing the moment KeyCard grows the
- * missing terminal branches, which is the signal we want.
+ * The revoked case ships as test.fixme(): keyStatusAt() never inspects
+ * revokedAt, so a revoked record still renders as active. It starts failing the
+ * moment KeyCard grows that terminal branch — which is the signal we want.
  */
 
 import crypto from 'crypto';
@@ -70,8 +54,7 @@ const SEED_KEYS: SeedKeyOptions[] = [
 async function seedKey(opts: SeedKeyOptions): Promise<void> {
   const db = getAdminDb();
   const environment: ApiKeyEnvironment = 'live';
-  // Deterministic raw value per keyId so the hash is stable on warm-emulator
-  // re-runs (idempotent batch.set overwrites the prior write).
+  // Deterministic raw value per keyId so the hash is stable on warm-emulator re-runs.
   const rawKey = `owk_live_e2e-states-${opts.keyId}-pad${'x'.repeat(20)}`;
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
   const keyPrefix = rawKey.slice(0, 15);
@@ -206,9 +189,7 @@ test(
   'expired key row renders the red "expired" badge',
   async ({ page }) => {
     // Promoted from fixme: GET /api/keys now derives `expired` server-side
-    // (buildApiKeyListItem in lib/apiKeyTypes.ts), so keyStatusAt()'s
-    // terminal branch is reachable and a past-due key no longer renders as
-    // "expiring soon" — or, in the account dialog, as plain "active".
+    // (buildApiKeyListItem), so a past-due key no longer renders "expiring soon".
     await page.goto('/settings/api-keys');
     await expect(
     page.getByRole('heading', { name: 'api keys', exact: true }),
@@ -224,11 +205,9 @@ test(
 test.fixme(
   'revoked key row renders a terminal "revoked" badge with muted treatment',
   async ({ page }) => {
-    // GAP: keyStatusAt() never inspects revokedAt; DELETE hard-deletes
-    // today so the field never reaches the UI through normal flows. A
-    // revoked record present in Firestore still renders as "active".
-    // Promote this fixme once revoke moves to a soft-delete and KeyCard
-    // grows a terminal "revoked" branch.
+    // GAP: keyStatusAt() never inspects revokedAt, and DELETE hard-deletes today,
+    // so a revoked record still renders as "active". Promote once revoke becomes a
+    // soft-delete and KeyCard grows a terminal "revoked" branch.
     await page.goto('/settings/api-keys');
     await expect(
     page.getByRole('heading', { name: 'api keys', exact: true }),

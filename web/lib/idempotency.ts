@@ -1,23 +1,14 @@
 /**
- * Idempotency-Key handling for mutating POST routes.
+ * Stripe-style Idempotency-Key for mutating POSTs
+ * (https://stripe.com/docs/api/idempotent_requests): same key within 24h with a
+ * byte-identical body replays the cached response; a different body is 422
+ * `idempotency_key_mismatch`.
  *
- * Stripe-style (https://stripe.com/docs/api/idempotent_requests): a client
- * sends `Idempotency-Key: <opaque>` with a mutating POST. If the same
- * user re-sends the same key within 24 hours AND the request body is
- * byte-identical, we replay the cached response instead of executing
- * the handler. If the body differs, we reject 422 `idempotency_key_mismatch`.
+ * Doc id hashes `{userId, environment, key, method, path, query}`; `bodyHash`
+ * lives on the doc so different-body retries cannot silently cache-hit.
+ * `sweepExpiredIdempotencyCache` (functions/) deletes entries past `expiresAt`.
  *
- * Cache key: `{userId, environment, idempotencyKey, method, path, query}` —
- * hashed to a short Firestore doc id. The `bodyHash` is stored on the doc
- * for mismatch detection, so different-body retries on the same route don't
- * silently cache-hit.
- *
- * Retention is handled by `sweepExpiredIdempotencyCache` (functions/),
- * which runs daily and deletes entries past `expiresAt`.
- *
- * Middleware note: the repo's `proxy.ts` matcher excludes `/api/*`, so
- * this ships as a helper that mutating routes call explicitly rather
- * than as Next.js middleware.
+ * A helper, not middleware — `proxy.ts`'s matcher excludes `/api/*`.
  */
 
 import crypto from 'crypto';
@@ -86,11 +77,9 @@ interface CachedDoc {
 }
 
 /**
- * Validate the Idempotency-Key header and look up a cached response.
- *
- * `rawBody` is the string form the handler already read (to avoid re-
- * consuming a stream). If no body, pass an empty string — the bodyHash
- * is still computed so mismatch detection is consistent.
+ * Validate the header and look up a cached response. `rawBody` is the string
+ * the handler already read (the stream cannot be re-consumed); pass '' when
+ * there is none — the hash is still computed so mismatch detection is uniform.
  */
 export async function checkIdempotency(
   request: NextRequest,
@@ -161,7 +150,7 @@ export async function checkIdempotency(
         response: rebuildResponse(data as CachedDoc),
       };
     }
-    // expired or malformed — fall through to proceed; save will overwrite.
+    // Expired or malformed — proceed; save overwrites.
   }
 
   return {
@@ -179,25 +168,17 @@ export async function checkIdempotency(
   };
 }
 
-/**
- * Persist the handler's response under the idempotency key. Reads the
- * response body + headers so replays are byte-for-byte identical (save
- * for the `Idempotent-Replayed` marker header we add).
- */
+/** Persist body + headers so replays are byte-identical bar `Idempotent-Replayed`. */
 export async function saveIdempotency(
   token: IdempotencyToken,
   response: NextResponse,
 ): Promise<void> {
   try {
-    // Don't cache error responses — callers expect to retry and get a
-    // fresh attempt. 4xx/5xx still return, just aren't cached.
+    // Errors are returned but never cached — a retry must re-execute.
     if (response.status >= 400) return;
 
-    // Don't cache streaming responses. `response.clone().text()` would buffer
-    // the entire stream into memory before returning, which (a) breaks real
-    // streaming for the original consumer and (b) risks OOM on long streams.
-    // Streaming responses are non-deterministic anyway; replays should re-run
-    // the handler.
+    // Never cache streams: `clone().text()` buffers the whole body, breaking
+    // streaming for the original consumer and risking OOM. Replays re-run.
     const contentType = response.headers.get('content-type') || '';
     if (
       contentType.includes('text/event-stream') ||
@@ -231,9 +212,7 @@ export async function saveIdempotency(
       createdAt: FieldValue.serverTimestamp(),
     });
   } catch (err) {
-    // Cache persistence is best-effort — a replay miss just means the
-    // next retry executes the handler again, which is the pre-idempotency
-    // default. Don't fail the request over it.
+    // Best-effort: a miss just re-executes the handler on the next retry.
     console.warn(
       `[idempotency] failed to persist cache: ${(err as Error).message}`,
     );
@@ -273,35 +252,18 @@ function rebuildResponse(data: CachedDoc): NextResponse {
     status: data.status,
     headers: data.headers,
   });
-  // Stripe-style `Idempotent-Replayed: true` so observant callers know
-  // this was a cache hit, not a fresh execution.
+  // Marks a cache hit rather than a fresh execution.
   response.headers.set('Idempotent-Replayed', 'true');
   return response;
 }
 
 /**
- * High-level wrapper for the standard {check → handler → save} flow.
+ * `checkIdempotency` → handler → `saveIdempotency` in one call: short-circuits
+ * to replay / mismatch / invalid-key, otherwise runs the handler and caches a
+ * 2xx-3xx response.
  *
- * Use this in any route that needs idempotency:
- *
- * ```ts
- * return withIdempotency(
- *   request,
- *   { userId: auth.userId, environment: auth.auth.keyContext?.environment ?? 'unknown' },
- *   parsed.raw,
- *   async () => buildResponseHere(),
- * );
- * ```
- *
- * Behavior matches the two-step `checkIdempotency` + `saveIdempotency`
- * pattern already in use across roost routes — short-circuits to cached
- * replay / mismatch / invalid-key responses, otherwise runs the handler
- * and saves a successful response. Caching only applies to 2xx-3xx
- * responses; errors are returned but never cached.
- *
- * Routes that need to add headers to the saved response (e.g.
- * `applyAuthDeprecations`) should do so inside the handler before
- * returning — the wrapper saves whatever NextResponse the handler emits.
+ * Headers to be cached (e.g. `applyAuthDeprecations`) must be added inside the
+ * handler — the wrapper saves whatever NextResponse it returns.
  */
 export async function withIdempotency(
   request: NextRequest,

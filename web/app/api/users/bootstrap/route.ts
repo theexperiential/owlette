@@ -1,32 +1,19 @@
 /**
- * POST /api/users/bootstrap
+ * POST /api/users/bootstrap — server-mediated, audit-logged creation of
+ * `users/{uid}` on first sign-in, replacing the client-side setDoc in
+ * `web/contexts/AuthContext.tsx`.
  *
- * Server-side user-doc creation on first sign-in / sign-up. Replaces the
- * client-side `setDoc(users/{uid}, ...)` calls in
- * `web/contexts/AuthContext.tsx` (line 421 unsubscribe-listener path; line
- * 527 signUp path) so user-doc creation is server-mediated and audit-logged.
+ * NOT `authorizedPlatformHandler`: it demands `actor.role === 'superadmin'`, and a
+ * user with no firestore doc narrows to 'member', so no new user could ever
+ * bootstrap. No capability fits either — the target is the caller's own
+ * nonexistent record. Uses `requireSessionOrIdToken` directly, like
+ * `/api/webhooks/user-created`.
  *
- * **Auth model — handler choice rationale.**
- * The default `authorizedPlatformHandler` requires `actor.role === 'superadmin'`
- * which is the wrong shape for bootstrap: at first sign-in the user has
- * no firestore record yet, so a role lookup returns 'member' (the default
- * narrowing) and the handler 403s — making it impossible for any new
- * user to ever bootstrap themselves. The capability concept also doesn't
- * apply: bootstrap operates on the caller's OWN nonexistent record, so
- * neither USER_ROLE_MANAGE nor any other capability fits. Instead this
- * route uses `requireSessionOrIdToken` directly + a self-target check
- * (the bearer's uid MUST match the bootstrap target, which itself comes
- * from the verified auth context — there's no body-supplied uid). This
- * matches the existing pattern in `/api/webhooks/user-created`.
+ * Idempotent: a second call returns `alreadyExists: true`.
  *
- * Idempotent — calling twice for the same uid is a no-op (returns
- * `alreadyExists: true`).
- *
- * Body: `{ displayName?, timezone? }`. Both the `uid` AND the `email` are
- * taken from the verified auth context — the uid from the bearer/session and
- * the email from the Firebase Auth record (`getUser(uid).email`) — never from
- * the body. A caller therefore cannot bootstrap a doc for someone else, nor
- * persist a falsified email (issue #22). Any `email` in the body is ignored.
+ * Body is `{ displayName?, timezone? }`. uid comes from the bearer/session and
+ * email from `getUser(uid).email` — NEVER the body, so a caller can neither
+ * bootstrap someone else nor persist a falsified email (issue #22).
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -50,9 +37,8 @@ import { isDisposableEmailDomain } from '@/lib/disposableEmailDomains';
 import { readAndParseJsonBody } from '../../_shared';
 
 interface BootstrapBody {
-  // `email` is intentionally absent: the authoritative address comes from the
-  // verified Firebase Auth record, not the body (issue #22). A body-supplied
-  // email is ignored.
+  // No `email`: the authoritative address comes from the Firebase Auth record
+  // (issue #22). A body-supplied one is ignored.
   displayName?: unknown;
   timezone?: unknown;
   /** Turnstile token from the register form; absent on the listener path. */
@@ -82,13 +68,9 @@ async function handleBootstrap(request: NextRequest): Promise<NextResponse> {
       async () => {
         const body = parsed.body as BootstrapBody;
 
-        // Resolve the AUTHORITATIVE email from the Firebase Auth record, not
-        // from the request body. bootstrapUser writes via the Admin SDK, which
-        // bypasses the `email == request.auth.token.email` pin in
-        // firestore.rules — so trusting body.email would let a caller
-        // authenticate with one address (e.g. a disposable one that slips past
-        // the block below) while persisting another, or store a wholly
-        // falsified address. (issue #22)
+        // bootstrapUser writes via the Admin SDK, which bypasses the
+        // `email == request.auth.token.email` pin in firestore.rules — so a
+        // body-supplied email could be wholly falsified (issue #22).
         let userRecord: UserRecord;
         try {
           userRecord = await getAdminAuth().getUser(userId);
@@ -97,19 +79,13 @@ async function handleBootstrap(request: NextRequest): Promise<NextResponse> {
         }
         const verifiedEmail = userRecord.email?.trim();
 
-        // Bot gate for self-serve email signup, keyed off the provider on the
-        // VERIFIED auth record — never the body or a client-supplied flag.
-        //
-        // Two callers reach this route: the register form, which carries a
-        // Turnstile token, and the auth-state listener in AuthContext, which
-        // cannot — it bootstraps any signed-in user missing a doc, covering
-        // Google sign-in and recovery after a failed first bootstrap. Demanding
-        // a token unconditionally would break Google sign-in, so federated
-        // identities skip the challenge; Google's own flow is the bot gate there.
-        //
-        // The condition is deliberately inverted to fail closed: only a
-        // POSITIVELY federated-only record skips. Empty or absent providerData
-        // means we could not establish that, so the challenge still applies.
+        // Bot gate for self-serve email signup, keyed off the VERIFIED auth
+        // record's providers — never the body. The register form carries a
+        // Turnstile token; the AuthContext listener path cannot (it covers Google
+        // sign-in and retry after a failed bootstrap), so federated identities
+        // skip the challenge and rely on the provider's own gate.
+        // Inverted to FAIL CLOSED: only a positively federated-only record skips;
+        // empty or absent providerData still gets challenged.
         const providers = userRecord.providerData ?? [];
         const federatedOnly =
           providers.length > 0 &&
@@ -197,10 +173,9 @@ async function handleBootstrap(request: NextRequest): Promise<NextResponse> {
 }
 
 /**
- * Per-IP signup rate limit (10/hr prod, 100/hr dev). This caps creation of
- * the Firestore `users/{uid}` doc — the visible/admin-table surface — not
- * the upstream Firebase Auth account itself (that belongs to App Check /
- * blocking functions). Honors the `E2E_DISABLE_RATE_LIMIT` escape hatch.
+ * Per-IP signup limit (10/hr prod, 100/hr dev). Caps creation of the Firestore
+ * `users/{uid}` doc only — the upstream Firebase Auth account is App Check /
+ * blocking functions' problem. Honors `E2E_DISABLE_RATE_LIMIT`.
  */
 export const POST = withRateLimit(handleBootstrap, {
   strategy: 'signup',

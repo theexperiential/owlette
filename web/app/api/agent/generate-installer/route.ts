@@ -8,28 +8,15 @@ import logger from '@/lib/logger';
 /**
  * POST /api/agent/generate-installer
  *
- * Generate a registration code for creating a new installer.
- * This endpoint is called by authenticated users from the web dashboard
- * when they want to add a new machine to their site.
+ * Mint a single-use registration code to embed in an installer, for an authenticated
+ * dashboard user adding a machine to their site.
  *
- * Request body:
- * - siteId: string - Site ID to associate the agent with
- * - userId: string - Deprecated (derived from session)
- *
- * Response (200 OK):
- * - registrationCode: string - Single-use code to embed in installer
- * - expiresAt: string - ISO 8601 timestamp when code expires (24 hours)
- * - siteId: string - Site ID this code is for
- *
- * Errors:
- * - 400: Missing required fields
- * - 401: Unauthorized (no valid session)
- * - 403: Forbidden (user doesn't have access to site)
- * - 500: Server error
+ * Body: { siteId, userId (deprecated — derived from session) }
+ * 200:  { registrationCode, expiresAt (ISO 8601, +24h), siteId }
+ * Errors: 400 missing fields / 401 no session / 403 no site access / 500.
  */
 export async function POST(request: NextRequest) {
   try {
-    // Parse request body
     const body = await request.json();
     const { siteId } = body;
 
@@ -49,11 +36,9 @@ export async function POST(request: NextRequest) {
     const crypto = await import('crypto');
     const registrationCode = crypto.randomBytes(32).toString('base64url');
 
-    // Calculate expiration (24 hours from now)
     const now = Date.now();
     const expiresAt = new Date(now + 24 * 60 * 60 * 1000);
 
-    // Store registration code in Firestore
     const adminDb = getAdminDb();
     await adminDb.collection('agent_tokens').doc(registrationCode).set({
       siteId,

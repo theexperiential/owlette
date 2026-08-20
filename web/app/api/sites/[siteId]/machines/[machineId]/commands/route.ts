@@ -1,12 +1,8 @@
 /**
- * POST /api/sites/{siteId}/machines/{machineId}/commands
- *
- * Queue a remote command on a machine. The public contract from the
- * api-sprint route is preserved: request shape, idempotency behavior,
- * machine-scoped API-key scope, RFC 7807 errors, and 202 response envelope.
- *
- * security-boundary-migration wave 3.1: route is now a thin authorized shim
- * around `executeMachineCommand`.
+ * POST /api/sites/{siteId}/machines/{machineId}/commands — queue a remote
+ * command. A thin authorized shim over `executeMachineCommand`; request shape,
+ * idempotency, api-key scope, RFC 7807 errors and the 202 envelope are all
+ * unchanged public contract.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -346,11 +342,9 @@ function commandErrorToProblem(err: ExecuteMachineCommandError): NextResponse {
 }
 
 /**
- * View-only command types. These observe a machine's screen (single-shot
- * screenshot or live-view session control) without mutating it, so they are
- * authorized under the read-class MACHINE_VIEW capability — which members hold
- * on their assigned sites — rather than MACHINE_EXEC_COMMAND. Every other
- * command type stays behind MACHINE_EXEC_COMMAND (admin/superadmin).
+ * Commands that observe a machine's screen without mutating it, so they sit
+ * behind the read-class MACHINE_VIEW (which members hold on their sites)
+ * instead of MACHINE_EXEC_COMMAND. Everything else stays admin/superadmin.
  */
 const VIEW_COMMAND_TYPES: ReadonlySet<string> = new Set<string>([
   'capture_screenshot',
@@ -430,16 +424,14 @@ const sharedHandlerOptions = {
   },
 };
 
-// Mutating commands (reboot, process control, display topology, ...) require
-// MACHINE_EXEC_COMMAND.
+// Mutating commands (reboot, process control, display topology).
 const execHandler = authorizedSiteHandler<RouteParams>({
   capability: Capability.MACHINE_EXEC_COMMAND,
   ...sharedHandlerOptions,
 })(coreHandler);
 
-// View-only commands (screenshot / live view) require only MACHINE_VIEW, so
-// read-only members can use them. The api-key scope is unchanged (machine:write),
-// so api-key behavior is identical — only the user-role capability bar is lowered.
+// MACHINE_VIEW only, so read-only members can use these. The api-key scope
+// stays machine:write — only the user-role bar is lowered.
 const viewHandler = authorizedSiteHandler<RouteParams>({
   capability: Capability.MACHINE_VIEW,
   ...sharedHandlerOptions,
@@ -449,16 +441,15 @@ export async function POST(
   request: NextRequest,
   routeContext: { params: Promise<RouteParams> },
 ): Promise<NextResponse> {
-  // Peek the command type on a CLONE so the chosen handler still receives an
-  // unconsumed request body. View commands route to the MACHINE_VIEW handler;
-  // anything else (including an unparseable body or unknown type) routes to the
-  // stricter MACHINE_EXEC_COMMAND handler, which also surfaces the right 400.
+  // Peek on a CLONE so the chosen handler still gets an unconsumed body.
+  // Anything not a view command — including unparseable or unknown — routes to
+  // the stricter handler, which also emits the right 400.
   let cmdType = '';
   try {
     const peek = (await request.clone().json()) as { type?: unknown };
     if (typeof peek?.type === 'string') cmdType = peek.type.trim();
   } catch {
-    // Fall through to execHandler; coreHandler returns the proper validation error.
+    // execHandler's coreHandler emits the proper validation error.
   }
   const handler = VIEW_COMMAND_TYPES.has(cmdType) ? viewHandler : execHandler;
   return handler(request, routeContext);

@@ -1,10 +1,8 @@
 /**
  * @jest-environment node
  *
- * Firestore rules denial suite for security-boundary-migration wave 7.
- *
- * Each test describes a browser-client control-plane write that must fail
- * after the rules lockdown.
+ * Firestore rules denials: every test is a browser-client control-plane write
+ * that must fail under the locked-down rules.
  */
 
 import { assertFails } from '@firebase/rules-unit-testing';
@@ -291,16 +289,12 @@ describe('site-scoped control-plane writes', () => {
 });
 
 describe('roost version-pointer immutability', () => {
-  // The pointer fields on a roost doc (currentVersionId, previousVersionId,
-  // versionUrl) are the trust root for "what code runs on the fleet". They
-  // can only be flipped by /api/roosts/.../versions and /rollback under
-  // the admin SDK (which bypasses these rules and does CAS in a Firestore
-  // transaction). A direct browser write would let any site member ship
-  // arbitrary code to every targeted machine.
-  //
-  // Legacy field names (currentManifestId, etc.) are also blocked as
-  // defense-in-depth — old roost docs may still carry those keys and we
-  // don't want a stale name to become a bypass.
+  // A roost's pointer fields (currentVersionId, previousVersionId, versionUrl) are
+  // the trust root for what code runs on the fleet — a direct browser write would
+  // let any site member ship arbitrary code to every targeted machine. Only
+  // /api/roosts/.../versions and /rollback may flip them, via the admin SDK's
+  // transactional CAS. Legacy names (currentManifestId, ...) are blocked too, so a
+  // stale key on an old doc can't become a bypass.
 
   test('member cannot create a roost with currentVersionId pre-set', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
@@ -381,9 +375,8 @@ describe('roost version-pointer immutability', () => {
   });
 
   test('member cannot flip the legacy currentManifestId field on a roost', async () => {
-    // Defense in depth — legacy roost docs predate the manifest->version
-    // rename. Even though no code WRITES this field anymore, the rules
-    // still block flipping it so a stale doc can't become a bypass.
+    // Nothing writes this any more (pre manifest->version rename), but old docs
+    // still carry it, so the rules must still block flipping it.
     await seedAsAdmin(async (db) => {
       await setDoc(doc(db, 'sites', SITE_A, 'roosts', 'roost-legacy'), {
         name: 'legacy',

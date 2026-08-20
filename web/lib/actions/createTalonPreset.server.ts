@@ -1,16 +1,13 @@
 /**
- * createTalonPreset action core — reusable talon templates.
+ * Reusable talon templates, following the other preset families under `config/`
+ * exactly: writes `config/{siteId}/talon_presets/{presetId}`, stamps `createdAt`
+ * and a trusted `createdBy`, and ships `isBuiltIn`/`order` for the client's
+ * built-in merge.
  *
- * The fifth preset family, and it follows the other three under `config/`
- * exactly: writes `config/{siteId}/talon_presets/{presetId}`, stamps
- * `createdAt = serverTimestamp()`, stamps `createdBy` from trusted context, and
- * ships `isBuiltIn` / `order` so the client-side built-in merge works the same
- * way it does for schedule and restart presets.
- *
- * The talon payload itself is NOT re-validated here: `validateTalonPresetInput`
- * delegates to `validateTalonInput`, so a preset can never store a talon the
- * store would refuse. Capability is `PRESET_MANAGE`, not `TALON_MANAGE` —
- * curating a template touches no machine.
+ * The talon payload is not re-validated here — `validateTalonPresetInput`
+ * delegates to `validateTalonInput`, so a preset can never hold a talon the store
+ * would refuse. Capability is `PRESET_MANAGE`, not `TALON_MANAGE`: curating a
+ * template touches no machine.
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
@@ -56,9 +53,9 @@ export class TalonPresetValidationError extends Error {
 }
 
 /**
- * Validates the preset's own identity fields and, unless the caller omitted it
- * on a PATCH, its template. Returns the normalized template so create and
- * update both persist the validator's output rather than the raw input.
+ * Validate the preset's identity fields, and its template unless a PATCH omitted
+ * it. Returns the normalized template so both paths persist the validator's
+ * output, never the raw input.
  */
 export function validateTalonPresetFields(
   input: Partial<CreateTalonPresetInput>,
@@ -128,8 +125,8 @@ export async function createTalonPreset(
   const db = getAdminDb();
   const presetId = generatePresetId(input.name);
   if (!ID_RE.test(presetId)) {
-    // Only reachable if the slug rules ever change underneath us; a doc id the
-    // read routes would then reject is worse than a 400 here.
+    // Only reachable if the slug rules change: a doc id the read routes reject is
+    // worse than a 400 here.
     throw new TalonPresetValidationError('name', 'name produced an unusable preset id');
   }
   const presetRef = db

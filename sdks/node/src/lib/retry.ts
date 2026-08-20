@@ -1,15 +1,12 @@
 /**
- * Retry driver shared across every resource in the sdk.
+ * Retry driver shared by every sdk resource.
  *
- * Default policy: 5 attempts, exponential backoff starting at 250ms,
- * capped at 8s, with ±25% jitter. Retries only when the operation
- * throws an `OwletteApiError` with status 429 or ≥ 500 — everything
- * else (auth failures, validation errors, scope issues) bubbles
- * immediately because the caller can't unstick them with another try.
+ * Default: 5 attempts, exponential backoff from 250ms, capped at 8s, ±25%
+ * jitter. Retries only 429 and 5xx — auth, validation and scope errors bubble
+ * immediately because another attempt can't fix them.
  *
- * When the server hands back `Retry-After: <seconds>` on a 429, we
- * honor it instead of the exponential schedule. We clamp it to
- * `maxDelayMs * 2` so an abusive header can't wedge a caller forever.
+ * A `Retry-After` on a 429 overrides the schedule, clamped to `maxDelayMs * 2`
+ * so an abusive header can't wedge the caller.
  */
 
 import { OwletteApiError } from './client';
@@ -21,9 +18,9 @@ export interface RetryOptions {
   baseDelayMs: number;
   /** Hard cap on any single delay, ms. Default 8000. */
   maxDelayMs: number;
-  /** Jitter fraction — 0.25 = ±25% of computed delay. */
+  /** Jitter fraction; 0.25 = ±25%. */
   jitter: number;
-  /** Predicate: should we retry this error? Default: 429 + 5xx. */
+  /** Retry predicate. Default: 429 + 5xx. */
   shouldRetry: (err: unknown) => boolean;
 }
 
@@ -36,15 +33,12 @@ export const DEFAULT_RETRY: RetryOptions = {
     if (err instanceof OwletteApiError) {
       return err.status === 429 || err.status >= 500;
     }
-    // Network / fetch errors are opaque — retry them.
+    // Opaque network/fetch errors — retry them.
     return true;
   },
 };
 
-/**
- * Run `op` with the merged retry policy. Returns the first success or
- * throws the last error after the policy is exhausted.
- */
+/** Run `op` under the merged policy; rethrows the last error when exhausted. */
 export async function retry<T>(
   op: () => Promise<T>,
   override: Partial<RetryOptions> = {},
@@ -70,7 +64,7 @@ function computeDelay(
   attempt: number,
   err: unknown,
 ): number {
-  // Honor Retry-After on 429 if the server sent one inside the problem+json.
+  // Honor a server-sent Retry-After on 429.
   if (err instanceof OwletteApiError && err.status === 429) {
     const retryAfter = err.problem.retryAfter;
     if (typeof retryAfter === 'number' && Number.isFinite(retryAfter)) {

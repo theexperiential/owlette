@@ -1,24 +1,15 @@
 /**
- * The reboot countdown, as a value.
+ * The reboot countdown, as a value. Rules ported unchanged from
+ * `agent/src/prompt_restart.py`: two-minute wait, an indefinite operator pause,
+ * reboot the moment it runs out. The prompt is now a window in this app, not a
+ * python process — hence `owlette_service._is_restart_prompt_active` tracking
+ * its own launch instead of scanning.
  *
- * Ported from `agent/src/prompt_restart.py` (:12-76), which the service spawned
- * when a process burned through its relaunch budget. The rules are unchanged: a
- * two-minute wait, a pause the operator can hold indefinitely, and a reboot the
- * moment it runs out. Only the shell is new — the prompt is a window inside this
- * app now rather than its own python process, which is why
- * `owlette_service._is_restart_prompt_active` tracks its own launch instead of
- * scanning for one.
- *
- * The state lives here rather than in the component so the arithmetic is
- * testable without a clock.
+ * State lives here, not in the component, so the arithmetic is testable without
+ * a clock.
  */
 
-/**
- * Seconds on the clock when the prompt opens.
- *
- * The legacy dialog printed "2:00" and started its ticker at 119, so it reached
- * zero 120 ticks later; 120 here is the same two minutes said plainly.
- */
+/** Seconds on the clock when the prompt opens. */
 export const RESTART_COUNTDOWN_SECONDS = 120
 
 export interface CountdownState {

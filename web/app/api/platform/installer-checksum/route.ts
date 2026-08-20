@@ -1,13 +1,10 @@
 /**
- * POST /api/platform/installer-checksum
- *   body:   { installer_url: string }
- *   output: { sha256_checksum: string, size_bytes: number }
+ * POST /api/platform/installer-checksum — { installer_url } ->
+ * { sha256_checksum, size_bytes }.
  *
- * Platform-level twin of POST /api/sites/{siteId}/deployments/checksum, used
- * by the admin system-preset dialog (which has no site context). Same SSRF
- * guard and streaming hash; gated on SYSTEM_PRESET_MANAGE.
- *
- * Internal dashboard utility — not part of the public API surface.
+ * Platform twin of POST /api/sites/{siteId}/deployments/checksum for the admin
+ * system-preset dialog, which has no site context. Same SSRF guard and streaming
+ * hash, gated on SYSTEM_PRESET_MANAGE. Internal, not public API.
  */
 
 import type { NextRequest } from 'next/server';
@@ -22,8 +19,7 @@ import {
 } from '@/lib/actions/computeInstallerChecksum.server';
 
 export const runtime = 'nodejs';
-// Large installers (TouchDesigner ~1 GB) take a while to stream on the
-// Vercel failover origin; Railway (primary) has no function deadline.
+// ~1 GB installers need the headroom on the Vercel failover origin; Railway has no deadline
 export const maxDuration = 300;
 
 export const POST = authorizedPlatformHandler({

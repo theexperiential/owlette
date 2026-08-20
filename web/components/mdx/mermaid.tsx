@@ -4,26 +4,19 @@ import { use, useId, useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
 
 /**
- * Renders a Mermaid diagram from a ```mermaid code fence, themed to match the
- * docs (Geist typography + the Fumadocs/site color tokens) so diagrams read as
- * part of the page, not a foreign embed.
+ * Mermaid diagrams, themed with the docs' own tokens so they read as part of
+ * the page. `remarkMdxMermaid` (source.config.ts) rewrites every ```mermaid
+ * fence into `<Mermaid chart="..." />`, so this owns all diagram rendering.
+ * Mermaid loads lazily via a module-level promise cache; rendered SVG is
+ * cached per chart+theme.
  *
- * The `remarkMdxMermaid` plugin (wired in source.config.ts) rewrites every
- * ```mermaid fence into `<Mermaid chart="..." />`, so this component owns all
- * diagram rendering. Mermaid is imported lazily (React `use` + a module-level
- * promise cache) so its bundle only loads on pages that contain a diagram, and
- * rendered SVG is cached per chart+theme so toggling the theme doesn't re-render.
+ * Theme tokens are read live at render time, then normalized to hex through a
+ * canvas 2d context — they are `oklch(...)`, which Mermaid's khroma cannot
+ * parse.
  *
- * Theming notes:
- *  - We resolve the live CSS custom properties at render time (rather than
- *    hardcoding colors) so the diagram tracks the active theme. The tokens are
- *    `oklch(...)`, which Mermaid's color lib (khroma) can't parse, so each is
- *    normalized to hex via a canvas 2d context first.
- *  - We pass an explicit `fontFamily` (Geist) and await `document.fonts.ready`
- *    before rendering. Mermaid sizes each node from a text measurement; if the
- *    measure font and render font differ (e.g. the upstream `fontFamily:
- *"inherit"`, or a web font that loads late), boxes come out ~1 glyph too
- *    narrow and clip the last character. Same font + loaded font = no clipping.
+ * `fontFamily` must be explicit (never `inherit`) and `document.fonts.ready`
+ * awaited: Mermaid sizes nodes by measuring text, so a measure/render font
+ * mismatch makes boxes a glyph too narrow and clips the last character.
  */
 const subscribe = () => () => {};
 
@@ -52,10 +45,8 @@ function cachePromise<T>(key: string, setPromise: () => Promise<T>): Promise<T> 
 }
 
 /**
- * Resolve the site's design tokens into hex colors + a font stack the diagram
- * can use. Reads from the docs layout element so it inherits the active theme's
- * cascade; falls back to <html>. Canvas normalizes any CSS color (incl oklch)
- * to "#rrggbb"; if a token is missing/unparseable it falls back to `fallback`.
+ * Design tokens → hex colors + font stack. Reads the docs layout element so it
+ * inherits the active theme's cascade, falling back to <html> then `fallback`.
  */
 function resolveTokens() {
   const root = document.getElementById("nd-docs-layout") ?? document.documentElement;
@@ -64,10 +55,9 @@ function resolveTokens() {
     willReadFrequently: true,
   });
 
-  // Rasterize the color to a 1px sRGB pixel and read the bytes back as
-  // "#rrggbb". We can't just read `ctx.fillStyle` — for an oklch/wide-gamut
-  // input the canvas serializes it back as `lab(...)`/`color(...)`, which
-  // Mermaid's color lib (khroma) rejects. Drawing forces a concrete sRGB value.
+  // Rasterize to one sRGB pixel and read the bytes. `ctx.fillStyle` is no good:
+  // for oklch/wide-gamut input the canvas echoes `lab(...)`/`color(...)`, which
+  // khroma rejects. Drawing forces a concrete sRGB value.
   const hex = (value: string, fallback: string): string => {
     const v = value.trim();
     if (!v || !ctx) return fallback;
@@ -108,7 +98,7 @@ function MermaidContent({ chart }: { chart: string }) {
 
   const { svg, bindFunctions } = use(
     cachePromise(`${chart}-${resolvedTheme}`, async () => {
-      // Wait for the web font so node sizing is measured with the render font.
+      // Measure with the render font — see the clipping note above.
       if (document.fonts?.ready) await document.fonts.ready;
       const t = resolveTokens();
 
@@ -118,8 +108,8 @@ function MermaidContent({ chart }: { chart: string }) {
         theme: "base",
         fontFamily: t.fontFamily,
         themeCSS: "margin: 1.25rem auto 0;",
-        // Extra rank spacing keeps the labels on antiparallel edges (e.g.
-        // RUNNING<->KILLED) from overlapping; basis curves read more softly.
+        // Extra rank spacing stops antiparallel edge labels (RUNNING<->KILLED)
+        // overlapping.
         flowchart: { curve: "basis", nodeSpacing: 60, rankSpacing: 80 },
         themeVariables: {
           darkMode: resolvedTheme !== "light",
@@ -163,9 +153,8 @@ function MermaidContent({ chart }: { chart: string }) {
         },
       });
 
-      // useId() returns ":r0:"-style values; mermaid feeds the id into an
-      // internal querySelector, where a leading colon is an invalid selector
-      // and throws — so strip them.
+      // useId() yields ":r0:"; mermaid passes the id to querySelector, where a
+      // leading colon throws.
       return mermaid.render(id.replaceAll(":", ""), chart.replaceAll("\\n", "\n"));
     }),
   );

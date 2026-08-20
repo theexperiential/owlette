@@ -1,10 +1,6 @@
 /**
- * Firebase Client Configuration
- *
- * This is the client-side Firebase configuration for the web portal.
- * Uses Firebase JS SDK (not Admin SDK like the Python agent).
- *
- * Environment variables are validated at app startup in layout.tsx (warnings only).
+ * Client-side Firebase config for the web portal (JS SDK, not the Admin SDK the
+ * Python agent uses). Env vars are validated at startup in layout.tsx (warn only).
  */
 
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
@@ -12,8 +8,7 @@ import { getAuth, Auth, connectAuthEmulator } from 'firebase/auth';
 import { getFirestore, Firestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getStorage, FirebaseStorage, connectStorageEmulator } from 'firebase/storage';
 
-// Firebase configuration
-// These values come from Firebase Console > Project Settings > Web App
+// From Firebase Console > Project Settings > Web App.
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || 'placeholder',
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || 'placeholder.firebaseapp.com',
@@ -23,9 +18,7 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || 'placeholder',
 };
 
-// Check if Firebase is configured. In emulator mode (Playwright E2E) the API
-// key doesn't need to be real — emulator accepts anything — so we treat that
-// as configured regardless of the env var value.
+// Emulator mode (Playwright E2E) accepts any API key, so count it as configured.
 const isEmulatorMode =
   typeof window !== 'undefined' &&
   process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
@@ -37,7 +30,7 @@ const isConfigured = typeof window !== 'undefined' && (
   )
 );
 
-// Initialize Firebase (singleton pattern) - only on client side
+// Client-only singletons.
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let db: Firestore | null = null;
@@ -62,9 +55,8 @@ function makeIdempotencyKey(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-// Emulator wiring for Playwright E2E tests. Gated on NEXT_PUBLIC_USE_FIREBASE_EMULATOR
-// so production builds never connect to localhost. Called exactly once per app
-// instance (tracked on window to survive hot-reload re-execution of this module).
+// Emulator wiring for Playwright E2E, gated so production never hits localhost.
+// Once per app instance — tracked on window to survive hot-reload re-execution.
 function maybeConnectEmulators(
   authInstance: Auth,
   dbInstance: Firestore,
@@ -100,27 +92,21 @@ function maybeConnectEmulators(
 }
 
 /**
- * Firebase App Check — attests that calls to Firebase services come from this
- * app rather than a script hitting the API directly.
+ * Firebase App Check — attests that calls come from this app rather than a script
+ * hitting the API directly. It is the only instrument that reaches the
+ * login/register abuse path: `signInWithEmailAndPassword` talks to
+ * `identitytoolkit` straight from the browser, which is why Turnstile guards
+ * /api/users/bootstrap and /api/auth/forgot-password but deliberately NOT login.
  *
- * This is the only instrument that reaches the login/register abuse path.
- * `signInWithEmailAndPassword` and `createUserWithEmailAndPassword` talk to
- * `identitytoolkit` straight from the browser, so our server is not in that
- * request and cannot gate it — which is exactly why Turnstile is on
- * /api/users/bootstrap and /api/auth/forgot-password but deliberately NOT on
- * the login form (see lib/turnstile.server.ts).
+ * ⚠️ ENFORCEMENT IS A CONSOLE ACTION AND IS *NOT* IMPLIED BY THIS CODE —
+ * initializing the SDK only makes clients START SENDING tokens. Enforce
+ * Authentication only: enforcing Cloud Firestore 403s the whole agent fleet,
+ * which calls `firestore.googleapis.com` over REST
+ * (agent/src/firestore_rest_client.py) and cannot produce App Check tokens.
+ * Read docs/runbooks/app-check-rollout.md first.
  *
- * ⚠️  ENFORCEMENT IS A CONSOLE ACTION AND IS *NOT* IMPLIED BY THIS CODE.
- * Initializing the SDK only makes clients START SENDING tokens. Read
- * docs/runbooks/app-check-rollout.md before enabling enforcement on anything.
- * The short version: enforce Authentication only. Enforcing Cloud Firestore
- * takes the entire agent fleet offline — agents call
- * `firestore.googleapis.com` directly over REST
- * (agent/src/firestore_rest_client.py) and cannot produce App Check tokens,
- * so every one of them would start getting 403s.
- *
- * Inert until `NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY` is set, and always
- * skipped against the emulator so local dev and the E2E suite are unaffected.
+ * Inert without `NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY`, and always skipped
+ * against the emulator.
  */
 async function maybeInitAppCheck(firebaseApp: FirebaseApp) {
   const siteKey = process.env.NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY;
@@ -134,9 +120,8 @@ async function maybeInitAppCheck(firebaseApp: FirebaseApp) {
       isTokenAutoRefreshEnabled: true,
     });
   } catch (error) {
-    // Never let attestation setup break app startup. While enforcement is off
-    // a missing token changes nothing; once it is on, the failure surfaces as
-    // rejected Firebase calls, which is the intended signal.
+    // Never let attestation setup break startup. With enforcement off a missing
+    // token changes nothing; with it on, rejected Firebase calls are the signal.
     console.error('[AppCheck] initialization failed:', error);
   }
 }
@@ -158,16 +143,9 @@ if (typeof window !== 'undefined' && !getApps().length && isConfigured) {
 
 export { app, auth, db, storage, isConfigured };
 
-/**
- * Firebase Helper Functions
- */
-
 import { getDoc, doc } from 'firebase/firestore';
 
-/**
- * Get the latest Owlette agent version from installer_metadata collection
- * @returns Latest version metadata or null if not found
- */
+/** Latest agent version from `installer_metadata/latest`, or null if absent. */
 export async function getLatestOwletteVersion(): Promise<{
   version: string;
   downloadUrl: string;
@@ -180,7 +158,6 @@ export async function getLatestOwletteVersion(): Promise<{
   }
 
   try {
-    // Get the latest version from the dedicated 'latest' document
     const latestRef = doc(db, 'installer_metadata', 'latest');
     const latestDoc = await getDoc(latestRef);
 
@@ -205,18 +182,10 @@ export async function getLatestOwletteVersion(): Promise<{
 }
 
 /**
- * Send update_owlette command to a machine
- *
- * ANTI-FRAGILE: Requires checksum (agent will reject commands without it).
- * Always fetches a fresh download URL from installer_metadata to avoid expired tokens.
- *
- * @param siteId Site ID
- * @param machineId Machine ID
- * @param installerUrl URL of the Owlette installer
- * @param deploymentId Optional deployment ID for tracking
- * @param targetVersion Target version string (e.g., "2.1.0")
- * @param checksumSha256 SHA256 checksum of the installer (REQUIRED - agent rejects without it)
- * @returns Command ID
+ * Queue an `update_owlette` command. Checksum and target version are mandatory —
+ * the agent rejects updates without SHA256 verification. Always re-fetches the
+ * download URL from installer_metadata: Storage URLs carry auth tokens that
+ * expire after ~7 days, and an offline machine may only process this days later.
  */
 export async function sendOwletteUpdateCommand(
   siteId: string,
@@ -230,20 +199,15 @@ export async function sendOwletteUpdateCommand(
     throw new Error('Firestore not initialized');
   }
 
-  // ANTI-FRAGILE: Checksum is mandatory - agent will reject updates without it
   if (!checksumSha256) {
     throw new Error('Checksum is required for self-updates. The agent will reject updates without SHA256 verification.');
   }
 
-  // ANTI-FRAGILE: Version is mandatory for proper update tracking
   if (!targetVersion) {
     throw new Error('Target version is required for update tracking.');
   }
 
   try {
-    // ANTI-FRAGILE: Fetch a fresh download URL from installer_metadata to avoid
-    // expired Firebase Storage tokens. URLs contain auth tokens that expire after ~7 days.
-    // If the machine is offline and processes this command later, the original URL may be stale.
     let freshUrl = installerUrl;
     try {
       const latestRef = doc(db, 'installer_metadata', 'latest');

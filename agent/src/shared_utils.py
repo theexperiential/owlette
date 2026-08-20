@@ -17,15 +17,8 @@ from pathlib import Path
 
 # VERSION MANAGEMENT
 def get_app_version():
-    """
-    Read application version from VERSION file.
-    This ensures a single source of truth for version management.
-
-    Returns:
-        str: Version string (e.g., "2.0.55") or "0.0.0" if VERSION file not found
-    """
+    """Version string from agent/VERSION, or "0.0.0" if it can't be read."""
     try:
-        # VERSION file is in agent/ directory (parent of src/)
         version_file = Path(__file__).parent.parent / 'VERSION'
         if version_file.exists():
             return version_file.read_text().strip()
@@ -52,7 +45,7 @@ ACCENT_COLOR = '#00cfd1'      # web --accent-cyan oklch(0.75 0.18 195)
 BORDER_COLOR = '#143c62'      # web --border oklch(0.35 0.08 250)
 HIGHLIGHT_COLOR = '#006566'   # web --accent-cyan-muted oklch(0.45 0.10 195)
 TEXT_COLOR = "white"
-CORNER_RADIUS = 6             # consistent corner radius for all elements
+CORNER_RADIUS = 6
 STATUS_COLORS = {
     'RUNNING':       '#4ade80',  # green-400
     'LAUNCHING':     '#facc15',  # yellow-400
@@ -73,7 +66,6 @@ SERVICE_NAME = 'OwletteService'
 
 
 # OS
-# Initialize a global lock (thread-level)
 json_lock = threading.Lock()
 
 # Cross-process mutex for JSON file access (service + desktop app coordination)
@@ -81,20 +73,12 @@ _json_file_mutex = None
 
 _JSON_MUTEX_NAME = "Global\\OwletteJsonFileMutex"
 
-# Security descriptor for that mutex.
-#
-# The service runs as LocalSystem, and a kernel object it creates with a NULL
-# descriptor inherits that token's default DACL — LocalSystem and Administrators
-# only. Every other process then fails BOTH CreateMutex and OpenMutex with
-# ACCESS_DENIED, so _CrossProcessLock silently degraded to "no lock at all"
-# everywhere except inside the service itself; the legacy GUI never once held it
-# (measured 2026-08-12). Creating the object with an explicit descriptor is the
-# only fix, because whoever creates it sets the DACL for its whole lifetime.
-#
-# Authenticated Users get exactly SYNCHRONIZE (0x00100000) | MUTEX_MODIFY_STATE
-# (0x0001): enough to wait on the mutex and release it, and nothing else —
-# notably not WRITE_DAC, so a user process cannot re-permission the object.
-# LocalSystem and Administrators keep MUTEX_ALL_ACCESS (0x001F0001).
+# Explicit DACL required. A LocalSystem-created object with a NULL descriptor is
+# reachable by SYSTEM/Administrators only, so everyone else got ACCESS_DENIED on
+# both CreateMutex and OpenMutex and _CrossProcessLock silently became a no-op
+# (measured 2026-08-12). Whoever creates the object sets its DACL for life.
+# Authenticated Users get SYNCHRONIZE|MUTEX_MODIFY_STATE and nothing more — no
+# WRITE_DAC, so a user process cannot re-permission it.
 _JSON_MUTEX_SDDL = "D:(A;;0x1F0001;;;SY)(A;;0x1F0001;;;BA)(A;;0x100001;;;AU)"
 
 # The two rights the descriptor above hands to ordinary users.
@@ -104,14 +88,11 @@ _MUTEX_OPEN_ACCESS = 0x00100000 | 0x0001  # SYNCHRONIZE | MUTEX_MODIFY_STATE
 def _get_json_file_mutex():
     """Get or create the Windows named mutex for cross-process JSON file locking.
 
-    Creation carries an explicit descriptor (see _JSON_MUTEX_SDDL) so that
-    whichever process wins the race — normally the service — leaves the object
-    reachable by the desktop app and by any other agent process.
-
-    CreateMutex always asks for MUTEX_ALL_ACCESS, which that descriptor
-    deliberately withholds from ordinary users, so a non-elevated process falls
-    through to OpenMutex with just the rights it needs. The desktop host does
-    exactly the same thing (desktop/src-tauri/src/json_io.rs::json_mutex).
+    Created with an explicit descriptor (_JSON_MUTEX_SDDL) so whichever process
+    wins the race leaves the object reachable by everyone else. CreateMutex asks
+    for MUTEX_ALL_ACCESS, which that descriptor withholds from ordinary users, so
+    a non-elevated process falls through to OpenMutex. The desktop host does the
+    same (desktop/src-tauri/src/json_io.rs::json_mutex).
     """
     global _json_file_mutex
     if _json_file_mutex is None:
@@ -133,9 +114,8 @@ def _get_json_file_mutex():
                     _MUTEX_OPEN_ACCESS, False, _JSON_MUTEX_NAME
                 )
             except Exception as open_error:
-                # Both paths refused: proceed unlocked. The writes are atomic
-                # (temp file + os.replace), so the worst case is a lost update,
-                # never a torn file.
+                # Both refused: proceed unlocked. Writes are atomic (temp file
+                # + os.replace), so worst case is a lost update, not a torn file.
                 logging.debug(
                     f"Cross-process JSON mutex unavailable "
                     f"(create: {create_error}; open: {open_error}) — proceeding unlocked"
@@ -168,15 +148,13 @@ class _CrossProcessLock:
             except Exception:
                 pass
 
-# Return the hostname of the machine where the script is running
 def get_hostname():
     return socket.gethostname()
 
 def get_machine_timezone():
-    """Return the machine's timezone as the Windows registry name (e.g.
-    "Pacific Standard Time"). Used for diagnostics and back-compat — the
-    web dashboard does not consume this format directly. See
-    get_machine_timezone_iana() for the dashboard-facing IANA value.
+    """Machine timezone as the Windows registry name (e.g. "Pacific Standard
+    Time"). Diagnostics/back-compat only — the dashboard consumes the IANA form
+    from get_machine_timezone_iana().
     """
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
@@ -187,20 +165,11 @@ def get_machine_timezone():
 
 
 def get_machine_timezone_iana():
-    """Return the machine's timezone as an IANA name (e.g. "America/Los_Angeles").
+    """Machine timezone as an IANA name (e.g. "America/Los_Angeles").
 
-    The dashboard needs this format because:
-      - Python's `zoneinfo.ZoneInfo()` requires IANA names
-      - JavaScript's `Intl.DateTimeFormat({ timeZone: ... })` requires IANA names
-      - The Windows registry value (e.g. "Pacific Standard Time") is not
-        compatible with either standard library
-
-    Uses the `tzlocal` package which queries Windows in a more portable way
-    and maps to the CLDR Windows-to-IANA conversion table internally.
-
-    Returns None on any failure — the dashboard handles the missing field
-    gracefully by falling back to other timezone sources or labelling as
-    "unknown".
+    zoneinfo.ZoneInfo() and Intl.DateTimeFormat({timeZone}) both require IANA
+    names; the Windows registry value works with neither. tzlocal maps via the
+    CLDR Windows-to-IANA table. None on failure — the dashboard degrades.
     """
     try:
         import tzlocal
@@ -210,19 +179,10 @@ def get_machine_timezone_iana():
         return None
 
 def get_cpu_name():
+    """CPU model name (e.g. "Intel(R) Core(TM) i9-9900X CPU @ 3.50GHz"), or
+    "Unknown CPU" if every probe fails. Fastest/most reliable source first.
     """
-    Get CPU model name with multi-layered fallback for maximum reliability.
-
-    Tries methods in order of speed and reliability:
-    1. Windows Registry (fastest, most reliable)
-    2. PowerShell Get-CimInstance (Windows 11 compatible, modern)
-    3. platform.processor() (last resort, incomplete but always works)
-
-    Returns:
-        str: CPU model name (e.g., "Intel(R) Core(TM) i9-9900X CPU @ 3.50GHz")
-             or "Unknown CPU" if all methods fail
-    """
-    # Method 1: Windows Registry (BEST - fast, reliable, no admin rights)
+    # 1. Registry — fast, no admin rights
     try:
         key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
                             r'HARDWARE\DESCRIPTION\System\CentralProcessor\0')
@@ -233,7 +193,7 @@ def get_cpu_name():
     except Exception as e:
         logging.debug(f"Registry CPU detection failed: {e}")
 
-    # Method 2: PowerShell Get-CimInstance (GOOD - Windows 11 compatible)
+    # 2. PowerShell CIM — Windows 11 compatible
     try:
         result = subprocess.run(
             ['powershell', '-NoProfile', '-Command',
@@ -250,7 +210,7 @@ def get_cpu_name():
     except Exception as e:
         logging.debug(f"PowerShell CPU detection failed: {e}")
 
-    # Method 3: platform.processor() (LAST RESORT - incomplete but always works)
+    # 3. platform.processor() — incomplete but always available
     try:
         cpu_name = platform.processor()
         if cpu_name:
@@ -258,17 +218,13 @@ def get_cpu_name():
     except Exception as e:
         logging.debug(f"platform.processor() failed: {e}")
 
-    # All methods failed
     logging.warning("All CPU detection methods failed")
     return "Unknown CPU"
 
-# WinTmp read suppression. After a WinTmp read TIMES OUT (a blocked WinRing0
-# driver load that hangs rather than fails), suppress further WinTmp reads for a
-# cooldown. The watchdog returns promptly but cannot kill the hung worker thread,
-# so without this latch a *persistent* hang (e.g. an enforcing vulnerable-driver
-# blocklist) would leak one worker thread on every metrics tick — unbounded on a
-# 24/7 install. CPU + GPU share the latch (same underlying driver); GPU callers
-# fall through to pynvml during the cooldown. Monotonic clock so it's immune to
+# WinTmp read suppression. A timed-out read (hung WinRing0 driver load) leaks its
+# worker thread — the watchdog can't kill it — so a persistent hang would leak one
+# per metrics tick. Latch a cooldown after any timeout. CPU + GPU share the latch
+# (same driver); GPU falls through to pynvml meanwhile. Monotonic: immune to
 # wall-clock changes.
 _WINTMP_TIMEOUT_COOLDOWN_S = 600
 _wintmp_suppressed_until = 0.0
@@ -277,21 +233,12 @@ _wintmp_suppressed_until = 0.0
 def _wintmp_read_with_timeout(label: str, fn, timeout: float = 3.0):
     """Run a WinTmp temperature read under a watchdog.
 
-    WinTmp loads the WinRing0 ring-0 driver (`python.sys` / `pythonw.sys`) on
-    first use. A plain try/except catches a *failed* driver load (it raises) but
-    NOT a *hung* one — and if a future Windows vulnerable-driver-blocklist
-    enforcement ever blocks the load mid-call instead of failing fast, the call
-    could block indefinitely. These reads run on the startup metrics call
-    (firebase_client.start -> get_system_metrics) and the heartbeat thread, so an
-    unbounded hang could stall service startup or freeze the heartbeat. Bound it
-    so a hung driver load degrades to None like every other slow Windows call
-    here. Mirrors `_wmi_logical_disk_with_timeout` and hardware_profile's
-    `_disk_usage_with_timeout`.
-
-    A timed-out call leaks its worker thread (a hung native call isn't killable);
-    to keep that bounded on a persistent hang, a timeout latches a cooldown
-    (`_WINTMP_TIMEOUT_COOLDOWN_S`) during which we return the default immediately
-    without spawning another worker.
+    WinTmp loads the WinRing0 ring-0 driver on first use. try/except catches a
+    *failed* load but not a *hung* one, and these reads sit on service startup
+    (firebase_client.start -> get_system_metrics) and the heartbeat thread. Bound
+    it so a hung load degrades to None. Mirrors _wmi_logical_disk_with_timeout.
+    A timeout latches _WINTMP_TIMEOUT_COOLDOWN_S so a persistent hang doesn't
+    spawn a leaked worker per call.
     """
     global _wintmp_suppressed_until
     now = time.monotonic()
@@ -313,33 +260,23 @@ def _wintmp_read_with_timeout(label: str, fn, timeout: float = 3.0):
             logging.debug(f"[TEMP] {label} error: {e}")
             return None
     finally:
-        # shutdown(wait=False) so a hung worker can't block our exit — the
-        # default `with`-shutdown(wait=True) would deadlock on the very hang
-        # this watchdog exists to survive (see _wmi_logical_disk_with_timeout).
+        # wait=False: the default `with`-shutdown(wait=True) would deadlock on
+        # the very hang this watchdog exists to survive.
         pool.shutdown(wait=False, cancel_futures=True)
 
 
 def get_cpu_temperature():
-    """
-    Get CPU temperature in Celsius using LibreHardwareMonitor (via WinTmp).
+    """CPU temperature in Celsius via LibreHardwareMonitor (WinTmp), or None.
 
-    Returns:
-        float: CPU temperature in Celsius, or None if unavailable
-
-    Notes:
-        - Uses LibreHardwareMonitor driver via WinTmp wrapper
-        - Requires administrator privileges (satisfied by Windows service)
-        - Returns None on unsupported hardware without crashing
-        - Non-critical feature - system continues normally if unavailable
-        - The WinTmp call is bounded by a watchdog (_wintmp_read_with_timeout)
-          so a hung driver load can't stall startup or the heartbeat
+    Needs admin (the service has it); unsupported hardware yields None. Bounded
+    by _wintmp_read_with_timeout so a hung driver load can't stall startup or
+    the heartbeat.
     """
     try:
         import WinTmp
 
         cpu_temp = _wintmp_read_with_timeout("CPU_Temp", WinTmp.CPU_Temp)
 
-        # Validate reasonable temperature range (0-150°C)
         if cpu_temp is not None and 0 < cpu_temp < 150:
             return float(cpu_temp)
         return None
@@ -349,33 +286,20 @@ def get_cpu_temperature():
         return None
 
     except Exception as e:
-        # Broad boundary: a non-ImportError WinTmp/CLR import or a validation/
-        # conversion error must still degrade to None (callers like
-        # hardware_profile.collect_dynamic_metrics read this unguarded).
+        # Broad boundary: callers (hardware_profile.collect_dynamic_metrics)
+        # read this unguarded, so every failure must degrade to None.
         logging.debug(f"[TEMP] WinTmp error: {e}")
         return None
 
 def get_gpu_temperatures():
-    """
-    Get GPU temperatures in Celsius with fallback chain.
+    """GPU temperatures in Celsius: [{'index': 0, 'temperature': 72.0}], or [].
 
-    Tries multiple methods:
-    1. WinTmp (supports NVIDIA, AMD, Intel)
-    2. pynvml (NVIDIA only - official NVML library)
-
-    Returns:
-        list: List of dicts with GPU index and temperature, or empty list if unavailable
-              Example: [{'index': 0, 'temperature': 72.0}]
-
-    Notes:
-        - Always returns Celsius (storage standard)
-        - Requires administrator privileges for WinTmp (satisfied by Windows service)
-        - pynvml works with standard user permissions
-        - Non-critical - returns empty list on failure without crashing
+    WinTmp (NVIDIA/AMD/Intel, needs admin) then pynvml (NVIDIA only, works
+    unprivileged). Always Celsius — the storage standard.
     """
     temps = []
 
-    # Method 1: Try WinTmp (works for NVIDIA, AMD, Intel)
+    # 1. WinTmp — NVIDIA, AMD, Intel
     try:
         import WinTmp
         all_temps = _wintmp_read_with_timeout("GPU_Temps", WinTmp.GPU_Temps)
@@ -395,7 +319,7 @@ def get_gpu_temperatures():
     except Exception:
         pass
 
-    # Method 2: Fallback to pynvml for NVIDIA GPUs
+    # 2. pynvml — NVIDIA only
     try:
         from pynvml import nvmlInit, nvmlDeviceGetCount, nvmlDeviceGetHandleByIndex, nvmlDeviceGetTemperature, nvmlShutdown, NVML_TEMPERATURE_GPU, NVMLError
 
@@ -407,7 +331,6 @@ def get_gpu_temperatures():
                 handle = nvmlDeviceGetHandleByIndex(i)
                 temp = nvmlDeviceGetTemperature(handle, NVML_TEMPERATURE_GPU)
 
-                # Validate reasonable temperature range (0-150°C)
                 if temp is not None and 0 < temp < 150:
                     temps.append({
                         'index': i,
@@ -426,7 +349,6 @@ def get_gpu_temperatures():
     except Exception as e:
         logging.warning(f"[TEMP] pynvml GPU temp failed: {e}")
 
-    # All methods failed
     return []
 
 
@@ -436,25 +358,11 @@ _prev_net_time: float = 0.0
 
 
 def get_network_metrics():
-    """
-    Get per-NIC network throughput metrics.
+    """Per-NIC throughput, as deltas between consecutive calls. First call
+    returns zeros — no baseline yet.
 
-    Computes TX/RX bytes/sec by calculating deltas between consecutive calls.
-    First call returns zeros (no previous baseline to compare against).
-
-    Returns:
-        dict: {
-            'interfaces': {
-                'Ethernet': {
-                    'tx_bps': int,       # TX bytes per second
-                    'rx_bps': int,       # RX bytes per second
-                    'tx_util': float,    # TX as % of link speed (0-100)
-                    'rx_util': float,    # RX as % of link speed (0-100)
-                    'link_speed': int,   # NIC link speed in Mbps
-                },
-                ...
-            }
-        }
+    Returns {'interfaces': {name: {tx_bps, rx_bps (bytes/sec), tx_util, rx_util
+    (% of link speed, 0-100), link_speed (Mbps)}}}.
     """
     global _prev_net_counters, _prev_net_time
 
@@ -462,18 +370,17 @@ def get_network_metrics():
     now = time.time()
 
     try:
-        # Get current counters and NIC stats
         counters = psutil.net_io_counters(pernic=True)
         nic_stats = psutil.net_if_stats()
 
         if not _prev_net_counters or _prev_net_time == 0.0:
-            # First call — store baseline, return zeros but include active NICs
+            # First call — baseline only
             _prev_net_counters = {
                 name: {'sent': c.bytes_sent, 'recv': c.bytes_recv}
                 for name, c in counters.items()
             }
             _prev_net_time = now
-            # Populate interfaces with zeros so the web never sees an empty result
+            # Zeros rather than {} so the web never sees an empty result
             for name in counters:
                 stats = nic_stats.get(name)
                 if stats and stats.isup and stats.speed > 0 and 'loopback' not in name.lower():
@@ -489,12 +396,10 @@ def get_network_metrics():
             return result
 
         for name, c in counters.items():
-            # Skip interfaces that are down
             stats = nic_stats.get(name)
             if not stats or not stats.isup:
                 continue
 
-            # Skip loopback-like interfaces (no link speed or name contains "Loopback")
             if stats.speed == 0 or 'loopback' in name.lower():
                 continue
 
@@ -502,14 +407,13 @@ def get_network_metrics():
             if not prev:
                 continue
 
-            # Compute deltas (clamp negative to 0 for counter resets)
+            # Clamp negatives — counter reset
             tx_delta = max(0, c.bytes_sent - prev['sent'])
             rx_delta = max(0, c.bytes_recv - prev['recv'])
 
             tx_bps = int(tx_delta / elapsed)
             rx_bps = int(rx_delta / elapsed)
 
-            # Compute utilization % relative to link speed
             link_speed_mbps = stats.speed  # Mbps
             link_speed_bps = link_speed_mbps * 1_000_000 / 8  # Convert to bytes/sec
 
@@ -528,7 +432,6 @@ def get_network_metrics():
                 'link_speed': link_speed_mbps,
             }
 
-        # Update stored state for next call
         _prev_net_counters = {
             name: {'sent': c.bytes_sent, 'recv': c.bytes_recv}
             for name, c in counters.items()
@@ -544,33 +447,18 @@ def get_network_metrics():
 def _wmi_logical_disk_with_timeout(timeout: float = 10.0):
     """Query Win32_PerfFormattedData_PerfDisk_LogicalDisk under a watchdog.
 
-    Each call spawns a fresh worker thread that initializes its own COM
-    apartment, instantiates wmi.WMI(), runs the query, and extracts the
-    fields we care about INSIDE the worker thread. Returns a list of plain
-    Python dicts — never COM proxies — so the caller can read fields
-    safely without re-entering COM apartment marshalling rules.
+    Per-call worker, not a persistent one: the `wmi` package binds proxies to
+    the apartment that created them, so a cached proxy raises RPC_E_WRONG_THREAD
+    (0x8001010E) on the second query. ~350ms is fine at the 120s idle cadence.
 
-    Per-call (rather than persistent) because the python `wmi` package binds
-    its proxy interfaces to the apartment that created them — reusing a
-    cached proxy from a long-lived worker raises RPC_E_WRONG_THREAD
-    (0x8001010E, "interface marshalled for a different thread") on the
-    second and subsequent queries. Per-call avoids that entirely; the
-    ~350ms cost is fine since the metrics loop runs every 120s in idle.
+    Fields are extracted in-worker and returned as plain dicts — reading a COM
+    proxy after its apartment is torn down is a dangling pointer, segfault on
+    next attribute access.
 
-    Returning plain dicts (not COM proxies) avoids a second related crash:
-    if the caller does ANOTHER WMI query before reading attributes off the
-    rows, the worker thread's COM apartment is already torn down and the
-    proxies become dangling pointers — segfault on next attribute access.
-    Extracting in-worker keeps the proxy lifetime contained.
-
-    The 10s timeout is sized to capture the perflib LogicalDisk stalls that
-    occur when the BITS service flips state during Windows Update / Delivery
-    Optimization polling. Empirical observation: 2s and 5s budgets both
-    skipped these stalls (~3-4 timeouts/hour, perfectly spaced ~16 min
-    apart matching SCM event 7040 BITS demand↔auto cycles); the perflib
-    provider lock during a BITS state change consistently exceeds 5s. The
-    metrics loop runs in its own thread (not the main service loop) so a
-    10s WMI call doesn't stall anything else.
+    10s timeout sized for perflib LogicalDisk stalls when BITS flips state during
+    Windows Update / Delivery Optimization: 2s and 5s both timed out ~3-4x/hour,
+    spaced ~16 min apart matching SCM event 7040. The metrics loop has its own
+    thread, so a 10s call stalls nothing else.
     """
     def _query():
         try:
@@ -592,10 +480,9 @@ def _wmi_logical_disk_with_timeout(timeout: float = 10.0):
             for row in c.Win32_PerfFormattedData_PerfDisk_LogicalDisk()
         ]
 
-    # Manual lifecycle (not `with`) so we can shutdown(wait=False) on timeout.
-    # The default `with` exit calls shutdown(wait=True), which would block on a
-    # hung WMI worker thread — defeating the watchdog. Leaking a thread per
-    # failed tick is acceptable; stalling the metrics loop is not.
+    # Manual lifecycle (not `with`): shutdown(wait=True) would block on a hung
+    # WMI worker and defeat the watchdog. A leaked thread per failed tick is
+    # acceptable; stalling the metrics loop is not.
     pool = ThreadPoolExecutor(max_workers=1)
     try:
         future = pool.submit(_query)
@@ -611,39 +498,27 @@ def _wmi_logical_disk_with_timeout(timeout: float = 10.0):
         pool.shutdown(wait=False, cancel_futures=True)
 
 
-# --- Disk IO max-throughput estimation (for percentage scaling on the chart) ---
-#
-# `metrics.diskio[*].maxBps` is the denominator the web uses to plot read/write
-# as a 0-100% bandwidth utilization line. Computed as max(hardware_estimate,
-# observed_peak):
-#
-#   - Hardware estimate is detected once at first call by querying
-#     MSFT_PhysicalDisk for each volume's BusType + MediaType, then mapping to
-#     a conservative manufacturer-class throughput (NVMe ≈ 3.5 GB/s, SATA SSD
-#     ≈ 550 MB/s, etc).
-#   - Observed peak is ratcheted upward in process memory whenever a sample
-#     exceeds the current max. Self-corrects if the hardware estimate is
-#     conservative; preserves a sensible cold-start value when it's not.
-#
-# Both halves cached per volume id (drive letter). Cleared on service restart;
-# warm-up is one WMI tick.
+# Disk IO max-throughput estimation. `metrics.diskio[*].maxBps` is the
+# denominator the web plots read/write against as 0-100% utilization, computed as
+# max(hardware_estimate, observed_peak): the hardware estimate comes once from
+# MSFT_PhysicalDisk BusType+MediaType; the peak ratchets upward in memory so a
+# conservative estimate self-corrects. Cached per drive letter, cleared on
+# service restart (warm-up is one WMI tick).
 _disk_max_bps_cache: dict = {}        # volume_id -> int (bytes/sec)
 _disk_max_bps_hw_resolved: bool = False
 _disk_max_bps_lock = threading.Lock()
 
-# Conservative class baselines. Real-world peaks vary widely; values picked
-# to be "the chart shows ~30-60% during a normal heavy workload" rather than
-# best-case marketing numbers. Ratchet handles the drives that actually go
-# faster.
+# Conservative class baselines — tuned so the chart reads ~30-60% under a normal
+# heavy workload, not best-case marketing numbers. The ratchet covers faster drives.
 _DISK_MAX_BPS_BY_CLASS = {
-    ('NVMe',  'SSD'):      3_500 * 1024 * 1024,   # NVMe SSD: ~3.5 GB/s
+    ('NVMe',  'SSD'):      3_500 * 1024 * 1024,   # ~3.5 GB/s
     ('NVMe',  'Unknown'):  3_500 * 1024 * 1024,
-    ('SATA',  'SSD'):        550 * 1024 * 1024,   # SATA SSD: ~550 MB/s
-    ('SAS',   'SSD'):       1000 * 1024 * 1024,   # SAS SSD: ~1 GB/s
-    ('SATA',  'HDD'):        150 * 1024 * 1024,   # 7200rpm HDD: ~150 MB/s
-    ('SAS',   'HDD'):        200 * 1024 * 1024,   # SAS HDD: ~200 MB/s
-    ('USB',   'SSD'):        400 * 1024 * 1024,   # USB SSD: USB 3.2-ish
-    ('USB',   'HDD'):        100 * 1024 * 1024,   # USB HDD: USB 3.0-ish
+    ('SATA',  'SSD'):        550 * 1024 * 1024,   # ~550 MB/s
+    ('SAS',   'SSD'):       1000 * 1024 * 1024,   # ~1 GB/s
+    ('SATA',  'HDD'):        150 * 1024 * 1024,   # 7200rpm, ~150 MB/s
+    ('SAS',   'HDD'):        200 * 1024 * 1024,   # ~200 MB/s
+    ('USB',   'SSD'):        400 * 1024 * 1024,   # USB 3.2-ish
+    ('USB',   'HDD'):        100 * 1024 * 1024,   # USB 3.0-ish
     ('USB',   'Unknown'):    100 * 1024 * 1024,
 }
 _DISK_MAX_BPS_FALLBACK = 200 * 1024 * 1024  # 200 MB/s — generic spinning-disk-class default
@@ -658,12 +533,10 @@ _WMI_MEDIA_TYPE = {0: 'Unknown', 3: 'HDD', 4: 'SSD', 5: 'SCM'}
 
 
 def _resolve_disk_hardware_max_bps() -> dict:
-    """Query MSFT_PhysicalDisk for each volume's bus + media type, return {drive_letter: max_bytes_per_sec}.
+    """{drive_letter: max_bytes_per_sec} from MSFT_PhysicalDisk bus + media type.
 
-    Uses the Storage WMI namespace (root\\Microsoft\\Windows\\Storage) and walks
-    DiskToPartition + PartitionToVolume associations to map physical disks back
-    to drive letters. Returns {} silently on any failure — the caller falls back
-    to the observed-peak ratchet.
+    Walks root\\Microsoft\\Windows\\Storage disk -> partition -> volume to reach
+    drive letters. {} on any failure — the caller falls back to the ratchet.
     """
     def _query():
         try:
@@ -678,7 +551,6 @@ def _resolve_disk_hardware_max_bps() -> dict:
             disks = c.MSFT_PhysicalDisk()
         except Exception:
             return {}
-        # Map: DeviceId -> bus/media class
         disk_class = {}
         for d in disks:
             bus = _WMI_BUS_TYPE.get(int(getattr(d, 'BusType', 0) or 0), 'Unknown')
@@ -719,10 +591,10 @@ def _resolve_disk_hardware_max_bps() -> dict:
 
 
 def _disk_max_bps_for(volume_id: str, observed_bps: int) -> int:
-    """Return the larger of (hardware estimate for this volume) and (all-time observed peak).
+    """max(hardware estimate for this volume, all-time observed peak).
 
-    First call resolves the hardware estimate map (one WMI query, ~300ms).
-    Subsequent calls hit the in-memory cache + ratchet only.
+    First call resolves the hardware map (one WMI query, ~300ms); after that it
+    is cache + ratchet only.
     """
     global _disk_max_bps_hw_resolved
     with _disk_max_bps_lock:
@@ -732,53 +604,31 @@ def _disk_max_bps_for(volume_id: str, observed_bps: int) -> int:
                 # Only seed if no observed peak is already higher.
                 _disk_max_bps_cache[vol] = max(_disk_max_bps_cache.get(vol, 0), mb)
             _disk_max_bps_hw_resolved = True
-        # Ratchet: if a sample exceeds our current max, raise the bar.
+        # Ratchet upward on a new peak.
         cached = _disk_max_bps_cache.get(volume_id, 0)
         if observed_bps > cached:
             cached = observed_bps
             _disk_max_bps_cache[volume_id] = cached
-        # Final floor — never report 0 as max (would cause division by zero downstream).
+        # Floor: a 0 max would divide-by-zero downstream.
         return max(cached, _DISK_MAX_BPS_FALLBACK)
 
 
 def _is_real_drive_letter(name: str) -> bool:
-    """True for `C:`, `L:`, etc. — single-letter colon volumes that map to user-visible drive letters.
-
-    Excludes WMI's `_Total`, internal `HarddiskVolumeN` raw partitions, and any
-    other oddly-shaped Name fields. Drive letters are always 2 chars: A-Z + ':'.
+    """True for `C:`, `L:` — excludes WMI's `_Total` and `HarddiskVolumeN` raw
+    partitions, which have no user-visible mapping.
     """
     return len(name) == 2 and name[0].isalpha() and name[1] == ':'
 
 
 def get_disk_io_metrics():
-    """
-    Get per-logical-volume disk IO metrics via WMI.
+    """Per-drive-letter disk IO via Win32_PerfFormattedData_PerfDisk_LogicalDisk.
 
-    Uses Win32_PerfFormattedData_PerfDisk_LogicalDisk, which returns pre-computed
-    rates keyed by volume (e.g., 'C:', 'L:'). WMI perf counters need two internal
-    samples to compute rates, so the first call after boot may return zeros.
+    WMI perf counters need two internal samples to compute rates, so the first
+    call after boot may return zeros. Only real drive letters are emitted.
 
-    Only volumes with real drive letters are emitted — WMI's internal
-    `HarddiskVolumeN` raw-partition entries are filtered out as they have no
-    user-visible mapping in the dashboard.
-
-    Each entry includes `maxBps` — the denominator the web uses to plot read/write
-    as a 0-100% bandwidth utilization line. See `_disk_max_bps_for()` for the
-    hardware-estimate + observed-peak ratchet logic.
-
-    Returns:
-        dict: {
-            '<volume_id>': {
-                'readBps': int,      # Read bytes per second
-                'writeBps': int,     # Write bytes per second
-                'readIops': int,     # Read operations per second
-                'writeIops': int,    # Write operations per second
-                'busyPct': float,    # 100 - %IdleTime, clamped to [0, 100]
-                'maxBps': int,       # Hardware-class estimate, ratcheted up by observed peak
-            },
-            ...
-        }
-        Returns {} on WMI timeout or failure.
+    Returns {'<volume_id>': {readBps, writeBps (bytes/sec), readIops, writeIops
+    (ops/sec), busyPct (100 - %IdleTime, clamped 0-100), maxBps (see
+    _disk_max_bps_for)}}, or {} on WMI timeout/failure.
     """
     try:
         rows = _wmi_logical_disk_with_timeout()
@@ -914,94 +764,58 @@ def get_network_quality() -> dict:
 
 
 def get_path(filename=None):
+    """Path relative to this script (install dir) — icons, scripts, executables.
+    For application data (config, logs, cache) use get_data_path().
     """
-    Get path relative to the currently executing script (installation directory).
-    Use this for accessing icons, scripts, and executables.
-
-    For application data (config, logs, cache), use get_data_path() instead.
-    """
-    # Get the directory of the currently executing script
     path = os.path.dirname(os.path.realpath(__file__))
 
-    # Build the full path to the file name
     if filename is not None:
         path = os.path.join(path, filename)
 
-    # Normalize the path
     path = os.path.normpath(path)
 
     return path
 
 def get_python_exe_path():
+    """Bundled interpreter: pythonw.exe if present (no console window), else
+    python.exe. Raises FileNotFoundError if neither exists.
     """
-    Get path to the bundled Python interpreter executable.
-    Returns pythonw.exe (GUI, no console) if available, otherwise python.exe.
-
-    Returns:
-        str: Full path to pythonw.exe or python.exe
-
-    Raises:
-        FileNotFoundError: If neither pythonw.exe nor python.exe can be found
-    """
-    # Get installation root (C:\ProgramData\Owlette or wherever installed)
-    # src is at <install>\agent\src, so go up 2 levels to get <install>
+    # src lives at <install>\agent\src — two levels up is the install root
     install_root = os.path.dirname(os.path.dirname(get_path()))
 
-    # Try pythonw.exe first (for GUI scripts, no console window)
     pythonw_path = os.path.join(install_root, 'python', 'pythonw.exe')
     if os.path.exists(pythonw_path):
         return pythonw_path
 
-    # Fall back to python.exe
     python_path = os.path.join(install_root, 'python', 'python.exe')
     if os.path.exists(python_path):
         return python_path
 
-    # If neither found, raise error
     raise FileNotFoundError(
         f"Python interpreter not found. Searched in: {os.path.join(install_root, 'python')}"
     )
 
 def get_data_path(filename=None):
+    """Absolute path under %PROGRAMDATA%\Owlette — where a Windows service is
+    supposed to keep runtime data.
+
+    get_data_path() -> C:\ProgramData\Owlette
+    get_data_path('config/config.json') -> C:\ProgramData\Owlette\config\config.json
     """
-    Get path in ProgramData for Owlette application data.
-    This is the proper location for Windows services to store runtime data.
-
-    Args:
-        filename: Optional relative path within ProgramData\Owlette\
-
-    Returns:
-        Absolute path to ProgramData\Owlette\ or specified file within it
-
-    Examples:
-        get_data_path() -> C:\ProgramData\Owlette
-        get_data_path('config/config.json') -> C:\ProgramData\Owlette\config\config.json
-    """
-    # Get ProgramData directory (typically C:\ProgramData)
     program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
-
-    # Build Owlette data directory
     owlette_data = os.path.join(program_data, 'Owlette')
 
-    # Build full path if filename provided
     if filename is not None:
         path = os.path.join(owlette_data, filename)
     else:
         path = owlette_data
 
-    # Normalize the path
     path = os.path.normpath(path)
 
     return path
 
 def ensure_data_directories():
-    """
-    Ensure all required ProgramData directories exist.
-    Creates directories if they don't exist.
-
-    Returns:
-        bool: True if all directories exist or were created successfully
-    """
+    """Create every required ProgramData directory. True if all exist after."""
     directories = [
         get_data_path(),
         get_data_path('config'),
@@ -1022,12 +836,7 @@ def ensure_data_directories():
         return False
 
 def get_environment():
-    """
-    Get the current environment setting from config.
-
-    Returns:
-        str: 'production' or 'development' (defaults to 'production')
-    """
+    """'production' or 'development' from config; 'production' by default."""
     try:
         config = read_config()
         if config:
@@ -1037,16 +846,7 @@ def get_environment():
     return 'production'
 
 def get_api_base_url(environment=None):
-    """
-    Get API base URL based on environment.
-
-    Args:
-        environment: Optional environment override ('production' or 'development')
-                    If None, reads from config
-
-    Returns:
-        str: API base URL (e.g., 'https://owlette.app/api')
-    """
+    """API base URL, e.g. 'https://owlette.app/api'. environment defaults to config."""
     if environment is None:
         environment = get_environment()
 
@@ -1056,16 +856,7 @@ def get_api_base_url(environment=None):
         return 'https://owlette.app/api'
 
 def get_setup_url(environment=None):
-    """
-    Get setup URL based on environment.
-
-    Args:
-        environment: Optional environment override ('production' or 'development')
-                    If None, reads from config
-
-    Returns:
-        str: Setup URL (e.g., 'https://owlette.app/setup')
-    """
+    """Setup URL, e.g. 'https://owlette.app/setup'. environment defaults to config."""
     if environment is None:
         environment = get_environment()
 
@@ -1075,16 +866,7 @@ def get_setup_url(environment=None):
         return 'https://owlette.app/setup'
 
 def get_project_id(environment=None):
-    """
-    Get Firebase project ID based on environment.
-
-    Args:
-        environment: Optional environment override ('production' or 'development')
-                    If None, reads from config
-
-    Returns:
-        str: Firebase project ID
-    """
+    """Firebase project ID. environment defaults to config."""
     if environment is None:
         environment = get_environment()
 
@@ -1093,11 +875,9 @@ def get_project_id(environment=None):
     else:
         return 'owlette-prod-90a12'
 
-# TTL cache for is_script_running(). psutil.process_iter() is one of the
-# slowest psutil calls on Windows (200-500ms cmdline parse across all procs);
-# the metrics thread hits it every 5-120s just to pick a heartbeat cadence.
-# Cache for 10s — GUI can't appear/disappear faster than the 5s main loop
-# and the metrics interval selection responds within one cycle either way.
+# TTL cache: psutil.process_iter() costs 200-500ms on Windows (cmdline parse
+# across all procs) and the metrics thread only needs it to pick a heartbeat
+# cadence. 10s is under the 5s main-loop granularity that matters.
 _script_running_cache = {}  # script_name -> (result, expires_at_monotonic)
 _SCRIPT_RUNNING_TTL = 10.0
 
@@ -1122,18 +902,15 @@ def _is_script_running_uncached(script_name):
             continue
     return False
 
-# PATHS - Now using ProgramData for proper Windows service data storage
+# PATHS
 CONFIG_PATH = get_data_path('config/config.json')
 RESULT_FILE_PATH = get_data_path('tmp/app_states.json')
 
-# DESKTOP APP (Tauri) — replaces owlette_tray.py and owlette_gui.py.
-#
-# The installer drops it at {app}\app\owlette-desktop.exe, alongside the agent
-# and the bundled interpreter. Two pid markers tell the service what the
-# operator has open:
-#   tmp/tray.pid — written for the life of the process (tray icon present)
-#   tmp/gui.pid  — written only while the main window is on screen
-# See desktop/src-tauri/src/pid_file.rs for the writer.
+# DESKTOP APP (Tauri) — replaces owlette_tray.py and owlette_gui.py. Installed at
+# {app}\app\owlette-desktop.exe. Two pid markers tell the service what the
+# operator has open (writer: desktop/src-tauri/src/pid_file.rs):
+#   tmp/tray.pid — whole process lifetime (tray icon present)
+#   tmp/gui.pid  — only while the main window is on screen
 DESKTOP_EXE_NAME = 'owlette-desktop.exe'
 DESKTOP_TRAY_ARG = '--tray'
 DESKTOP_RESTART_PROMPT_ARG = '--restart-prompt'
@@ -1142,11 +919,8 @@ GUI_PID_PATH = get_data_path('tmp/gui.pid')
 
 
 def get_desktop_exe_path():
-    """Full path to the desktop app, or None when it is not installed.
-
-    Resolved from the install root the same way get_python_exe_path() does
-    (src lives at <install>\\agent\\src), so a relocated install is followed
-    rather than hardcoded.
+    """Full path to the desktop app, or None when not installed. Resolved from
+    the install root like get_python_exe_path(), so a relocated install works.
     """
     install_root = os.path.dirname(os.path.dirname(get_path()))
     candidate = os.path.join(install_root, 'app', DESKTOP_EXE_NAME)
@@ -1156,45 +930,29 @@ def get_desktop_exe_path():
 def build_detached_launch_command(exe_path, args=()):
     """Command line that launches exe_path *outside* the service's process tree.
 
-    Through 2.x the service ran under NSSM, which stopped a service by walking
-    the process tree of the program it started and terminating every process in
-    it (``Killing PID <n> in process tree of PID <m> because service
-    OwletteService is stopping``). The desktop app is spawned by the service with
-    CreateProcessAsUser, which makes it a child of that program — so every
-    operator stop of OwletteService also killed the operator's UI, including the
-    tray icon they need in order to start the service again. NSSM 2.24 ignored
-    the AppKillProcessTree=0 the installer set, so it could not be turned off
-    from the service configuration either.
+    Under 2.x NSSM stopped the service by killing its whole process tree, which
+    took the operator's tray icon with it — and NSSM 2.24 ignored the
+    AppKillProcessTree=0 the installer set. ``cmd.exe /c start`` breaks the link:
+    cmd exits immediately, so the recorded parent is gone before anything walks
+    the tree. The empty ``""`` is the window title ``start`` would otherwise take
+    the quoted path for.
 
-    ``cmd.exe /c start`` breaks the link: cmd spawns the app and exits
-    immediately, so by the time anything enumerates the tree the app's recorded
-    parent no longer exists and the walk never reaches it. The empty ``""`` is
-    the window title ``start`` would otherwise take the quoted path for.
+    owlette-host (3.0.0) never kills descendants, but this stays: a manual
+    ``taskkill /T`` or a remote-management tool still walks the tree.
 
-    owlette-host (3.0.0) terminates only the process it launched and never its
-    descendants, so this detachment is no longer the single thing standing
-    between an operator's stop and their UI. It stays because it is still true
-    of anything else that might walk the tree — a manual ``taskkill /T``, a
-    remote-management tool, a future host — and because losing the desktop app
-    on a service restart is exactly the failure it was written to prevent.
-
-    The PID is lost in the handoff — the caller gets cmd's, not the app's — so
-    callers must recover it from the marker the app writes for itself
-    (``read_desktop_pid(TRAY_PID_PATH)``) rather than from the launch.
+    The PID is lost in the handoff (the caller gets cmd's), so callers must read
+    it back from ``read_desktop_pid(TRAY_PID_PATH)``.
     """
     quoted = ' '.join(f'"{argument}"' for argument in args)
     return f'cmd.exe /c start "" "{exe_path}"{" " + quoted if quoted else ""}'
 
 
 def read_desktop_pid(pid_path):
-    """PID recorded in pid_path, but only if it is a live owlette-desktop.exe.
+    """PID from pid_path, but only if it is a live owlette-desktop.exe.
 
-    Replaces the is_script_running() image scan the python tray and GUI relied
-    on: that helper only inspects processes whose image name contains "python",
-    so it can never match a native executable. Checking the image name as well
-    as the PID is what stops a recycled PID from reading as a live UI.
-
-    Returns the PID, or None when the marker is absent, stale or foreign.
+    is_script_running() can't be used — it only matches "python" image names.
+    Checking the image name as well as the PID is what stops a recycled PID from
+    reading as a live UI. None when the marker is absent, stale or foreign.
     """
     try:
         with open(pid_path, 'r') as f:
@@ -1217,10 +975,9 @@ def is_desktop_window_open():
     """True while the operator has the desktop app's main window on screen."""
     return read_desktop_pid(GUI_PID_PATH) is not None
 
-# Lazy GPUtil import — avoids eager GPU probing at module load (saves ~5-10 MB
-# baseline and a startup delay for every process that imports shared_utils).
-# Failures are sticky only for _GPUTIL_RETRY_BACKOFF seconds so a transient
-# import error during a driver update recovers on its own.
+# Lazy GPUtil import — eager probing at module load costs ~5-10 MB plus startup
+# delay for every importer. Failures are sticky only for _GPUTIL_RETRY_BACKOFF so
+# a transient error during a driver update recovers on its own.
 _gputil_module = None
 _gputil_retry_after = 0.0  # monotonic seconds; 0 = retry immediately
 _gputil_popen_patched = False
@@ -1309,11 +1066,9 @@ def _get_gputil():
         _gputil_retry_after = time.monotonic() + _GPUTIL_RETRY_BACKOFF
         return None
 
-# Config cache with mtime-based invalidation. The agent is multi-threaded
-# (main service loop + metrics thread + Firestore listener), and read_config()
-# is called multiple times per 5s tick. Caching by mtime eliminates redundant
-# disk reads without changing semantics: external edits are picked up as soon
-# as the OS publishes the new mtime, and in-process writes invalidate directly.
+# mtime-invalidated config cache: read_config() runs several times per 5s tick
+# across three threads. Semantics are unchanged — external edits land as soon as
+# the OS publishes the new mtime, in-process writes invalidate directly.
 import copy as _copy
 _config_cache_lock = threading.Lock()
 _config_cache_mtime = 0.0
@@ -1329,8 +1084,7 @@ def _read_config_cached():
     try:
         mtime = os.path.getmtime(CONFIG_PATH)
     except OSError:
-        # File missing — fall through to the raw reader, which has its own
-        # not-found handling and retry logic.
+        # Missing — the raw reader has its own not-found and retry handling.
         return read_json_from_file(CONFIG_PATH)
 
     with _config_cache_lock:
@@ -1358,34 +1112,19 @@ CORTEX_IPC_EVENTS_DIR = get_data_path('ipc/cortex_events')
 
 
 def is_cortex_enabled(config=None):
-    """Check if Cortex is enabled in config.
-
-    Args:
-        config: Optional config dict. If None, reads from disk.
-
-    Returns:
-        True if cortex.enabled is truthy.
-    """
+    """True if cortex.enabled is truthy. Reads from disk when config is None."""
     if config is None:
         config = read_config()
     return bool(config.get('cortex', {}).get('enabled', False))
 
 # LOGGING
-# Get log level from config
 def get_log_level_from_config():
-    """
-    Read log level from config.json and convert to logging constant.
-    Defaults to INFO if not found or invalid.
-
-    Returns:
-        logging level constant (e.g., logging.INFO, logging.WARNING)
-    """
+    """logging.* level constant from config.json; INFO if missing or invalid."""
     try:
         level_str = read_config(['logging', 'level'])
         if not level_str:
             return logging.INFO
 
-        # Map string to logging constant
         level_map = {
             'DEBUG': logging.DEBUG,
             'INFO': logging.INFO,
@@ -1396,21 +1135,10 @@ def get_log_level_from_config():
 
         return level_map.get(level_str.upper(), logging.INFO)
     except Exception as e:
-        # If config read fails, default to INFO
         return logging.INFO
 
-# Clean up old log files
 def cleanup_old_logs(max_age_days=90):
-    """
-    Delete log files older than max_age_days.
-    Helps prevent unbounded log growth on long-running agents.
-
-    Args:
-        max_age_days: Maximum age in days for log files (default: 90 days)
-
-    Returns:
-        Number of files deleted
-    """
+    """Delete log files older than max_age_days. Returns the count deleted."""
     try:
         import time
         log_dir = get_data_path('logs')
@@ -1425,15 +1153,12 @@ def cleanup_old_logs(max_age_days=90):
         for filename in os.listdir(log_dir):
             file_path = os.path.join(log_dir, filename)
 
-            # Only process files (not directories)
             if not os.path.isfile(file_path):
                 continue
 
-            # Only process log files
             if not (filename.endswith('.log') or '.log.' in filename):
                 continue
 
-            # Check file age
             file_mtime = os.path.getmtime(file_path)
             if file_mtime < cutoff_time:
                 try:
@@ -1455,28 +1180,20 @@ def cleanup_old_logs(max_age_days=90):
         logging.error(f"Error during log cleanup: {e}")
         return 0
 
-# Size at which an externally-written log gets rotated. 2 MB is generous for
-# a single installer run and keeps the on-disk worst case (current + .1) at
-# ~4 MB.
+# 2 MB is generous for one installer run and caps the on-disk worst case
+# (current + .1) at ~4 MB.
 EXTERNAL_LOG_MAX_BYTES = 2 * 1024 * 1024
 
 
 def rotate_log_if_oversized(log_path, max_bytes=EXTERNAL_LOG_MAX_BYTES):
-    """
-    Rotate ONCE (``<name>`` -> ``<name>.1``) if the file is bigger than
-    max_bytes, so the next writer starts from empty.
+    """Rotate ONCE (``<name>`` -> ``<name>.1``) when the file exceeds max_bytes.
 
-    For logs written by an external process — the Inno Setup installer's
-    ``/LOG=`` file is the one that motivated this — which appends forever and
-    therefore isn't covered by the RotatingFileHandler our own logging uses.
-    ``cleanup_old_logs`` doesn't catch it either: every update refreshes the
-    mtime, so it never ages out.
+    For logs an external process appends to forever — the Inno Setup installer's
+    ``/LOG=`` file — which our RotatingFileHandler doesn't cover and
+    cleanup_old_logs never ages out (every update refreshes the mtime).
 
-    Deliberately dumb: one rename, no handlers, no locks. This log has to
-    survive the very upgrade it documents, so there is nothing here that can
-    hold the file open or fail the update. Never raises.
-
-    Returns True if a rotation happened.
+    Deliberately dumb: one rename, no handlers, no locks — this log must survive
+    the upgrade it documents. Never raises. True if a rotation happened.
     """
     try:
         if not os.path.exists(log_path):
@@ -1484,8 +1201,7 @@ def rotate_log_if_oversized(log_path, max_bytes=EXTERNAL_LOG_MAX_BYTES):
         size = os.path.getsize(log_path)
         if size <= max_bytes:
             return False
-        # os.replace overwrites an existing .1 atomically — we keep exactly one
-        # generation of history, never a growing chain.
+        # os.replace overwrites .1 atomically — exactly one generation, never a chain.
         os.replace(log_path, f"{log_path}.1")
         logging.info(
             f"Rotated oversized log {os.path.basename(log_path)} "
@@ -1493,8 +1209,8 @@ def rotate_log_if_oversized(log_path, max_bytes=EXTERNAL_LOG_MAX_BYTES):
         )
         return True
     except Exception as e:
-        # A log we couldn't rotate is a disk-space annoyance; failing the
-        # caller (an in-progress agent update) would be far worse.
+        # An unrotated log is a disk-space annoyance; failing the caller (an
+        # in-progress agent update) would be far worse.
         logging.warning(f"Could not rotate log {log_path}: {e}")
         return False
 
@@ -1513,44 +1229,26 @@ def get_log_tail(log_name='service', lines=100):
         return ''
 
 
-# Initialize logging with a rotating file handler
 def initialize_logging(log_file_name, level=logging.INFO):
-    # Ensure data directories exist before logging
     ensure_data_directories()
 
     log_file_path = get_data_path(f'logs/{log_file_name}.log')
 
-    # DON'T clear the log file - let RotatingFileHandler manage it
-    # This preserves historical logs for debugging crashes and issues
-    # Old code (removed):
-    # with open(log_file_path, 'w'):
-    #     pass
-
-    # Create a formatter for the log messages
     log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
-    # Create a handler that writes log messages to a file, with a maximum
-    # log file size of 10 MB, keeping 5 old log files.
-    # Mode 'a' appends to existing file instead of overwriting
-    # Total retention: 60 MB (current + 5 backups of 10 MB each)
-    # encoding='utf-8' so non-ASCII log content (e.g. the '→' arrow used in
-    # several status messages) doesn't raise UnicodeEncodeError on Windows,
-    # where encoding=None defaults to cp1252. errors='backslashreplace' makes
-    # the handler unable to ever crash on an unencodable char. Matches the
-    # utf-8 reader in get_log_tail() and the cortex.log handler.
+    # mode='a': never truncate — history is what crash triage runs on.
+    # 60 MB retention (current + 5 x 10 MB). encoding='utf-8' because Windows
+    # defaults to cp1252 and non-ASCII log content (the '→' in several status
+    # messages) would raise UnicodeEncodeError; errors='backslashreplace' makes
+    # the handler uncrashable. Matches get_log_tail() and the cortex.log handler.
     log_handler = RotatingFileHandler(log_file_path, mode='a', maxBytes=10*1024*1024, backupCount=5, encoding='utf-8', errors='backslashreplace', delay=0)
 
-    # Set the formatter for the handler
     log_handler.setFormatter(log_formatter)
 
-    # Create the logger and set its level
     logger = logging.getLogger()
     logger.setLevel(level)
-
-    # Add the handler to the logger
     logger.addHandler(log_handler)
 
-    # Log an initial message with clear separator for new service start
     _log_startup_banner(log_file_name, level, log_file_path)
 
 
@@ -1665,7 +1363,6 @@ def log_watchdog_restart_block(snapshot: dict):
         logging.info(f"  Restart ID         : {snapshot.get('restart_id', 'n/a')}")
         logging.info(f"  Timestamp (UTC)    : {snapshot.get('timestamp_utc', 'n/a')}")
         logging.info(sep)
-        # Machine-parseable JSON line alongside the human banner
         logging.info("[WATCHDOG-JSON] " + json.dumps(snapshot, default=str))
     except Exception as e:
         logging.error(f"log_watchdog_restart_block failed: {e}")
@@ -1712,34 +1409,22 @@ def log_startup_config_summary():
         logging.warning(f"Config summary failed (non-fatal): {e}")
 
 
-# Firebase log handler for centralized logging
 class FirebaseLogHandler(logging.Handler):
-    """
-    Custom logging handler that ships logs to Firebase Firestore.
-    Useful for centralized monitoring of multiple agents.
-    """
+    """Ships log records to Firestore for centralized multi-agent monitoring."""
     def __init__(self, firebase_client, errors_only=True):
-        """
-        Args:
-            firebase_client: FirebaseClient instance
-            errors_only: If True, only ship ERROR and CRITICAL logs (default: True)
-        """
+        """errors_only: ship only ERROR and CRITICAL."""
         super().__init__()
         self.firebase_client = firebase_client
         self.errors_only = errors_only
         self.buffer = []
-        self.max_buffer_size = 50  # Ship in batches of 50 logs
+        self.max_buffer_size = 50
 
     def emit(self, record):
-        """
-        Emit a log record to Firebase.
-        """
+        """Buffer a log record for shipping to Firebase."""
         try:
-            # If errors_only mode, skip non-error logs
             if self.errors_only and record.levelno < logging.ERROR:
                 return
 
-            # Format the log entry
             log_entry = {
                 'timestamp': record.created,
                 'level': record.levelname,
@@ -1749,48 +1434,37 @@ class FirebaseLogHandler(logging.Handler):
                 'line': record.lineno
             }
 
-            # Add to buffer
             self.buffer.append(log_entry)
 
-            # Ship immediately for critical errors, otherwise batch
+            # CRITICAL ships immediately; everything else batches.
             if record.levelno >= logging.CRITICAL or len(self.buffer) >= self.max_buffer_size:
                 self.flush()
 
         except Exception:
-            # Don't let logging errors crash the app
+            # A logging failure must never crash the app.
             self.handleError(record)
 
     def flush(self):
-        """
-        Ship buffered logs to Firebase.
-        """
+        """Ship buffered logs to Firebase."""
         if not self.buffer or not self.firebase_client:
             return
 
         try:
-            # Ship logs to Firebase (non-blocking)
             self.firebase_client.ship_logs(self.buffer.copy())
             self.buffer.clear()
         except Exception:
-            # Silently fail - don't crash the app due to logging issues
+            # A logging failure must never crash the app.
             pass
 
 def add_firebase_log_handler(firebase_client):
-    """
-    Add Firebase log shipping to the root logger if enabled in config.
-
-    Args:
-        firebase_client: FirebaseClient instance
-    """
+    """Attach the Firestore log handler to the root logger, if config enables it."""
     try:
-        # Check if Firebase log shipping is enabled
         shipping_config = read_config(['logging', 'firebase_shipping'])
         if not shipping_config or not shipping_config.get('enabled', False):
             return
 
         errors_only = shipping_config.get('ship_errors_only', True)
 
-        # Create and add the Firebase handler
         firebase_handler = FirebaseLogHandler(firebase_client, errors_only=errors_only)
         firebase_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
@@ -1804,8 +1478,6 @@ def add_firebase_log_handler(firebase_client):
 
 # CONFIG JSON
 
-# Reads a JSON configuration file from a given path and optionally updates 
-# an emails_to_entry list with email addresses from the configuration.
 def load_config(emails_to_entry=None):
     try:
         config = read_json_from_file(CONFIG_PATH)
@@ -1817,9 +1489,6 @@ def load_config(emails_to_entry=None):
         logging.error(f"Failed to load config: {e}")
         return generate_config_file()
 
-# Writes a given configuration to a JSON file at a specified path. 
-# If emails_to_entry is provided, the function updates the email addresses 
-# in the configuration before saving.
 def save_config(config=None, emails_to_entry=None):
     if config is None:
         config = read_json_from_file(CONFIG_PATH)
@@ -1833,25 +1502,19 @@ def save_config(config=None, emails_to_entry=None):
 
     write_json_to_file(config, CONFIG_PATH)
   
-# Maintain compatibility from JSON config versions < 1.1.0
+# Migrate config.json forward from any version < CONFIG_VERSION.
 def upgrade_config():
-    # Directly read the original config file
     config = read_json_from_file(CONFIG_PATH)
     if config:
-        # Check if 'version' key exists and its value
         current_version = config.get('version', '0.0.0')
 
-        # If version is less than 1.1.0, apply changes
         if version.parse(current_version) < version.parse(CONFIG_VERSION):
-            # Add or update the 'version' key to latest
             config['version'] = CONFIG_VERSION
 
-            # Update other keys as needed
             if 'email' in config:
                 config['gmail'] = config.pop('email')
                 config['gmail']['enabled'] = True
 
-            # Update autostart to autolaunch
             for process in config['processes']:
                 if 'autostart_process' in process:
                     process['autolaunch'] = process.pop('autostart_process')
@@ -1881,10 +1544,8 @@ def upgrade_config():
                 }
                 logging.info("Added logging configuration to config.json (v1.4.0)")
 
-            # Add environment configuration if missing (v1.5.0+)
-            # Detect current environment from existing api_base if set
+            # Add environment if missing (v1.5.0+), inferred from api_base
             if 'environment' not in config:
-                # Auto-detect from existing firebase config
                 existing_api_base = config.get('firebase', {}).get('api_base', '')
                 if 'dev.owlette.app' in existing_api_base:
                     config['environment'] = 'development'
@@ -1905,40 +1566,31 @@ def upgrade_config():
                 if 'schedules' not in process:
                     process['schedules'] = None
 
-            # Reorder the keys so that 'version' is at the top
+            # 'version' first
             ordered_config = {'version': config['version']}
             for key in config:
                 if key != 'version':
                     ordered_config[key] = config[key]
 
-            # Write the updated config back to the file
             write_json_to_file(ordered_config, CONFIG_PATH)
 
 
     else:
-        # CRITICAL: If config file exists but couldn't be read (file locking, etc.),
-        # DO NOT regenerate it - this would wipe the firebase section!
-        # Just skip the upgrade and let the service use what's there.
+        # CRITICAL: an existing-but-unreadable config (file lock) must NOT be
+        # regenerated — that wipes the firebase section and unregisters the agent.
         if os.path.exists(CONFIG_PATH):
             logging.warning(f"Config file exists but couldn't be read (file lock?). Skipping upgrade.")
             logging.warning("If this persists, check file permissions and locks.")
-            return  # Skip upgrade, don't overwrite
+            return
 
-        # Only generate new config if file truly doesn't exist
         logging.info("Config file doesn't exist, generating default...")
         new_config = generate_config_file()
         write_json_to_file(new_config, CONFIG_PATH)
 
 # Schedule utility for launch_mode='scheduled'
 def is_within_schedule(schedules, timezone_str=None):
-    """Check if current time falls within ANY schedule block's active window.
-
-    Args:
-        schedules: List of schedule blocks, each with 'days' and 'ranges'.
-        timezone_str: Optional IANA timezone (e.g. 'America/New_York'). Uses local time if None.
-
-    Returns:
-        True if current day+time matches any block, or if schedules is empty/None (safety fallback).
+    """True if now falls in ANY schedule block's window, or if schedules is
+    empty (safety fallback). timezone_str is IANA; local time when None.
     """
     if not schedules:
         return True  # No schedules = always active (safety fallback)
@@ -1972,37 +1624,25 @@ def is_within_schedule(schedules, timezone_str=None):
             start = dt_time(start_h, start_m)
             stop = dt_time(stop_h, stop_m)
             if start <= stop:
-                # Normal range: current day must be in the schedule
                 if current_day in days and start <= current_time <= stop:
                     return True
             else:
-                # Overnight range (e.g. 22:00 – 01:00): spans midnight.
-                # "Before midnight" portion — current day must be scheduled, time >= start
+                # Overnight (e.g. 22:00-01:00). Before midnight: today scheduled.
                 if current_day in days and current_time >= start:
                     return True
-                # "After midnight" portion — the *previous* day must be scheduled, time <= stop
+                # After midnight: the *previous* day must be scheduled.
                 if prev_day in days and current_time <= stop:
                     return True
     return False
 
 
 def compute_scheduled_instant(date_obj, time_str, timezone_str=None):
-    """Build a timezone-aware datetime for a specific date + HH:MM time.
+    """Timezone-aware datetime for date_obj + time_str ("HH:MM", 24h).
 
-    Used by the reboot scheduler to convert an entry's `{date, time}` into an
-    absolute instant for comparison against `now` and `boot_time`.
-
-    Args:
-        date_obj: A `datetime.date` (the day the instant lands on).
-        time_str: "HH:MM" 24-hour format.
-        timezone_str: Optional IANA timezone (e.g. 'America/New_York'). Local time if None.
-
-    Returns:
-        A timezone-aware `datetime.datetime`, or None if `time_str` is malformed.
-        On DST forward jumps where the requested local time doesn't exist, the
-        returned instant is the closest valid post-jump moment (zoneinfo's default
-        behavior). The reboot scheduler treats this as "the entry fires at the
-        next valid wall-clock time after the gap" — acceptable per the plan.
+    The reboot scheduler uses this to compare an entry's {date, time} against now
+    and boot_time. timezone_str is IANA; local time when None. None if time_str is
+    malformed. Across a DST forward jump the result is the closest valid post-gap
+    instant (zoneinfo default) — the entry fires just after the gap.
     """
     from datetime import datetime, time as dt_time
     try:
@@ -2026,25 +1666,17 @@ def compute_scheduled_instant(date_obj, time_str, timezone_str=None):
     return naive.replace(tzinfo=tz) if tz else naive.astimezone()
 
 
-# Read a JSON file and returns its content as a Python dictionary with retry logic
 def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
-    """
-    Read JSON data from file with retry logic to handle cross-process file locking.
+    """Read JSON, retrying past cross-process file locks.
 
-    Args:
-        file_path: Source file path
-        max_retries: Maximum number of retry attempts (default: 3)
-        initial_delay: Initial delay in seconds, doubles with each retry (default: 0.1s)
-
-    Returns:
-        Dictionary from JSON file, or {} if error/not found (never returns None)
+    initial_delay doubles per attempt. Returns {} on any error or missing file —
+    never None, because callers index the result unguarded.
     """
     with _CrossProcessLock(), json_lock:
         for attempt in range(max_retries):
             try:
                 with open(file_path, 'r') as f:
                     content = f.read().strip()
-                    # Handle empty files gracefully
                     if not content:
                         logging.debug(f"{file_path} is empty, returning empty dict")
                         return {}
@@ -2057,17 +1689,15 @@ def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
 
             except json.JSONDecodeError as e:
                 logging.error(f"Failed to decode JSON from {file_path}: {e}")
-                # Return empty dict instead of None to prevent NoneType errors
                 return {}
 
             except PermissionError as e:
-                # File is locked by another process - retry with exponential backoff
+                # Locked by another process — back off and retry.
                 if attempt < max_retries - 1:
-                    delay = initial_delay * (2 ** attempt)  # Exponential backoff: 0.1s, 0.2s, 0.4s
+                    delay = initial_delay * (2 ** attempt)  # 0.1s, 0.2s, 0.4s
                     logging.warning(f"File locked during read, retrying in {delay}s... (attempt {attempt + 1}/{max_retries}): {e}")
                     time.sleep(delay)
                 else:
-                    # Final attempt failed
                     logging.error(f"Failed to read after {max_retries} attempts (file locked): {e}")
                     return {}
 
@@ -2077,43 +1707,32 @@ def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
 
         return {}  # All retries exhausted
 
-# Writes a Python dictionary to a JSON file using atomic write pattern with retry logic
 def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
-    """
-    Write JSON data to file with retry logic to handle cross-process file locking.
+    """Atomically write JSON (temp file + replace), retrying past file locks.
 
-    Args:
-        data: Dictionary to write as JSON
-        file_path: Target file path
-        max_retries: Maximum number of retry attempts (default: 3)
-        initial_delay: Initial delay in seconds, doubles with each retry (default: 0.1s)
+    initial_delay doubles per attempt.
     """
     with _CrossProcessLock(), json_lock:
-        # Use atomic write pattern: write to temp file, then rename
         temp_path = file_path + '.tmp'
 
         for attempt in range(max_retries):
             try:
-                # Write to temporary file first
                 with open(temp_path, 'w') as f:
                     json.dump(data, f, indent=4)
 
-                # Atomic rename (replaces existing file)
-                # os.replace is atomic on Windows (unlike os.rename)
+                # os.replace is atomic on Windows; os.rename is not.
                 os.replace(temp_path, file_path)
 
-                return  # Success - exit function
+                return
 
             except PermissionError as e:
-                # File is locked by another process - retry with exponential backoff
+                # Locked by another process — back off and retry.
                 if attempt < max_retries - 1:
-                    delay = initial_delay * (2 ** attempt)  # Exponential backoff: 0.1s, 0.2s, 0.4s
+                    delay = initial_delay * (2 ** attempt)  # 0.1s, 0.2s, 0.4s
                     logging.warning(f"File locked, retrying in {delay}s... (attempt {attempt + 1}/{max_retries}): {e}")
                     time.sleep(delay)
                 else:
-                    # Final attempt failed
                     logging.error(f"Failed to write after {max_retries} attempts (file locked): {e}")
-                    # Clean up temp file
                     if os.path.exists(temp_path):
                         try:
                             os.remove(temp_path)
@@ -2121,19 +1740,18 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
                             pass
 
             except Exception as e:
-                # Other errors - don't retry
+                # Not a lock — retrying won't help.
                 if os.path.exists(temp_path):
                     try:
                         os.remove(temp_path)
                     except Exception:
                         pass
                 logging.error(f"An error occurred while writing to the file: {e}")
-                break  # Exit retry loop on non-permission errors
+                break
 
-# Generate a default configuration file, optionally merging with an existing one
+# Default config, optionally merged into an existing one.
 def generate_config_file(existing_config=None):
-    # Try to preserve firebase section from existing config file
-    # This prevents losing authentication when config is regenerated
+    # Carry the firebase section across — losing it unregisters the agent.
     preserved_firebase = None
     if existing_config is None and os.path.exists(CONFIG_PATH):
         try:
@@ -2144,11 +1762,11 @@ def generate_config_file(existing_config=None):
                     logging.debug("Preserving firebase section from existing config file")
         except Exception as e:
             logging.debug(f"Could not read existing config to preserve firebase: {e}")
-            pass  # Continue with default generation
+            pass
 
     default_config = {
         "version": CONFIG_VERSION,
-        "environment": "production",  # Default to production environment
+        "environment": "production",
         "processes": [],
         "logging": {
             "level": "INFO",
@@ -2186,7 +1804,6 @@ def generate_config_file(existing_config=None):
     }
 
     if existing_config is None:
-        # If we preserved a firebase section, add it to default config
         if preserved_firebase:
             default_config['firebase'] = preserved_firebase
             logging.debug("Added preserved firebase section to generated config")
@@ -2199,11 +1816,10 @@ def generate_config_file(existing_config=None):
 
     return existing_config
 
-# Read specific keys from the configuration file or a specific process by its ID
+# Whole config, a key path within it, or one process entry by its ID.
 def read_config(keys=None, process_list_id=None):
     config = _read_config_cached()
 
-    # If process_list_id is provided, find the corresponding process
     if process_list_id:
         for process in config['processes']:
             if process['id'] == process_list_id:
@@ -2217,7 +1833,6 @@ def read_config(keys=None, process_list_id=None):
                 else:
                     return process
 
-    # If keys are provided, traverse the config to find the value
     elif keys:
         item = config
         for key in keys:
@@ -2228,21 +1843,17 @@ def read_config(keys=None, process_list_id=None):
 
     return config
 
-# Write a specific value to a specific key in the configuration file
 def write_config(keys, value):
     config = read_json_from_file(CONFIG_PATH)
 
-    # Traverse the config dictionary using the keys to find the item to update
     item = config
     for key in keys[:-1]:
         item = item.get(key, {})
 
-    # Update the value
     item[keys[-1]] = value
 
     write_json_to_file(config, CONFIG_PATH)
-    # Publish the fresh data to the cache so subsequent reads in this process
-    # see the new value immediately (don't wait for mtime propagation).
+    # Publish to the cache so in-process reads see it without waiting on mtime.
     _invalidate_config_cache(config)
 
 # PROCESS TERMINATION
@@ -2269,14 +1880,10 @@ def find_windows_by_pid(pid):
 def _reap_orphaned_descendants(snapshot, pid):
     """Kill descendants that outlived the process they belonged to.
 
-    `snapshot` must have been taken while the parent was still alive — once it
-    exits, the parent/child link is gone and the survivors are unattributable.
-
-    Only called after the parent is confirmed dead, so this can never kill a
-    child out from under a running process. Matching on (pid, create_time)
-    rather than pid alone: Windows recycles pids aggressively, and a bare pid
-    match could terminate an unrelated process that inherited the number
-    between the snapshot and here.
+    `snapshot` must predate the parent's exit — afterwards the parent/child link
+    is gone and survivors are unattributable. Only called once the parent is
+    confirmed dead. Matches (pid, create_time), not pid alone: Windows recycles
+    pids fast and a bare match could kill an unrelated process.
     """
     reaped = []
     for child_pid, created in snapshot:
@@ -2301,23 +1908,17 @@ def _reap_orphaned_descendants(snapshot, pid):
 
 
 def graceful_terminate(pid, timeout=5, exe_path=None):
-    """Attempt graceful shutdown via WM_CLOSE, then fall back to hard terminate.
+    """WM_CLOSE, then hard terminate. True if killed, False if already gone.
 
-    Returns True if the process was terminated, False if it was already gone.
+    `exe_path` only decides whether to reap children. A .bat/.cmd target runs
+    behind a cmd.exe wrapper (process_launcher.build_hidden_batch_command), so
+    the tracked pid is the wrapper: killing it leaves the real process alive and
+    untracked, still holding its port/GPU/files while the supervisor reports a
+    clean restart. Children are snapshotted before the kill, reaped after.
 
-    `exe_path` is the configured target, used only to decide whether surviving
-    children need reaping. A .bat/.cmd target runs through a cmd.exe wrapper
-    (see process_launcher.build_hidden_batch_command), so the pid Owlette
-    tracks is the wrapper, not the payload. Killing the wrapper leaves the
-    real process running and untracked — the supervisor reports the restart as
-    successful while the old instance is still holding its port, its GPU, or
-    its files. Children are snapshotted before the kill and reaped after.
-
-    Deliberately NOT unconditional. For a normal .exe the tracked pid is the
-    application itself, and its children are its own business — TouchDesigner
-    spawns TouchEngine.exe and TouchDesignerWebRender.exe, and a well-behaved
-    app tears those down during WM_CLOSE. Reaping there would only race that
-    cleanup.
+    Do not make this unconditional — for a plain .exe the children are the app's
+    own business (TouchDesigner tears down TouchEngine.exe during WM_CLOSE) and
+    reaping would race that cleanup.
     """
     import win32gui
     import win32con
@@ -2327,8 +1928,7 @@ def graceful_terminate(pid, timeout=5, exe_path=None):
     except psutil.NoSuchProcess:
         return False
 
-    # Snapshot descendants while the parent still exists, so orphans stay
-    # attributable after it is gone. Cheap, and only for wrapper targets.
+    # Snapshot while the parent lives — afterwards orphans are unattributable.
     wrapper_target = bool(exe_path) and exe_path.replace('/', '\\').lower().endswith(('.bat', '.cmd'))
     child_snapshot = []
     if wrapper_target:
@@ -2340,14 +1940,13 @@ def graceful_terminate(pid, timeout=5, exe_path=None):
             logging.debug(f"Could not enumerate children of {pid}: {e}")
 
     def _finish(result):
-        # Reap regardless of `result`: a False here means the wrapper exited on
-        # its own between the snapshot and the kill, which orphans its children
-        # just the same. Every path that reaches _finish has a dead parent.
+        # Reap even on result=False: the wrapper exiting on its own between the
+        # snapshot and the kill orphans its children just the same.
         if wrapper_target:
             _reap_orphaned_descendants(child_snapshot, pid)
         return result
 
-    # Try graceful shutdown: send WM_CLOSE to all visible windows
+    # Graceful: WM_CLOSE every visible window.
     windows = find_windows_by_pid(pid)
     if windows:
         for hwnd in windows:
@@ -2356,7 +1955,6 @@ def graceful_terminate(pid, timeout=5, exe_path=None):
             except Exception:
                 pass
 
-        # Wait for process to exit gracefully
         try:
             proc.wait(timeout=timeout)
             logging.info(f"Process {pid} exited gracefully after WM_CLOSE")
@@ -2384,44 +1982,34 @@ def graceful_terminate(pid, timeout=5, exe_path=None):
 def fetch_pid_by_id(target_id):
     data = read_json_from_file(RESULT_FILE_PATH)
 
-    # Defensive programming: ensure data is never None
     if data is None:
         data = {}
 
-    # Filter out the processes that match the target_id
     matching_processes = {pid: info for pid, info in data.items() if info['id'] == target_id}
 
     if not matching_processes:
         logging.debug(f"No processes found with id: {target_id}")
         return None
-    
-    # Find the pid of the process with the newest timestamp
+
+    # Newest timestamp wins.
     newest_pid = max(matching_processes.keys(), key=lambda pid: matching_processes[pid]['timestamp'])
     
     return newest_pid
 
 def update_process_status_in_json(pid, new_status, firebase_client=None, process_id=None):
+    """Write a process status to app_states.json; the metrics loop syncs it to
+    Firebase. firebase_client is deprecated, kept for signature compatibility.
     """
-    Update process status in JSON file. Status will sync to Firebase via centralized metrics loop.
-
-    Args:
-        pid: OS process ID to update
-        new_status: New status string (LAUNCHING, RUNNING, STALLED, etc.)
-        firebase_client: Deprecated parameter (kept for compatibility)
-        process_id: Config process ID (for GUI status mapping)
-    """
-    # Guard against None/invalid PIDs — writing "None" as a key corrupts app_states.json
+    # A None pid would be written as the literal key "None" and corrupt the file.
     if pid is None:
         logging.debug(f"Skipping status update for None PID (status={new_status}, process_id={process_id})")
         return
 
     data = read_json_from_file(RESULT_FILE_PATH)
 
-    # Defensive programming: ensure data is never None
     if data is None:
         data = {}
 
-    # Ensure PID entry exists
     if str(pid) not in data:
         data[str(pid)] = {}
 
@@ -2430,39 +2018,24 @@ def update_process_status_in_json(pid, new_status, firebase_client=None, process
         data[str(pid)]['id'] = process_id
     write_json_to_file(data, RESULT_FILE_PATH)
 
-    # Status updated locally - will sync via centralized metrics loop on next interval
-    # (removed immediate Firebase sync to eliminate duplicate uploads and reduce Firebase writes)
-    # Removed verbose logging - status changes sync every ~30s to Firebase
-
 def find_running_process_by_exe(exe_path, file_path=None, strict=False):
     """Find a running process by its executable path.
 
-    Shared by the service (startup adoption, dashboard/Cortex kill fallback)
-    and the GUI (kill/restart of untracked processes). Matches by exe filename
-    (basename) to handle version/path differences when file association
-    launches a different version than configured. When file_path is provided,
-    also checks the command line to distinguish between multiple instances of
-    the same exe (e.g. different .toe files).
-
-    .bat/.cmd targets run through cmd.exe, so for a script exe_path the match
-    is a cmd.exe whose command line references the script path.
-
-    strict=True tightens matching for kill/restart fallbacks: a bare basename
-    match (no file_path corroboration) is never accepted, and when file_path
-    offers no corroboration the match must be UNIQUE — with several candidate
-    instances of the same exe there is no way to know which one the operator
-    meant, so none is returned rather than risking an unrelated process.
+    Matches on exe basename so a file-association launch of a different build
+    still resolves. .bat/.cmd targets run behind cmd.exe, so a script exe_path
+    matches a cmd.exe whose command line references it.
 
     Matching precedence, strongest evidence first:
-      1. file_path present and found in a candidate's command line — unambiguous
-         even when several instances of the exe are running (the TouchDesigner
-         case: one image, one process per .toe).
+      1. file_path found in a candidate's command line — unambiguous even with
+         several instances of the exe (TouchDesigner: one process per .toe).
       2. an exact exe-path match that is unique on the machine.
-      3. (non-strict only) an exe-path or image-name match chosen from several.
-         Ambiguous by construction — logged with a warning, because the fix is
-         to configure file_path, not to guess better. strict refuses here.
-    Callers that kill or restart must pass strict=True; only startup adoption,
-    which merely risks watching the wrong instance, may take tier 3.
+      3. (non-strict only) one of several exe-path or image-name matches.
+         Ambiguous by construction; warns, because the fix is to configure
+         file_path.
+
+    strict=True refuses tier 3 and refuses bare basename matches outright.
+    Anything that kills or restarts MUST pass strict=True; only startup
+    adoption, which merely risks watching the wrong instance, may take tier 3.
     """
     try:
         exe_lower = exe_path.replace('/', '\\').lower()
@@ -2476,7 +2049,7 @@ def find_running_process_by_exe(exe_path, file_path=None, strict=False):
                     continue
                 proc_exe = proc.info['exe'].lower()
                 if is_script:
-                    # Match the cmd.exe wrapper by its command line.
+                    # The wrapper is cmd.exe; identify it by its command line.
                     if os.path.basename(proc_exe) != 'cmd.exe':
                         continue
                     try:
@@ -2492,45 +2065,39 @@ def find_running_process_by_exe(exe_path, file_path=None, strict=False):
                 basename_match = os.path.basename(proc_exe) == exe_basename
                 if not (full_match or basename_match):
                     continue
-                # Strict: never accept a bare basename match — require an exact
-                # exe-path match, or a basename match corroborated by file_path
-                # in the command line.
+                # Strict: a bare basename match is never enough.
                 if strict and not full_match and not file_path_lower:
                     continue
                 if file_path_lower:
                     try:
                         cmdline = ' '.join(proc.cmdline()).replace('/', '\\').lower()
                         if file_path_lower not in cmdline:
-                            continue  # Wrong instance, keep looking
+                            continue  # wrong instance
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        continue  # Can't verify cmdline, skip to avoid false match
-                    return proc.info['pid']  # cmdline-corroborated — unambiguous
+                        continue  # unverifiable cmdline — don't risk a false match
+                    return proc.info['pid']  # cmdline-corroborated
                 candidates.append((proc.info['pid'], full_match))
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-        # No file_path to corroborate with. Rank an exact exe-path match above a
-        # bare image-name match: several instances of one image are normal for
-        # the apps Owlette supervises (every TouchDesigner project is the same
-        # TouchDesigner.exe), and an unranked scan would adopt whichever one
-        # psutil happened to yield first — possibly a different install entirely.
+        # No file_path. Rank exact exe-path above bare image-name: several
+        # instances of one image are normal here (every TouchDesigner project is
+        # the same TouchDesigner.exe) and an unranked scan would adopt whichever
+        # psutil yielded first, possibly from a different install.
         full_matches = [pid for pid, is_full in candidates if is_full]
         if len(full_matches) == 1:
             return full_matches[0]
         if strict:
-            # Bare basename matches never reach `candidates` under strict, so
-            # everything here is a full-path match and the unique case already
-            # returned above. Reaching this point means several instances of
-            # the configured exe are running with nothing to tell them apart.
+            # Bare basename matches never reach `candidates` under strict and the
+            # unique full-path case already returned, so getting here means
+            # several instances with nothing to tell them apart.
             if candidates:
                 logging.warning(
                     f"find_running_process_by_exe: {len(candidates)} instances of "
                     f"{exe_basename} match with no file_path to disambiguate — refusing"
                 )
             return None
-        # Non-strict callers (startup adoption) must still return something when
-        # the choice is ambiguous: returning None makes the monitor loop launch
-        # yet another instance, which is the duplicate we are trying to avoid.
-        # Prefer an exact-path match, then fall back to the image-name match.
+        # Non-strict (startup adoption) must still pick one: None makes the
+        # monitor loop launch yet another instance — the duplicate we're avoiding.
         if full_matches:
             logging.warning(
                 f"find_running_process_by_exe: {len(full_matches)} instances of "
@@ -2547,14 +2114,12 @@ def find_running_process_by_exe(exe_path, file_path=None, strict=False):
 
 
 def pid_matches_exe(pid, exe_path, file_path=None):
-    """True if PID is alive and its image matches the configured exe_path.
+    """True if PID is alive and its image matches exe_path.
 
-    Kill/restart flows must never terminate a PID whose executable doesn't
-    match the process entry it was resolved from — state-file entries go
-    stale once a process is no longer monitored (e.g. launch mode off), and
-    Windows reuses PIDs. .bat/.cmd entries run through cmd.exe, so those
-    match a cmd.exe whose command line references the script. When file_path
-    is provided the command line must reference it too.
+    Kill/restart must never terminate a PID whose image doesn't match the entry
+    it came from: state-file entries go stale once a process stops being
+    monitored, and Windows reuses PIDs. .bat/.cmd entries match a cmd.exe whose
+    command line references the script (and file_path too, when given).
     """
     if not pid or not exe_path:
         return False
@@ -2602,16 +2167,14 @@ def get_scaling_factor():
     LOGPIXELSX = 88
     actual_dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, LOGPIXELSX)
     ctypes.windll.user32.ReleaseDC(0, hdc)
-    return actual_dpi / 96.0  # 96 DPI is the standard DPI, so we divide the actual by 96 to get the scaling factor
+    return actual_dpi / 96.0  # 96 DPI == 100% scaling
 
 def center_window(root, width, height):
     scaling_factor = get_scaling_factor()
 
-    # Get screen width and height
     screen_width = root.winfo_screenwidth() * scaling_factor
     screen_height = root.winfo_screenheight() * scaling_factor
 
-    # Calculate position x and y coordinates
     x = (screen_width / 2) - (width * scaling_factor / 2)
     y = (screen_height / 2) - (height * scaling_factor / 2)
     root.geometry(f'{int(width)}x{int(height)}+{int(x)}+{int(y)}')
@@ -2619,10 +2182,8 @@ def center_window(root, width, height):
 
 # METRICS
 def get_system_info():
-    # Get system information
     cpu_info = get_cpu_name()
     if not cpu_info:
-        # Revert to platform info
         cpu_info = platform.processor()
     cpu_usage = psutil.cpu_percent()
     memory_info = psutil.virtual_memory()
@@ -2631,7 +2192,6 @@ def get_system_info():
     gpus = _g.getGPUs() if _g else []
     gpu_info = gpus[0] if gpus else "No GPU detected"
 
-    # Convert bytes to gigabytes
     bytes_to_gb = lambda x: round(x / (1024 ** 3), 2)
 
     return {
@@ -2647,50 +2207,39 @@ def get_system_info():
     }
 
 def get_system_metrics(skip_gpu=False):
-    """
-    Get system metrics with clear units for Firebase.
-    Returns CPU model/%, memory (used/total GB), disk (used/total GB), GPU (usage % and VRAM used/total GB).
-    Also includes process information from config and runtime state.
+    """System metrics for Firebase: CPU model/%, memory and disk in GB, GPU
+    usage % and VRAM GB, plus per-process config + runtime state.
 
-    Args:
-        skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
+    skip_gpu: skip GPU probes, which flash a console window when called from a UI.
     """
-    # Route through the mtime-cached reader so repeated calls inside a tick
-    # don't re-hit disk. read_config() returns a deep copy, safe to pass down.
+    # mtime-cached read; returns a deep copy, safe to pass down.
     config = read_config()
     return get_system_metrics_with_config(config, skip_gpu)
 
 
 def get_system_metrics_with_config(config=None, skip_gpu=False):
-    """
-    Get system metrics with clear units. Returns the legacy snake_case shape
-    (cpu/memory/disk/gpu/network/processes) for in-process consumers such as
-    mcp_tools, report_issue, and the tray GUI; firebase_client reads only the
-    `memory` and `processes` keys and sources per-device metrics directly from
-    hardware_profile.collect_dynamic_metrics() for the v2 heartbeat.
+    """Legacy snake_case metrics (cpu/memory/disk/gpu/network/processes) for
+    in-process consumers: mcp_tools, report_issue, the tray GUI. firebase_client
+    reads only `memory` and `processes` — the v2 heartbeat sources per-device
+    metrics from hardware_profile.collect_dynamic_metrics() instead.
 
-    Args:
-        config: Configuration dict (to avoid re-reading from disk). If None,
-            loads via the mtime-cached read_config() — no extra disk I/O when
-            the cache is warm.
-        skip_gpu: If True, skip GPU queries (used by GUI callers to avoid the
-            nvidia-smi / WinTmp console window flash).
+    config: reuse a dict to skip a disk read; None goes through the mtime cache.
+    skip_gpu: skip the nvidia-smi / WinTmp probes that flash a console window.
     """
     if config is None:
         config = read_config()
     try:
-        # CPU - model, aggregate percent, temperature
         cpu_name = get_cpu_name()
         cpu_percent = round(psutil.cpu_percent(interval=0.1), 1)
         cpu_temp = get_cpu_temperature()
 
-        # Memory - bytes to GB (both snake and camelCase for v1 + v2 readers)
+        # GB, emitted in both snake_case and camelCase for v1 + v2 readers.
         mem = psutil.virtual_memory()
         mem_used_gb = round(mem.used / (1024**3), 2)
         mem_total_gb = round(mem.total / (1024**3), 2)
         mem_percent = round(mem.percent, 1)
 
-        # Disk - system drive
+        # System drive only.
         try:
             disk = psutil.disk_usage('/')
             disk_used_gb = round(disk.used / (1024**3), 2)
@@ -2701,7 +2250,7 @@ def get_system_metrics_with_config(config=None, skip_gpu=False):
             disk_total_gb = 0.0
             disk_percent = 0.0
 
-        # GPU - first GPU (skipped in GUI to avoid subprocess flash)
+        # First GPU only.
         gpu_usage_percent = 0
         gpu_vram_used_gb = 0
         gpu_vram_total_gb = 0
@@ -2740,19 +2289,17 @@ def get_system_metrics_with_config(config=None, skip_gpu=False):
         if 'gateway_ip' in quality:
             network_metrics['gateway_ip'] = quality.get('gateway_ip')
 
-        # Processes - combine config and runtime state
+        # Config + runtime state. Uses the passed-in config, not a fresh read —
+        # re-reading here races the caller's snapshot.
         processes_data = {}
         try:
-            # Use config passed as parameter (avoids race condition from re-reading disk)
-            # Read runtime state
             runtime_state = read_json_from_file(RESULT_FILE_PATH)
 
             if config and 'processes' in config:
-                # Create a map of process IDs to their runtime PIDs
                 pid_to_runtime = {}
                 if runtime_state:
                     for pid, state_info in runtime_state.items():
-                        # Skip invalid PID keys (e.g. "None" from failed launches)
+                        # "None" keys come from failed launches.
                         try:
                             pid_int = int(pid)
                         except (ValueError, TypeError):
@@ -2766,11 +2313,9 @@ def get_system_metrics_with_config(config=None, skip_gpu=False):
                                 'timestamp': state_info.get('timestamp', 0)
                             }
 
-                # Build processes data structure
                 for index, process in enumerate(config['processes']):
                     process_id = process.get('id')
                     if process_id:
-                        # Start with configuration data
                         process_data = {
                             'name': process.get('name', ''),
                             'exe_path': process.get('exe_path', ''),
@@ -2784,10 +2329,9 @@ def get_system_metrics_with_config(config=None, skip_gpu=False):
                             'time_delay': process.get('time_delay', 0),
                             'time_to_init': process.get('time_to_init', 10),
                             'relaunch_attempts': process.get('relaunch_attempts', 5),
-                            'index': index  # Preserve config order for web app display
+                            'index': index  # config order, for web display
                         }
 
-                        # Add runtime state if available
                         if process_id in pid_to_runtime:
                             runtime = pid_to_runtime[process_id]
                             process_data['pid'] = runtime['pid']
@@ -2795,7 +2339,6 @@ def get_system_metrics_with_config(config=None, skip_gpu=False):
                             process_data['responsive'] = runtime['responsive']
                             process_data['last_updated'] = runtime['timestamp']
                         else:
-                            # Process not running
                             process_data['pid'] = None
                             mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
                             process_data['status'] = 'INACTIVE' if mode == 'off' else 'STOPPED'

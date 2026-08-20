@@ -35,17 +35,11 @@ interface RotateBody {
 }
 
 /**
- * POST /api/keys/{keyId}/rotate
+ * POST /api/keys/{keyId}/rotate — { ttlDays?: 1-365, default 90 }
  *
- * Issue a new raw key with the same scopes + environment and a fresh
- * `expiresAt`. The old key enters a 24-hour grace window where both keys
- * are valid; after grace, the old key is rejected (via the `retiresAt`
- * check in resolveApiKeyContext).
- *
- * Body (optional):
- *   { ttlDays?: number }  1-365, default 90
- *
- * Response: same shape as POST /api/keys.
+ * Issues a new raw key with the same scopes and environment. The old key stays
+ * valid for a 24-hour grace window, after which the `retiresAt` check in
+ * resolveApiKeyContext rejects it. Response matches POST /api/keys.
  */
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
@@ -120,20 +114,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         );
       }
 
-      // Legacy pre-scoping keys have no scopes/environment. Carry a sensible
-      // default forward so the rotated key is a valid modern key: 'live' env,
-      // empty scopes[] triggers the legacy bypass path — but users should
-      // create a fresh scoped key rather than rotate legacy ones. We preserve
-      // whatever scopes exist verbatim.
+      // Legacy pre-scoping keys carry no scopes/environment; scopes are
+      // preserved verbatim and an empty scopes[] keeps the legacy bypass path.
       //
-      // Rotation INHERITS the old environment rather than forcing
-      // MINTED_API_KEY_ENVIRONMENT, deliberately — do not "fix" this. Two
-      // reasons: the inheritance is published contract (openapi.yaml), and
-      // `environment` is part of the idempotency cache key
-      // (hashCacheKey(userId, environment, ...) in lib/idempotency.ts), so
-      // flipping a rotating key from test to live would silently re-namespace
-      // its cached responses mid-flight. A legacy test key rotates to a test
-      // key; only brand-new keys are forced live.
+      // DO NOT "fix" the environment inheritance to MINTED_API_KEY_ENVIRONMENT.
+      // It is published contract (openapi.yaml), and `environment` is part of
+      // the idempotency cache key (hashCacheKey in lib/idempotency.ts), so
+      // flipping a rotating key from test to live silently re-namespaces its
+      // cached responses mid-flight. Only brand-new keys are forced live.
       const environment: ApiKeyEnvironment =
         (oldKey.environment as ApiKeyEnvironment) ?? 'live';
       const scopes = Array.isArray(oldKey.scopes) ? oldKey.scopes : [];
@@ -179,9 +167,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       };
       batch.set(db.collection('api_keys').doc(keyHash), newLookup);
 
-      // Old key: stamp rotation fields. Its lookup entry gets retiresAt so
-      // the auth resolver can reject requests after the grace window. Until
-      // then, both keys work.
+      // retiresAt on the old key's lookup entry is what lets the auth resolver
+      // reject it after the grace window. Until then both keys work.
       batch.update(oldKeyRef, {
         rotatedAt: now,
         retiresAt,

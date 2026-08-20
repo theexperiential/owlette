@@ -1,31 +1,13 @@
 /**
- * `owlette.processes(siteId, machineId)` — public scoped process management.
+ * `owlette.processes(siteId, machineId)` — scoped process management over
+ * `/api/sites/{siteId}/machines/{machineId}/processes[/{processId}[/action]]`.
  *
- * Wraps the wave-2B routes:
- *
- *   GET    /api/sites/{siteId}/machines/{machineId}/processes
- *   POST   /api/sites/{siteId}/machines/{machineId}/processes
- *   GET    /api/sites/{siteId}/machines/{machineId}/processes/{processId}
- *   PATCH  /api/sites/{siteId}/machines/{machineId}/processes/{processId}
- *   DELETE /api/sites/{siteId}/machines/{machineId}/processes/{processId}
- *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/kill
- *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/start
- *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/stop
- *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/restart
- *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/schedule
- *
- * The constructor is bound to a (siteId, machineId) tuple — exposed as a
- * factory on the root `Owlette` instance so callers do
- * `owlette.processes(siteId, machineId).list()`. This matches the api shape
- * (process resource is always nested under a machine) without forcing the
- * caller to pass siteId+machineId on every call.
+ * Bound to a (siteId, machineId) tuple and exposed as a factory on the root
+ * `Owlette` instance, matching the api's nesting without repeating both ids on
+ * every call: `owlette.processes(siteId, machineId).list()`.
  */
 import { randomUUID } from 'crypto';
 import type { OwletteClient } from '../lib/client';
-
-/* --------------------------------------------------------------------- */
-/*  types                                                                */
-/* --------------------------------------------------------------------- */
 
 export type ProcessLaunchMode = 'off' | 'always' | 'scheduled';
 
@@ -89,19 +71,13 @@ export interface ScheduleOptions {
 }
 
 /**
- * Response shape returned by `restart`. The server queues an agent
- * command and returns the command id immediately — callers can poll
- * `owlette.machines.getCommand(siteId, machineId, commandId)` to track
- * progress.
+ * `restart` response. The server queues an agent command and returns its id at
+ * once; poll `owlette.machines.getCommand(siteId, machineId, commandId)`.
  */
 export interface RestartProcessResult {
   commandId: string;
   status: string;
 }
-
-/* --------------------------------------------------------------------- */
-/*  resource                                                             */
-/* --------------------------------------------------------------------- */
 
 export class Processes {
   constructor(
@@ -207,11 +183,9 @@ export class Processes {
   }
 
   /**
-   * Queue a restart for the named process. Mirrors `start` / `stop` /
-   * `kill` but returns the queued command id (and status) directly so
-   * callers don't have to peel the envelope. The server-side handler
-   * stops the process if running, then starts it again — the agent
-   * reports each transition over the command stream.
+   * Queue a restart. Like `start`/`stop`/`kill`, but returns the command id and
+   * status unwrapped. The server stops the process if running then starts it; the
+   * agent reports each transition over the command stream.
    */
   async restart(
     processId: string,

@@ -1,27 +1,20 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Playwright config for the marketing screenshot pipeline.
+ * Playwright config for the marketing screenshot pipeline. Separate from the
+ * regression suite's config because:
+ *   - testDir `./e2e/screenshots`
+ *   - workers 1 — every scenario calls resetAndReseedBaseline, which clears the
+ *     emulators, so parallel workers wipe each other's seed data
+ *   - retries 0 — screenshot output must be deterministic
+ *   - chromium-only, 1280×720 (previews sit in the landing card grid);
+ *     `dashboard.spec.ts` overrides to 2400×1300 for the hero
  *
- * Separate from `playwright.config.ts` (the regression e2e suite) because:
- *   - testDir is `./e2e/screenshots` (not `./e2e/specs`)
- *   - workers: 1 (serialized — every scenario calls resetAndReseedBaseline
- *     which clears the auth + firestore emulator, so parallel workers wipe
- *     each other's seed data mid-test)
- *   - retries: 0 (failures should be loud — screenshot output must be deterministic)
- *   - chromium-only with a 1280×720 default viewport (capability previews
- *     are sized to display compactly inside the landing page card grid).
- *     `dashboard.spec.ts` overrides up to 2400×1300 since the hero treatment
- *     wants more density.
+ * Specs write PNGs themselves into `web/public/landing-screens/`; `outputDir`
+ * below is only for incidental failure artifacts. Reuses the regression suite's
+ * emulator boot + global-setup + webServer, so the same fixtures apply.
  *
- * Specs themselves call `page.screenshot({ path: 'public/landing-screens/X.png' })`
- * to write PNGs into `web/public/landing-screens/`. The `outputDir` below is only
- * for incidental Playwright test artifacts (traces, etc.) on failure.
- *
- * Reuses the regression suite's emulator boot + global-setup + webServer block so
- * specs get the same seeded users, sites, and storageState fixtures.
- *
- * Triggered by an explicit npm script (added in task 4.5); not in CI by default.
+ * Run via its own npm script; not in CI by default.
  */
 
 const PORT = Number(process.env.E2E_PORT) || 3100;
@@ -35,14 +28,12 @@ const OUTPUT_DIR = process.env.E2E_SCREENSHOTS_OUTPUT_DIR || './e2e/.output/scre
 
 export default defineConfig({
   testDir: './e2e/screenshots',
-  // Incidental Playwright artifacts (traces on failure, etc.) — NOT the
-  // marketing PNGs. Specs write those directly to `public/landing-screens/`
-  // via `page.screenshot({ path: ... })`.
+  // Failure artifacts only — the marketing PNGs go to public/landing-screens/.
   outputDir: OUTPUT_DIR,
   fullyParallel: false,
   forbidOnly: false,
-  // Screenshot generation must be deterministic. A retry that produces a
-  // different pixel-perfect output silently is worse than a loud failure.
+  // Deterministic output: a silent retry with different pixels is worse than a
+  // loud failure.
   retries: 0,
   workers: 1,
   reporter: [['list']],
@@ -55,9 +46,7 @@ export default defineConfig({
   use: {
     baseURL: BASE_URL,
     trace: 'retain-on-failure',
-    // No screenshot-on-failure here — specs explicitly screenshot to
-    // `public/landing-screens/` and Playwright's failure screenshot would
-    // collide / pollute the output.
+    // Off: Playwright's failure screenshots would pollute the output dir.
     screenshot: 'off',
     video: 'off',
     actionTimeout: 10_000,

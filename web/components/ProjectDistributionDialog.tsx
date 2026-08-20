@@ -34,11 +34,9 @@ import {
 } from '@/hooks/useRoostUpload';
 
 /**
- * "+ new version" pre-fill — opens the dialog targeting an EXISTING roost.
- * When supplied, name/extractPath/targets are LOCKED + pre-populated; the
- * user only edits the file picker + description. Submit calls the same
- * upload pipeline (`uploadFolder`) but skips the "create distribution"
- * Firestore write since the roost already exists.
+ * "+ new version" pre-fill — targets an EXISTING roost: name/extractPath/
+ * targets are LOCKED, only file picker + description are editable. Submit runs
+ * the same `uploadFolder` pipeline but skips the create-distribution write.
  */
 export interface NewVersionContext {
   roostId: string;
@@ -58,33 +56,20 @@ interface ProjectDistributionDialogProps {
     machineIds: string[]
   ) => Promise<string>;
   /**
-   * Upload state lives on the parent page (via `useRoostUpload`) so a
-   * multi-GB run isn't killed when the user dismisses the dialog. When
-   * omitted, falls back to dialog-local state — tests use that path to
-   * avoid wiring a full hook into every render call.
+   * Owned by the parent page so a multi-GB run survives dismissing the dialog.
+   * Omitted = dialog-local fallback (tests).
    */
   upload?: UseRoostUploadApi;
-  /**
-   * When set, the dialog opens in "+ new version" mode — name, extract
-   * path, and targets are locked to the existing roost; only the file
-   * picker + description are editable. Omitted = "new roost" mode.
-   */
+  /** Set = "+ new version" mode; omitted = "new roost" mode. */
   newVersion?: NewVersionContext;
-  /**
-   * Roost ids that already exist on this site. Used in "new roost" mode
-   * to detect slug collisions — a name that resolves to an existing
-   * roost id would silently land as a new version of that roost,
-   * which is almost never the user's intent here.
-   */
+  /** Existing roost ids, for slug-collision detection in "new roost" mode. */
   existingRoostIds?: string[];
 }
 
 /**
- * Collapse a human-entered distribution name to a firestore-safe doc id.
- * The server-side validator requires 8-64 chars (see api/_shared.ts
- * RESOURCE_ID_RE); pad short slugs deterministically so repeat deploys
- * of the same short name ("assets", "prod", etc.) keep hitting the same
- * roostId and build up a shared version history.
+ * Distribution name → firestore doc id. The server validator requires 8-64
+ * chars (api/_shared.ts RESOURCE_ID_RE); short slugs are padded
+ * deterministically so repeat deploys of the same name share version history.
  */
 function slugify(s: string): string {
   const core = s
@@ -141,11 +126,8 @@ export default function ProjectDistributionDialog({
   const { machines } = useMachines(siteId);
   const { presets, createPreset, updatePreset, deletePreset } = useProjectDistributionPresets(siteId);
 
-  // Upload state lives outside the dialog (via `useRoostUpload`) so the
-  // in-flight run survives a dismissal. If the parent didn't supply one
-  // (e.g. standalone render in tests), fall back to a hook scoped to the
-  // dialog — conditional call is safe because the fallback never toggles
-  // within a component's lifetime (prop is fixed at construction time).
+  // Fallback hook for standalone renders (tests). Safe despite looking
+  // conditional: the prop is fixed for a component's lifetime.
   const localUpload = useRoostUpload();
   const upload: UseRoostUploadApi = externalUpload ?? localUpload;
 
@@ -171,34 +153,21 @@ export default function ProjectDistributionDialog({
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(new Set());
   const [distributing, setDistributing] = useState(false);
 
-  // Wave 3.1 — upload-source state. Files dropped via FolderDropzone land here;
-  // clicking "start upload" runs the uploadFolder() orchestrator. The
-  // actual upload execution + progress lives on the `upload` hook above
-  // (see JSDoc on props) so a dismissal while uploading doesn't kill the
-  // run — the floating minimized card picks it up.
+  // FolderDropzone output; execution lives on the `upload` hook, not here.
   const [droppedFiles, setDroppedFiles] = useState<NamedBlob[] | null>(null);
   const [droppedRootName, setDroppedRootName] = useState<string>('');
-  // When set, the operator has clicked an upload button and we're showing
-  // PreUploadSummary as a confirmation gate (size + per-target disk
-  // warnings). On confirm we hand the staged inputs to upload.start();
-  // on cancel we drop them and let the operator edit the form. Holds the
-  // FULL UploadInputs so confirmation captures the form state at the
-  // moment of click — subsequent edits to the form don't leak in.
+  // Set while the PreUploadSummary confirmation gate is showing. Holds the FULL
+  // UploadInputs so later form edits can't leak into the confirmed run.
   const [pendingKickoff, setPendingKickoff] = useState<UploadInputs | null>(null);
-  // Source mode — url (v1 one-shot download link) vs upload (v2 roost
-  // chunked upload). Upload is the default because it's the expected
-  // path for a first-party roost (drag a folder/files, go) — URL mode
-  // is the escape hatch for mirroring an existing public archive.
+  // url = v1 one-shot download link; upload = v2 chunked. Upload is the default
+  // path; URL is the escape hatch for mirroring an existing public archive.
   type SourceMode = 'url' | 'upload';
   const [sourceMode, setSourceMode] = useState<SourceMode>('upload');
 
-  // Derive upload runtime state from the hook. `uploadProgress` is the
-  // live payload we render into the in-dialog progress card; `uploading`
-  // is the boolean form used for button/cancel gating.
   const uploadProgress = upload.state.progress;
   const uploading = upload.state.status === 'uploading';
 
-  // Preset bar state (mirrors RestartScheduleDialog pattern)
+  // Preset bar state (mirrors RestartScheduleDialog).
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const [savingNewPreset, setSavingNewPreset] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
@@ -207,21 +176,16 @@ export default function ProjectDistributionDialog({
   const [confirmDeletePresetId, setConfirmDeletePresetId] = useState<string | null>(null);
   const [pendingReplacePreset, setPendingReplacePreset] = useState<ProjectDistributionPreset | null>(null);
 
-  // Autosave state. `idle` = no changes pending; `saving` = debounce flushed,
-  // write in flight; `saved` = recently persisted (returns to idle after a tick).
+  // idle = nothing pending; saving = write in flight; saved = briefly, then idle.
   const [autosaveStatus, setAutosaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  // Set to true right after applyPreset so the resulting field updates don't
-  // immediately schedule a redundant write back to Firestore.
+  // Set by applyPreset so the resulting field updates don't write straight back.
   const suppressNextAutosaveRef = useRef(false);
 
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
 
-  // Reset form state when dialog opens. We deliberately DO NOT reset
-  // the upload hook here — if the user dismissed the dialog mid-upload
-  // and then reopened, the in-flight progress needs to resume rendering
-  // (minimize-to-corner handoff). The hook resets itself on a new
-  // `start()` call, or on terminal states inside the minimized card.
+  // Reset form on open. Deliberately does NOT reset the upload hook — reopening
+  // mid-run must resume rendering progress; the hook resets on its own start().
   useEffect(() => {
     if (!open) return;
     setActivePresetId(null);
@@ -233,31 +197,26 @@ export default function ProjectDistributionDialog({
     setSourceMode('upload');
     setDescription('');
     setPendingKickoff(null);
-    // Pre-populate locked fields when opening in "+ new version" mode.
-    // Upload mode is forced (new versions are bytes-driven; there's no
-    // url-source equivalent for an existing roost).
+    // "+ new version": locked fields, upload mode forced (no url-source
+    // equivalent for an existing roost).
     if (newVersion) {
       setDistributionName(newVersion.name);
       setExtractPath(newVersion.extractPath ?? '');
       setSelectedMachines(new Set(newVersion.targets));
     }
-    // Preserve droppedFiles + name if the upload is live so reopening
-    // mid-run shows the same summary chip the user dropped.
+    // Keep droppedFiles + name while live so reopening shows the same chip.
     if (upload.state.status !== 'uploading') {
       setDroppedFiles(null);
       setDroppedRootName('');
     }
   }, [open, upload.state.status, newVersion]);
 
-  // Autosave field edits back to the active non-builtin preset, debounced.
-  // Built-ins are excluded so editing one doesn't silently create an override.
-  // The suppress ref short-circuits the write that would otherwise fire
-  // immediately after applyPreset (we just LOADED these values from the preset).
+  // Debounced autosave into the active non-builtin preset. Built-ins excluded so
+  // editing one doesn't silently create an override; the suppress ref kills the
+  // echo write right after applyPreset.
   //
-  // Note: there is intentionally NO auto-detect effect that flips activePresetId
-  // based on field contents. With autosave, the active preset is the source of
-  // truth for "where edits go" — having an effect deselect the preset whenever
-  // fields differ would cancel in-flight autosaves and confuse the user.
+  // Deliberately NO auto-detect effect flipping activePresetId from field
+  // contents — deselecting on divergence would cancel in-flight autosaves.
   useEffect(() => {
     if (!open) return;
     if (suppressNextAutosaveRef.current) {
@@ -273,9 +232,8 @@ export default function ProjectDistributionDialog({
     const presetKey = presetConfigKey(preset.project_url, preset.extract_path);
     if (currentKey === presetKey) return;
 
-    // Debounce — don't flag "saving" yet, just queue the write. Status flips
-    // to "saving" only when the actual Firestore call is in flight, so the
-    // indicator reflects reality rather than every keystroke.
+    // Queue only; "saving" flips when the Firestore call is actually in flight,
+    // so the indicator doesn't blink on every keystroke.
     const handle = setTimeout(async () => {
       setAutosaveStatus('saving');
       try {
@@ -284,8 +242,7 @@ export default function ProjectDistributionDialog({
           extract_path: extractPath || undefined,
         });
         setAutosaveStatus('saved');
-        // Drop the "saved" indicator after a short window so it doesn't
-        // linger and imply pending changes.
+        // Drop "saved" so it doesn't linger and imply pending changes.
         setTimeout(() => setAutosaveStatus('idle'), 1500);
       } catch (err) {
         setAutosaveStatus('idle');
@@ -297,18 +254,15 @@ export default function ProjectDistributionDialog({
   }, [open, activePresetId, projectUrl, extractPath, presets, updatePreset]);
 
   const applyPreset = async (preset: ProjectDistributionPreset) => {
-    // Clicking the already-active preset deselects it (since auto-detect was
-    // removed, this is the user's escape hatch). Form fields are left as-is
-    // so they can keep working with the values without losing them.
+    // Re-clicking the active preset deselects it (the escape hatch, now that
+    // auto-detect is gone). Fields keep their values.
     if (activePresetId === preset.id) {
       setActivePresetId(null);
       return;
     }
 
-    // Flush pending autosave to the OUTGOING preset before switching. Without
-    // this, edits made within the 800ms debounce window get cancelled by the
-    // effect cleanup when we change activePresetId, and the next time the
-    // user comes back to that preset they see stale (pre-edit) values.
+    // Flush the outgoing preset first: changing activePresetId runs the effect
+    // cleanup, which would drop edits still inside the 800ms debounce window.
     const outgoing = activePresetId ? presets.find(p => p.id === activePresetId) : null;
     if (outgoing && !outgoing.isBuiltIn) {
       const currentKey = presetConfigKey(projectUrl || undefined, extractPath || undefined);
@@ -321,8 +275,7 @@ export default function ProjectDistributionDialog({
             extract_path: extractPath || undefined,
           });
         } catch (err) {
-          // Don't block the switch on save failure — but tell the user so
-          // they're not surprised when they come back and find stale values.
+          // Don't block the switch on failure, but say so — values are stale.
           toast.error('failed to save preset before switching', {
             description: sanitizeError(err),
           });
@@ -331,17 +284,12 @@ export default function ProjectDistributionDialog({
       }
     }
 
-    // Switching presets fully replaces form fields — including clearing them
-    // when the new preset doesn't have a value. Anything else creates a
-    // confusing "stuck" state where old values bleed into the new preset.
-    // Distribution name stays per-deployment since names tend to be time-bound
-    // (e.g. "Summer Show 2024").
+    // A switch fully replaces fields, clearing ones the new preset lacks —
+    // otherwise old values bleed in and look stuck. Name stays per-deployment.
     setProjectUrl(preset.project_url || '');
     setExtractPath(preset.extract_path || '');
     setActivePresetId(preset.id);
-    // Suppress the autosave that would otherwise fire from the field updates
-    // above — we just loaded these values FROM the preset, so writing them
-    // back would be a wasteful no-op.
+    // These values came FROM the preset; don't write them straight back.
     suppressNextAutosaveRef.current = true;
   };
 
@@ -351,7 +299,7 @@ export default function ProjectDistributionDialog({
       return;
     }
 
-    // Name collision → defer to replace-confirm flow
+    // Name collision → replace-confirm flow.
     const trimmedName = newPresetName.trim();
     const existing = presets.find(p => p.name.toLowerCase() === trimmedName.toLowerCase());
     if (existing) {
@@ -427,7 +375,6 @@ export default function ProjectDistributionDialog({
   };
 
   const handleDistribute = async () => {
-    // Validation
     if (!distributionName.trim()) {
       toast.error('please provide a roost name');
       return;
@@ -438,7 +385,6 @@ export default function ProjectDistributionDialog({
       return;
     }
 
-    // Validate URL format
     let parsedUrl;
     try {
       parsedUrl = new URL(projectUrl);
@@ -455,12 +401,10 @@ export default function ProjectDistributionDialog({
     setDistributing(true);
 
     try {
-      // Auto-extract project filename from URL
       const urlPath = parsedUrl.pathname;
       const projectName = urlPath.substring(urlPath.lastIndexOf('/') + 1) || 'project.zip';
 
-      // Create distribution. verify_files is dropped as of the v2 clean-cutover
-      // (version is authoritative; spot-check is dead weight).
+      // verify_files dropped in the v2 cutover — the version is authoritative.
       await onCreateDistribution(
         {
           name: distributionName,
@@ -474,7 +418,6 @@ export default function ProjectDistributionDialog({
 
       toast.success(`roost started — syncing to ${selectedMachines.size} machine${selectedMachines.size > 1 ? 's' : ''}`);
 
-      // Reset form
       setDistributionName('');
       setProjectUrl('');
       setExtractPath('');
@@ -491,19 +434,11 @@ export default function ProjectDistributionDialog({
 
   const selectedPreset = activePresetId ? presets.find(p => p.id === activePresetId) : null;
 
-  // Wave 3.1 — upload-source handler. Runs the roost orchestrator
-  // (chunk → check → upload → finalize) via the `useRoostUpload` hook.
-  // Execution state lives on the hook, not the dialog, so a dismissal
-  // while uploading doesn't kill the run — the minimized card picks up.
-  //
-  // The dialog's target-machines selector still applies: once the version
-  // is finalised, the fan-out cloud function (wave 2b.3) dispatches
-  // sync_pull commands to targets stored on the roost doc.
-  // Shared kickoff for both "upload" and "upload + distribute". When
-  // `withTargets` is false we skip the target-machines validation and pass
-  // an empty array — the roost is published but no target_state docs are
-  // written, so no agent picks it up until the user manually distributes
-  // later.
+  // Shared kickoff for "upload" and "upload + distribute", running the roost
+  // orchestrator (chunk → check → upload → finalize) on `useRoostUpload`.
+  // withTargets=false publishes the roost with no target_state docs, so no agent
+  // picks it up until the user distributes later; otherwise the fan-out cloud
+  // function dispatches sync_pull to the targets on the roost doc.
   const startUpload = (withTargets: boolean) => {
     if (!droppedFiles || droppedFiles.length === 0) {
       toast.error('drop a folder first');
@@ -518,11 +453,9 @@ export default function ProjectDistributionDialog({
       return;
     }
 
-    // In "new roost" mode, auto-disambiguate the roostId if a roost
-    // already exists with the same slug — otherwise the upload would
-    // silently land as a new VERSION of the existing roost (slugify is
-    // intentionally deterministic for CI/CD reuse, but the UI's
-    // "+ new roost" path always means a new doc).
+    // "new roost" must mean a new doc: disambiguate a taken slug, or the upload
+    // lands as a new VERSION of the existing roost (slugify is deterministic on
+    // purpose, for CI/CD reuse).
     const baseRoostId = slugify(distributionName) || droppedRootName || 'roost-folder';
     const taken = new Set(existingRoostIds ?? []);
     let resolvedRoostId = baseRoostId;
@@ -538,11 +471,9 @@ export default function ProjectDistributionDialog({
 
     const totalBytes = droppedFiles.reduce((n, f) => n + f.blob.size, 0);
 
-    // Stage the inputs for confirmation. The user sees PreUploadSummary
-    // (size + per-target disk warnings) and chooses to proceed. Without
-    // this gate, mistyped folder picks or target machines with full
-    // disks would burn bandwidth + storage and only fail mid-sync at
-    // the agent — codex audit #8 (security-boundary punchlist).
+    // Stage for the PreUploadSummary gate: without it a mistyped folder pick or
+    // a full-disk target burns bandwidth and only fails mid-sync at the agent
+    // (codex audit #8, security-boundary punchlist).
     setPendingKickoff({
       siteId,
       roostId: isNewVersion ? newVersion!.roostId : resolvedRoostId,
@@ -559,19 +490,13 @@ export default function ProjectDistributionDialog({
   const handleUploadOnly = () => startUpload(false);
   const handleUploadDistribute = async () => startUpload(true);
 
-  // PreUploadSummary's per-target disk check needs free-bytes on each
-  // selected machine. We sum across all volumes on the machine: each
-  // joined disk entry exposes both totalGb (from DiskProfile) and
-  // usedGb (from DiskMetric); free = total - used. Volumes that haven't
-  // reported metrics yet are skipped — if NO volume has both numbers
-  // we leave freeDiskBytes undefined so the summary renders the
-  // "unknown free disk" warning rather than showing a misleading 0.
+  // Free bytes per selected machine, SUMMED across volumes (free = totalGb -
+  // usedGb; volumes missing either number are skipped, and if none have both,
+  // freeDiskBytes stays undefined so the summary warns instead of showing 0).
   //
-  // This is a SUM across volumes, not the destination volume's free
-  // alone. extract_root usually lands on C:; a 50GB roost that fits
-  // across all drives might still not fit on C:. The agent will catch
-  // the per-volume failure during sync; this client check just blocks
-  // the obviously-too-big case.
+  // The sum is deliberately not the destination volume alone: extract_root
+  // usually lands on C:, so a 50GB roost fitting across all drives may still not
+  // fit. The agent catches the per-volume failure; this only blocks the obvious.
   const summaryTargets = React.useMemo<PreUploadTarget[]>(() => {
     if (!pendingKickoff) return [];
     return pendingKickoff.targets.map((machineId) => {
@@ -598,9 +523,8 @@ export default function ProjectDistributionDialog({
     [pendingKickoff],
   );
 
-  // Fire-and-forget: the hook tracks progress + result. The minimized
-  // card surfaces completion (success toast fired by the effect below
-  // that watches `upload.state.status`).
+  // Fire-and-forget: the hook tracks progress; the effect below toasts the
+  // terminal state.
   const handleConfirmKickoff = () => {
     if (!pendingKickoff) return;
     const inputs = pendingKickoff;
@@ -612,11 +536,8 @@ export default function ProjectDistributionDialog({
     setPendingKickoff(null);
   };
 
-  // React to upload hook terminal states. We fire the user-facing toast
-  // here rather than inside handleUploadDistribute because the dialog may
-  // have been dismissed by the time the hook resolves — the toast still
-  // needs to land. The `lastReportedStatusRef` guards against emitting
-  // the same toast twice when the status is read across multiple renders.
+  // Toast here, not in handleUploadDistribute: the dialog may be dismissed by
+  // the time the hook resolves. lastReportedStatusRef dedupes across renders.
   const lastReportedStatusRef = useRef<string | null>(null);
   useEffect(() => {
     const status = upload.state.status;
@@ -632,16 +553,13 @@ export default function ProjectDistributionDialog({
         `roost published — ${versionLabel}` +
           ` (uploaded ${formatBytesShort(result.uploadedBytes)} of ${formatBytesShort(result.totalBytes)})`,
       );
-      // Clear the per-deploy inputs so a follow-up roost starts clean.
+      // Clear per-deploy inputs so a follow-up roost starts clean.
       setDistributionName('');
       setExtractPath('');
       setDroppedFiles(null);
       setDroppedRootName('');
       setSelectedMachines(new Set());
-      // Close the dialog on success if it's still open — matches the
-      // prior behavior where the distribute button awaited completion
-      // and then dismissed the modal. The minimized card flashes
-      // "synced" for a moment before disappearing on its own.
+      // Close on success if still open; the minimized card flashes "synced".
       if (open) onOpenChange(false);
     } else if (status === 'error' && upload.state.error) {
       toast.error('upload failed', { description: upload.state.error });
@@ -650,12 +568,9 @@ export default function ProjectDistributionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* Wave 3.10 — responsive at 375px:
-          - default (mobile): dialog takes ≥95% of the viewport with 4px
-            inset so edge-of-screen taps are still reachable.
-          - sm+ (640px): reverts to the desktop `max-w-2xl` layout.
-          - `max-h-[90vh]` + overflow-y keeps the body scrollable on
-            short mobile viewports so the footer buttons stay reachable. */}
+      {/* Mobile: near-full-viewport with a 4px inset so edge taps land; sm+
+          reverts to max-w-2xl. max-h-[90vh] + overflow-y keeps the footer
+          reachable on short viewports. */}
       <DialogContent className="border-border bg-secondary text-white w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] sm:max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle className="text-white">
@@ -677,14 +592,10 @@ export default function ProjectDistributionDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Preset bar.
-              Each pill sits in a `relative` wrapper; the per-pill action row
-              (autosaves/rename/delete) or inline rename/delete-confirm form
-              is absolutely positioned under it and centered horizontally, so
-              the actions read as belonging to that specific chip without
-              stretching the pill's flex slot (which would blow out the row
-              layout). The pill row reserves `pb-10` when a panel is attached
-              so the next section doesn't collide with the overlay. */}
+          {/* Preset bar. Each pill is a `relative` wrapper with its action row /
+              rename form absolutely positioned under it — inline would stretch
+              the pill's flex slot and blow out the row. `pb-10` reserves space
+              for the attached panel. */}
           <div className="space-y-1.5">
             <Label className="text-white">presets</Label>
             <div
@@ -780,9 +691,8 @@ export default function ProjectDistributionDialog({
                       </div>
                     )}
 
-                    {/* Per-pill action row (autosave indicator + rename + delete).
-                        Autosave is debounced — no manual save. The indicator
-                        reflects save state so the user knows changes persist. */}
+                    {/* Per-pill action row. Autosave is debounced — no manual
+                        save button, so the indicator carries the feedback. */}
                     {showActions && selectedPreset && (
                       <div className="absolute left-1/2 top-full z-10 mt-1 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap text-[11px] leading-5 text-muted-foreground">
                         <span
@@ -863,8 +773,8 @@ export default function ProjectDistributionDialog({
               </form>
             )}
 
-            {/* Inline replace-confirm — sits below the row; not scoped to the selected pill
-                because the conflict is with a different preset (same name). */}
+            {/* Inline replace-confirm — unscoped, since the conflict is with a
+                different preset of the same name. */}
             {pendingReplacePreset && (
               <div className="flex flex-wrap items-center gap-2 text-[11px] leading-5">
                 <span className="text-muted-foreground">
@@ -888,7 +798,6 @@ export default function ProjectDistributionDialog({
             )}
           </div>
 
-          {/* Distribution Name */}
           <div className="space-y-2">
             <Label htmlFor="distribution-name" className="text-white">roost name</Label>
             <Input
@@ -939,10 +848,9 @@ export default function ProjectDistributionDialog({
               )}
           </div>
 
-          {/* Description (optional, ≤500 chars). Plaintext, no markdown.
-              In "+ new version" mode this is the commit-message style
-"what changed?" textarea. In new-roost mode it doubles as
-              the first version's description. */}
+          {/* Description, ≤500 chars, plaintext (no markdown). Commit-message
+              style in "+ new version"; the first version's description in
+              new-roost mode. */}
           <div className="space-y-2">
             <Label htmlFor="distribution-description" className="text-white">
               description <span className="text-muted-foreground text-xs">(optional)</span>
@@ -962,11 +870,9 @@ export default function ProjectDistributionDialog({
             </p>
           </div>
 
-          {/* Source picker — inline segmented control. Wave 3.5 (revised):
-              choosing the bytes-source (url download vs drag-drop upload)
-              is a sub-choice WITHIN a deployment, not a top-level mode.
-              Hidden in "+ new version" mode — new versions always come
-              from a fresh file drop. */}
+          {/* Source picker. Bytes-source is a sub-choice within a deployment,
+              not a top-level mode. Hidden for "+ new version" — those always
+              come from a fresh file drop. */}
           {!isNewVersion && (
           <div className="space-y-2">
             <Label className="text-white">source</Label>
@@ -1029,9 +935,8 @@ export default function ProjectDistributionDialog({
                   if (!distributionName) setDistributionName(rootName);
                 }}
                 onFilesAppend={(newFiles) => {
-                  // Merge by relative path — later entries win so a user
-                  // can re-pick a folder to refresh its contents. Keeps
-                  // the existing rootName + distribution name.
+                  // Merge by relative path, later wins, so re-picking a folder
+                  // refreshes it. rootName + distribution name are kept.
                   setDroppedFiles((prev) => {
                     const byPath = new Map<string, NamedBlob>();
                     for (const f of prev ?? []) byPath.set(f.path, f);
@@ -1047,8 +952,7 @@ export default function ProjectDistributionDialog({
                   droppedFiles
                     ? (() => {
                         const s = summariseVersion([]);
-                        // light-weight summary from the raw blobs; the full
-                        // version summary (with dedup) only exists after hashing.
+                        // Raw-blob summary; the deduped one needs hashing first.
                         s.fileCount = droppedFiles.length;
                         s.totalBytes = droppedFiles.reduce((n, f) => n + f.blob.size, 0);
                         return { fileCount: s.fileCount, totalBytes: s.totalBytes };
@@ -1058,13 +962,9 @@ export default function ProjectDistributionDialog({
                 files={droppedFiles ?? undefined}
                 disabled={distributing || uploading}
               />
-              {/* Sanity warnings — non-blocking. Surface BEFORE submit so the
-                  user knows upfront that the run will take time and what the
-                  minimize-to-corner indicator is for. Thresholds match what
-                  we've seen hit the pain points in practice:
-                    - >5k files → version size + hashing time get noticeable
-                    - >20 GB   → expect minutes, warn about keeping the tab
-                  Both can trigger together; we only show whichever apply. */}
+              {/* Non-blocking pre-submit warnings. >5k files = noticeable
+                  hashing time; >20 GB = minutes, warn about keeping the tab.
+                  Both can apply at once. */}
               {droppedFiles && droppedFiles.length > 0 && (() => {
                 const fileCount = droppedFiles.length;
                 const totalBytes = droppedFiles.reduce((n, f) => n + f.blob.size, 0);
@@ -1100,10 +1000,8 @@ export default function ProjectDistributionDialog({
                 );
               })()}
               {uploadProgress && uploadProgress.phase !== 'idle' && (() => {
-                // Pick the fraction that belongs to the active phase so the
-                // bar doesn't snap 0% → 100% when we cross hashing→uploading
-                // (both fields can be set on the same payload during the
-                // transition tick).
+                // Use only the active phase's fraction — both fields can be set
+                // on the transition tick, snapping the bar 0% → 100%.
                 const frac =
                   uploadProgress.phase === 'hashing'
                     ? uploadProgress.hashFraction
@@ -1112,9 +1010,8 @@ export default function ProjectDistributionDialog({
                       : undefined;
                 const pct = frac !== undefined ? Math.round(frac * 100) : null;
                 const isError = uploadProgress.phase === 'error';
-                // ETA/throughput are populated by useRoostUpload once it has
-                // enough samples (~3s). Below that we deliberately hide them
-                // rather than flash a nonsense number.
+                // useRoostUpload needs ~3s of samples; hide rather than flash a
+                // nonsense number.
                 const throughput = uploadProgress.throughputBytesPerSec;
                 const eta = uploadProgress.etaSeconds;
                 const showRate =
@@ -1132,10 +1029,9 @@ export default function ProjectDistributionDialog({
                     <div className="flex items-baseline gap-2">
                       <span className="font-medium text-white">{phaseCopy}</span>
                     </div>
-                    {/* bar + % on one row — ratio reads at a glance, track is
-                        a darker bg-background + subtle border so unfilled
-                        portion is clearly visible on the dialog's bg-muted/20
-                        panel. aligned with MinimizedUploadCard. */}
+                    {/* Darker track + border so the unfilled portion stays
+                        visible on the dialog's bg-muted/20 panel. Matches
+                        MinimizedUploadCard. */}
                     {frac !== undefined && !isError && (
                       <div className="mt-1.5 flex items-center gap-2">
                         <div className="h-[4px] flex-1 overflow-hidden rounded-full bg-background border border-border/40">
@@ -1151,10 +1047,9 @@ export default function ProjectDistributionDialog({
                         )}
                       </div>
                     )}
-                    {/* Single consolidated status line: "281/1841 chunks
-                        uploaded · 1 KB/s · ~9h 30m remaining". The rate +
-                        ETA are latched across ticks so they don't flicker
-                        when a brief sample window has no byte progress. */}
+                    {/* One status line: "281/1841 chunks uploaded · 1 KB/s ·
+                        ~9h 30m remaining". Rate + ETA are latched across ticks
+                        so a sample window with no byte progress can't flicker. */}
                     {(uploadProgress.message || (showRate && throughput !== undefined)) && (
                       <div className="mt-1 text-muted-foreground tabular-nums">
                         {uploadProgress.message}
@@ -1174,7 +1069,6 @@ export default function ProjectDistributionDialog({
             </div>
           )}
 
-          {/* Extract Path */}
           <div className="space-y-2">
             <Label htmlFor="extract-path" className="text-white">extract to (optional)</Label>
             <Input
@@ -1221,10 +1115,8 @@ export default function ProjectDistributionDialog({
             )}
           </div>
 
-          {/* Target Machines */}
           <div className="space-y-2">
-            {/* Wave 3.10 — wraps at 375px: label stacks above the two
-                action buttons when the row can't fit on one line. */}
+            {/* Wraps at 375px: the label stacks above the action buttons. */}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Label className="text-white">target machines ({selectedMachines.size} selected){isNewVersion && ' — locked'}</Label>
               {!isNewVersion && (
@@ -1305,15 +1197,10 @@ export default function ProjectDistributionDialog({
         )}
 
         <DialogFooter className={pendingKickoff ? 'hidden' : undefined}>
-          {/* During an upload the footer surfaces BOTH actions explicitly:
-              - "cancel upload" aborts the in-flight run (AbortController
-                fires, fetches bail out, minimized card hides)
-              - "minimize" closes the dialog but keeps the upload running
-                (MinimizedUploadCard takes over the visibility)
-              This replaces the previous single-button "minimize/cancel"
-              toggle that was ambiguous about whether close = abort.
-              The URL-source path still has no cancel — its handleDistribute
-              doesn't use the lifted hook. */}
+          {/* Both actions are explicit during an upload — a single
+              "minimize/cancel" toggle was ambiguous about whether close =
+              abort. URL-source has no cancel: handleDistribute doesn't use the
+              lifted hook. */}
           {uploading && sourceMode === 'upload' ? (
             <>
               <Button
@@ -1341,17 +1228,10 @@ export default function ProjectDistributionDialog({
               cancel
             </Button>
           )}
-          {/*
-            Two-button kickoff so the user can publish without picking
-            targets. "upload" is always available once the bare minimum
-            (name + source bytes) is met; "upload and distribute" is the
-            primary action and additionally requires at least one target.
-            The URL-source path keeps a single distribute button — its
-            handleDistribute doesn't have an upload-only counterpart yet.
-
-            `uploading` disables both — a second start() would abort the
-            first one, which is almost never what the user wants.
-          */}
+          {/* Two-button kickoff so a roost can be published without targets:
+              "upload" needs name + bytes, "upload and distribute" also needs a
+              target. URL-source keeps one button (no upload-only counterpart).
+              `uploading` disables both — a second start() aborts the first. */}
           {(() => {
             const baseMissing: string[] = [];
             if (!distributionName.trim()) baseMissing.push('name');

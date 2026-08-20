@@ -1,25 +1,17 @@
 /**
- * deleteDistribution action core (security-boundary-migration wave 3.4).
+ * deleteDistribution action core. Mirrors the deployment delete rule: delete
+ * only once every target is terminal, so an in-flight distribution must be
+ * cancelled first.
  *
- * Mirrors the deployment delete rule: only delete when every target has
- * reached a terminal state. In-flight distributions cannot be deleted, so
- * the operator must cancel them first.
- *
- * The action does NOT cascade-delete queued `distribute_project` commands
- * from machine pending docs. Commands have a 24h `expiresAt` and the agent
- * ignores entries it can't resolve to a live distribution. Cleanup is wave
- * 8.x housekeeping.
+ * Queued `distribute_project` commands are NOT cascade-deleted — they carry a
+ * 24h `expiresAt` and the agent ignores entries with no live distribution.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
 
-/**
- * Distribution-level statuses that allow a delete. Matches the deployment
- * terminal list, minus `uninstalled` (distributions don't have an uninstall
- * path).
- */
+/** Terminal statuses that allow a delete — the deployment list minus `uninstalled`. */
 export const TERMINAL_DISTRIBUTION_STATUSES_FOR_DELETE = new Set<string>([
   'completed',
   'failed',
@@ -56,10 +48,9 @@ export type DeleteDistributionResult =
     };
 
 /**
- * Delete a distribution doc. Refuses with 409 if the distribution is not
- * in a terminal state OR if any target is still pre-flight (this is a
- * defense-in-depth check on top of the parent-status guard, since the
- * status field can drift if the reconciler hasn't run yet).
+ * Delete a distribution doc. 409 when the distribution isn't terminal or any
+ * target is still pre-flight — the parent status can drift ahead of the
+ * targets when the reconciler hasn't run.
  */
 export async function deleteDistribution(
   ctx: DeleteDistributionContext,
@@ -95,10 +86,7 @@ export async function deleteDistribution(
     };
   }
 
-  // Defense in depth: even if parent status looks terminal, refuse if any
-  // target is still in a pre-flight state. This shields against a partial
-  // reconciler write where the parent status was updated but a target was
-  // missed.
+  // Guards a partial reconciler write: parent terminal, a target missed.
   const targets: DistributionTargetData[] = Array.isArray(data.targets)
     ? (data.targets as DistributionTargetData[])
     : [];

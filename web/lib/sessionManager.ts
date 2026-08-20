@@ -1,67 +1,38 @@
 /**
- * @deprecated This client-side session manager is deprecated and no longer used.
+ * @deprecated Client-side session manager — DO NOT USE IN NEW CODE.
  *
- * SECURITY ISSUE: Client-side cookies are vulnerable to XSS attacks.
- * This file has been replaced with server-side session management.
- *
- * NEW IMPLEMENTATION:
- * - Server-side: lib/sessionManager.server.ts (HTTPOnly, encrypted cookies)
- * - API routes: app/api/auth/session/route.ts
- * - Used by: contexts/AuthContext.tsx, proxy.ts
- *
- * DO NOT USE THIS FILE IN NEW CODE.
- * Kept for backward compatibility during migration period only.
- *
- * Migration completed: 2025-11-17
+ * Client-set cookies are readable by XSS; replaced by lib/sessionManager.server.ts
+ * (HTTPOnly, encrypted) behind app/api/auth/session/route.ts, used by
+ * contexts/AuthContext.tsx and proxy.ts. Kept only for backward compatibility.
+ * Migration completed 2025-11-17.
  */
 
-/**
- * Session Management Utility (DEPRECATED)
- * Handles setting and clearing session cookies for authentication
- */
-
-/**
- * Sets a session cookie when user logs in
- * This cookie is checked by the proxy for route protection
- *
- * @param userId - The authenticated user's ID
- * @param expirationDays - Number of days until session expires (default: 7)
- */
+/** Sets the session cookie the proxy checks for route protection. */
 export const setSessionCookie = (userId: string, expirationDays: number = 7): void => {
-  // Only run in browser (not during SSR)
   if (typeof window === 'undefined') return;
 
   const expirationDate = new Date();
   expirationDate.setDate(expirationDate.getDate() + expirationDays);
 
-  // Determine if we should use Secure flag (only on HTTPS)
   const isSecure = window.location.protocol === 'https:';
   const secureFlag = isSecure ? '; Secure' : '';
 
-  // Set a simple session cookie
-  // In production, this should be an encrypted token
+  // Plaintext uid — production should carry an encrypted token instead.
   document.cookie = `__session=${userId}; expires=${expirationDate.toUTCString()}; path=/; SameSite=Lax${secureFlag}`;
 
-  // Also set a shorter-lived auth indicator for the proxy
+  // Indicator cookie the proxy reads.
   document.cookie = `auth=true; expires=${expirationDate.toUTCString()}; path=/; SameSite=Lax${secureFlag}`;
 };
 
-/**
- * Clears the session cookie when user logs out
- */
+/** Clears the session cookie on logout. */
 export const clearSessionCookie = (): void => {
-  // Only run in browser (not during SSR)
   if (typeof window === 'undefined') return;
 
-  // Set expiration to past date to delete cookie
   document.cookie = '__session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax';
   document.cookie = 'auth=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax';
 };
 
-/**
- * Checks if a valid session cookie exists (client-side check)
- * @returns True if session cookie exists
- */
+/** Client-side presence check for the session cookie. */
 export const hasSessionCookie = (): boolean => {
   if (typeof document === 'undefined') return false;
 

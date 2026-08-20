@@ -1,12 +1,7 @@
 /**
- * Access-control — route guards
- *
- * RequireSuperadmin wraps /admin/layout.tsx. Anyone without role ===
- * 'superadmin' should get redirected to /dashboard with an error toast.
- * Unauthenticated users should hit /login instead.
- *
- * These tests assert URL behavior, not DOM content — the guard runs in a
- * useEffect, so we wait for the router.push to settle before asserting.
+ * RequireSuperadmin wraps /admin/layout.tsx: non-superadmins go to /dashboard,
+ * unauthenticated users to /login. Asserts URLs, not DOM — the guard runs in a
+ * useEffect, so each assertion waits for router.push to settle.
  */
 
 import { test, expect } from '@playwright/test';
@@ -24,7 +19,7 @@ const ADMIN_ROUTES = [
 ];
 
 test.describe('route guards — unauthenticated', () => {
-  // Fresh context: no storageState → no auth.
+  // No storageState = no auth.
   test.use({ storageState: { cookies: [], origins: [] } });
 
   test('visiting /dashboard redirects to /login', async ({ page }) => {
@@ -44,7 +39,6 @@ test.describe('route guards — member', () => {
   for (const route of ADMIN_ROUTES) {
     test(`visiting ${route} redirects away`, async ({ page }) => {
       await page.goto(route);
-      // RequireSuperadmin fires in a useEffect → allow time for the router.push.
       await expect(page).not.toHaveURL(new RegExp(`${route}$`), { timeout: 10_000 });
     });
   }

@@ -1,14 +1,10 @@
 'use client';
 
 /**
- * useTalons — real-time listener for `sites/{siteId}/talons`.
- *
- * Read-only on purpose. Every talon mutation goes through
- * `/api/sites/{siteId}/talons` so validation, the `command`-output privilege
- * gate, the webhook SSRF check, and the audit emit can't be sidestepped (see
- * `@/lib/talons/store.server`), and firestore.rules 2.7.0 denies client writes
- * to this collection outright. Site members may read it, which is what makes
- * the live subscription below possible.
+ * Real-time listener for `sites/{siteId}/talons`. Read-only on purpose: every
+ * mutation goes through `/api/sites/{siteId}/talons` so validation, the
+ * `command`-output privilege gate, the webhook SSRF check and the audit emit
+ * can't be sidestepped, and firestore.rules 2.7.0 denies client writes outright.
  */
 
 import { useEffect, useState } from 'react';
@@ -16,23 +12,18 @@ import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import type { TalonDoc } from '@/lib/talons/types';
 
-/**
- * A talon document plus the id its collection keys it by — the client-side
- * mirror of `StoredTalon` in `@/lib/talons/store.server`, which can't be
- * imported here because that module pulls in firebase-admin.
- */
+/** Client-side mirror of `StoredTalon`; that module can't be imported (firebase-admin). */
 export interface Talon extends TalonDoc {
   id: string;
 }
 
-// Module-level constant so the "not loaded for this site" branch returns the
-// same reference on every render and can't churn consumers' memo/effect deps.
+// Module-level so the "not loaded" branch returns a stable reference and can't
+// churn consumers' memo/effect deps.
 const EMPTY_TALONS: Talon[] = [];
 
 export function useTalons(siteId: string) {
-  // loadedSiteId pins state to the site it was populated for so `loading` can
-  // be derived at render without a synchronous reset on site change — that
-  // reset is what makes empty states flicker.
+  // Pins state to the site it was populated for, so `loading` derives at render
+  // instead of needing a sync reset on site change — that reset flickers empty states.
   const [state, setState] = useState<{
     talons: Talon[];
     loadedSiteId: string | null;
@@ -58,25 +49,22 @@ export function useTalons(siteId: string) {
           talonData.push({
             ...data,
             id: docSnap.id,
-            // Sorted on below, so it has to be a string even if a document
-            // somehow reaches the client without one.
+            // sorted on below, so it must be a string even if a doc lacks it
             name: typeof data.name === 'string' ? data.name : '',
           });
         });
 
-        // Sorted client-side rather than with an `orderBy('name')`, matching
-        // `listTalons` on the server: a Firestore orderBy silently drops
-        // documents that lack the field, and a name-less talon must still be
-        // visible (and fixable) in the list.
+        // Client-side, not orderBy('name') (matching server `listTalons`): Firestore
+        // orderBy silently drops docs lacking the field, and a name-less talon must
+        // stay visible to be fixable.
         talonData.sort((a, b) => a.name.localeCompare(b.name));
 
         setState({ talons: talonData, loadedSiteId: siteId, error: null });
       },
       (err) => {
         console.error('Error fetching talons:', err);
-        // Pin loadedSiteId on the error path too: onSnapshot's error callback
-        // ends the subscription, so leaving it null would hold consumers in
-        // `loading` forever instead of letting them render the error.
+        // Also on the error path: onSnapshot's error ends the subscription, so a null
+        // here would hold consumers in `loading` forever.
         setState({ talons: [], loadedSiteId: siteId, error: err.message });
       },
     );
@@ -87,8 +75,7 @@ export function useTalons(siteId: string) {
   const loaded = !!siteId && state.loadedSiteId === siteId;
   const talons = loaded ? state.talons : EMPTY_TALONS;
   const loading = !!db && !!siteId && !loaded;
-  // An error is only ever reported for the site currently in view, so one
-  // site's permission failure can't leak onto the next.
+  // scoped to the site in view, so one site's permission failure can't leak onto the next
   const error = !db ? 'Firebase not configured' : (loaded ? state.error : null);
 
   return { talons, loading, error };

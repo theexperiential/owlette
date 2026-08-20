@@ -27,37 +27,29 @@ import shared_utils
 
 logger = logging.getLogger(__name__)
 
-# Default allow-list for run_command (used with .exe binaries, strict by design).
-# NOTE: run_powershell no longer uses this — it executes arbitrary PowerShell and
-# relies on the Firestore audit trail (see owlette_service._log_cortex_tool) plus
-# the [MCP-AUDIT] local log for accountability. The first-token regex that used
-# to live here was security theater — a semicolon-prefixed `Get-Date; Remove-Item`
-# bypassed it trivially, and real scripts (foreach, if, try, $var = ...) triggered
-# constant false rejections.
+# run_command only (.exe binaries), strict by design. run_powershell deliberately
+# does NOT use it: the old first-token regex was bypassed by `Get-Date; Remove-Item`
+# and false-rejected real scripts, so accountability is the Firestore audit trail
+# (owlette_service._log_cortex_tool) plus the [MCP-AUDIT] local log.
 DEFAULT_ALLOWED_COMMANDS = [
     'ipconfig', 'systeminfo', 'hostname', 'whoami', 'tasklist',
     'netstat', 'ping', 'tracert', 'nslookup', 'dir', 'type',
     'echo', 'set', 'ver', 'wmic', 'sc', 'net', 'reg', 'nvidia-smi', 'dxdiag',
 ]
 
-# Maximum output size returned from commands (characters)
-MAX_OUTPUT_SIZE = 50000
+MAX_OUTPUT_SIZE = 50000  # characters
 
-# Subprocess timeout (seconds)
-SUBPROCESS_TIMEOUT = 25
+SUBPROCESS_TIMEOUT = 25  # seconds
 
-# Maximum execute_script timeout (seconds). 55 minutes — safely under the
-# 1-hour pending-entry GC in firebase_client._cleanup_stale_commands: a script
-# that outlives its pending entry can never deliver a result. The web side
-# clamps to the same value; longer jobs use the detached-job + follow-up
-# pattern instead.
+# Seconds. 55min, under the 1h pending-entry GC in
+# firebase_client._cleanup_stale_commands — a script that outlives its pending
+# entry can never deliver a result. Web clamps to the same value; longer jobs use
+# the detached-job + follow-up pattern.
 MAX_SCRIPT_TIMEOUT = 3300
 
-# ─── Running-process registry (cancel support) ──────────────────────────────
-# Maps in-flight command_id → subprocess PID for every shell-spawning tool
-# (execute_script, run_powershell, run_command), so a cancel_mcp_tool command
-# (handled in firebase_client) can kill the process tree of a specific running
-# command. Entries are removed when the command finishes, times out, or errors.
+# command_id → subprocess PID for every shell-spawning tool, so cancel_mcp_tool
+# (in firebase_client) can kill one running command's process tree. Entries are
+# removed on finish, timeout or error.
 _RUNNING_COMMANDS = {}
 _RUNNING_COMMANDS_LOCK = threading.Lock()
 
@@ -120,16 +112,14 @@ def _run_tracked_subprocess(cmd, timeout, command_id, cwd=None):
             with _RUNNING_COMMANDS_LOCK:
                 _RUNNING_COMMANDS.pop(command_id, None)
 
-# ─── Tier 2 safety: critical processes that manage_process must never kill ──
+# Tier 2 safety: manage_process must never kill these.
 _CRITICAL_PROCESSES = frozenset({
     'system', 'system idle process', 'registry', 'memory compression',
     'csrss.exe', 'wininit.exe', 'winlogon.exe', 'services.exe',
     'lsass.exe', 'smss.exe', 'fontdrvhost.exe', 'dwm.exe', 'svchost.exe',
     'spoolsv.exe', 'lsaiso.exe', 'sihost.exe',
-    # Owlette itself. `owlette-host.exe` is the service host (it replaced
-    # nssm.exe in 3.0.0); nssm.exe stays on the list because a machine that has
-    # not taken the 3.0.0 upgrade yet is still hosted by it, and killing either
-    # one takes the agent down with it.
+    # Owlette itself. owlette-host.exe replaced nssm.exe in 3.0.0; nssm.exe stays
+    # because pre-3.0.0 machines are still hosted by it.
     'owlette_service.exe', 'owlette-host.exe', 'nssm.exe',
     'python.exe', 'pythonw.exe',
 })
@@ -142,9 +132,8 @@ def _is_critical_process(name):
     return name.lower() in _CRITICAL_PROCESSES
 
 
-# ─── Tier 2 safety: registry path allowlist for registry_operation ──────────
-# Explicit list of key path prefixes the registry_operation tool may touch.
-# Mirrors the _validate_file_path() allowlist pattern. Case-insensitive.
+# Key path prefixes registry_operation may touch (case-insensitive). Mirrors the
+# _validate_file_path() allowlist pattern.
 _SAFE_REGISTRY_PREFIXES = (
     # Auto-login configuration
     r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon',
@@ -186,12 +175,11 @@ def _validate_registry_path(hive, key_path):
 
     key_lower = key_path.lower().lstrip('\\')
 
-    # Explicit forbidden blocklist takes priority
+    # Blocklist wins over the allowlist
     for forbidden in _FORBIDDEN_REGISTRY_PREFIXES:
         if key_lower.startswith(forbidden.lower()):
             return False, f"Registry path '{key_path}' is in the forbidden list"
 
-    # Must match an allowed prefix
     for allowed in _SAFE_REGISTRY_PREFIXES:
         if key_lower.startswith(allowed.lower()):
             return True, None
@@ -202,9 +190,8 @@ def _validate_registry_path(hive, key_path):
     )
 
 
-# Tools that spawn a shell subprocess and register it for cancellation. These
-# handlers take an extra command_id arg (routed through _run_tracked_subprocess)
-# so a cancel_mcp_tool interrupt can kill the running process tree.
+# Shell-spawning tools; their handlers take an extra command_id (via
+# _run_tracked_subprocess) so cancel_mcp_tool can kill the process tree.
 _CANCELLABLE_TOOLS = frozenset({'execute_script', 'run_powershell', 'run_command'})
 
 
@@ -268,9 +255,8 @@ def execute_tool(tool_name, tool_params, config=None, command_id=None):
         return {'error': f'Unknown tool: {tool_name}'}
 
     try:
-        # Shell-spawning tools track their subprocess for cancellation and take
-        # the (params, config, command_id) signature; every other handler keeps
-        # the (params, config) signature.
+        # Cancellable handlers take (params, config, command_id); all others
+        # take (params, config).
         if tool_name in _CANCELLABLE_TOOLS:
             return handler(tool_params, config, command_id=command_id)
         return handler(tool_params, config)
@@ -279,7 +265,7 @@ def execute_tool(tool_name, tool_params, config=None, command_id=None):
         return {'error': str(e)}
 
 
-# ─── Tier 1: Read-Only Tools ────────────────────────────────────────────────
+# Tier 1: read-only tools
 
 
 def _get_system_info(params, config):
@@ -351,7 +337,6 @@ def _get_process_list(params, config):
         launch_mode = proc.get('launch_mode', 'always' if autolaunch else 'off')
         schedules = proc.get('schedules', None)
 
-        # Check runtime state (keyed by PID, matched by process id)
         state_info = {}
         if runtime_state:
             for key, val in runtime_state.items():
@@ -412,7 +397,6 @@ def _get_running_processes(params, config):
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 
-    # Sort by memory usage descending
     processes.sort(key=lambda p: p['memory_mb'], reverse=True)
     processes = processes[:limit]
 
@@ -511,7 +495,6 @@ def _get_gpu_processes(params, config):
 
 def _get_gpu_totals():
     """Get GPU-level summary (model, total/used VRAM) from pynvml or GPUtil."""
-    # Try pynvml first (more detailed)
     try:
         from pynvml import (
             nvmlInit, nvmlShutdown, nvmlDeviceGetCount,
@@ -539,7 +522,6 @@ def _get_gpu_totals():
     except Exception:
         pass
 
-    # Fallback to GPUtil
     try:
         import GPUtil
         shared_utils._ensure_gputil_no_window_popen_patched()
@@ -621,7 +603,6 @@ def _get_event_logs(params, config):
     max_events = min(params.get('max_events', 20), 100)
     level_filter = params.get('level', None)  # 'Error', 'Warning', 'Information'
 
-    # Use PowerShell to query event logs
     ps_cmd = f'Get-EventLog -LogName {log_name} -Newest {max_events * 2}'
     if level_filter:
         ps_cmd += f' -EntryType {level_filter}'
@@ -712,7 +693,6 @@ def _get_service_status(params, config):
             win32service.SERVICE_PAUSED: 'paused',
         }
 
-        # Query the service start type for proper context
         start_type = 'unknown'
         try:
             scm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
@@ -793,7 +773,6 @@ def _get_agent_logs(params, config):
     if not os.path.isdir(log_dir):
         return {'error': 'Log directory not found', 'log_dir': log_dir}
 
-    # Find most recent log file
     log_files = sorted(
         [f for f in os.listdir(log_dir) if f.endswith('.log')],
         reverse=True
@@ -808,12 +787,10 @@ def _get_agent_logs(params, config):
         with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
             lines = f.readlines()
 
-        # Filter by level if specified
         if level_filter:
             level_filter_upper = level_filter.upper()
             lines = [l for l in lines if level_filter_upper in l]
 
-        # Return last N lines
         recent = lines[-max_lines:]
 
         return {
@@ -857,7 +834,6 @@ def _get_display_layout(params, config):
         import display_manager
         import nvapi_display
         profile = display_manager.build_display_profile()
-        # Merge Mosaic data if available
         try:
             mosaic = nvapi_display.detect_mosaic()
             if mosaic:
@@ -874,7 +850,7 @@ def _get_display_layout(params, config):
         return {'error': str(e)}
 
 
-# ─── Tier 3: Privileged Tools ───────────────────────────────────────────────
+# Tier 3: privileged tools
 
 
 def _run_command(params, config, command_id=None):
@@ -891,8 +867,7 @@ def _run_command(params, config, command_id=None):
     if not command:
         return {'error': 'command parameter is required'}
 
-    # Parse command into a safe token list (no shell interpretation).
-    # posix=False preserves Windows backslashes in paths (POSIX mode treats \ as escape).
+    # posix=False keeps Windows backslashes in paths (POSIX mode treats \ as escape).
     try:
         cmd_parts = shlex.split(command, posix=False)
     except ValueError as e:
@@ -901,7 +876,6 @@ def _run_command(params, config, command_id=None):
     if not cmd_parts:
         return {'error': 'command parameter is required'}
 
-    # Validate first token against allow-list
     allowed = _get_allowed_commands(config)
     cmd_base = cmd_parts[0].lower()
 
@@ -940,10 +914,9 @@ def _run_powershell(params, config, command_id=None):
     if not script:
         return {'error': 'script parameter is required'}
 
-    # Audit log: capture a script preview, not just length. The first ~500 chars
-    # are enough to identify the command and its first few operations while
-    # keeping log rotation manageable. Newlines rendered as literal `\n` so a
-    # real PowerShell pipe (`|`) isn't confused with a line break.
+    # Audit preview, not just length: 500 chars identifies the script without
+    # blowing up log rotation. Newlines become literal `\n` so a real pipe (`|`)
+    # can't be misread as a line break.
     _preview = script[:500].replace('\r\n', '\n').replace('\n', '\\n')
     _truncated = '...' if len(script) > 500 else ''
     logger.info(f"[MCP-AUDIT] run_powershell ({len(script)} chars): {_preview}{_truncated}")
@@ -989,9 +962,8 @@ def _execute_script(params, config, command_id=None):
 
     logger.info(f"[MCP-AUDIT] execute_script called. Script length: {len(script)} chars, timeout: {timeout}s")
 
-    # -ExecutionPolicy Bypass is required for kiosks with Group Policy set to
-    # AllSigned/Restricted. It's not a security boundary (SYSTEM can already
-    # do anything), it's a compatibility flag for hardened deployments.
+    # -ExecutionPolicy Bypass: needed on kiosks with GPO AllSigned/Restricted.
+    # Not a security boundary — SYSTEM can already do anything.
     returncode, stdout, stderr, timed_out = _run_tracked_subprocess(
         ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
         timeout, command_id, cwd=cwd,
@@ -1026,12 +998,11 @@ def _get_allowed_file_bases(config):
         os.path.expandvars('%TEMP%'),
         os.path.expandvars('%USERPROFILE%'),
     ]
-    # Add directories of configured processes (e.g. TouchDesigner projects)
+    # Configured process dirs, e.g. TouchDesigner projects
     for proc in (config or {}).get('processes', []):
         proc_path = proc.get('path', '')
         if proc_path:
             bases.append(os.path.dirname(proc_path))
-    # Resolve all to real paths for consistent comparison
     return [os.path.realpath(b) for b in bases if b]
 
 
@@ -1047,8 +1018,8 @@ def _validate_file_path(file_path, config):
     for base in _get_allowed_file_bases(config):
         base_lower = base.lower()
         if resolved_lower.startswith(base_lower):
-            # Ensure it's truly under base, not just a prefix match
-            # e.g. "C:\ProgramData\OwletteEVIL" must NOT match "C:\ProgramData\Owlette"
+            # Under base, not merely prefix-matching it:
+            # C:\ProgramData\OwletteEVIL must NOT match C:\ProgramData\Owlette.
             if len(resolved_lower) == len(base_lower) or resolved_lower[len(base_lower)] in ('\\', '/'):
                 return True, resolved
     return False, f"Path is outside allowed directories: {file_path}"
@@ -1110,7 +1081,6 @@ def _write_file(params, config):
     logger.info(f"[MCP-AUDIT] write_file: {resolved} ({len(content)} chars)")
 
     try:
-        # Ensure directory exists
         dir_path = os.path.dirname(resolved)
         if dir_path and not os.path.isdir(dir_path):
             os.makedirs(dir_path, exist_ok=True)
@@ -1152,7 +1122,6 @@ def _list_directory(params, config):
                 pass
             entries.append(info)
 
-        # Sort: directories first, then by name
         entries.sort(key=lambda e: (not e['is_dir'], e['name'].lower()))
 
         return {
@@ -1164,7 +1133,7 @@ def _list_directory(params, config):
         return {'error': f'Failed to list directory: {e}'}
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────────────
+# Helpers
 
 
 def _kill_process_tree(pid):
@@ -1172,14 +1141,12 @@ def _kill_process_tree(pid):
     try:
         parent = psutil.Process(pid)
         children = parent.children(recursive=True)
-        # Kill children first (bottom-up), then the parent
         for child in reversed(children):
             try:
                 child.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
         parent.kill()
-        # Wait briefly for processes to actually terminate
         psutil.wait_procs(children + [parent], timeout=5)
     except psutil.NoSuchProcess:
         pass  # Already dead
@@ -1196,9 +1163,7 @@ def _get_allowed_commands(config):
     return DEFAULT_ALLOWED_COMMANDS
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Tier 2: Purpose-built admin tools (validated params, no raw shell)
-# ═══════════════════════════════════════════════════════════════════════════
+# Tier 2: purpose-built admin tools (validated params, no raw shell)
 
 
 def _manage_process(params, config):
@@ -1217,13 +1182,11 @@ def _manage_process(params, config):
     if not name_pattern:
         return {'error': 'name_pattern is required'}
 
-    # Compile a matcher
     pattern_lower = name_pattern.lower()
     if match_exact:
         def matches(pname):
             return pname.lower() == pattern_lower
     else:
-        # Simple glob via fnmatch
         import fnmatch
         def matches(pname):
             return fnmatch.fnmatch(pname.lower(), pattern_lower)
@@ -1251,7 +1214,6 @@ def _manage_process(params, config):
                     if force:
                         proc.kill()  # SIGKILL equivalent on Windows
                     else:
-                        # Try graceful terminate first
                         shared_utils.graceful_terminate(proc.info['pid'], timeout=5)
                 elif action == 'suspend':
                     proc.suspend()
@@ -1323,7 +1285,7 @@ def _manage_windows_service(params, config):
     except ImportError:
         return {'error': 'pywin32 not available'}
 
-    # ─── State operations ──────────────────────────────────────────────────
+    # State operations
     if action in ('start', 'stop', 'restart', 'pause', 'continue'):
         try:
             if action == 'start':
@@ -1340,7 +1302,7 @@ def _manage_windows_service(params, config):
         except Exception as e:
             return {'error': f'{action} failed: {e}'}
 
-    # ─── Set startup type ──────────────────────────────────────────────────
+    # Set startup type
     if action == 'set_startup':
         startup = (params.get('startup_type') or '').lower()
         mapping = {
@@ -1354,7 +1316,7 @@ def _manage_windows_service(params, config):
             return {'error': f'sc config failed: {err or out}'}
         return {'action': action, 'service': service_name, 'startup_type': startup, 'status': 'ok'}
 
-    # ─── Set recovery / failure actions ────────────────────────────────────
+    # Set recovery / failure actions
     if action == 'set_recovery':
         action_map = {'restart': 'restart', 'run_program': 'run', 'reboot': 'reboot', 'none': ''}
         first = params.get('first_failure', 'restart').lower()
@@ -1370,7 +1332,6 @@ def _manage_windows_service(params, config):
         reboot_msg = params.get('reboot_message', '')
         run_prog = params.get('run_program_path', '')
 
-        # Build sc failure command
         # actions format: action1/delay/action2/delay/action3/delay
         actions_str = f'{action_map[first]}/{delay_ms}/{action_map[second]}/{delay_ms}/{action_map[subsequent]}/{delay_ms}'
         sc_args = ['failure', service_name, f'reset={reset_seconds}', f'actions={actions_str}']
@@ -1398,26 +1359,22 @@ def _manage_windows_service(params, config):
             'status': 'ok',
         }
 
-    # ─── Get full details ──────────────────────────────────────────────────
+    # Get full details
     if action == 'get_details':
-        # sc qc
         rc, qc_out, qc_err = _sc_exe(['qc', service_name])
         if rc != 0:
             return {'error': f'Service not found or sc qc failed: {qc_err or qc_out}'}
         qc = _parse_sc_qc(qc_out)
 
-        # sc qfailure (recovery config)
         _, qf_out, _ = _sc_exe(['qfailure', service_name])
         recovery_text = qf_out
 
-        # sc qdescription
         _, qd_out, _ = _sc_exe(['qdescription', service_name])
         description = ''
         for line in qd_out.splitlines():
             if 'DESCRIPTION:' in line.upper():
                 description = line.split(':', 1)[1].strip()
 
-        # Current runtime status
         status_name = 'unknown'
         process_id = None
         try:
@@ -1481,7 +1438,6 @@ def _configure_gpu_tdr(params, config):
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0,
                             winreg.KEY_READ | winreg.KEY_WRITE) as key:
-            # Read previous values
             try:
                 previous['TdrDelay'], _ = winreg.QueryValueEx(key, 'TdrDelay')
             except FileNotFoundError:
@@ -1491,7 +1447,6 @@ def _configure_gpu_tdr(params, config):
             except FileNotFoundError:
                 previous['TdrDdiDelay'] = None
 
-            # Write new values
             winreg.SetValueEx(key, 'TdrDelay', 0, winreg.REG_DWORD, timeout)
             new_values['TdrDelay'] = timeout
             if ddi_timeout is not None:
@@ -1556,7 +1511,6 @@ def _manage_windows_update(params, config):
                 return {'error': 'pause_days must be 1-35'}
         except (TypeError, ValueError):
             return {'error': 'pause_days must be an integer'}
-        # Calculate ISO-formatted pause-until timestamp
         from datetime import datetime, timedelta, timezone
         pause_until = (datetime.now(timezone.utc) + timedelta(days=pause_days)).strftime('%Y-%m-%dT%H:%M:%SZ')
         try:
@@ -1950,7 +1904,6 @@ def _configure_power_plan(params, config):
     actions_done = []
     errors = []
 
-    # Set active plan
     if plan:
         if plan not in plan_guids:
             return {'error': f"Invalid plan. Use: {', '.join(plan_guids)}"}
@@ -2077,9 +2030,7 @@ def check_pending_reboot(params, config):
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Wave 2: Provisioning & Maintenance
-# ═══════════════════════════════════════════════════════════════════════════
+# Provisioning & maintenance
 
 
 def _ps_escape(s):
@@ -2200,7 +2151,7 @@ def _create_scheduled_task(params):
     if not re.match(r'^[\w.\-\\ ]+$', task_name):
         return {'error': f"Invalid task_name '{task_name}'"}
 
-    # ─── Build trigger ────────────────────────────────────────────────
+    # Build trigger
     t_type = (trigger.get('type') or '').lower()
     if t_type == 'boot':
         trigger_ps = 'New-ScheduledTaskTrigger -AtStartup'
@@ -2251,7 +2202,7 @@ def _create_scheduled_task(params):
     else:
         return {'error': f"Invalid trigger.type '{t_type}'. Use: boot/logon/once/daily/weekly/on_event/on_idle"}
 
-    # ─── Build action ─────────────────────────────────────────────────
+    # Build action
     a_type = (action_def.get('type') or 'run_program').lower()
     if a_type != 'run_program':
         return {'error': f"Only action.type 'run_program' is supported"}
@@ -2264,7 +2215,7 @@ def _create_scheduled_task(params):
     wd_part = f' -WorkingDirectory "{_ps_escape(working_dir)}"' if working_dir else ''
     action_ps = f'New-ScheduledTaskAction -Execute "{_ps_escape(program)}"{args_part}{wd_part}'
 
-    # ─── Build principal ──────────────────────────────────────────────
+    # Build principal
     run_as = (principal.get('run_as') or 'SYSTEM').upper()
     run_level = (principal.get('run_level') or 'highest').lower()
     user_map = {
@@ -2281,7 +2232,7 @@ def _create_scheduled_task(params):
     else:
         principal_ps = f'New-ScheduledTaskPrincipal -UserId "{user_map[run_as]}" -LogonType ServiceAccount -RunLevel {rl}'
 
-    # ─── Build settings ───────────────────────────────────────────────
+    # Build settings
     settings_parts = []
     if settings.get('start_when_available', True):
         settings_parts.append('-StartWhenAvailable')
@@ -2313,7 +2264,7 @@ def _create_scheduled_task(params):
         settings_parts.append(f'-IdleDuration (New-TimeSpan -Minutes 1) -IdleWaitTimeout (New-TimeSpan -Minutes {mins}) -RunOnlyIfIdle')
     settings_ps = 'New-ScheduledTaskSettingsSet ' + ' '.join(settings_parts) if settings_parts else 'New-ScheduledTaskSettingsSet'
 
-    # ─── Assemble full script ─────────────────────────────────────────
+    # Assemble full script
     desc_part = f' -Description "{_ps_escape(description)}"' if description else ''
     ps_script = (
         f'$trigger = {trigger_ps}; '
@@ -2401,7 +2352,6 @@ def _registry_operation(params, config):
                     val, regtype = winreg.QueryValueEx(key, value_name)
                     return {'hive': hive, 'key_path': key_path, 'value_name': value_name,
                             'value': val if not isinstance(val, bytes) else val.hex(), 'type': regtype}
-                # Enumerate all values
                 values = []
                 i = 0
                 while True:
@@ -2669,7 +2619,6 @@ def _manage_windows_feature(params, config):
     if rc != 0:
         return {'error': f'{ftype} {action} failed: {err or out}'}
 
-    # Try to parse JSON, otherwise return raw
     try:
         data = json.loads(out) if out.strip() else None
     except Exception:

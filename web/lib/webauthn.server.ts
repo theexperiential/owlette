@@ -1,44 +1,28 @@
 /**
- * WebAuthn (Passkey) Server Configuration & Firestore Helpers
+ * WebAuthn RP config, challenge storage, and credential persistence.
+ * Server-only — never import from a client component.
  *
- * Centralized configuration for WebAuthn registration and authentication.
- * Handles challenge storage, credential persistence, and RP configuration.
- *
- * IMPORTANT: This file should only be imported in server components/API routes.
- *
- * RETIRED FIELD — `users/{uid}.passkeyEnrolled`:
- * `storePasskey` / `deletePasskey` used to set a boolean on the user document
- * alongside the credential write. That was a second source of truth for "this
- * account has passkeys", maintained non-transactionally, and it could disagree
- * with the subcollection it claimed to summarize. The authoritative answer is
- * now `users/{uid}.mfaFactors.passkeys`, recounted from this subcollection
- * inside a transaction by `applyMfaFactorChange` in `lib/mfaFactors.server.ts`.
- * Nothing reads `passkeyEnrolled` any more, but user documents written before
- * this change still CARRY it until a cleanup pass drops it — a stale value
- * there is inert, not a bug. Do not reintroduce a writer for it.
+ * RETIRED FIELD `users/{uid}.passkeyEnrolled`: a non-transactional boolean that could
+ * disagree with the subcollection it summarized. The authoritative count is
+ * `users/{uid}.mfaFactors.passkeys`, recounted transactionally by `applyMfaFactorChange`
+ * (lib/mfaFactors.server.ts). Old user docs still carry the field; a stale value is inert.
+ * Do not reintroduce a writer for it.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
 import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
 
-// ── RP (Relying Party) Configuration ────────────────────────────────────
-
 const RP_NAME = 'Owlette';
 
 /**
- * E2E override for the relying-party identity.
+ * E2E override for the relying-party identity. Checked BEFORE the production branch on
+ * purpose — do NOT collapse it into the dev fall-through: the Playwright harness serves a
+ * production Next build (`next({ dev: false })`, NODE_ENV inlined at build time), so without
+ * it getRpId() returns 'owlette.app' and no loopback ceremony can verify.
  *
- * This is checked BEFORE the production branch on purpose — do not "simplify"
- * it down to the dev fall-through. The Playwright harness serves a PRODUCTION
- * Next build (`web/scripts/e2e-next-server.mjs` calls `next({ dev: false })`,
- * and Next inlines NODE_ENV at build time), so without this override
- * `getRpId()` resolves to 'owlette.app' and the origins to the https pair, and
- * no ceremony run against the loopback e2e server could ever verify.
- *
- * Gated on OWLETTE_E2E === '1', which only `web/playwright.config.ts` sets, and
- * only honored when a value is actually supplied — an e2e run that forgets to
- * thread the vars falls through to the normal branches rather than silently
- * running with an empty origin allowlist.
+ * Gated on OWLETTE_E2E === '1' (set only by playwright.config.ts) and only when a value is
+ * supplied, so a run that forgets the vars falls through instead of running with an empty
+ * origin allowlist.
  */
 function e2eRpOverride(name: 'WEBAUTHN_RP_ID' | 'WEBAUTHN_ORIGINS'): string | null {
   if (process.env.OWLETTE_E2E !== '1') {
@@ -60,7 +44,7 @@ export function getRpId(): string {
 }
 
 export function getExpectedOrigins(): string[] {
-  // Comma-separated so a spec can allow more than one loopback origin.
+  // Comma-separated: a spec may need more than one loopback origin.
   const e2eOrigins = e2eRpOverride('WEBAUTHN_ORIGINS')
     ?.split(',')
     .map((origin) => origin.trim())
@@ -77,8 +61,6 @@ export function getExpectedOrigins(): string[] {
 export function getRpName(): string {
   return RP_NAME;
 }
-
-// ── Types ───────────────────────────────────────────────────────────────
 
 export interface StoredPasskey {
   credentialId: string;
@@ -108,8 +90,6 @@ interface StoredChallenge {
   createdAt: Date;
   expiresAt: Date;
 }
-
-// ── Challenge Management ────────────────────────────────────────────────
 
 const CHALLENGE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -142,10 +122,9 @@ export async function getAndDeleteChallenge(
 
   const data = doc.data() as StoredChallenge;
 
-  // Delete challenge (single-use)
+  // Single-use.
   await docRef.delete();
 
-  // Check expiry
   const expiresAt = data.expiresAt instanceof Date
     ? data.expiresAt
     : new Date((data.expiresAt as { _seconds: number })._seconds * 1000);
@@ -156,8 +135,6 @@ export async function getAndDeleteChallenge(
 
   return data;
 }
-
-// ── Passkey CRUD ────────────────────────────────────────────────────────
 
 export async function getUserPasskeys(userId: string): Promise<StoredPasskey[]> {
   const db = getAdminDb();
@@ -197,11 +174,9 @@ export async function storePasskey(
 ): Promise<void> {
   const db = getAdminDb();
 
-  // Store credential in passkeys subcollection. The credential document is the
-  // only thing written here: the account's factor tally is owned by
-  // `applyMfaFactorChange({ recountPasskeys: true })`, which the caller runs
-  // immediately after and which counts this subcollection inside a transaction.
-  // A summary flag written from here could not be transactional with that count.
+  // Credential document only. The factor tally belongs to
+  // `applyMfaFactorChange({ recountPasskeys: true })`, which the caller runs next and which
+  // counts this subcollection in a transaction — a summary flag written here could not be.
   const passkeyRef = db
     .collection('users')
     .doc(userId)
@@ -226,10 +201,9 @@ export async function deletePasskey(
 ): Promise<void> {
   const db = getAdminDb();
 
-  // Delete the passkey document. Whether this was the account's last passkey is
-  // not decided here — the caller's `applyMfaFactorChange({ recountPasskeys })`
-  // recounts the subcollection transactionally and owns every consequence of
-  // reaching zero (re-arming `requiresMfaSetup`, revoking trusted devices).
+  // Document only. Whether this was the last passkey is decided by the caller's
+  // `applyMfaFactorChange({ recountPasskeys })`, which owns the zero-case consequences
+  // (re-arming requiresMfaSetup, revoking trusted devices).
   await db
     .collection('users')
     .doc(userId)

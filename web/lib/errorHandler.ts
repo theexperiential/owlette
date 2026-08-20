@@ -1,7 +1,4 @@
-/**
- * Error sanitization utility
- * Provides user-friendly error messages while hiding internal implementation details
- */
+/** User-facing error strings that don't leak internal implementation detail. */
 import * as Sentry from '@sentry/nextjs';
 
 interface FirebaseError {
@@ -9,11 +6,7 @@ interface FirebaseError {
   message?: string;
 }
 
-/**
- * Maps Firebase error codes to user-friendly messages
- */
 const FIREBASE_ERROR_MESSAGES: Record<string, string> = {
-  // Authentication errors
   'auth/user-not-found': 'Invalid email or password',
   'auth/wrong-password': 'Invalid email or password',
   'auth/invalid-email': 'Please enter a valid email address',
@@ -23,25 +16,18 @@ const FIREBASE_ERROR_MESSAGES: Record<string, string> = {
   'auth/too-many-requests': 'Too many failed attempts. Please try again later',
   'auth/operation-not-allowed': 'This operation is not allowed',
   'auth/requires-recent-login': 'Please log out and log in again to continue',
-  // The Firebase SDK signs the user out itself when it sees these (see
-  // `_logoutIfInvalidated` in @firebase/auth), so by the time a caller reads
-  // this string the session is already gone.
+  // The SDK already signed the user out (`_logoutIfInvalidated` in @firebase/auth).
   'auth/user-token-expired': 'Your session expired. Please sign in again',
   'auth/invalid-user-token': 'Your session expired. Please sign in again',
 
-  // Constrained-browser errors. The first two are in POPUP_UNAVAILABLE_CODES
-  // (lib/inAppBrowser), so on /login and /register they get inline remediation
-  // instead of a toast and these strings serve only other callers.
-  //
-  // `auth/web-storage-unsupported` is deliberately NOT in that set: blocked
-  // storage is a different failure from a refused popup, and the inline notice
-  // would steer the user to an email fallback that needs the same storage. It
-  // keeps the ordinary toast, so this string is what the user actually reads.
+  // The first two are in POPUP_UNAVAILABLE_CODES (lib/inAppBrowser), so /login and
+  // /register show inline remediation and these strings serve other callers only.
+  // `auth/web-storage-unsupported` is deliberately excluded from that set — the
+  // inline notice points at an email fallback needing the same blocked storage.
   'auth/popup-blocked': 'This browser blocked the sign-in window. Open owlette.app in your browser, or sign in with your email',
   'auth/operation-not-supported-in-this-environment': 'Google sign-in is not available in this browser. Open owlette.app in your browser, or sign in with your email',
   'auth/web-storage-unsupported': 'This browser is blocking the storage sign-in needs. Try another browser, or sign in with your email',
 
-  // Firestore errors
   'permission-denied': 'You do not have permission to perform this action',
   'not-found': 'The requested item could not be found',
   'already-exists': 'This item already exists',
@@ -55,33 +41,22 @@ const FIREBASE_ERROR_MESSAGES: Record<string, string> = {
   'data-loss': 'Data may have been lost. Please contact support',
   'unauthenticated': 'You must be logged in to perform this action',
 
-  // Network errors
   'auth/network-request-failed': 'Network error. Please check your connection and try again',
   'timeout': 'Request timed out. Please try again',
 };
 
-/**
- * Sanitizes error messages for display to users
- * - In development: Shows full error details for debugging
- * - In production: Shows user-friendly generic messages
- *
- * @param error - The error object to sanitize
- * @returns User-friendly error message
- */
+/** Full detail in development, generic user-facing strings in production. */
 export const sanitizeError = (error: unknown): string => {
   const isDevelopment = process.env.NODE_ENV === 'development';
 
-  // Log full error in development for debugging
   if (isDevelopment) {
     console.error('[Error Handler - DEV]', error);
   }
 
-  // Handle null/undefined errors
   if (!error) {
     return 'An unknown error occurred';
   }
 
-  // Handle Firebase-specific errors
   if (typeof error === 'object' && error !== null) {
     const firebaseError = error as FirebaseError;
 
@@ -89,63 +64,47 @@ export const sanitizeError = (error: unknown): string => {
       return FIREBASE_ERROR_MESSAGES[firebaseError.code];
     }
 
-    // In development, show the actual error message
     if (isDevelopment && firebaseError.message) {
       return firebaseError.message;
     }
   }
 
-  // Handle string errors
   if (typeof error === 'string') {
-    // In production, don't show raw error strings (they might contain internal info)
+    // raw strings may carry internal detail
     if (!isDevelopment) {
       return 'An error occurred. Please try again';
     }
     return error;
   }
 
-  // Handle Error objects
   if (error instanceof Error) {
-    // In development, show full error message
     if (isDevelopment) {
       return error.message;
     }
 
-    // In production, check if it's a network error
     if (error.message.toLowerCase().includes('network') ||
         error.message.toLowerCase().includes('fetch')) {
       return 'Network error. Please check your connection';
     }
   }
 
-  // Default fallback
   return isDevelopment
     ? `Unknown error: ${JSON.stringify(error)}`
     : 'An error occurred. Please try again';
 };
 
 /**
- * Extra Sentry scope for a single report.
- *
- * Exists so a caller can attach the environment detail that makes an otherwise
- * unactionable error diagnosable — the raw user-agent being the motivating
- * case, since Sentry's parsed browser family collapses every unrecognised iOS
- * webview to one fallback label and loses which app it actually was.
+ * Extra Sentry scope for one report. Motivating case: the raw user-agent — Sentry's
+ * parsed browser family collapses every unrecognised iOS webview to one label.
  */
 export interface ErrorDetail {
-  /** Short, low-cardinality values only — these become Sentry tags. */
+  /** Sentry tags: short, low-cardinality values only. */
   tags?: Record<string, string>;
-  /** Anything larger or higher-cardinality (user agents, ids, payloads). */
+  /** Larger / higher-cardinality values (user agents, ids, payloads). */
   extra?: Record<string, unknown>;
 }
 
-/**
- * Logs errors to console in development, could be extended to send to error tracking service
- *
- * @param error - The error to log
- * @param context - Optional context about where the error occurred
- * @param detail - Optional tags/extra to attach to the Sentry report
- */
+/** Console in development, Sentry in production. */
 export const logError = (error: unknown, context?: string, detail?: ErrorDetail): void => {
   const isDevelopment = process.env.NODE_ENV === 'development';
 
@@ -169,14 +128,7 @@ export const logError = (error: unknown, context?: string, detail?: ErrorDetail)
   }
 };
 
-/**
- * Creates a user-friendly error message from a caught error
- * Combines sanitization with optional logging
- *
- * @param error - The error object
- * @param context - Optional context about where the error occurred
- * @returns User-friendly error message
- */
+/** logError + sanitizeError in one call. */
 export const handleError = (error: unknown, context?: string): string => {
   logError(error, context);
   return sanitizeError(error);

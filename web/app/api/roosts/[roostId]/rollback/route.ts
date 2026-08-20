@@ -1,40 +1,25 @@
 /**
  * POST /api/roosts/{roostId}/rollback
- *      input:  { siteId: string, targetVersion?: string | number }
- *      output: { ok, roostId, siteId, currentVersionId, currentVersionNumber, previousVersionId }
+ *      in:  { siteId: string, targetVersion?: string | number }
+ *      out: { ok, roostId, siteId, currentVersionId, currentVersionNumber, previousVersionId }
  *
- * Flip the roost's `currentVersionId` pointer to a previously-published
- * version. Does NOT mint a new version (rollbacks are a pointer change,
- * not a new publish — versions are immutable once written).
+ * Flips `currentVersionId` to an already-published version. Mints NO new
+ * version — versions are immutable, a rollback is a pointer change.
  *
- * `targetVersion` accepts every form supported by the resolver in
- * `web/lib/resolveVersion.ts`:
- *   - alias    'current' | 'previous' | 'first'
- *   - stable id 'vrs_<hex>'
- *   - number    3 / '3' / '#3' / 'v3' / 'V3'
- * Defaults to `'previous'` when omitted, matching the most common UX
- * (one-click "undo last publish").
+ * `targetVersion` takes any form `web/lib/resolveVersion.ts` accepts (alias
+ * 'current'|'previous'|'first', stable id 'vrs_<hex>', number 3/'3'/'#3'/'v3').
+ * Defaults to 'previous' — one-click "undo last publish".
  *
- * Auth: scope `rollback` on the roost. The scope grammar already
- * distinguishes rollback from write so an operator key can be issued
- * with rollback-only powers (no new pushes). Defined in
- * `web/lib/apiKeyTypes.ts`.
+ * Auth: scope `rollback` (`web/lib/apiKeyTypes.ts`), distinct from write so an
+ * operator key can roll back without being able to push.
  *
- * Dispatch: rollback flips the pointer, but does not let the fan-out
- * trigger replay its deterministic `roost_sync_{roostId}_{versionId}`
- * command id. The route keeps/creates `rollouts/{targetVersionId}` so
- * `onRoostWritten` bails, then directly enqueues replay-safe nonce
- * `sync_pull` commands to each target machine.
+ * Dispatch: the pointer flip must NOT let the fan-out trigger replay its
+ * deterministic `roost_sync_{roostId}_{versionId}` command id, so the route
+ * keeps/creates `rollouts/{targetVersionId}` (making `onRoostWritten` bail) and
+ * enqueues nonce'd `sync_pull` commands itself.
  *
- * Webhook emission: a `version.rolled_back` event is queued for every
- * subscription on the site once the pointer flip and the sync dispatch
- * have landed. Queueing only — the scheduled pump in
- * `functions/src/webhookDispatch.ts` owns delivery, backoff, and the
- * billing gate. See `web/lib/roostWebhooks.server.ts`.
- *
- * Audit log: `version_pointer_changed` audit emission is structural
- * infra not yet wired up from any web route. See TODO below — for now
- * the firestore write itself is the durable record.
+ * Webhooks: `version.rolled_back` is QUEUED per subscription after the flip and
+ * dispatch land; `functions/src/webhookDispatch.ts` owns delivery and backoff.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -170,9 +155,8 @@ async function dispatchRollbackSyncPulls(args: {
 }
 
 /**
- * Map a resolver error to an RFC 7807 response. Mirrors the helper in
- * `versions/[versionRef]/route.ts` so error envelopes stay identical
- * across every endpoint that resolves a versionRef.
+ * Resolver error -> RFC 7807. Mirrors the helper in the versions/[versionRef]
+ * route so error envelopes stay identical across every versionRef endpoint.
  */
 function problemFromResolveError(
   err: ResolveVersionError,
@@ -204,9 +188,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const site = validateSiteIdBody(body.siteId);
     if (!site.ok) return site.response;
 
-    // Scope `rollback` per `web/lib/apiKeyTypes.ts` — the operator preset
-    // grants this alongside read/write/deploy. A read-only key gets a
-    // 403 scope_insufficient.
+    // Scope `rollback`: the operator preset grants it alongside
+    // read/write/deploy; a read-only key gets 403 scope_insufficient.
     const auth = await requireRoostAuthAndScope(
       request,
       site.siteId,
@@ -218,10 +201,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
     if (gateRes) return gateRes;
 
-    // Idempotency replay support — matches the PATCH pattern in
-    // versions/[versionRef]/route.ts so retries (operator hits the button
-    // twice on a flaky network) don't double-flip the pointer or fire two
-    // dispatcher waves.
+    // Idempotency replay (same pattern as the versions PATCH handler): a
+    // double-click on a flaky network must not double-flip or fire two waves.
     const idem = await checkIdempotency(
       request,
       {
@@ -234,9 +215,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return idem.response;
     }
 
-    // targetVersion is optional. When provided, accept string OR number;
-    // anything else (object, array, boolean) is an immediate 400 — we
-    // don't want to silently coerce or bury that error in the resolver.
+    // Optional; string OR number only. Objects/arrays/booleans 400 here rather
+    // than being coerced or buried in the resolver.
     const rawTarget = body.targetVersion;
     if (
       rawTarget !== undefined &&
@@ -254,9 +234,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         ? DEFAULT_TARGET
         : String(rawTarget);
 
-    // Resolve the ref to a concrete version doc — same grammar as
-    // GET/PATCH /versions/{versionRef}. Side-effect free; throws
-    // ResolveVersionError on bad input or missing target.
+    // Same ref grammar as GET/PATCH /versions/{versionRef}. Side-effect free;
+    // throws ResolveVersionError.
     let resolved;
     try {
       resolved = await resolveVersion({
@@ -279,11 +258,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         ? resolvedData.versionUrl
         : null;
 
-    // Compare-and-swap inside a transaction: read the roost head, verify
-    // the target isn't already current, flip the pointers atomically.
-    // The transactional read protects us against a concurrent push that
-    // landed between resolveVersion() and the update — firestore retries
-    // the callback if the roost doc moved.
+    // Compare-and-swap in a transaction: the transactional read of the roost
+    // head catches a concurrent push landing between resolveVersion() and the
+    // update — firestore retries the callback if the doc moved.
     const db = getAdminDb();
     const roostRef = db
       .collection('sites')
@@ -325,10 +302,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           ? existing.extractPath.trim()
           : DEFAULT_EXTRACT_ROOT;
 
-      // Denormalise the resolved version's summary fields onto the roost
-      // doc so the /roost list + dispatcher cloud function can read them
-      // without a sub-collection round-trip. Mirrors the field set the
-      // POST /versions handler writes on a fresh push.
+      // Denormalised onto the roost doc so the /roost list and the dispatcher
+      // cloud function read it without a sub-collection round-trip. Same field
+      // set POST /versions writes on a fresh push.
       tx.update(roostRef, {
         currentVersionId: resolved.versionId,
         currentVersionNumber: resolved.versionNumber,
@@ -345,11 +321,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      // Keep/create the target rollout doc as a terminal guard. The roost
-      // pointer change will trigger onRoostWritten, and that trigger bails
-      // when rollouts/{versionId} already exists. Marking it terminal also
-      // prevents an older in-flight rollout state from later promoting a
-      // deterministic fleet command for this rollback version.
+      // Terminal guard: onRoostWritten bails when rollouts/{versionId} exists,
+      // and terminal also stops an older in-flight rollout from later promoting
+      // a deterministic fleet command for this version.
       tx.set(
         rolloutRef,
         {
@@ -390,9 +364,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
     if (txResult.kind === 'no_op') {
-      // Defensive only — the UI hides the rollback action on the row that's
-      // already current. A direct API caller still gets a clear 400 rather
-      // than a silent success that does nothing.
+      // Defensive: the UI hides rollback on the current row, but a direct API
+      // caller deserves a 400 over a silent no-op.
       return problem({
         type: ProblemType.ValidationFailed,
         title: 'rollback no-op',
@@ -425,10 +398,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       requestedBy: auth.userId,
     });
 
-    // Queue `version.rolled_back` for every subscriber. Awaited so the
-    // 200 means the event is durably queued; the scheduled retry pump in
-    // functions/src/webhookDispatch.ts does the actual POSTing. Never
-    // throws — a webhook outage must not fail a completed rollback.
+    // Awaited so a 200 means the event is durably queued; the scheduled pump in
+    // functions/src/webhookDispatch.ts does the POSTing. Never throws — a
+    // webhook outage must not fail a completed rollback.
     await emitRoostWebhook({
       db,
       siteId: site.siteId,

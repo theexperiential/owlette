@@ -77,8 +77,8 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [healthAlerts, setHealthAlerts] = useState(true);
   const [processAlerts, setProcessAlerts] = useState(true);
   const [thresholdAlerts, setThresholdAlerts] = useState(true);
-  // Firestore keeps the legacy field name `cortexAlerts` (see web/lib/hoot/WIRE_NAMES.md);
-  // the local state carries the product name and is mapped at the wire boundary.
+  // Firestore keeps the legacy `cortexAlerts` field (web/lib/hoot/WIRE_NAMES.md);
+  // local state uses the product name and maps at the wire boundary.
   const [hootAlerts, setHootAlerts] = useState(true);
   const [displayAlerts, setDisplayAlerts] = useState(true);
   const [talonAlerts, setTalonAlerts] = useState(true);
@@ -87,7 +87,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [ccEmailError, setCcEmailError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Password change state
   const [showPasswordSection, setShowPasswordSection] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -97,7 +96,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
 
-  // LLM API key state
   const [llmProvider, setLlmProvider] = useState<'anthropic' | 'openai'>('anthropic');
   const [llmApiKey, setLlmApiKey] = useState('');
   const [llmModel, setLlmModel] = useState('');
@@ -108,12 +106,10 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [llmModelsLoading, setLlmModelsLoading] = useState(false);
 
 
-  // Account deletion state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
 
-  // Fetch available models from provider API
   const fetchLlmModels = async (provider: string) => {
     setLlmModelsLoading(true);
     try {
@@ -123,19 +119,17 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         setLlmModels(data.models || []);
       }
     } catch {
-      // Fall back to hardcoded list (already in state)
+      // Keep the hardcoded fallback list already in state.
     }
     setLlmModelsLoading(false);
   };
 
-  // Navigate to initial section when dialog opens
   useEffect(() => {
     if (open && initialSection) {
       setActiveSection(initialSection);
     }
   }, [open, initialSection]);
 
-  // Load form state when dialog opens
   useEffect(() => {
     if (open) {
       if (user?.displayName) {
@@ -251,7 +245,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
 
   const handlePhotoPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    // Reset the input value so picking the same file twice in a row still fires onChange.
+    // Reset so picking the same file twice still fires onChange.
     e.target.value = '';
     if (!file) return;
 
@@ -274,7 +268,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
     try {
       await updateUserPhoto(blob);
     } catch {
-      // AuthContext surfaces its own toast
+      // AuthContext toasts.
     } finally {
       setPhotoUploading(false);
     }
@@ -285,7 +279,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
     try {
       await updateUserPhoto(null);
     } catch {
-      // Toast handled in AuthContext
+      // AuthContext toasts.
     } finally {
       setPhotoUploading(false);
     }
@@ -325,7 +319,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       }
       onOpenChange(false);
     } catch {
-      // Error already handled by AuthContext with toast
+      // AuthContext toasts.
     } finally {
       setLoading(false);
     }

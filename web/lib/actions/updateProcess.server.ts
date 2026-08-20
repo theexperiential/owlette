@@ -1,9 +1,4 @@
-/**
- * Action core: partial-update a process on a machine.
- *
- * Extracted from `web/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/route.ts`
- * (PATCH).
- */
+/** Action core: partial-update a process on a machine (the PATCH route's body). */
 import {
   withProcessLock,
   findProcessIndex,
@@ -19,9 +14,8 @@ export interface UpdateProcessInput {
   machineId: string;
   processId: string;
   /**
-   * Partial process config. `id` and `processId` are forbidden — the route
-   * shim already strips them, and any that slip past are re-pinned inside
-   * the txn so a malicious body can't override them.
+   * Partial process config. `id` / `processId` are forbidden: the route shim
+   * strips them and the txn re-pins them, so a malicious body can't override.
    */
   patch: Partial<PublicProcessConfig>;
 }

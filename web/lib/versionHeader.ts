@@ -1,18 +1,14 @@
 /**
- * `Roost-Version` request/response header handling.
+ * `Roost-Version` header handling. Clients pin an API shape with
+ * `Roost-Version: YYYY-MM-DD`; the catalog in `web/app/api/version/route.ts` is
+ * the single source of truth for supported dates.
  *
- * Clients pin an API shape by sending `Roost-Version: YYYY-MM-DD`. The
- * version catalog lives in `web/app/api/version/route.ts` and is
- * single-source-of-truth for supported dates.
+ *   missing     → pass, log, add `X-Roost-Version-Missing: true`
+ *   supported   → pass silently
+ *   unsupported → 400 problem+json, code `unsupported_version`
  *
- * Behavior in wave 3 (soft-advisory until a second version ships):
- *   - Missing header       → pass + log + add `X-Roost-Version-Missing: true`
- *                            to the response (signals callers to start pinning)
- *   - Supported version    → pass silently
- *   - Unsupported version  → 400 problem+json with code `unsupported_version`
- *
- * Once a second dated version is released, "missing" graduates from
- * soft-advisory to a hard default and clients MUST pin explicitly.
+ * Soft-advisory only until a second dated version ships; then "missing" becomes a
+ * hard error and clients MUST pin.
  */
 
 import type { NextRequest } from 'next/server';
@@ -44,12 +40,7 @@ export interface VersionCheckFail {
 
 export type VersionCheckResult = VersionCheckOk | VersionCheckFail;
 
-/**
- * Read + validate the `Roost-Version` request header. Never throws.
- *
- * Uses a case-insensitive lookup — `Request.headers.get` already handles
- * the HTTP-standard case-insensitivity for header names.
- */
+/** Read + validate the `Roost-Version` request header. Never throws. */
 export function checkRoostVersion(request: NextRequest): VersionCheckResult {
   const raw = request.headers.get(ROOST_VERSION_HEADER);
   if (!raw || raw.trim().length === 0) {
@@ -81,10 +72,7 @@ export function checkRoostVersion(request: NextRequest): VersionCheckResult {
   return { ok: true, missing: false, effectiveVersion: version };
 }
 
-/**
- * Attach the missing-version advisory header to a response. No-op when
- * the caller pinned an explicit supported version.
- */
+/** Attach the missing-version advisory header; no-op when the caller pinned. */
 export function applyVersionHeaders(
   response: NextResponse,
   check: VersionCheckOk,

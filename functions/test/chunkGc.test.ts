@@ -21,9 +21,7 @@ import {
   type TombstoneStore,
 } from '../src/chunkGc';
 
-/* --------------------------------------------------------------------- */
-/*  planGc                                                               */
-/* --------------------------------------------------------------------- */
+// planGc
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW = 10_000 * DAY_MS; // arbitrary stable "now"
@@ -85,8 +83,7 @@ describe('planGc', () => {
   });
 
   it('resurrection safety: drops tombstones for chunks that came back to life', () => {
-    // regression: the whole point of a TTL is that if a chunk gets
-    // re-referenced by a new version mid-TTL, we must NOT delete it.
+    // Regression: a chunk re-referenced by a new version mid-TTL must NOT be deleted.
     const tomb: TombstoneRecord = {
       hash: 'resurrected',
       tombstonedAt: NOW - TOMBSTONE_TTL_MS - 1, // ripe, would otherwise delete
@@ -102,8 +99,7 @@ describe('planGc', () => {
   });
 
   it('clears tombstones for chunks that vanished from storage out of band', () => {
-    // operator manually deleted a chunk; tombstone lingers. GC should
-    // clean it up so the tombstone collection doesn't grow forever.
+    // Operator deleted a chunk manually; GC must clear the lingering tombstone.
     const tomb: TombstoneRecord = {
       hash: 'missing',
       tombstonedAt: NOW - 2 * DAY_MS,
@@ -119,8 +115,8 @@ describe('planGc', () => {
   });
 
   it('handles duplicate tombstone records by keeping the oldest', () => {
-    // concurrent firestore writes could in theory create dupes. picking
-    // the oldest tombstonedAt means TTL elapses per the earliest mark.
+    // Concurrent firestore writes can create dupes; oldest tombstonedAt wins so
+    // the TTL elapses from the earliest mark.
     const older: TombstoneRecord = { hash: 'x', tombstonedAt: NOW - 40 * DAY_MS };
     const newer: TombstoneRecord = { hash: 'x', tombstonedAt: NOW - 5 * DAY_MS };
     const plan = planGc({
@@ -182,9 +178,7 @@ describe('summarisePlan', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  gcOneSite orchestrator                                               */
-/* --------------------------------------------------------------------- */
+// gcOneSite orchestrator
 
 interface FakeState {
   referenced: Set<string>;

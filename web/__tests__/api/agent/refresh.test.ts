@@ -1,15 +1,10 @@
 /** @jest-environment node */
 
 /**
- * Refresh token rotation tests for /api/agent/auth/refresh.
- *
- * The endpoint rotates the refresh token on every successful refresh and
- * leaves the old token usable for a 5-minute grace window (so a client
- * retry after a lost response doesn't kill the session). After grace the
- * old token must be rejected.
- *
- * Constants pulled from the route:
- *   REFRESH_TOKEN_GRACE_MS = 5 * 60 * 1000
+ * Refresh-token rotation for /api/agent/auth/refresh: the endpoint rotates on
+ * every success and keeps the old token usable for a 5-minute grace window
+ * (REFRESH_TOKEN_GRACE_MS), so a retry after a lost response doesn't kill the
+ * session. After grace the old token must be rejected.
  */
 
 import crypto from 'crypto';
@@ -72,16 +67,15 @@ jest.mock('@/lib/firebase-admin', () => ({
     }),
     runTransaction: (cb: (tx: unknown) => Promise<unknown>) => {
       mockRunTransaction(cb);
-      // Simulate: read source token, check supersession/expiry, write new
-      // token, mark old superseded. The callback drives all those.
+      // The callback drives read → supersession/expiry check → write new token →
+      // mark old superseded.
       const tx = {
         async get(ref: { hash: string }) {
           const data = tokenStore.get(ref.hash);
           return {
             exists: !!data,
-            // Real DocumentSnapshots expose `.ref` back to the ref; the
-            // rotation GC reads the predecessor snapshot then deletes via
-            // snapshot.ref, so the mock must provide it.
+            // Real DocumentSnapshots expose `.ref`; the rotation GC deletes the
+            // predecessor via snapshot.ref, so the mock must provide it.
             ref: { hash: ref.hash },
             data: () =>
               data
@@ -103,9 +97,8 @@ jest.mock('@/lib/firebase-admin', () => ({
         update(ref: { hash: string }, payload: Record<string, unknown>) {
           const existing = tokenStore.get(ref.hash);
           if (!existing) return;
-          // Only apply fields actually present in the payload — the prior
-          // mock unconditionally wrote supersededAt=Date.now() even when
-          // the route only bumped lastUsed, which broke legacy-agent tests.
+          // Apply only fields present in the payload — unconditionally writing
+          // supersededAt broke the legacy-agent tests.
           const next: StoredToken = { ...existing };
           if ('supersededAt' in payload) {
             next.supersededAt =
@@ -134,8 +127,8 @@ jest.mock('@/lib/firebase-admin', () => ({
             version: (payload.version as string) ?? '2.11.3',
             createdBy: (payload.createdBy as string) ?? 'installer',
             agentUid: (payload.agentUid as string) ?? 'agent-uid',
-            // Rotation writes a back-pointer to the token it supersedes; the
-            // route reads it on the NEXT rotation to GC the grandparent.
+            // Back-pointer to the superseded token; the NEXT rotation reads it to
+            // GC the grandparent.
             predecessorHash:
               typeof payload.predecessorHash === 'string'
                 ? (payload.predecessorHash as string)
@@ -198,17 +191,14 @@ beforeEach(() => {
 });
 
 /**
- * Sentinel passed as `agentVersion` to omit the X-Owlette-Agent-Version
- * header entirely (legacy-agent path). JS default-param semantics mean
- * passing `undefined` does NOT bypass the default, so we use an explicit
- * sentinel instead.
+ * Sentinel for "omit the X-Owlette-Agent-Version header" (legacy-agent path).
+ * Passing `undefined` would not bypass the default parameter.
  */
 const NO_AGENT_HEADER = Symbol('NO_AGENT_HEADER');
 
 /**
- * Build a mock refresh request. Default agent-version is '2.12.0' so the
- * rotation path is exercised by default — tests that want the legacy
- * (no-rotation) path pass `NO_AGENT_HEADER` or an older version string.
+ * Mock refresh request. Default agent-version '2.12.0' exercises rotation; the
+ * legacy path needs NO_AGENT_HEADER or an older version string.
  */
 function refreshReq(
   token: string,
@@ -257,14 +247,13 @@ describe('POST /api/agent/auth/refresh — rotation', () => {
     const r1 = await refreshPOST(refreshReq('original-refresh-token'));
     expect(r1.status).toBe(200);
 
-    // Manually shrink the original's retiresAt so we KNOW we're still in
-    // grace (this is what the route writes — we don't fake time here).
+    // Shrink retiresAt so we KNOW we're still in grace (what the route writes —
+    // no fake timers here).
     const stored = tokenStore.get(hashOf('original-refresh-token'));
     expect(stored).toBeTruthy();
     // Already inside grace (retiresAt > now). Try again with the SAME token.
     const r2 = await refreshPOST(refreshReq('original-refresh-token'));
-    // The grace-window path: superseded but retiresAt is in the future,
-    // so the route should accept and issue another rotation.
+    // Grace path: superseded but retiresAt in the future, so another rotation.
     expect(r2.status).toBe(200);
   });
 
@@ -355,14 +344,9 @@ describe('POST /api/agent/auth/refresh — rotation', () => {
   });
 });
 
-/* ------------------------------------------------------------------ */
-/*  agent-version gate — staged rollout of refresh-token rotation     */
-/* ------------------------------------------------------------------ */
-//
-// The rotation behaviour is opt-in by the agent advertising
-// X-Owlette-Agent-Version >= 2.12.0. Older / missing / malformed
-// versions fall through to the legacy non-rotating path so 2.11.x
-// agents in the field don't lose auth when this lands in prod.
+// agent-version gate — staged rollout of refresh-token rotation.
+// Rotation is opt-in on X-Owlette-Agent-Version >= 2.12.0; older/missing/malformed
+// versions take the legacy non-rotating path so 2.11.x agents don't lose auth.
 
 describe('POST /api/agent/auth/refresh — agent-version gate', () => {
   it('legacy agent (no header) does NOT rotate — response omits refreshToken', async () => {
@@ -474,9 +458,7 @@ describe('POST /api/agent/auth/refresh — agent-version gate', () => {
   });
 });
 
-/* ------------------------------------------------------------------ */
-/*  parseAgentVersion / shouldRotateRefreshToken — pure-helper tests  */
-/* ------------------------------------------------------------------ */
+// parseAgentVersion / shouldRotateRefreshToken — pure-helper tests
 
 describe('parseAgentVersion + shouldRotateRefreshToken', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -505,9 +487,8 @@ describe('parseAgentVersion + shouldRotateRefreshToken', () => {
       'abc',
       '2.x.0',
       '-1.0.0',
-      // Number.parseInt-tolerant inputs that MUST be rejected by the
-      // strict regex check (otherwise '0junk' parses as 0 and rotation
-      // would activate on a malformed version header):
+      // Number.parseInt-tolerant inputs the strict regex MUST reject — '0junk'
+      // would otherwise parse as 0 and activate rotation on a malformed header.
       '2.12.0junk',
       '2.12beta',
       '2.12.0 ',         // trailing space

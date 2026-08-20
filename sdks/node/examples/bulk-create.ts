@@ -1,15 +1,9 @@
 /**
- * Bulk-create roosts from a CSV.
+ * Bulk-create roosts from a CSV: `node bulk-create.js path/to/roosts.csv`.
  *
- * Required env vars:
- *   OWLETTE_TOKEN - site:<id>:write scope on every site referenced in the CSV
- *
- * Usage:
- *   node bulk-create.js path/to/roosts.csv
- *
- * CSV shape:
- *   siteId,roostName,targets
- *   kiosk-01,lobby-display,machine-a|machine-b
+ * Needs OWLETTE_TOKEN with `site:<id>:write` on every site in the CSV, whose
+ * shape is `siteId,roostName,targets` — e.g.
+ * `kiosk-01,lobby-display,machine-a|machine-b`.
  */
 
 import { readFile } from 'node:fs/promises';

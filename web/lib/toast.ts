@@ -1,31 +1,24 @@
 /**
  * Sequential toast draining over sonner.
  *
- * The bug this exists for: sonner starts EVERY toast's dismiss timer on mount
- * and only pauses it for hover-expand / interaction / hidden document — stack
- * position is never consulted (dist/index.mjs ~605). Fire three toasts
- * together and all three timers burn concurrently, so the ones behind the
- * front toast expire unseen and the whole stack vanishes at once.
+ * The bug this exists for: sonner starts EVERY toast's dismiss timer on mount and only
+ * pauses it for hover-expand / interaction / hidden document — stack position is never
+ * consulted (dist/index.mjs ~605). Fire three toasts together and all three timers burn
+ * concurrently, so the ones behind the front expire unseen and the stack vanishes.
  *
- * The fix keeps sonner's stacked visual exactly as-is: every toast is handed
- * to sonner immediately (so it renders in the stack), but with
- * `duration: Infinity` — sonner's own timer is explicitly skipped for
- * Infinity — and THIS module times the stack's front toast only. When the
- * front toast's time is up (or the user swipes it away), the next one steps
- * forward and gets its own full duration. The stack drains one toast at a
- * time, newest-first, matching sonner's front-of-stack visual order.
+ * The fix keeps sonner's stacked visual exactly as-is: every toast is handed to sonner
+ * immediately but with `duration: Infinity` (sonner skips its own timer for Infinity),
+ * and THIS module times only the stack's front toast. When the front's time is up, or
+ * the user swipes it away, the next steps forward with its own full duration — the
+ * stack drains one at a time, newest-first, matching sonner's visual order.
  *
- * Also provided, because sonner's equivalents die with its timers:
- *   - hover pause: pointer over the toaster pauses the drain (sonner pauses
- *     its own timers on hover; ours must do the same).
- *   - burst dedupe: an identical (kind, string message) already in the stack
- *     is dropped, so a retry loop can't queue N copies at a full duration each.
+ * Also here, because sonner's equivalents die with its timers: hover pause (pointer
+ * over the toaster halts the drain) and burst dedupe (an identical (kind, string
+ * message) already in the stack is dropped, so a retry loop can't queue N copies).
  *
- * Usage: `import { toast } from '@/lib/toast'` everywhere in the app. The
- * `<Toaster />` in layout.tsx still comes from 'sonner'. Only the methods the
- * app uses are exposed (success / error / info / warning / dismiss) — add
- * passthroughs here if new sonner surface is ever needed, so the sequential
- * behaviour stays in one place.
+ * Import `toast` from here everywhere; `<Toaster />` still comes from 'sonner'. Only
+ * success / error / info / warning / dismiss are exposed — add passthroughs here so the
+ * sequential behaviour stays in one place.
  */
 
 import { toast as sonnerToast, type ExternalToast, type ToastT } from 'sonner';
@@ -119,10 +112,9 @@ function handleSonnerDismiss(t: ToastT) {
   if (wasFront) retime();
 }
 
-/* Hover pause — mirrors sonner's own pause-on-hover, which duration:Infinity
- * disables. Pointer anywhere over the toaster halts the drain so the user can
- * read the (possibly expanded) stack; leaving resumes the front toast's
- * remaining time. */
+/* Hover pause — mirrors sonner's own pause-on-hover, which duration:Infinity disables.
+ * Pointer anywhere over the toaster halts the drain so the user can read the (possibly
+ * expanded) stack; leaving resumes the front toast's remaining time. */
 function pauseDrain() {
   if (hoverPaused) return;
   hoverPaused = true;
@@ -157,9 +149,8 @@ function ensureListeners() {
 function enqueue(kind: ToastKind, message: ToastMessage, opts: ExternalToast = {}) {
   ensureListeners();
 
-  // Burst dedupe: an identical notification already on screen would drain as
-  // a duplicate full-duration toast — drop it. Non-string messages (JSX) are
-  // never deduped; equality is meaningless there.
+  // Burst dedupe: an identical notification already on screen would drain as a duplicate
+  // full-duration toast. Non-string (JSX) messages are never deduped.
   if (typeof message === 'string' && shown.some(t => t.kind === kind && t.message === message)) {
     return;
   }

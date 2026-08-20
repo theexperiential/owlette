@@ -1,13 +1,9 @@
 /** @jest-environment node */
 
 /**
- * Public site-members api — http-shape tests for
- *   GET    /api/sites/{siteId}/members
- *   POST   /api/sites/{siteId}/members
- *   DELETE /api/sites/{siteId}/members/{uid}
- *
- * (api-sprint wave 3 track 3B). Mirrors the path-keyed `docStore` mock
- * style used by `installer-public.test.ts` and `users.test.ts`.
+ * HTTP-shape tests for GET/POST /api/sites/{siteId}/members and
+ * DELETE .../members/{uid}. Uses the path-keyed `docStore` mock style from
+ * `installer-public.test.ts`.
  */
 
 import { createMockRequest } from './helpers/utils';
@@ -17,10 +13,8 @@ jest.mock('@sentry/nextjs', () => ({
   captureMessage: jest.fn(),
 }));
 
-// Mirror the deployments/distributions test pattern: bypass the
-// capability/rate/audit wrapper here and let the route's inner
-// `requireSiteAuthAndScope` (mocked via mockResolveAuth below) handle
-// auth shape. The wrapper itself is unit-tested in
+// Bypass the capability/rate/audit wrapper and let the route's inner
+// `requireSiteAuthAndScope` handle auth shape. The wrapper is covered by
 // `__tests__/lib/authorizedHandler.test.ts`.
 jest.mock('@/lib/authorizedHandler.server', () => ({
   authorizedSiteHandler:
@@ -73,9 +67,7 @@ jest.mock('firebase-admin/firestore', () => ({
   Timestamp: { fromDate: (d: Date) => ({ toMillis: () => d.getTime() }) },
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Firestore mock — keyed by collection path                                 */
-/* -------------------------------------------------------------------------- */
+// Firestore mock — keyed by collection path
 
 interface DocStore {
   data: Record<string, unknown> | null;
@@ -265,9 +257,7 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminStorage: () => ({ bucket: () => ({}) }),
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Imports come AFTER mocks                                                  */
-/* -------------------------------------------------------------------------- */
+// Imports come AFTER mocks
 
 import {
   GET as membersGET,
@@ -277,9 +267,7 @@ import { DELETE as memberDELETE } from '@/app/api/sites/[siteId]/members/[uid]/r
 
 const SITE = 'site-alpha';
 
-/* -------------------------------------------------------------------------- */
-/*  Fixtures                                                                  */
-/* -------------------------------------------------------------------------- */
+// Fixtures
 
 function authedAsSuperadminWithKey(perm: 'read' | 'write' | 'admin' = 'admin'): void {
   mockResolveAuth.mockResolvedValue({
@@ -311,8 +299,7 @@ function authedAsKeyMissingScope(): void {
 }
 
 function authedAsMemberWithoutAccess(): void {
-  // Member-tier user with no site assignment and no ownership — the
-  // assertUserHasSiteAccess gate should reject.
+  // No site assignment, no ownership — assertUserHasSiteAccess must reject.
   mockResolveAuth.mockResolvedValue({
     userId: 'member-uid',
     keyContext: null,
@@ -351,9 +338,7 @@ beforeEach(() => {
   for (const k of Object.keys(collectionDocs)) delete collectionDocs[k];
 });
 
-/* ========================================================================== */
-/*  GET /api/sites/{siteId}/members                                           */
-/* ========================================================================== */
+// GET /api/sites/{siteId}/members
 
 describe('GET /api/sites/{siteId}/members', () => {
   it('lists members with derived per-site role + surfaces owner', async () => {
@@ -403,8 +388,7 @@ describe('GET /api/sites/{siteId}/members', () => {
       params: Promise.resolve({ siteId: SITE }),
     });
 
-    // assertUserHasSiteAccess returns 404-style "site not found or no access"
-    // on access failure — not 403 — to avoid leaking site existence.
+    // 404, not 403, on access failure — a 403 would leak site existence.
     expect([403, 404]).toContain(res.status);
   });
 
@@ -425,9 +409,7 @@ describe('GET /api/sites/{siteId}/members', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/sites/{siteId}/members                                          */
-/* ========================================================================== */
+// POST /api/sites/{siteId}/members
 
 describe('POST /api/sites/{siteId}/members', () => {
   it('adds member by extending users.sites[] + emits site_member_mutated', async () => {
@@ -527,9 +509,7 @@ describe('POST /api/sites/{siteId}/members', () => {
   });
 });
 
-/* ========================================================================== */
-/*  DELETE /api/sites/{siteId}/members/{uid}                                  */
-/* ========================================================================== */
+// DELETE /api/sites/{siteId}/members/{uid}
 
 describe('DELETE /api/sites/{siteId}/members/{uid}', () => {
   it('removes membership from users.sites[] + emits audit', async () => {
@@ -611,9 +591,7 @@ describe('DELETE /api/sites/{siteId}/members/{uid}', () => {
     expect(res.status).toBe(404);
   });
 
-  /* ---------------------------------------------------------------------- */
-  /*  talons the departing member authored                                   */
-  /* ---------------------------------------------------------------------- */
+  // talons the departing member authored
 
   describe('authored talons', () => {
     function seedTalon(talonId: string, data: Record<string, unknown>): void {
@@ -647,8 +625,8 @@ describe('DELETE /api/sites/{siteId}/members/{uid}', () => {
       });
       const body = await res.json();
 
-      // The count is the warning a blind api client still gets; nothing moves
-      // without an explicit successor.
+      // The count is the warning a blind api client gets; nothing moves without
+      // an explicit successor.
       expect(res.status).toBe(200);
       expect(body.talonCount).toBe(2);
       expect(body.reassignedTalonIds).toEqual([]);

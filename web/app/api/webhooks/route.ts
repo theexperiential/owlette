@@ -1,25 +1,17 @@
 /**
- * POST /api/webhooks?siteId=...
- *   body:   { url, events[], description? }
- *   output: { id, url, events, description?, createdAt, signingSecret }
+ * POST /api/webhooks?siteId=... — create a subscription at
+ * `sites/{siteId}/webhooks/{webhookId}`. Validates the url (https, no
+ * private/loopback/link-local, dns-resolved addresses re-checked) and events[]
+ * against `ROOST_WEBHOOK_EVENTS`.
  *
- *   - validates url (https required, no private/loopback/link-local ips,
- *     dns-resolved addresses re-checked)
- *   - validates events[] against `ROOST_WEBHOOK_EVENTS`
- *   - generates a `whsec_*` signing secret — returned ONCE in the response
- *     body, then stored plaintext in the subscription doc (needed for
- *     server-side hmac at dispatch time; Firestore encryption at rest is
- *     relied upon — never returned via any other endpoint)
- *   - creates a doc at `sites/{siteId}/webhooks/{webhookId}`
+ * The `whsec_*` signing secret is returned ONCE here and then stored plaintext
+ * (needed for server-side hmac at dispatch; relies on Firestore encryption at
+ * rest) — no other endpoint ever returns it.
  *
- * GET /api/webhooks?siteId=...&limit=&cursor=
- *   output: { webhooks: WebhookSubscription[], nextPageToken }
- *   - cursor-paginated, soft-deleted entries filtered out, signingSecret
- *     never included.
+ * GET /api/webhooks?siteId=...&limit=&cursor= — cursor-paginated list,
+ * soft-deleted filtered out, never includes signingSecret.
  *
  * Scope: site:<id>:write for POST, site:<id>:read for GET.
- *
- * roost public api wave 6.1 (POST) + 6.2 (GET list).
  */
 
 import { randomBytes } from 'node:crypto';
@@ -69,10 +61,6 @@ interface CreateWebhookBody {
   description?: unknown;
 }
 
-/* ------------------------------------------------------------------------- */
-/*  POST — create subscription                                               */
-/* ------------------------------------------------------------------------- */
-
 export async function POST(request: NextRequest) {
   try {
     const siteIdParam = request.nextUrl.searchParams.get('siteId');
@@ -103,7 +91,7 @@ export async function POST(request: NextRequest) {
       return idem.response;
     }
 
-    // URL validation (scheme, port, literal ips, dns-resolved ips).
+    // Scheme, port, literal ips, dns-resolved ips.
     const urlValidation = await validateWebhookUrl(body.url);
     if (!urlValidation.ok) {
       if (
@@ -126,7 +114,6 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Event catalog validation.
     const eventsValidation = validateEvents(body.events);
     if (!eventsValidation.ok) {
       const detail = eventsValidation.unknown.length
@@ -139,7 +126,6 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Optional description.
     let description: string | undefined;
     if (body.description !== undefined && body.description !== null) {
       if (typeof body.description !== 'string') {
@@ -153,7 +139,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Mint ids + secret.
     const webhookId = generateWebhookId();
     const signingSecret = generateSigningSecret();
 
@@ -219,10 +204,6 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/* ------------------------------------------------------------------------- */
-/*  GET — list subscriptions                                                 */
-/* ------------------------------------------------------------------------- */
-
 export async function GET(request: NextRequest) {
   try {
     const siteIdParam = request.nextUrl.searchParams.get('siteId');
@@ -283,24 +264,17 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/* ------------------------------------------------------------------------- */
-/*  helpers                                                                  */
-/* ------------------------------------------------------------------------- */
-
 function generateWebhookId(): string {
-  // 18 hex chars = 72 bits, prefixed — together 21 chars, fits 8-64 bound.
+  // 18 hex = 72 bits; with the prefix, 21 chars — inside the 8-64 bound.
   return `wh_${randomBytes(WEBHOOK_ID_BYTES).toString('hex')}`;
 }
 
 function generateSigningSecret(): string {
-  // 32 random bytes -> 64 hex chars; `whsec_` prefix follows stripe convention.
+  // 64 hex chars; `whsec_` follows the stripe convention.
   return `whsec_${randomBytes(SIGNING_SECRET_BYTES).toString('hex')}`;
 }
 
-/**
- * Scrub the Firestore doc into a client-safe summary. `signingSecret` is
- * NEVER returned by any endpoint except the create / rotate responses.
- */
+/** Client-safe summary. `signingSecret` is only ever in create/rotate responses. */
 export function serializeSubscription(
   id: string,
   data: FirebaseFirestore.DocumentData,

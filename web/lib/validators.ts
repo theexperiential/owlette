@@ -1,21 +1,13 @@
-/**
- * Password validation utility
- * Enforces 8+ character minimum with complexity requirements
- */
+/** Password validation: 8+ chars with complexity requirements. */
 
 export interface ValidationResult {
   isValid: boolean;
   error?: string;
 }
 
-/**
- * Validates password strength
- * Requires:
- * - At least 8 characters
- * - At least 2 of: lowercase, uppercase, numbers, special characters
- */
+/** 8+ chars, and at least 2 of: lowercase, uppercase, digit, special. */
 export const validatePassword = (password: string): ValidationResult => {
-  // Check minimum length
+  // minimum length
   if (password.length < 8) {
     return {
       isValid: false,
@@ -23,7 +15,7 @@ export const validatePassword = (password: string): ValidationResult => {
     };
   }
 
-  // Check complexity - at least 2 of these categories
+  // at least 2 categories
   let complexity = 0;
 
   if (/[a-z]/.test(password)) complexity++; // Has lowercase
@@ -41,9 +33,7 @@ export const validatePassword = (password: string): ValidationResult => {
   return { isValid: true };
 };
 
-/**
- * Validates email format
- */
+/** Email format. */
 export const validateEmail = (email: string): ValidationResult => {
   // Require at least 2-char local part, 2-char domain, and 2-char TLD
   const emailRegex = /^[^\s@]{2,}@[^\s@]{2,}\.[^\s@]{2,}$/;
@@ -65,11 +55,7 @@ export const validateEmail = (email: string): ValidationResult => {
   return { isValid: true };
 };
 
-/**
- * Validates process name
- * - Max 255 characters
- * - Only alphanumeric, spaces, hyphens, underscores, and periods
- */
+/** Process name: <=255 chars of alphanumerics, spaces, `-`, `_`, `.`. */
 export const validateProcessName = (name: string): ValidationResult => {
   if (!name || name.trim() === '') {
     return {
@@ -95,12 +81,7 @@ export const validateProcessName = (name: string): ValidationResult => {
   return { isValid: true };
 };
 
-/**
- * Validates Windows executable path
- * - Must be valid Windows path format
- * - No path traversal (..)
- * - Must have file extension
- */
+/** Windows exe path: valid drive-letter form, no `..`, must have an extension. */
 export const validateExecutablePath = (path: string): ValidationResult => {
   if (!path || path.trim() === '') {
     return {
@@ -109,7 +90,7 @@ export const validateExecutablePath = (path: string): ValidationResult => {
     };
   }
 
-  // Check for path traversal
+  // path traversal
   if (path.includes('..')) {
     return {
       isValid: false,
@@ -117,8 +98,7 @@ export const validateExecutablePath = (path: string): ValidationResult => {
     };
   }
 
-  // Basic Windows path validation
-  // Accepts: C:\path\to\file.exe or C:/path/to/file.exe
+  // Accepts C:\path\to\file.exe and C:/path/to/file.exe
   const windowsPathRegex = /^[A-Za-z]:[\\\/][\w\s\-_.\\\/()]+\.\w+$/;
 
   if (!windowsPathRegex.test(path)) {
@@ -131,9 +111,7 @@ export const validateExecutablePath = (path: string): ValidationResult => {
   return { isValid: true };
 };
 
-/**
- * Validates numeric string within range
- */
+/** Numeric string within a range. */
 export const validateNumericString = (
   value: string,
   min: number,
@@ -159,9 +137,7 @@ export const validateNumericString = (
   return { isValid: true };
 };
 
-/**
- * Validates enum value
- */
+/** Enum membership. */
 export const validateEnum = <T extends string>(
   value: string,
   allowedValues: readonly T[],
@@ -177,9 +153,7 @@ export const validateEnum = <T extends string>(
   return { isValid: true };
 };
 
-/**
- * Reserved site IDs that cannot be used
- */
+/** Site IDs that cannot be claimed. */
 const RESERVED_SITE_IDS: readonly string[] = [
   'admin',
   'api',
@@ -197,11 +171,8 @@ const RESERVED_SITE_IDS: readonly string[] = [
 ] as const;
 
 /**
- * Validates site ID (slug format)
- * - 3-50 characters
- * - Lowercase letters, numbers, hyphens, underscores
- * - Must start with letter
- * - Cannot be reserved word
+ * Site ID slug: 3-50 chars, lowercase letters/digits/`-`/`_`, must start with a
+ * letter, must not be in RESERVED_SITE_IDS.
  */
 export const validateSiteId = (siteId: string): ValidationResult => {
   if (!siteId || siteId.trim() === '') {
@@ -211,7 +182,7 @@ export const validateSiteId = (siteId: string): ValidationResult => {
     };
   }
 
-  // Check length
+  // length
   if (siteId.length < 3) {
     return {
       isValid: false,
@@ -226,7 +197,7 @@ export const validateSiteId = (siteId: string): ValidationResult => {
     };
   }
 
-  // Check format: lowercase, letters, numbers, hyphens, underscores
+  // format
   if (!/^[a-z][a-z0-9_-]*$/.test(siteId)) {
     return {
       isValid: false,
@@ -234,7 +205,7 @@ export const validateSiteId = (siteId: string): ValidationResult => {
     };
   }
 
-  // Check for reserved words
+  // reserved words
   if (RESERVED_SITE_IDS.includes(siteId)) {
     return {
       isValid: false,
@@ -245,10 +216,7 @@ export const validateSiteId = (siteId: string): ValidationResult => {
   return { isValid: true };
 };
 
-/**
- * Generates a URL-friendly slug from a site name
- * Example: "New York Office" -> "new-york-office"
- */
+/** "New York Office" -> "new-york-office". */
 export const generateSiteIdFromName = (siteName: string): string => {
   return siteName
     .toLowerCase()
@@ -277,9 +245,7 @@ const NOUNS = [
   'flint', 'grove', 'heath', 'iron', 'brook', 'cliff', 'drift', 'field', 'glow', 'husk',
 ];
 
-/**
- * Generates a random two-word site ID like "calm-reef" or "bold-peak"
- */
+/** Random two-word site ID, e.g. "calm-reef". */
 export const generateRandomSiteId = (): string => {
   const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
   const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];

@@ -1,17 +1,12 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/actions/removeMachine.server.ts` (security-
- * boundary-migration wave 3.8).
+ * Unit tests for `web/lib/actions/removeMachine.server.ts`: the four-path cascade (the same
+ * paths the legacy `useMachineOperations.ts` hook deleted) and tolerance of missing
+ * `commands/pending` / `commands/completed` docs.
  *
- * Verifies the four-path cascade — the same paths the legacy client hook
- * `useMachineOperations.ts` was deleting — and that missing
- * `commands/pending` / `commands/completed` docs are tolerated.
- *
- * Authorization (superadmin-only via `MACHINE_REMOVE`) is enforced by the
- * `authorizedSiteHandler` wrapper in the route, not by the action core,
- * so the auth tests live alongside the route shim and the existing
- * `authorizedHandler.test.ts` suite.
+ * Authorization (superadmin via MACHINE_REMOVE) belongs to the route's `authorizedSiteHandler`
+ * wrapper, so those tests live with the route shim and `authorizedHandler.test.ts`.
  */
 
 const loggerWarnSpy = jest.fn();
@@ -26,9 +21,8 @@ jest.mock('@/lib/logger', () => ({
   },
 }));
 
-// `removeMachine` resolves the default db once at the top of its body,
-// so the firebase-admin mock must be in place before import even though
-// every test injects an explicit `db`.
+// `removeMachine` resolves the default db at the top of its body, so the firebase-admin mock
+// must exist before import even though every test injects an explicit `db`.
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({ collection: () => ({ doc: () => ({}) }) }),
 }));
@@ -58,20 +52,19 @@ interface AgentRefreshTokenDoc {
 }
 
 interface FakeDbResult {
-  // Helper exposes the path of every individual `.delete()` call (Phase 2).
+  // Path of every individual `.delete()` (Phase 2).
   individualDeletes: RecordedDelete[];
-  // Plus the ordered list of batch ops + commit invocations (Phase 1).
+  // Ordered batch ops + commits (Phase 1).
   batchOps: BatchOp[];
   batchCommitSizes: number[];
   batchCommitCount: number;
-  // Make a specific path's individual delete throw to test fault isolation.
+  // Force one path's delete to throw (fault isolation).
   setIndividualDeleteFailure: (path: string, err: Error) => void;
-  // Make the batch commit throw to test main-cascade failure mode.
+  // Force the batch commit to throw (main-cascade failure).
   setBatchCommitFailure: (err: Error) => void;
-  // Make the agent_refresh_tokens query throw to test token cleanup tolerance.
+  // Force the agent_refresh_tokens query to throw (cleanup tolerance).
   setAgentRefreshTokenQueryFailure: (err: Error) => void;
-  // The fake db itself, typed loosely — the action core casts to its
-  // import of `Firestore`.
+  // Loosely typed — the action core casts to its own `Firestore` import.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any;
 }
@@ -302,8 +295,7 @@ describe('removeMachine — cascade covers all 4 paths', () => {
 
   it('phase 1 batch runs BEFORE phase 2 best-effort deletes', async () => {
     const fake = buildFakeDb();
-    // The batch commit failing should short-circuit before any
-    // individual delete is attempted.
+    // A failed batch commit must short-circuit before any individual delete.
     fake.setBatchCommitFailure(new Error('batch_blew_up'));
 
     await expect(
@@ -330,13 +322,13 @@ describe('removeMachine — best-effort tolerance', () => {
       db: fake.db,
     });
 
-    // The completed delete should still have been attempted + recorded.
+    // The completed delete is still attempted and recorded.
     expect(fake.individualDeletes).toEqual([
       { path: 'sites/site-a/machines/m1/commands/completed' },
     ]);
     expect(loggerWarnSpy).toHaveBeenCalledTimes(1);
     expect(loggerWarnSpy.mock.calls[0][0]).toMatch(/pending commands delete/);
-    // The result still reports all four paths (caller treats this as success).
+    // All four paths still reported — the caller treats this as success.
     expect(result.deleted.pendingCommands).toBe(
       'sites/site-a/machines/m1/commands/pending',
     );

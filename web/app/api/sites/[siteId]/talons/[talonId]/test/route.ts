@@ -1,25 +1,17 @@
 /**
- * POST /api/sites/{siteId}/talons/{talonId}/test — run a talon on demand.
+ * POST /api/sites/{siteId}/talons/{talonId}/test — run a talon on demand
+ * (the re-run button on `/talons`). Thin shim over `runTalonManual`, which owns
+ * what makes a manual fire different: cooldown bypassed, and every run recorded
+ * with `manual: true` so the run list distinguishes operator from trigger fires.
  *
- * The "run now" affordance behind the re-run button on `/talons`. Thin http
- * shim over `runTalonManual` in `@/lib/talons/engine.server`, which owns
- * everything that makes a manual fire different from a scheduled one: the
- * cooldown is bypassed (an operator pressing run-now has decided it does not
- * apply) and every recorded run carries `manual: true`, so the run list can
- * tell an operator fire from a trigger fire.
+ * Deliberately NOT idempotent — pressing twice means run twice. It cannot
+ * overlap though: the engine's in-flight guard records a `skipped` run, returned
+ * like any other.
  *
- * Not idempotent, and deliberately so: pressing the button twice means "run it
- * twice". What it cannot do is overlap — the engine's in-flight guard records
- * a `skipped` run when another execution already holds the talon's slot, and
- * that skip comes back in the response like any other run.
+ * Not tier-gated: authoring a talon is pro-only, running an existing one isn't —
+ * same posture as the scheduler, which sweeps a downgraded site's talons.
  *
- * Not tier-gated. Authoring a talon is pro-only (`POST .../talons`), but
- * running one that already exists is not — same posture as the scheduler,
- * which sweeps a downgraded site's talons without consulting the tier.
- *
- * Capability: TALON_MANAGE with the write-class api-key default.
- *
- * talons wave 4.2.
+ * Capability: TALON_MANAGE with the write-class api-key default. talons wave 4.2.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';

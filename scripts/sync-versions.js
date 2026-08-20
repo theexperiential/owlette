@@ -1,15 +1,9 @@
 #!/usr/bin/env node
 /**
- * Version Sync Script for Owlette Monorepo
+ * Sync every component version to the product version.
  *
- * Keeps component versions in sync with product version.
- *
- * Usage:
- *   node scripts/sync-versions.js [new-version]
- *
- * Examples:
- *   node scripts/sync-versions.js         # Show current versions
- *   node scripts/sync-versions.js 2.1.0   # Bump all to 2.1.0
+ *   node scripts/sync-versions.js         # show current versions
+ *   node scripts/sync-versions.js 2.1.0   # bump all to 2.1.0
  */
 
 const fs = require('fs');
@@ -17,7 +11,6 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 
-// Version file paths
 const VERSION_FILES = {
   product: path.join(ROOT, 'VERSION'),
   agent: path.join(ROOT, 'agent', 'VERSION'),
@@ -26,8 +19,8 @@ const VERSION_FILES = {
   tauriConf: path.join(ROOT, 'desktop', 'src-tauri', 'tauri.conf.json'),
 };
 
-// Cargo.toml needs its own writer — TOML, and only the [package] version may
-// change (dependency `version = "..."` keys must not match).
+// Own writer: TOML, and only the [package] version may change — dependency
+// `version = "..."` keys must not match.
 const CARGO_TOML = path.join(ROOT, 'desktop', 'src-tauri', 'Cargo.toml');
 
 function writeCargoVersion(version) {
@@ -39,14 +32,13 @@ function writeCargoVersion(version) {
   fs.writeFileSync(CARGO_TOML, updated, 'utf8');
 }
 
-// Documentation files with version references
 const DOC_FILES = {
   readme: path.join(ROOT, 'README.md'),
   claudemd: path.join(ROOT, '.claude', 'CLAUDE.md'),
   versionMgmt: path.join(ROOT, 'docs', 'internal', 'version-management.md'),
 };
 
-// Today's date in YYYY-MM-DD (for "Last Updated" fields)
+// YYYY-MM-DD, for "Last Updated" fields.
 function todayISO() {
   const d = new Date();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -54,7 +46,6 @@ function todayISO() {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-// Read version from file
 function readVersion(file) {
   if (file.endsWith('.json')) {
     const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -63,7 +54,6 @@ function readVersion(file) {
   return fs.readFileSync(file, 'utf8').trim();
 }
 
-// Write version to file
 function writeVersion(file, version) {
   if (file.endsWith('.json')) {
     const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -74,31 +64,29 @@ function writeVersion(file, version) {
   }
 }
 
-// Update version in documentation file
-// oldVersion is the previous product version — needed to precisely target
-// lines like "**Current:** X.Y.Z" without touching independent versions (e.g. firestore rules).
+// `oldVersion` targets lines like "**Current:** X.Y.Z" precisely, so independent
+// versions (firestore rules) are left alone.
 function updateDocVersion(file, version, oldVersion) {
   let content = fs.readFileSync(file, 'utf8');
   let updated = false;
 
   if (file === DOC_FILES.readme) {
-    // Update README.md shields.io version badge: version-X.Y.Z-blue
+    // shields.io badge: version-X.Y.Z-blue
     const badgePattern = /(img\.shields\.io\/badge\/version-)\d+\.\d+\.\d+(-[a-z]+\))/;
     if (badgePattern.test(content)) {
       content = content.replace(badgePattern, `$1${version}$2`);
       updated = true;
     }
 
-    // Also handle legacy **Version X.Y.Z** format if present
+    // Legacy **Version X.Y.Z** format.
     const readmePattern = /\*\*Version \d+\.\d+\.\d+\*\*/;
     if (readmePattern.test(content)) {
       content = content.replace(readmePattern, `**Version ${version}**`);
       updated = true;
     }
   } else if (file === DOC_FILES.versionMgmt) {
-    // Update product/agent/web "Current: X.Y.Z" entries (skip firestore rules — independent)
-    // The file has 3 "**Current:** X.Y.Z" lines for product/agent/web, and one for firestore rules (2.2.0).
-    // We replace only those matching the previous product version to avoid touching firestore rules.
+    // Only lines matching the PREVIOUS product version, so the independent
+    // firestore-rules "**Current:**" line is left alone.
     const escapedPrev = oldVersion.replace(/\./g, '\\.');
     const currentPattern = new RegExp(`\\*\\*Current:\\*\\* ${escapedPrev}`, 'g');
     if (currentPattern.test(content)) {
@@ -106,26 +94,20 @@ function updateDocVersion(file, version, oldVersion) {
       updated = true;
     }
 
-    // Update trailing "Last Updated" line (supports **Last Updated:** or **Last Updated**:)
+    // Supports **Last Updated:** and **Last Updated**:.
     const lastUpdatedPattern = /\*\*Last Updated:?\*\*:? \d{4}-\d{2}-\d{2}/;
     if (lastUpdatedPattern.test(content)) {
       content = content.replace(lastUpdatedPattern, `**Last Updated:** ${todayISO()}`);
       updated = true;
     }
   } else if (file === DOC_FILES.claudemd) {
-    // Update .claude/CLAUDE.md in multiple places
-
-    // 1. Update: **Version**: X.Y.Z (see [Version Management]...)
     const headerPattern = /\*\*Version\*\*: \d+\.\d+\.\d+/;
     if (headerPattern.test(content)) {
       content = content.replace(headerPattern, `**Version**: ${version}`);
       updated = true;
     }
 
-    // 2. Update version file examples section
-    // - `/VERSION` - Product release version (X.Y.Z)
-    // - `agent/VERSION` - Agent binary version (X.Y.Z)
-    // - `web/package.json` - Web app version (X.Y.Z)
+    // The three-line version-files list.
     const versionFilesPattern = /- `\/VERSION` - Product release version \(\d+\.\d+\.\d+\)\n- `agent\/VERSION` - Agent binary version \(\d+\.\d+\.\d+\)\n- `web\/package\.json` - Web app version \(\d+\.\d+\.\d+\)/;
     if (versionFilesPattern.test(content)) {
       const replacement = `- \`/VERSION\` - Product release version (${version})\n- \`agent/VERSION\` - Agent binary version (${version})\n- \`web/package.json\` - Web app version (${version})`;
@@ -133,23 +115,20 @@ function updateDocVersion(file, version, oldVersion) {
       updated = true;
     }
 
-    // 3. Update trailing "Last Updated" line
     const lastUpdatedPattern = /\*\*Last Updated\*\*: \d{4}-\d{2}-\d{2}/;
     if (lastUpdatedPattern.test(content)) {
       content = content.replace(lastUpdatedPattern, `**Last Updated**: ${todayISO()}`);
       updated = true;
     }
 
-    // 4. Update: **Current Version**: X.Y.Z (November...)
+    // **Current Version**: X.Y.Z (Month D, YYYY)
     const currentVersionPattern = /\*\*Current Version\*\*: \d+\.\d+\.\d+/;
     if (currentVersionPattern.test(content)) {
-      // Get current date
       const now = new Date();
       const monthNames = ["January", "February", "March", "April", "May", "June",
         "July", "August", "September", "October", "November", "December"];
       const dateStr = `${monthNames[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
 
-      // Replace the entire Current Version line
       content = content.replace(
         /\*\*Current Version\*\*: \d+\.\d+\.\d+ \([^)]+\)/,
         `**Current Version**: ${version} (${dateStr})`
@@ -165,7 +144,6 @@ function updateDocVersion(file, version, oldVersion) {
   return updated;
 }
 
-// Show current versions
 function showVersions() {
   console.log('\n📦 Current Versions:\n');
   console.log(`  Product:  ${readVersion(VERSION_FILES.product)}`);
@@ -175,7 +153,6 @@ function showVersions() {
   console.log('\n  Note: Firestore rules version is independent (tracks schema changes)\n');
 }
 
-// Sync all versions
 function syncVersions(newVersion) {
   if (!newVersion.match(/^\d+\.\d+\.\d+$/)) {
     console.error(`❌ Invalid version format: ${newVersion}`);
@@ -206,7 +183,6 @@ function syncVersions(newVersion) {
   console.log(`  ✅ Updated desktop/src-tauri/Cargo.toml → ${newVersion}`);
   console.log('     (Cargo.lock and package-lock.json follow on the next build/install)');
 
-  // Update documentation files
   if (updateDocVersion(DOC_FILES.readme, newVersion, oldVersion)) {
     console.log(`  ✅ Updated README.md → ${newVersion}`);
   }
@@ -225,15 +201,12 @@ function syncVersions(newVersion) {
   console.log('   2. Commit changes: git commit -am "chore: Bump version to ' + newVersion + '"');
   console.log('   3. Create tag: git tag v' + newVersion);
   console.log('   4. Push with tags: git push origin main --tags\n');
-  // Deliberately *after* the build, not here: a bump has no installer to
-  // photograph yet, and this script must stay side-effect-free (it edits version
-  // files and nothing else). Release time is when the docs have to match what
-  // ships. See .claude/skills/build-system.md → "Agent Installer Release".
+  // Printed, not run: a bump has no installer to photograph yet, and this
+  // script edits version files and nothing else.
   console.log('   After building the installer: cd web && npm run screenshots:desktop');
   console.log('   (refreshes the agent docs screenshots from the shipping desktop app)\n');
 }
 
-// Main
 const args = process.argv.slice(2);
 
 if (args.length === 0) {

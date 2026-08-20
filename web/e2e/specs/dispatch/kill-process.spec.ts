@@ -1,24 +1,11 @@
 /**
- * Dispatch — kill process (D2.3)
+ * Dispatch — kill process. Seed a running process, click kill, assert the
+ * `kill_process` command lands in `commands/pending`, then stub the agent
+ * (`completeCommand` + a metrics scan without the process) and assert the row
+ * disappears.
  *
- * First spec to consume D1.1's `completeCommand` stub. Flow:
- *   1. Seed a machine with one running process in `metrics.processes`.
- *   2. UI: open dashboard, expand the process panel, click the kill
- *      button on the process row.
- *   3. Firestore: useFirestore.killProcess writes a `kill_{Date.now()}`
- *      command to `commands/pending` with
- *      `{ type: 'kill_process', process_name, status: 'pending' }`.
- *   4. Stub the agent finishing — `completeCommand(...)` writes
- *      `commands/completed` and removes from pending.
- *   5. Stub the next metrics scan — remove the process key from
- *      `metrics.processes` so the machine listener sees it gone.
- *   6. Assert the row disappears from the UI.
- *
- * Admin role (the kill button is disabled for non-RUNNING processes
- * and isn't behind a separate isSiteAdmin gate, but the dashboard's
- * machine view is). MachineCardView is the default; testing the kill
- * affordance there proves the contract for both card and list views
- * since they share the same handler.
+ * Admin role because the dashboard machine view is admin-gated, not the kill
+ * button. Card and list views share the handler, so card covers both.
  */
 
 import { test, expect } from '@playwright/test';
@@ -43,9 +30,8 @@ async function clearMachineCommands() {
 }
 
 async function seedProcessOnMachine() {
-  // Re-seed the machine doc with one running process under metrics.processes.
-  // seedMachine writes minimal metrics, so we extend it via a follow-up set
-  // with merge to add the process entry without clobbering the rest.
+  // seedMachine writes minimal metrics, so merge the process entry in rather
+  // than clobbering the rest.
   const db = getAdminDb();
   await db.collection('sites').doc(SITE_ID).collection('machines').doc(MACHINE_ID).set(
     {
@@ -68,10 +54,8 @@ async function seedProcessOnMachine() {
 }
 
 async function removeProcessFromMetrics() {
-  // Simulate the next metrics scan after the agent killed the process —
-  // overwrite metrics.processes with an empty object (mergeFields would also
-  // work, but a clean overwrite is closer to what the agent's metrics push
-  // looks like in practice).
+  // Next metrics scan after the kill. A clean overwrite mirrors the agent's
+  // real metrics push more closely than mergeFields.
   const db = getAdminDb();
   await db.collection('sites').doc(SITE_ID).collection('machines').doc(MACHINE_ID).set(
     {
@@ -99,10 +83,7 @@ test('admin kills a process — command dispatched + stubbed completion + proces
   await expect(card).toBeVisible();
   await expect(card.getByText(PROCESS_NAME, { exact: false })).toBeVisible({ timeout: 5_000 });
 
-  // Click the kill affordance — aria-label "kill notepad.exe" was added
-  // alongside this spec for both card + list views (a11y fix + selector).
-  // The Square button OPENS a confirmation dialog rather than firing the
-  // kill directly — the actual setDoc only fires on the confirm button.
+  // The Square button opens a confirmation dialog; setDoc only fires on confirm.
   await card.getByRole('button', { name: `kill ${PROCESS_NAME}` }).click();
 
   const confirmDialog = page.getByRole('dialog', { name: /^kill process$/i });
@@ -110,10 +91,8 @@ test('admin kills a process — command dispatched + stubbed completion + proces
   await expect(confirmDialog).toContainText(PROCESS_NAME);
   await confirmDialog.getByRole('button', { name: /^kill process$/i }).click();
 
-  // useFirestore.killProcess returns immediately after setDoc resolves —
-  // no toast on the happy path (only logger.debug). Wait for the command
-  // doc to land via Admin SDK polling: the write happens fast but isn't
-  // synchronously observable from page.click() returning.
+  // No toast on the happy path, and the write is not observable from
+  // page.click() returning — poll for the command doc via the Admin SDK.
   const db = getAdminDb();
   let pending: FirebaseFirestore.DocumentData = {};
   await expect.poll(async () => {
@@ -135,13 +114,11 @@ test('admin kills a process — command dispatched + stubbed completion + proces
   expect(cmd.process_id).toBe(PROCESS_ID);
   expect(cmd.status).toBe('pending');
 
-  // Simulate the agent: mark the command completed, then push a metrics
-  // scan that no longer lists the killed process.
+  // Agent stub: complete the command, then push metrics without the process.
   await completeCommand(SITE_ID, MACHINE_ID, killCmdId, { killed: true }, { cmdType: 'kill_process' });
   await removeProcessFromMetrics();
 
-  // UI: the process row disappears once the snapshot listener picks up
-  // the new metrics with the empty processes map.
+  // The row goes once the snapshot listener sees the empty processes map.
   await expect(card.getByText(PROCESS_NAME, { exact: false })).toHaveCount(0, { timeout: 5_000 });
 
   // Admin SDK: pending no longer has the kill command, completed has it.

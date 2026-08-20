@@ -1,21 +1,10 @@
 /**
- * Usage-based color utility functions
- *
- * Maps resource usage percentage to a color spectrum with high contrast:
- * - Low usage (0-30%): Green (healthy)
- * - Medium-low (30-50%): Violet (distinct from green)
- * - Medium (50-70%): Sky blue (distinct from violet)
- * - High usage (70-85%): Amber (warning)
- * - Critical usage (85-100%): Red (danger)
+ * Usage percentage → accent color. Bands are deliberately far apart in hue so
+ * adjacent ones stay distinguishable: <30 emerald, <50 violet, <70 sky,
+ * <85 amber, else red.
  */
 
-/**
- * Get the accent bar color based on usage percentage
- * Returns a Tailwind CSS background color class
- *
- * @param percent - Usage percentage (0-100)
- * @returns Tailwind CSS background color class
- */
+/** Tailwind background class for a 0-100 usage percentage. */
 export function getUsageColorClass(percent: number): string {
   if (percent < 30) {
     return 'bg-emerald-500';
@@ -30,13 +19,7 @@ export function getUsageColorClass(percent: number): string {
   }
 }
 
-/**
- * Get the accent bar color as a raw CSS color value
- * For use in inline styles
- *
- * @param percent - Usage percentage (0-100)
- * @returns CSS color string (rgb format)
- */
+/** Same bands as `getUsageColorClass`, as raw rgb() for inline styles. */
 export function getUsageColor(percent: number): string {
   if (percent < 30) {
     return 'rgb(16, 185, 129)';   // emerald-500

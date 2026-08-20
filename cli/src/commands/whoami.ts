@@ -1,18 +1,13 @@
 /**
- * `owlette whoami` — print the server-resolved identity for the active
- * profile.
+ * `owlette whoami` — the server-resolved identity for the active profile, over
+ * GET /api/whoami.
  *
- * Drives:
- *   GET /api/whoami
+ * Key/value summary by default; `--json` emits the envelope `owlette auth status`
+ * has always produced: `{ apiUrl, profile, configPath, credentialSource,
+ * environment, whoami }`.
  *
- * Renders a key/value summary by default (user id, email, scopes,
- * environment, apiUrl, profile, configPath, credentialSource) and emits the same JSON
- * envelope `owlette auth status` historically produced
- * (`{ apiUrl, profile, configPath, credentialSource, environment, whoami: <raw response> }`)
- * when `--json` is passed.
- *
- * `runWhoami` is exported and reused by the `auth status` action so
- * both commands produce byte-identical stdout/stderr.
+ * `runWhoami` is reused by the `auth status` action so both commands produce
+ * byte-identical output.
  */
 
 import { Command } from 'commander';
@@ -46,13 +41,8 @@ interface WhoamiResponse {
 }
 
 /**
- * Shared implementation for `owlette whoami` and `owlette auth status`.
- * Reads the active profile, calls GET /api/whoami, and writes the
- * response in either table or JSON form.
- *
- * Exit codes:
- *   2 — no token configured
- *   1 — request failed (non-2xx response or network error)
+ * Shared by `owlette whoami` and `owlette auth status`. Exits 2 when no token is
+ * configured, 1 on a non-2xx response or network error.
  */
 export async function runWhoami(cmd: Command): Promise<void> {
   const {
@@ -124,10 +114,6 @@ export function registerWhoamiCommand(program: Command): void {
       await runWhoami(cmd);
     });
 }
-
-/* --------------------------------------------------------------------- */
-/*  formatter                                                            */
-/* --------------------------------------------------------------------- */
 
 interface LocalContext {
   apiUrl: string;

@@ -1,24 +1,11 @@
 /**
- * POST /api/hoot/autonomous
+ * POST /api/hoot/autonomous — internal endpoint the alert route calls after it
+ * has verified the agent's identity. Runs an autonomous `generateText()` tool
+ * loop to diagnose a crashed / failed-to-start process, then escalates if
+ * unresolved.
  *
- * Internal endpoint triggered by the agent alert system when a process crashes
- * or fails to start. Runs an autonomous LLM investigation loop using generateText()
- * with tool calling to diagnose and remediate the issue.
- *
- * Auth: hoot internal shared secret (deployed env var CORTEX_INTERNAL_SECRET),
- * NOT a user session.
- * This endpoint is called by the alert route after verifying the agent's identity.
- *
- * Flow:
- * 1. Validate internal secret + request body
- * 2. Check autonomous mode enabled for site
- * 3. Dedup/cooldown check (same machine+process within cooldown window)
- * 4. Concurrency check (max 3 active sessions per site)
- * 5. Create hoot-event record
- * 6. Return accepted response immediately
- * 7. Run LLM investigation in background (fire-and-forget)
- * 8. Save conversation + update event status
- * 9. Escalate if unresolved
+ * Auth is the hoot internal shared secret (`CORTEX_INTERNAL_SECRET`), NOT a
+ * user session. Responds `accepted` before the investigation runs.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -95,14 +82,10 @@ function emitHootEventMetric(
 }
 
 /**
- * Tools an unattended investigator must never call.
- *
- * Authoring a talon or flipping its enabled state changes standing fleet
- * automation policy, which outlives the incident being investigated — that
- * stays a human decision even when the tier ceiling would otherwise allow it.
- * Read-only talon tools (e.g. `list_talons`) are deliberately NOT excluded.
- * Matched by name so the policy holds regardless of whether the tools are
- * present in the registry.
+ * Tools an unattended investigator must never call: authoring a talon or
+ * flipping its enabled state is standing fleet policy that outlives the
+ * incident, so it stays a human decision regardless of tier. Read-only talon
+ * tools are deliberately NOT excluded. Matched by name, not registry presence.
  */
 const AUTONOMOUS_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   'create_talon',
@@ -110,20 +93,13 @@ const AUTONOMOUS_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Build executable tools for autonomous mode (single machine, no streaming).
+ * Executable tools for autonomous mode (single machine, no streaming). Agent
+ * dispatches go through `invokeAsSystem` so the cortex_autonomous audit rows
+ * and system rate-limit bucket are honored. `SERVER_SIDE_TOOLS` have no
+ * handler in agent/src/mcp_tools.py and run here under the same identity.
  *
- * security-boundary-migration wave 3.12 — every agent dispatch flows through
- * `invokeAsSystem` (via `dispatchToolCallAsSystem` /
- * `dispatchExistingCommandAsSystem`) so the cortex_autonomous actor's
- * audit rows + system rate-limit bucket are honored. Those tool
- * implementations live on the agent — only the dispatch layer changed.
- *
- * `SERVER_SIDE_TOOLS` are the exception: they have no handler in
- * agent/src/mcp_tools.py, so they run here on the web server (same system
- * identity, `systemActor: 'cortex_autonomous'`).
- *
- * Separate from the shared buildExecutableTools to avoid the `tool()` import issue
- * with generateText vs streamText — they use the same tool() helper.
+ * Kept separate from the shared `buildExecutableTools` because of the `tool()`
+ * import mismatch between generateText and streamText.
  */
 function buildAutonomousTools(
   db: FirebaseFirestore.Firestore,
@@ -134,8 +110,8 @@ function buildAutonomousTools(
   toolDefs: McpToolDefinition[]
 ) {
   const dispatchCtx = { db, siteId, machineId, chatId, eventId };
-  // No chatId/userId: an autonomous run has no session behind it, so
-  // server-side mutations are audited as `system:cortex_autonomous`.
+  // No chatId/userId — an autonomous run has no session, so server-side
+  // mutations audit as `system:cortex_autonomous`.
   const serverSideOptions: BuildExecutableToolsOptions = { systemActor: 'cortex_autonomous' };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -178,14 +154,12 @@ function buildAutonomousTools(
 
 export async function POST(request: NextRequest) {
   try {
-    // 1. Validate internal secret
     const secret = request.headers.get('x-cortex-secret');
     const expectedSecret = hootInternalSecret();
     if (!expectedSecret || secret !== expectedSecret) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. Parse & validate body
     const body = await request.json() as AutonomousRequest;
     const { siteId, machineId, machineName, eventType, processName, errorMessage, agentVersion, nonce } = body;
 
@@ -198,7 +172,6 @@ export async function POST(request: NextRequest) {
 
     const db = getAdminDb();
 
-    // 3. Read directive config
     const hootSettingsDoc = await db.doc(`sites/${siteId}/settings/cortex`).get();
     const settings = (hootSettingsDoc.data() ?? {}) as HootSettings;
 
@@ -206,8 +179,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ accepted: false, reason: 'autonomous_disabled' });
     }
 
-    // 4. Dedup check — same machine+process within cooldown window
-    //    Also dedup by nonce if provided (prevents replay attacks)
+    // Dedup on machine+process within the cooldown window, and on nonce when
+    // supplied (replay protection).
     const cooldownMs = (settings.cooldownMinutes ?? DEFAULT_COOLDOWN_MINUTES) * 60 * 1000;
     const cutoffTime = Timestamp.fromMillis(Date.now() - cooldownMs);
 
@@ -225,7 +198,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ accepted: false, reason: 'cooldown_active' });
     }
 
-    // Nonce-based dedup: reject exact replay of same request
     if (nonce) {
       const nonceRef = db.doc(`sites/${siteId}/cortex-nonces/${nonce}`);
       const nonceDoc = await nonceRef.get();
@@ -233,11 +205,11 @@ export async function POST(request: NextRequest) {
         console.log(`[hoot/autonomous] Nonce replay blocked: ${nonce}`);
         return NextResponse.json({ accepted: false, reason: 'duplicate_nonce' });
       }
-      // Store nonce with TTL (cleaned up by cooldown window naturally)
+      // No TTL and no pruner: cortex-nonces docs are write-once and stay.
       await nonceRef.set({ machineId, processName, timestamp: FieldValue.serverTimestamp() });
     }
 
-    // 5. Concurrency check — max sessions per site
+    // Max concurrent sessions per site.
     const lockRef = db.doc(`sites/${siteId}/cortex-state/lock`);
     const canProceed = await db.runTransaction(async (tx) => {
       const lockDoc = await tx.get(lockRef);
@@ -255,7 +227,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ accepted: false, reason: 'concurrency_limit' });
     }
 
-    // 6. Create event record
     const eventId = `evt_${Date.now()}_${machineId.replace(/[^a-zA-Z0-9-_]/g, '')}`;
     const chatId = `auto_${Date.now()}_${machineId.replace(/[^a-zA-Z0-9-_]/g, '')}`;
     const eventRef = db.doc(`sites/${siteId}/cortex-events/${eventId}`);
@@ -282,7 +253,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`[hoot/autonomous] Accepted: ${eventId} — ${processName} ${eventType} on ${machineName}`);
 
-    // 7. Fire and forget the investigation
+    // Fire and forget — the response goes back before this finishes.
     runAutonomousInvestigation(db, {
       siteId, machineId, machineName, eventType, processName,
       errorMessage: errorMessage || '', agentVersion: agentVersion || '',
@@ -297,8 +268,6 @@ export async function POST(request: NextRequest) {
     return apiError(error, 'hoot/autonomous');
   }
 }
-
-// ─── Background Investigation ─────────────────────────────────────────────────
 
 interface InvestigationParams {
   siteId: string;
@@ -327,7 +296,6 @@ async function runAutonomousInvestigation(
   const startTime = Date.now();
 
   try {
-    // Check machine online
     const online = await isMachineOnline(db, siteId, machineId);
     if (!online) {
       await eventRef.update({
@@ -356,8 +324,7 @@ async function runAutonomousInvestigation(
       return;
     }
 
-    // Respect the per-machine Hoot kill switch — skip autonomous investigation
-    // but still escalate so operators aren't left in the dark.
+    // Per-machine Hoot kill switch: skip the investigation but still escalate.
     const hootEnabled = await isHootEnabled(db, siteId, machineId);
     if (!hootEnabled) {
       await eventRef.update({
@@ -386,32 +353,26 @@ async function runAutonomousInvestigation(
       return;
     }
 
-    // Whose key this investigation spends. There is no shared site key any
-    // more (see `resolveLlmConfig`), and a machine-triggered investigation has
-    // no author, so it runs on the SITE OWNER's key — the one uid that is
-    // durable for the life of the site and already carries its billing.
+    // No shared site key exists and a machine-triggered run has no author, so
+    // it spends the SITE OWNER's key — the one uid durable for the site's life.
     const llmConfig = await resolveLlmConfig(db, await resolveSiteKeyOwner(db, siteId));
 
-    // Build tools (tier-capped)
     const maxTier = settings.maxTier ?? 2;
     const toolDefs = getToolsByTier(maxTier as 1 | 2 | 3);
     const tools = buildAutonomousTools(db, siteId, machineId, chatId, eventId, toolDefs);
 
-    // Build event context
     const eventLabel = eventType === 'process_start_failed' ? 'failed to start' : 'crashed';
     const eventContext = [
       `Process "${processName}" ${eventLabel} on machine "${machineName}".`,
       errorMessage ? `Error details: ${errorMessage}` : '',
     ].filter(Boolean).join('\n');
 
-    // Build system prompt with directive
     const systemPrompt = buildAutonomousSystemPrompt(
       machineName,
       settings.directive || '',
       eventContext
     );
 
-    // Run LLM with tools
     const model = createModel(llmConfig);
     const result = await generateText({
       model,
@@ -421,19 +382,15 @@ async function runAutonomousInvestigation(
       stopWhen: stepCountIs(MAX_STEPS),
     });
 
-    // Extract final text
     const finalText = result.text || '';
 
-    // Determine outcome
     const needsEscalation = finalText.includes('ESCALATION NEEDED');
     const status = needsEscalation ? 'escalated' : 'resolved';
 
-    // Extract summary from structured output
     const summaryMatch = finalText.match(/OUTCOME:\s*(.+)/i);
     const summary = summaryMatch?.[1]?.trim()
       || (needsEscalation ? 'Escalated — hoot could not resolve the issue' : 'Issue investigated and addressed');
 
-    // Collect actions from tool call steps
     const actions = result.steps?.flatMap(step =>
       (step.toolCalls || []).map(tc => ({
         tool: tc.toolName,
@@ -442,7 +399,6 @@ async function runAutonomousInvestigation(
       }))
     ) || [];
 
-    // Update event record
     await eventRef.update({
       status,
       summary,
@@ -451,8 +407,7 @@ async function runAutonomousInvestigation(
       durationMs: Date.now() - startTime,
     });
 
-    // Save conversation to chats collection
-    // Store the full message exchange for review in the Hoot UI
+    // Full message exchange, for review in the Hoot UI.
     const chatMessages = result.response?.messages || [];
     await db.doc(`chats/${chatId}`).set({
       source: 'autonomous',
@@ -463,13 +418,11 @@ async function runAutonomousInvestigation(
       machineName,
       title: `Auto: ${processName} ${eventLabel}`,
       autonomousSummary: summary,
-      // Store serializable message data
       messages: JSON.parse(JSON.stringify(chatMessages)),
       createdAt: Timestamp.fromMillis(startTime),
       updatedAt: Timestamp.now(),
     });
 
-    // Escalate if needed
     if (needsEscalation && settings.escalationEmail !== false) {
       await escalate(siteId, eventId, machineName, processName, finalText);
     }
@@ -504,7 +457,7 @@ async function runAutonomousInvestigation(
     });
 
   } finally {
-    // Always decrement the active session counter (retry once on failure)
+    // Always release the session slot; one retry before giving up.
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         await db.runTransaction(async (tx) => {

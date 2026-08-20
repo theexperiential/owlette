@@ -1,18 +1,11 @@
 /**
- * `owlette quota show | history`.
- *
- * Drives:
+ * `owlette quota show | history` over
  *   GET /api/sites/{siteId}/quota
  *   GET /api/sites/{siteId}/quota/history?period=<7d|14d|30d|60d|90d>
  *
- * `show` renders the current storage snapshot as a human-readable
- * progress bar in table mode and surfaces any recent alarm firings.
- * `history` renders the per-day rollup as an ascii table with one row
- * per UTC day in the requested window.
- *
- * Both commands round-trip the server's full snapshot when `--json` is
- * passed at the program level — important for users piping output into
- * `jq` or scripting against the API.
+ * `show` prints a storage progress bar plus recent alarms; `history` prints
+ * one ascii row per UTC day. `--json` round-trips the server snapshot verbatim
+ * so it stays pipeable into `jq`.
  */
 
 import { Command } from 'commander';
@@ -62,11 +55,10 @@ export function registerQuotaCommands(program: Command): void {
     (program.commands.find((c) => c.name() === 'quota') as Command | undefined) ??
     program.command('quota').description('inspect site storage + bandwidth quota');
 
-  // Overwrite any earlier stub description so help text stays canonical
-  // regardless of registration order.
+  // Overwrite any stub registered earlier, so help text is order-independent.
   quota.description('inspect site storage + bandwidth quota');
 
-  // Remove any stubs left by earlier file-load ordering.
+  // Drop stubs left by earlier file-load ordering.
   for (const verb of ['show', 'history'] as const) {
     const existing = quota.commands.find((c) => c.name() === verb);
     if (existing) {
@@ -75,8 +67,6 @@ export function registerQuotaCommands(program: Command): void {
       if (idx >= 0) list.splice(idx, 1);
     }
   }
-
-  /* -------------------- show -------------------- */
 
   quota
     .command('show')
@@ -107,8 +97,6 @@ export function registerQuotaCommands(program: Command): void {
 
       process.stdout.write(formatQuotaSnapshot(data));
     });
-
-  /* -------------------- history -------------------- */
 
   quota
     .command('history')
@@ -153,10 +141,6 @@ export function registerQuotaCommands(program: Command): void {
     });
 }
 
-/* --------------------------------------------------------------------- */
-/*  formatters                                                           */
-/* --------------------------------------------------------------------- */
-
 const BAR_WIDTH = 20;
 
 function formatQuotaSnapshot(q: QuotaSnapshot): string {
@@ -165,9 +149,8 @@ function formatQuotaSnapshot(q: QuotaSnapshot): string {
   out.push('');
 
   if (q.limitBytes === null) {
-    // The API reports a finite cap; the schema still marks the field
-    // nullable, so render what we do know instead of a bar against an
-    // unknown limit.
+    // The API always reports a finite cap, but the field is nullable —
+    // print what we know rather than a bar against an unknown limit.
     out.push(`storage: ${humanBytes(q.committedBytes)} used`);
   } else {
     out.push(formatProgressLine('storage', q.committedBytes, q.limitBytes));
@@ -199,9 +182,8 @@ function formatQuotaSnapshot(q: QuotaSnapshot): string {
 }
 
 /**
- * Render a single quota dimension as `<label>: <used> / <limit> (NN%) [bar]`.
- * `limit` must be > 0; callers handle the no-entitlement / null case
- * separately.
+ * `<label>: <used> / <limit> (NN%) [bar]`. `limit` must be > 0 — callers
+ * handle the null/no-entitlement case.
  */
 function formatProgressLine(label: string, used: number, limit: number): string {
   const fraction = limit > 0 ? Math.min(1, Math.max(0, used / limit)) : 0;
@@ -234,10 +216,6 @@ function formatQuotaHistory(h: QuotaHistory): string {
   );
   return out.join('\n') + '\n';
 }
-
-/* --------------------------------------------------------------------- */
-/*  util                                                                 */
-/* --------------------------------------------------------------------- */
 
 function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json: boolean } {
   const { apiUrl, token } = loadConfig({ profile: cmd.optsWithGlobals().profile });

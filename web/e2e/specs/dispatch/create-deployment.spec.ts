@@ -1,19 +1,10 @@
 /**
- * Dispatch — create deployment (D4.1)
- *
- * Flow:
- *   1. Seed a machine on site-A.
- *   2. UI: navigate to /deployments → "new deployment" → DeploymentDialog
- *      ("deploy software") → fill installer URL (auto-derives installer
- *      filename) → check the target machine → "deploy to 1 machine".
- *   3. Firestore (per useDeployments.createDeployment):
- *      - `sites/{siteId}/deployments/{deployId}` doc with
- *        `{ name, installer_name, installer_url, silent_flags, targets,
- *           status, createdAt }`. Status starts 'pending', flips to
- *        'in_progress' once all per-machine commands write.
- *      - One `install_{deployId}_{machineId}_{ts}` command per target in
- *        `sites/{siteId}/machines/{id}/commands/pending` with
- *        `{ type: 'install_software', installer_url, deployment_id, … }`.
+ * Dispatch — create deployment. Drives /deployments → new deployment dialog →
+ * installer URL → target machine → deploy, then asserts the Firestore writes:
+ * `sites/{siteId}/deployments/{deployId}` (status 'pending' → 'in_progress'
+ * once every per-machine command lands) plus one
+ * `install_{deployId}_{machineId}_{ts}` command per target under
+ * `machines/{id}/commands/pending`.
  *
  * Admin role — deployment creation is a site-admin action.
  */
@@ -52,42 +43,34 @@ test.beforeEach(async () => {
 test('admin creates a deployment — deployment doc + per-target install command both written', async ({ page }) => {
   await page.goto('/deployments');
 
-  // Wait for the deployments page to mount with our site selected.
-  // The page uses an h2 (not h1) for its title.
+  // Page title is an h2, not an h1.
   await expect(page.getByRole('heading', { name: 'deployments', exact: true })).toBeVisible({ timeout: 10_000 });
 
-  // Open the deploy dialog. The "new deployment" button appears either in the
-  // empty state or the header — first() tolerates both.
+  // "new deployment" renders in the empty state or the header — first() takes both.
   await page.getByRole('button', { name: /^new deployment$/i }).first().click();
 
   const dialog = page.getByRole('dialog', { name: /^deploy software$/i });
   await expect(dialog).toBeVisible();
 
-  // Fill the installer URL — onChange auto-derives installer_name from
-  // the URL's last path segment when it includes a dot.
+  // onChange auto-derives installer_name from the URL's last path segment.
   const installerUrl = `https://example.com/test-installer-${Date.now()}.exe`;
   await dialog.locator('#installer-url').fill(installerUrl);
 
-  // Agents require a sha256 checksum; the dialog auto-computes one from the
-  // URL (unreachable from the test env), so switch to manual entry. The
-  // "enter manually" link renders in both the computing and error states.
+  // The dialog auto-computes the required sha256 by fetching the URL, which is
+  // unreachable here — switch to manual entry.
   const sha256 = 'cd'.repeat(32);
   await dialog.getByRole('button', { name: /^enter manually$/i }).click();
   await dialog.locator('#manual-checksum').fill(sha256);
 
-  // Check the seeded machine in the target list. Each row is a clickable div
-  // with the machineId as its visible text + a checkbox; clicking the row
-  // toggles the checkbox via toggleMachine.
+  // Rows are clickable divs, not labels — clicking the row runs toggleMachine.
   const machineRow = dialog.locator('div').filter({ hasText: new RegExp(`^${MACHINE_ID}`) }).first();
   await machineRow.click();
 
-  // Submit. Button text varies with selectedMachines.size:
-  // "deploy to 1 machine" / "deploy to N machines".
+  // Button text pluralises with selectedMachines.size.
   await dialog.getByRole('button', { name: /^deploy to 1 machine$/i }).click();
 
-  // Wait until the deployments collection sees the new doc — useDeployments
-  // returns immediately after the deploy chain resolves; the resulting
-  // dialog close + list refresh are async UI updates.
+  // useDeployments resolves before the dialog close + list refresh land, so
+  // wait on the collection rather than the UI.
   const db = getAdminDb();
   let deploymentDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
   await expect.poll(async () => {
@@ -109,8 +92,7 @@ test('admin creates a deployment — deployment doc + per-target install command
   expect(deployment.targets[0].machineId).toBe(MACHINE_ID);
   expect(deployment.targets[0].status).toBe('pending');
 
-  // The install command landed in the target machine's pending doc with the
-  // right type + deployment_id linkage.
+  // The install command landed with the right type + deployment_id linkage.
   let installKeys: string[] = [];
   await expect.poll(async () => {
     const pendingIds = await getPendingCommandIds(SITE_ID, MACHINE_ID);

@@ -1,23 +1,16 @@
 /**
- * POST /api/hoot/stop — stop a running hoot turn (hoot-async-turns).
+ * POST /api/hoot/stop — stop a running hoot turn. Body `{ chatId, turnId }`
+ * (turnId from the chat's `stream/current`).
  *
- * Body: `{ chatId, turnId }` — the chat and the specific turn to stop (from
- * the chat's `stream/current`).
+ * Auth in order: resolveAuth (401) → chat exists (404, and its siteId scopes
+ * the next check) → verifyUserSiteAccess → chat ownership (403, owner-only).
  *
- * Authorization (in order):
- *   1. `resolveAuth` — session, ID token, or scoped API key (401 otherwise).
- *   2. Chat must exist (404 otherwise) — its `siteId` scopes the access check.
- *   3. `verifyUserSiteAccess` — caller must have access to the chat's site.
- *   4. Chat ownership — the chat must belong to the caller (owner-only; 403).
+ * Effect is `finishTurn(..., 'cancelled')`, turnId- and status-guarded so a
+ * stale turnId or terminal turn no-ops. The running turn's next heartbeat
+ * `touch` sees the lost ownership and aborts the model loop and tool poll.
  *
- * Effect: `finishTurn(db, chatId, turnId, 'cancelled')`. This is turnId- AND
- * status-guarded, so a stale/mismatched turnId or an already-terminal turn
- * no-ops. Marking the stream doc `cancelled` is picked up by the running
- * turn's next heartbeat `touch` (it reports loss of ownership), which aborts
- * the model loop and any in-flight tool poll on the server side.
- *
- * Response: always 200 `{ stopped: true }` — the caller does not need to know
- * whether a live turn was actually running (the effect is idempotent).
+ * Always 200 `{ stopped: true }` — idempotent, so the caller needn't know
+ * whether a turn was live.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -64,7 +57,7 @@ async function handleStop(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'chat not found' }, { status: 404 });
     }
 
-    // Site access gate — throws on no access.
+    // Throws on no access.
     try {
       await verifyUserSiteAccess(db, auth.userId, siteId);
     } catch {

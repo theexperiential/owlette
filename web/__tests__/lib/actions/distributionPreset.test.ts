@@ -1,28 +1,8 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for the distribution preset action cores
- * (`web/lib/actions/{create,update,delete}DistributionPreset.server.ts`).
- *
- * security-boundary-migration wave 3.7. Mirrors 3.6 schedule/reboot preset
- * tests — only the firestore path differs.
- *
- * Coverage:
- *   - createDistributionPreset
- *     - happy path: writes to config/{siteId}/project_distribution_presets/<id>
- *     - generates id from name slug + timestamp
- *     - strips undefined optional fields before write
- *     - stamps createdBy from actor + serverTimestamp createdAt
- *     - validation: empty name, oversized name, non-string fields, bad
- *       verify_files array, non-finite order, name with no alphanumerics
- *   - updateDistributionPreset
- *     - built-in override: setDoc merge with isBuiltIn forced to true
- *     - custom edit: update() with serverTimestamp updatedAt
- *     - custom edit on missing doc → DistributionPresetNotFoundError
- *     - validation: invalid presetId, bad partial fields
- *   - deleteDistributionPreset
- *     - calls delete() on the doc
- *     - validation: invalid presetId
+ * Unit tests for `web/lib/actions/{create,update,delete}DistributionPreset.server.ts`.
+ * Mirrors the schedule/reboot preset tests — only the firestore path differs.
  */
 
 import {
@@ -116,10 +96,6 @@ beforeEach(() => {
   updateShouldThrow = null;
   mockEmitMutation.mockClear();
 });
-
-/* ------------------------------------------------------------------------- */
-/*  createDistributionPreset                                                 */
-/* ------------------------------------------------------------------------- */
 
 describe('createDistributionPreset', () => {
   it('writes a preset to config/{siteId}/project_distribution_presets/<id>', async () => {
@@ -281,10 +257,6 @@ describe('createDistributionPreset', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  updateDistributionPreset                                                 */
-/* ------------------------------------------------------------------------- */
-
 describe('updateDistributionPreset', () => {
   it('built-in override: setDoc merge with isBuiltIn=true forced', async () => {
     await updateDistributionPreset(
@@ -319,7 +291,7 @@ describe('updateDistributionPreset', () => {
       name: 'renamed',
       updatedAt: '__SERVER_TS__',
     });
-    // partial update should not include unspecified fields
+    // A partial update must not write unspecified fields.
     expect(updateCalls[0].payload).not.toHaveProperty('order');
     expect(updateCalls[0].payload).not.toHaveProperty('isBuiltIn');
   });
@@ -404,10 +376,6 @@ describe('updateDistributionPreset', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  deleteDistributionPreset                                                 */
-/* ------------------------------------------------------------------------- */
-
 describe('deleteDistributionPreset', () => {
   it('calls delete on the preset doc', async () => {
     await deleteDistributionPreset({
@@ -446,10 +414,6 @@ describe('deleteDistributionPreset', () => {
     ).rejects.toThrow(/presetId/);
   });
 });
-
-/* ------------------------------------------------------------------------- */
-/*  audit emission                                                           */
-/* ------------------------------------------------------------------------- */
 
 describe('distribution preset audit emission', () => {
   it('emits preset.create on create', async () => {

@@ -1,16 +1,10 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/app/api/platform/security/kill-switch/route.ts`.
- *
- * Coverage:
- *   - superadmin succeeds: writes to `global/security_config` with the
- *     expected merge fields (`flippedBy`, `reason`, `expiresAt`)
- *   - non-superadmin rejected with 403
- *   - validation: missing/invalid flag, missing reason, out-of-range
- *     expiresInMinutes
- *   - audit entry created (the wrapper writes it; we just verify the
- *     route was reachable)
+ * `web/app/api/platform/security/kill-switch/route.ts`: superadmin writes
+ * `global/security_config` with `flippedBy`/`reason`/`expiresAt`; everyone else
+ * gets 403; missing/invalid flag, missing reason and out-of-range
+ * expiresInMinutes are rejected; the wrapper's audit entry lands.
  */
 
 const securitySetCalls: Array<{ payload: Record<string, unknown>; opts?: unknown }> = [];
@@ -133,12 +127,11 @@ describe('POST /api/platform/security/kill-switch — happy path', () => {
     const expiresAt = call.payload.capability_enforcement_expiresAt as Date;
     expect(expiresAt).toBeInstanceOf(Date);
     const expiresMs = expiresAt.getTime();
-    // ~4h ahead of "now" (within a generous window for slow CI)
+    // ~4h ahead of now, with slack for slow CI.
     expect(expiresMs).toBeGreaterThanOrEqual(before + 4 * 60 * 60 * 1000 - 5_000);
     expect(expiresMs).toBeLessThanOrEqual(after + 4 * 60 * 60 * 1000 + 5_000);
     expect(call.opts).toEqual({ merge: true });
 
-    // audit entry was emitted to global/audit_log
     expect(auditSetCalls.length).toBeGreaterThanOrEqual(1);
     expect(auditSetCalls.some((c) => (c.payload as { outcome?: string }).outcome === 'allow')).toBe(true);
   });

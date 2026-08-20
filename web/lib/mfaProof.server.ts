@@ -1,39 +1,20 @@
 /**
- * Live proof of possession of a second factor.
+ * Live proof of possession of a second factor, for routes that cannot settle
+ * for "the session cleared a challenge sometime in the last seven days" —
+ * minting fresh recovery codes off a warm session alone would hand a session
+ * thief a permanent offline factor that also unlocks disable.
  *
- * WHAT THIS IS FOR
+ * Three equivalent proofs: `totp`, `backup_code` (consumed on use), and
+ * `passkey` (UV-verified assertion; the same ceremony
+ * `/api/passkeys/step-up/verify` runs, factored out so there is one impl).
  *
- * A handful of routes must not settle for "the session cleared a challenge at
- * some point in the last seven days" — they need the caller to prove, in THIS
- * request, that they still hold a factor. `/api/mfa/disable` has always done
- * that inline ("No re-auth shortcut" in its header), and
- * `/api/mfa/backup-codes` must do the same: minting fresh recovery codes from
- * a warm session alone would hand a session thief a permanent, offline second
- * factor that also unlocks disable.
+ * Deliberately does NOT: touch the session (promoting to `mfaVerified` is the
+ * step-up route's job), write factor state (`lib/mfaFactors.server.ts` owns
+ * that), or audit (callers emit the user-visible verb).
  *
- * Three proofs are accepted, and they are equivalent in strength:
- *
- *   - `totp`        — a current code from the enrolled authenticator.
- *   - `backup_code` — an unused recovery code, consumed on use.
- *   - `passkey`     — a UV-verified WebAuthn assertion against a credential
- *                     registered to this account (the same ceremony
- *                     `/api/passkeys/step-up/verify` runs, factored out here so
- *                     there is exactly one implementation of it).
- *
- * WHAT THIS MODULE DOES NOT DO
- *
- * - It never touches the session. Promoting a session to `mfaVerified` is the
- *   step-up route's job; a route that merely needs proof (regenerating backup
- *   codes) has no business re-minting the caller's cookie.
- * - It never writes factor state. `lib/mfaFactors.server.ts` owns that.
- * - It never audits. Callers emit the verb that describes the user-visible
- *   action, exactly as they do around `applyMfaFactorChange`.
- *
- * NOTE ON `/api/mfa/disable`: that route still carries its own copy of the
- * TOTP and backup-code blocks this module mirrors. It is deliberately untouched
- * by this wave (another task owns nothing in it, and it is the one route whose
- * failure mode is a hard account lockout); it should adopt `verifyMfaProof`
- * once this has soaked, which would also give it the passkey option for free.
+ * TODO: `/api/mfa/disable` still carries its own TOTP + backup-code copies;
+ * adopt `verifyMfaProof` there once this has soaked (gets passkey for free).
+ * Left alone for now — its failure mode is a hard account lockout.
  */
 
 import { NextResponse } from 'next/server';
@@ -66,11 +47,7 @@ export type MfaProof =
       challengeId: string;
     };
 
-/**
- * A refusal, in the repo's `{ error, code }` shape plus the status to send.
- * `error` is the human sentence clients surface directly; `code` is the
- * machine slug they branch on.
- */
+/** `error` is surfaced verbatim; `code` is the slug clients branch on. */
 export interface MfaProofRejection {
   ok: false;
   status: number;
@@ -95,21 +72,16 @@ export function mfaProofErrorResponse(rejection: MfaProofRejection): NextRespons
 }
 
 /**
- * Read a proof out of a request body.
- *
- * Accepts the two body shapes already in the wild rather than inventing a
- * third: `{ code, isBackupCode }` (as `/api/mfa/disable` takes) and
- * `{ credential, challengeId }` (as the passkey step-up ceremony produces).
- * A body carrying neither is refused here, before the caller does anything —
- * "no proof" must never fall through to a success path.
+ * Read a proof out of a request body. Accepts the two shapes already in the
+ * wild — `{ code, isBackupCode }` and `{ credential, challengeId }`. A body
+ * with neither is refused here; "no proof" must never reach a success path.
  */
 export function parseMfaProof(body: unknown): MfaProofParse {
   const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
 
   if (b.credential) {
-    // A half-formed passkey proof is its own error rather than falling through
-    // to "no proof supplied", which would send the caller looking for a code
-    // they were never being asked for.
+    // Its own error, not "no proof supplied" — that would send the caller
+    // looking for a code they were never asked for.
     if (typeof b.challengeId !== 'string' || !b.challengeId) {
       return reject(
         400,
@@ -173,13 +145,8 @@ function verifyStoredTotp(
 }
 
 /**
- * Verify a backup code and consume it in the same transaction.
- *
- * Consumption is inside the transaction for the same reason it is in
- * `/api/mfa/disable`: a crash between "this code matched" and whatever the
- * caller does next must not leave the code replayable. Callers that go on to
- * replace the whole generation (regeneration) make this moot, but a caller
- * that fails midway leaves the account one code lighter rather than exposed.
+ * Verify and consume a backup code in ONE transaction: a crash between match
+ * and whatever the caller does next must not leave the code replayable.
  */
 async function consumeBackupCode(
   userId: string,
@@ -215,20 +182,16 @@ async function consumeBackupCode(
 
 /**
  * Verify a WebAuthn step-up assertion against the SESSION'S OWN account.
+ * Three checks bind the ceremony to the account; dropping any one turns
+ * step-up into a bypass:
+ *   1. the challenge was minted for this uid (a `null` uid means the pre-login
+ *      discoverable-credential flow and must not be redeemable here),
+ *   2. the credential is one of this uid's — we never look outside
+ *      `users/{uid}/passkeys`,
+ *   3. `requireUserVerification: true` — possession alone is not enough.
  *
- * Extracted verbatim from `/api/passkeys/step-up/verify`, which now calls this.
- * The three checks that bind the ceremony to the account are all here, and
- * removing any one of them turns a step-up into a bypass:
- *   1. the stored challenge must have been minted for this uid (a `null` uid
- *      means it came from the pre-login discoverable-credential flow and must
- *      not be redeemable here),
- *   2. the asserted credential must be one of this uid's registered passkeys —
- *      we never look outside `users/{uid}/passkeys`, so another user's
- *      credential simply is not found, and
- *   3. `requireUserVerification: true`, so possession alone is not enough.
- *
- * `credential.response.userHandle` is IGNORED: it is attacker-controlled, and
- * the uid always comes from the caller's session instead.
+ * `credential.response.userHandle` is IGNORED (attacker-controlled); the uid
+ * always comes from the session.
  */
 export async function verifyPasskeyStepUpAssertion(args: {
   userId: string;
@@ -268,12 +231,9 @@ export async function verifyPasskeyStepUpAssertion(args: {
     expectedChallenge: challengeData.challenge,
     expectedOrigin: getExpectedOrigins(),
     expectedRPID: getRpId(),
-    // Pinned explicitly even though @simplewebauthn/server already defaults it
-    // to true — same reasoning as the sign-in route. Satisfying MFA with a
-    // passkey rests entirely on the authenticator having verified the user
-    // (PIN/biometric); without the `uv` flag this is possession only, and an
-    // upstream default flip would silently turn step-up into a one-touch
-    // bypass.
+    // Pinned though the library already defaults true: without the `uv` flag
+    // this is possession only, and an upstream default flip would silently
+    // turn step-up into a one-touch bypass.
     requireUserVerification: true,
     credential: {
       id: matchingPasskey.credentialId,
@@ -298,10 +258,8 @@ export async function verifyPasskeyStepUpAssertion(args: {
 }
 
 /**
- * Verify whichever proof the caller presented.
- *
- * `userData` is the user document the caller has already read (every caller
- * runs `assertActiveUser` first), so the TOTP branch costs no extra read.
+ * Verify whichever proof the caller presented. `userData` is the doc the caller
+ * already read via `assertActiveUser`, so the TOTP branch costs no extra read.
  */
 export async function verifyMfaProof(
   userId: string,

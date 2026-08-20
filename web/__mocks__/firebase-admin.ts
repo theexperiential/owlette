@@ -1,23 +1,17 @@
 /**
- * Firebase Admin SDK Mock for API Route Testing
+ * Mocks getAdminDb/getAdminAuth/getAdminStorage from @/lib/firebase-admin.
+ * Tests configure return values through the exported mock functions:
  *
- * Mocks getAdminDb(), getAdminAuth(), and getAdminStorage() from @/lib/firebase-admin.
- * Each test should configure mock return values via the exported mock functions.
- *
- * Usage in tests:
- *   import { mockDbGet, mockDbSet, mockDbUpdate, resetAdminMocks } from '@/__mocks__/firebase-admin';
+ *   import { mockDbGet, resetAdminMocks } from '@/__mocks__/firebase-admin';
  *   beforeEach(() => resetAdminMocks());
  *   mockDbGet.mockResolvedValueOnce({ exists: true, data: () => ({...}) });
  */
-
-// --- Firestore Mocks ---
 
 export const mockDbGet = jest.fn().mockResolvedValue({ exists: false, data: () => null, id: 'mock' });
 export const mockDbSet = jest.fn().mockResolvedValue(undefined);
 export const mockDbUpdate = jest.fn().mockResolvedValue(undefined);
 export const mockDbDelete = jest.fn().mockResolvedValue(undefined);
 export const mockRunTransaction = jest.fn(async (fn: (tx: unknown) => unknown) => {
-  // Simulate transaction by passing a mock transaction object
   const mockTransaction = {
     get: mockDbGet,
     set: mockDbSet,
@@ -27,7 +21,6 @@ export const mockRunTransaction = jest.fn(async (fn: (tx: unknown) => unknown) =
   return fn(mockTransaction);
 });
 
-// Chainable collection/doc pattern
 const createDocRef = (docId?: string) => ({
   get: mockDbGet,
   set: mockDbSet,
@@ -50,16 +43,12 @@ const mockDb = {
   runTransaction: mockRunTransaction,
 };
 
-// --- Auth Mocks ---
-
 export const mockVerifyIdToken = jest.fn().mockResolvedValue({ uid: 'test-uid' });
 
 const mockAuth = {
   verifyIdToken: mockVerifyIdToken,
   createCustomToken: jest.fn().mockResolvedValue('mock-custom-token'),
 };
-
-// --- Storage Mocks ---
 
 export const mockGetSignedUrl = jest.fn().mockResolvedValue(['https://storage.example.com/signed-url']);
 export const mockFileExists = jest.fn().mockResolvedValue([true]);
@@ -77,13 +66,10 @@ const mockStorage = {
   }),
 };
 
-// --- Exported Getters (match firebase-admin.ts exports) ---
-
+// Getters, matching the firebase-admin.ts exports.
 export const getAdminDb = jest.fn(() => mockDb);
 export const getAdminAuth = jest.fn(() => mockAuth);
 export const getAdminStorage = jest.fn(() => mockStorage);
-
-// --- Reset Helper ---
 
 export const resetAdminMocks = () => {
   mockDbGet.mockReset().mockResolvedValue({ exists: false, data: () => null, id: 'mock' });
@@ -106,9 +92,9 @@ export const resetAdminMocks = () => {
   mockFileSave.mockReset().mockResolvedValue(undefined);
 };
 
-// Default export to match `import admin from 'firebase-admin'`
+// Matches `import admin from 'firebase-admin'`.
 export default {
-  apps: [{}], // Pretend SDK is initialized
+  apps: [{}], // non-empty = "SDK initialized"
   auth: () => mockAuth,
   firestore: () => mockDb,
   storage: () => mockStorage,

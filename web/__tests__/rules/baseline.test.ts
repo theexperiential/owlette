@@ -1,11 +1,8 @@
 /**
  * @jest-environment node
  *
- * Firestore rules baseline test suite.
- *
- * Establishes the GREEN baseline for paths that remain allowed after
- * security-boundary-migration wave 7: reads, agent writes, and user-owned
- * preference writes. Browser control-plane writes live in `denials.test.ts`.
+ * Firestore rules GREEN baseline: what stays allowed after the security-boundary migration — reads,
+ * agent writes, user-owned preference writes. Browser control-plane writes live in denials.test.ts.
  */
 
 import { assertSucceeds } from '@firebase/rules-unit-testing';
@@ -40,9 +37,8 @@ afterAll(async () => {
 beforeEach(async () => {
   await clearFirestoreData();
 
-  // Baseline fixture: two sites owned by a third party (so members can only
-  // reach them via their users/{uid}.sites assignment). Machine X belongs
-  // to site A.
+  // Two sites owned by a third party, so members reach them only via users/{uid}.sites.
+  // Machine X belongs to site A.
   await seedAsAdmin(async (db) => {
     await setDoc(doc(db, 'sites', SITE_A), {
       owner: 'someone-else',
@@ -74,9 +70,7 @@ beforeEach(async () => {
   });
 });
 
-// ------------------------------------------------------------
 // User reads on authorised sites
-// ------------------------------------------------------------
 
 describe('user reads', () => {
   test('member reads site they are assigned to', async () => {
@@ -123,9 +117,7 @@ describe('user reads', () => {
   });
 });
 
-// ------------------------------------------------------------
 // Agent reads/writes on its own site + machine
-// ------------------------------------------------------------
 
 describe('agent reads + writes', () => {
   test('agent reads its own machine doc', async () => {
@@ -215,8 +207,7 @@ describe('agent reads + writes', () => {
   });
 
   test('agent writes its target_state under a roost', async () => {
-    // The roosts/{roostId} parent must exist; seed it with rules disabled
-    // (creating a roost requires fields we don't care about here).
+    // The roosts/{roostId} parent must exist; seed with rules disabled.
     await seedAsAdmin(async (db) => {
       await setDoc(doc(db, 'sites', SITE_A, 'roosts', 'roost-1'), {
         name: 'kiosk-bundle',
@@ -248,9 +239,7 @@ describe('agent reads + writes', () => {
   });
 });
 
-// ------------------------------------------------------------
 // Unauthenticated access — public reads + global denies
-// ------------------------------------------------------------
 
 describe('unauthenticated', () => {
   test('reads installer_metadata (public download path)', async () => {
@@ -259,9 +248,7 @@ describe('unauthenticated', () => {
   });
 });
 
-// ------------------------------------------------------------
 // User self-write — own users/{uid} doc with role/email/sites preserved
-// ------------------------------------------------------------
 
 describe('user self-writes', () => {
   test('member updates own user doc preserving role/email/sites', async () => {

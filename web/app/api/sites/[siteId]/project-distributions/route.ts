@@ -1,18 +1,12 @@
 /**
- * GET  /api/sites/{siteId}/project-distributions
- *      → cursor-paginated list of project distributions for a site,
- *        newest first. Requires `site=<id>:read`.
+ * GET  — cursor-paginated project distributions, newest first. `site=<id>:read`.
+ * POST — create one and fan `distribute_project` out to each target machine.
+ *        `site=<id>:write` + `Idempotency-Key`. Per-site max-targets quota
+ *        (default 100, `sites/{siteId}.distributionQuota`); over it, 413
+ *        `over_quota`.
  *
- * POST /api/sites/{siteId}/project-distributions
- *      → create a project distribution + fan out `distribute_project`
- *        commands to each target machine. Requires `site=<id>:write` +
- *        `Idempotency-Key` header. Enforces a per-site max-targets quota
- *        (default 100, override via `sites/{siteId}.distributionQuota`);
- *        over quota returns 413 `over_quota`.
- *
- * Mirror of `/api/sites/{siteId}/deployments` (api-sprint wave 1) for the
- * project-distribution surface (security-boundary-migration wave 3.4).
- * Action core: `web/lib/actions/createDistribution.server.ts`.
+ * Mirrors `/api/sites/{siteId}/deployments`. Action core:
+ * `web/lib/actions/createDistribution.server.ts`.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -40,10 +34,6 @@ type RouteParams = { siteId: string };
 
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
-
-/* --------------------------------------------------------------------- */
-/*  GET — list distributions                                             */
-/* --------------------------------------------------------------------- */
 
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'DISTRIBUTION_MANAGE',
@@ -92,10 +82,6 @@ export const GET = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* --------------------------------------------------------------------- */
-/*  POST — create distribution                                           */
-/* --------------------------------------------------------------------- */
-
 interface CreateDistributionBody {
   name?: unknown;
   file_name?: unknown;
@@ -132,9 +118,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
           ? `apiKey:${auth.auth.keyContext.keyId}`
           : `user:${auth.userId}`;
 
-        // The action does its own validation; pass the raw body (cast to
-        // the Input shape) and let the action surface field-level errors
-        // via the discriminated result.
+        // The action validates; field-level errors come back on its result.
         const input = body as unknown as CreateDistributionInput;
         const result = await createDistribution(input, {
           siteId,
@@ -177,10 +161,6 @@ export const POST = authorizedSiteHandler<RouteParams>({
     return problemFromError(err, 'sites/[siteId]/project-distributions:POST');
   }
 });
-
-/* --------------------------------------------------------------------- */
-/*  helpers                                                              */
-/* --------------------------------------------------------------------- */
 
 function validationFieldFor(code: string): string {
   switch (code) {

@@ -1,18 +1,12 @@
 /**
- * The canonical machine the agent documentation shows.
+ * The canonical machine the agent documentation shows. All fixture data, written
+ * into a scratch owlette tree by `harness.ts` — nothing touches the capture
+ * machine. The three seam documents the desktop app renders are
+ * `config/config.json`, `tmp/app_states.json` and `tmp/service_status.json`.
  *
- * Every value here is fixture data written into the scratch owlette tree from
- * `harness.ts` — nothing is read from, or written to, the machine running the
- * capture. The three documents are the seam the desktop app renders:
- * `config/config.json` (what this machine is supposed to run),
- * `tmp/app_states.json` (what the service has actually launched) and
- * `tmp/service_status.json` (whether the service is up and talking to owlette).
- *
- * The processes are the three shapes owlette exists for: a TouchDesigner show
- * that must never be down, a kiosk that runs to opening hours, and a headless
- * node media server. Between them they cover all three launch modes, both
- * visibilities, a schedule with two blocks, and a running / idle mix of status
- * dots.
+ * The three processes (TD show, scheduled kiosk, headless media server) cover
+ * all launch modes, both visibilities, a two-block schedule and a running/idle
+ * mix of status dots.
  */
 
 import fs from 'node:fs'
@@ -42,11 +36,8 @@ export const DEMO_PAIR_PHRASE = 'silver-compass-drift'
 export type Scenario = 'paired' | 'paired-empty' | 'unpaired'
 
 /**
- * The agent version the footer reports.
- *
- * Read from the repo's `VERSION` rather than hardcoded: this pipeline runs as
- * part of a release, and a screenshot claiming the previous version is exactly
- * the kind of staleness it exists to prevent.
+ * Agent version in the footer. Read from the repo's `VERSION`, not hardcoded —
+ * this runs as part of a release and must not screenshot a stale version.
  */
 export function agentVersion(): string {
   try {
@@ -108,10 +99,8 @@ const DEMO_PROCESSES = [
     relaunch_attempts: '3',
     launch_mode: 'scheduled',
     autolaunch: true,
-    // One block, deliberately. The summary beside the segmented control is not
-    // truncated and the control keeps its labels on one line at the capture
-    // width — a second block pushes both, and a screenshot of a squeezed
-    // control teaches the wrong thing about the UI.
+    // One block, deliberately: a second wraps the segmented control's labels
+    // and truncates the summary at the capture width.
     schedules: [
       {
         name: 'opening hours',
@@ -143,11 +132,8 @@ const DEMO_PROCESSES = [
 export const DEMO_PROCESS_NAMES = DEMO_PROCESSES.map((process) => process.name)
 
 /**
- * The service's live table.
- *
- * The two always-on entries are running; the kiosk has no row at all, which is
- * what an entry outside its schedule window looks like — an INACTIVE hollow
- * ring rather than a filled dot.
+ * The service's live table. The two always-on entries run; the kiosk has NO row,
+ * which is how an entry outside its schedule window looks (hollow INACTIVE ring).
  */
 const DEMO_APP_STATES = {
   '4212': { id: SHOW_ID, status: 'RUNNING', timestamp: FIXED_EPOCH_SECONDS },
@@ -180,14 +166,9 @@ function serviceStatusFile(scenario: Scenario): Record<string, unknown> {
 }
 
 /**
- * The pairing helper the join dialog runs.
- *
- * The real `configure_site.py` asks owlette for a device code and polls until
- * somebody approves it. Documentation does not need a live code — and burning
- * one on every release build would be gratuitous — so the scratch tree carries a
- * stand-in that speaks the same one-JSON-object-per-line protocol
- * (`desktop/src/lib/agentCli.ts`) and then waits to be cancelled, which is what
- * closing the dialog does to the real helper too.
+ * Stand-in for the pairing helper the join dialog runs. Avoids burning a real
+ * device code per release build: speaks the same one-JSON-object-per-line
+ * protocol (`desktop/src/lib/agentCli.ts`), then waits to be cancelled.
  */
 const PAIRING_STUB = `"""Documentation stand-in for configure_site.py --json-progress.
 

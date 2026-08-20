@@ -2,21 +2,14 @@ import { test, expect, type Locator } from '@playwright/test';
 import { roleState } from '../../helpers/roles';
 import { seedLogEvents } from '../../helpers/coverageSeed';
 
-// Guards the button hover standard. Hover once went "dead" on the logs toolbar
-// when individual buttons overrode the shared style with a near-invisible
-// `hover:bg-muted`; this catches that regression class.
+// Guards the button hover standard — hover once went dead on the logs toolbar
+// when buttons overrode the shared style with a near-invisible `hover:bg-muted`.
 //
-// The MECHANISM changed with the .btn-sweep treatment: hover feedback is no
-// longer a `background-color` swap but a `background-image` gradient (the
-// --btn-hover scrim) that sweeps left-to-right by animating background-size
-// from 0% to 100%. The resting background-color deliberately stays put — the
-// scrim paints above it — so asserting on backgroundColor would now prove
-// nothing.
-//
-// These assertions are stricter than the colour check they replace: they pin
-// the sweep geometry itself, so hover dying (no scrim layer, a transparent
-// --btn-hover, or .btn-sweep dropped from the base class) all fail here.
-// Theme-agnostic: no colour literals, only presence and geometry.
+// Assert geometry, not colour: with .btn-sweep, hover is a --btn-hover gradient
+// scrim animating background-size 0% -> 100% over an unchanged
+// background-color, so a backgroundColor assertion would prove nothing. Pinning
+// the sweep catches a missing scrim, a transparent --btn-hover, and a dropped
+// .btn-sweep alike, without colour literals.
 test.describe('button hover states', () => {
   test.use(roleState('admin'));
 
@@ -40,7 +33,7 @@ test.describe('button hover states', () => {
       await expect(button).toBeVisible();
       const rest = await sweep(button);
 
-      // A sweep layer must exist at rest, collapsed to zero width...
+      // at rest: layer present, collapsed to zero width
       expect(rest.image, 'button should carry a hover sweep layer').toContain('gradient');
       expect(rest.image, 'the sweep colour must not be transparent').not.toContain(
         'rgba(0, 0, 0, 0)',
@@ -50,11 +43,10 @@ test.describe('button hover states', () => {
       await button.hover();
       await page.waitForTimeout(300); // let the 200ms sweep settle
 
-      // ...and expand to cover the button on hover.
       const hovered = await sweep(button);
       expect(hovered.size, 'sweep should cover the button on hover').toBe('100% 100%');
 
-      // Reset so the next button is measured from its true resting state.
+      // reset so the next button measures from its true resting state
       await page.mouse.move(0, 0);
       await page.waitForTimeout(300);
     }

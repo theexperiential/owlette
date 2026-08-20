@@ -10,8 +10,6 @@ import pytest
 from sync_state import SCHEMA_VERSION, SyncState, SyncStateError, _default_state_db_path
 
 
-# ─── default path resolution ────────────────────────────────────────
-
 
 def test_default_state_db_path_windows(monkeypatch):
     """on windows the default db lives under %PROGRAMDATA%\\Owlette\\sync-state.db."""
@@ -42,28 +40,20 @@ def test_default_state_db_path_posix_home_fallback(monkeypatch):
 
 
 def test_default_state_db_path_is_not_under_documents():
-    """
-    regression: the default path MUST NOT point at `~/Documents/Owlette/...`
-    since under LocalSystem that resolves to C:\\Windows\\System32\\config\\systemprofile\\.
-    """
+    """regression: never `~/Documents/Owlette/...` — under LocalSystem that
+    resolves to C:\\Windows\\System32\\config\\systemprofile\\."""
     got = _default_state_db_path()
     assert 'Documents' not in got, (
         f"default state DB path {got!r} must not live under user Documents"
     )
 
 
-# ─── lifecycle ───────────────────────────────────────────────────────
-
 
 def test_migration_skips_renames_already_applied(tmp_path):
-    """
-    regression (TEC-B4A, 2026-08-17): interim dev builds created DBs with the
-    NEW column names while still stamped user_version 1. the v1->v2 rename then
-    failed with "no such column: folder_id", the txn rolled back the version
-    stamp with it, and the same crash repeated on every open — killing the
-    hourly scrub and the content-store reaper forever. such a DB must open
-    cleanly and come out stamped at SCHEMA_VERSION.
-    """
+    """regression TEC-B4A (2026-08-17): interim dev builds stamped user_version 1
+    on DBs that already had the new column names, so the v1->v2 rename failed
+    with "no such column: folder_id", rolled back the stamp, and crashed on every
+    open — killing the hourly scrub and content-store reaper forever."""
     db_path = tmp_path / 'state.db'
     seed = SyncState(str(db_path))
     seed.close()
@@ -102,12 +92,11 @@ def test_can_open_close_open_again_round_trip(tmp_path):
 
 def test_context_manager_closes_on_exit(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
-        # use it
         state.start_distribution(
             site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=[],
         )
-    # after exit, connection closed — calling op should fail
+    # Connection is closed after exit, so any op must fail.
     with pytest.raises((sqlite3.ProgrammingError, AssertionError, AttributeError)):
         state.list_pending_distributions()
 
@@ -125,13 +114,10 @@ def test_wal_mode_enabled(tmp_path):
     state = SyncState(str(tmp_path / 'state.db'))
     try:
         cur = state._conn.execute('PRAGMA journal_mode')
-        # journal_mode returns 'wal' (case-insensitive)
         assert cur.fetchone()[0].lower() == 'wal'
     finally:
         state.close()
 
-
-# ─── schema migration (v1 -> v2: roost rename) ──────────────────────────
 
 
 def test_fresh_db_uses_current_roost_columns(tmp_path):
@@ -193,7 +179,6 @@ def test_v1_db_migrated_to_v2_renames_columns(tmp_path):
         assert {'roost_id', 'version_id', 'version_url'} <= cols
         assert not ({'folder_id', 'manifest_id', 'manifest_url'} & cols)
 
-        # rows survive and are readable through the new column names.
         row = state.get_distribution(1)
         assert row is not None
         assert row['site_id'] == 'site_a'
@@ -201,7 +186,7 @@ def test_v1_db_migrated_to_v2_renames_columns(tmp_path):
         assert row['version_id'] == 'ver_c'
         assert row['version_url'] == 'https://x/manifest'
 
-        # the query the scrub runs no longer raises — it returns the due row.
+        # The scrub's query no longer raises.
         due = state.list_scrub_due(max_age_seconds=0)
         assert [r['id'] for r in due] == [1]
 
@@ -212,14 +197,11 @@ def test_migrated_db_is_noop_on_reopen(tmp_path):
     _create_v1_distributions_db(db)
     with SyncState(str(db)) as state:
         assert state._conn.execute('PRAGMA user_version').fetchone()[0] == SCHEMA_VERSION
-    # second open must not attempt to re-run the migration (would fail: the old
-    # columns no longer exist).
+    # Re-running the migration would fail — the old columns are gone.
     with SyncState(str(db)) as state:
         assert state._conn.execute('PRAGMA user_version').fetchone()[0] == SCHEMA_VERSION
         assert state.get_distribution(1)['version_url'] == 'https://x/manifest'
 
-
-# ─── distributions ──────────────────────────────────────────────────
 
 
 def test_start_distribution_creates_row(tmp_path):
@@ -298,8 +280,6 @@ def test_list_pending_distributions(tmp_path):
         assert d2 not in ids
 
 
-# ─── chunks ──────────────────────────────────────────────────────────
-
 
 def test_chunk_state_transitions(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
@@ -330,8 +310,6 @@ def test_chunk_attempts_counter_increments(tmp_path):
         assert row['attempts'] == 3
 
 
-# ─── files ──────────────────────────────────────────────────────────
-
 
 def test_file_state_transitions(tmp_path):
     with SyncState(str(tmp_path / 'state.db')) as state:
@@ -346,8 +324,6 @@ def test_file_state_transitions(tmp_path):
         committed = state.list_files(dist_id, state='committed')
         assert len(committed) == 1
 
-
-# ─── progress aggregation ───────────────────────────────────────────
 
 
 def test_progress_summary_counts_by_state(tmp_path):
@@ -368,13 +344,10 @@ def test_progress_summary_counts_by_state(tmp_path):
         assert summary['files']['planned'] == 1
 
 
-# ─── concurrency ────────────────────────────────────────────────────
-
 
 def test_concurrent_writes_are_serialized(tmp_path):
     """multiple threads can set chunk state without losing updates."""
     with SyncState(str(tmp_path / 'state.db')) as state:
-        # set up 50 chunks
         chunks = [{'hash': f'{i:064x}', 'size': 100} for i in range(50)]
         dist_id = state.start_distribution(
             site_id='s', roost_id='f', version_id='m', version_url='u',
@@ -394,8 +367,6 @@ def test_concurrent_writes_are_serialized(tmp_path):
         assert len(verified) == 50
 
 
-# ─── crash safety (smoke test) ──────────────────────────────────────
-
 
 def test_crash_safe_state_survives_close_reopen(tmp_path):
     """data persists across process boundary (open/close/open)."""
@@ -408,7 +379,6 @@ def test_crash_safe_state_survives_close_reopen(tmp_path):
         )
         state.set_chunk_state(dist_id, 'a' * 64, 'verified')
 
-    # reopen
     with SyncState(str(db_path)) as state:
         row = state.find_distribution('s', 'f', 'm')
         assert row is not None

@@ -1,11 +1,9 @@
 /**
- * Landing — pricing regression
+ * Landing — pricing regression.
  *
- * Locks down the two-tier pricing layout (core + pro) on the public landing
- * page. Pricing copy is high-signal — accidental edits to the per-machine
- * rates, the "free during beta" label, the 3-machine pro minimum, or the
- * roost storage allowance should break CI, not silently ship to production.
- * The landing page is public, so this spec runs without a storage state.
+ * Locks the two-tier layout (core + pro): the per-machine rates, the "free during beta"
+ * label, the 3-machine pro minimum and the roost storage allowance must break CI rather
+ * than silently ship. The landing page is public, so this spec runs without storage state.
  */
 
 import { test, expect } from '@playwright/test';
@@ -19,7 +17,6 @@ test.describe('landing — pricing', () => {
     const pricing = page.locator('section#pricing');
     await expect(pricing).toBeVisible();
 
-    // Section header.
     await expect(
       pricing.getByRole('heading', { name: /simple, transparent pricing\./i }),
     ).toBeVisible();

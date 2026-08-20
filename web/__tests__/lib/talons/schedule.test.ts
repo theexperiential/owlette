@@ -3,15 +3,11 @@
 /**
  * Unit tests for `computeNextRunAt` (talons wave 1, task 1.1).
  *
- * Every expectation is a hand-computed UTC instant rather than a value derived
- * from the implementation, so a regression in the timezone math fails loudly
- * instead of agreeing with itself. The DST cases use America/New_York, whose
- * 2026 transitions are 2026-03-08 (02:00 EST → 03:00 EDT) and 2026-11-01
- * (02:00 EDT → 01:00 EST).
- *
- * These must pass regardless of the machine running them (TZ=UTC in CI, a
- * developer's local zone otherwise) — that is precisely the bug the
- * `Intl`-based implementation exists to prevent.
+ * Every expectation is a hand-computed UTC instant rather than a value derived from the
+ * implementation, so a timezone-math regression fails loudly instead of agreeing with
+ * itself. DST cases use America/New_York (2026: 03-08 02:00 EST→03:00 EDT, 11-01 02:00
+ * EDT→01:00 EST). They must pass whatever the host TZ — precisely the bug the `Intl`-based
+ * implementation exists to prevent.
  */
 
 import { computeNextRunAt } from '@/lib/talons/schedule.server';

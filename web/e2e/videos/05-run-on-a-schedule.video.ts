@@ -1,13 +1,9 @@
 /**
- * Scene — episode 5, "run apps on a schedule".
+ * Scene — episode 5, "run apps on a schedule". Every beat is a SCREEN beat.
+ * (b06's "cut to the agent GUI" line is a native-capture shot assembled in the
+ * editor; here we just hold on the web for the full dwell.)
  *
- * Every beat in this episode is a SCREEN beat (web capture). No B-ROLL to skip.
- * (Note: the end of b06 mentions "briefly cut to the agent GUI showing the
- * saved schedule summary, read-only" — that's a NATIVE-CAPTURE shot assembled
- * in the editor, NOT part of this web scene. We just hold on the web for the
- * full b06 dwell so the VO drops cleanly underneath the editor's cut.)
- *
- * Beats and their rendered VO durations (voiceover/out/05-run-on-a-schedule/):
+ * Beats and rendered VO durations (voiceover/out/05-run-on-a-schedule/):
  *   b01 ≈ 20.0s — why schedule (frame the lobby-display card)
  *   b02 ≈ 12.8s — switch to scheduled (open process for edit, flip launch mode)
  *   b03 ≈ 19.5s — the schedule editor (configure-schedule dialog, day pills + time range)
@@ -15,20 +11,11 @@
  *   b05 ≈ 21.2s — presets (preset pills + new preset)
  *   b06 ≈ 22.7s — outside the window (save schedule + warning)
  *
- * Reuses the screenshots harness verbatim: the `automate-schedule-editor`
- * fixture (lobby-display + media-server-stage, a reboot schedule + a custom
- * "museum hours" preset on top of the four built-in presets) + the admin role
- * storageState.
- *
- * Pre-record state hacks (same pattern as ep01's `lastSiteId` set):
- *   1. Auto-select the seeded site on load.
- *   2. Seed a "show player" process on lobby-display in `launch_mode: 'always'`
- *      state so the user can open it for edit, flip it to Scheduled, and
- *      reopen the standalone `ScheduleEditor` dialog via the row's gear icon
- *      (the standalone dialog — not the inline ProcessDialog editor — is the
- *      one that has the preset bar + "save schedule" button referenced in
- *      b05/b06). The `automate-schedule-editor` fixture intentionally seeds
- *      no processes because the static screenshots frame the reboot schedule.
+ * Uses the `automate-schedule-editor` screenshot fixture + admin storageState.
+ * That fixture seeds no processes (its stills frame the reboot schedule), so this
+ * scene pre-seeds a "show player" in `launch_mode: 'always'`: b05/b06 need the
+ * standalone ScheduleEditor dialog (preset bar + "save schedule") reached from
+ * the row's gear, not the inline ProcessDialog editor.
  *
  * Run:  cd web && npm run videos -- --grep "episode 5"
  * Out:  web/e2e/.output/videos/05-run-on-a-schedule.mp4
@@ -136,16 +123,9 @@ test('episode 5 — run apps on a schedule', async ({ browser }) => {
         await narrate(page, 'b01 why schedule', 20);
 
         // [b02] switch to scheduled — open the process for edit, flip launch mode (~12.8s).
-        // NOTE: the original draft tried to click a "1 process" CollapsibleTrigger
-        // first, but the process list is EXPANDED by default — the seeded admin
-        // user prefs set `processesExpanded: true` (web/e2e/helpers/seed.ts:112)
-        // and the AuthContext default is also `true` (contexts/AuthContext.tsx:185).
-        // The collapsed trigger button (MachineCardView.tsx:724–751) is only
-        // rendered when `!processesExpanded`, so it doesn't exist on load and
-        // the show-player.exe row's pencil/edit button is already visible.
-        // We pre-seeded exactly ONE process (show-player.exe) on the lobby card,
-        // so the only pencil-icon button on this card is its edit button. Skip
-        // the brittle row-text filter chain and scope directly to lobbyCard.
+        // The process list is EXPANDED by default (seed.ts user prefs and the
+        // AuthContext default), so the collapsed trigger doesn't exist on load and
+        // the single seeded process's pencil is the only edit button on this card.
         const editButton = lobbyCard.locator('button:has(svg.lucide-pencil)').first();
         await clickWithCursor(page, editButton);
         await expect(page.getByRole('dialog')).toBeVisible();
@@ -177,10 +157,8 @@ test('episode 5 — run apps on a schedule', async ({ browser }) => {
         await narrate(page, 'b03 schedule editor', 19);
 
         // [b04] overnight windows — change the time range to 23:00 → 06:00 (~15.9s).
-        // The default block has start 08:00 stop 17:00. TimePicker inputs all
-        // share `title="Type a time (e.g. 9:00, 5pm, 17:00) or use ↑↓ arrows"`,
-        // and there are exactly two in the default single-block editor (start,
-        // stop). Once both are set the "+1 day" badge renders on the stop side.
+        // Default block is 08:00–17:00; the two TimePickers (start, stop) share a
+        // `title` prefix. Setting both renders the "+1 day" badge on the stop side.
         const timeInputs = page.locator('input[title^="Type a time"]'); // VERIFY: TimePicker inputs in ScheduleBlocksEditor; default block has two (start/stop)
         await clickWithCursor(page, timeInputs.nth(0));
         await timeInputs.nth(0).fill('23:00');
@@ -213,10 +191,9 @@ test('episode 5 — run apps on a schedule', async ({ browser }) => {
         await typewrite(page, presetNameInput, 'opening hours', 55);
         await narrate(page, 'b05 presets', 21);
 
-        // [b06] outside the window — save the schedule and hold on the
-        // resulting state (warning banner if FIXED_NOW is outside the window) (~22.7s).
-        // First press Escape to clear the inline "new preset" form so it
-        // doesn't intercept the upcoming save click.
+        // [b06] outside the window — save and hold on the result (warning banner
+        // when FIXED_NOW is outside the window) (~22.7s). Escape first so the inline
+        // "new preset" form doesn't intercept the save click.
         await page.keyboard.press('Escape');
         await page.waitForTimeout(300);
         // Save the schedule — footer button "save schedule".

@@ -30,20 +30,15 @@ export default function AddMachinePage() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [machineId, setMachineId] = useState<string | null>(null);
   /**
-   * Whether the current selection was made for the user (the single-site
-   * convenience below) rather than chosen by them.
-   *
-   * This effect re-runs as auth resolves: `user` settles before `role` does,
-   * so the first pass sees `isSuperadmin === false` and takes the membership
-   * branch, which returns a narrower list than a superadmin actually has. If
-   * that narrow list happens to hold exactly one site it gets auto-selected,
-   * and the corrected wider list arriving afterwards used to leave the stale
-   * selection in place — authorizing a machine against a site the operator
-   * never chose. A deliberate choice is never withdrawn.
+   * Whether the selection was auto-made (single-site convenience) rather than
+   * chosen. `user` settles before `role`, so the first pass takes the narrower
+   * membership branch; if that held one site it auto-selected, and the wider
+   * superadmin list arriving after used to leave the stale pick in place —
+   * authorizing against a site nobody chose. A deliberate choice is never withdrawn.
    */
   const autoSelectedRef = useRef(false);
 
-  // Get pairing phrase from URL query params (from agent browser auto-open)
+  // Pairing phrase arrives as ?code= when the agent auto-opens the browser.
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -54,7 +49,6 @@ export default function AddMachinePage() {
     }
   }, []);
 
-  // Fetch user's sites
   useEffect(() => {
     async function fetchSites() {
       if (!user || !db) {
@@ -77,7 +71,7 @@ export default function AddMachinePage() {
         const fetchedSites: Site[] = [];
 
         if (isSuperadmin) {
-          // Admin: fetch all sites via collection (same as setup page)
+          // Superadmin sees every site, as on the setup page.
           const { collection, getDocs } = await import('firebase/firestore');
           const sitesRef = collection(db, 'sites');
           const sitesSnapshot = await getDocs(sitesRef);
@@ -92,14 +86,14 @@ export default function AddMachinePage() {
                 fetchedSites.push({ id: siteDoc.id, ...siteDoc.data() as Omit<Site, 'id'> });
               }
             } catch {
-              // Skip inaccessible sites
+              // Skip inaccessible sites.
             }
           }
         }
 
         setSites(fetchedSites);
         setSelectedSiteId((prev) => {
-          // Exactly one choice — pick it, and record that we did.
+          // One choice — pick it, and record that we did.
           if (fetchedSites.length === 1) {
             autoSelectedRef.current = true;
             return fetchedSites[0].id;
@@ -123,7 +117,6 @@ export default function AddMachinePage() {
     fetchSites();
   }, [user, isSuperadmin]);
 
-  // Redirect to login if not authenticated
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/login?redirect=/add');
@@ -182,7 +175,6 @@ export default function AddMachinePage() {
 
   if (!user) return null;
 
-  // Success state
   if (isAuthorized) {
     return (
       <div className="relative flex min-h-screen items-center justify-center p-4">

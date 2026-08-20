@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 /**
- * owlette CLI entrypoint — builds the commander program, wires sub-
- * commands, and dispatches argv. The `./bin/owlette` launcher exec's
- * `dist/index.js` (after `npm run build`) or `ts-node src/index.ts`
- * during development.
+ * CLI entrypoint: builds the commander program and dispatches argv. `bin/owlette`
+ * exec's `dist/index.js`, or `ts-node src/index.ts` in development.
  */
 
 import { Command } from 'commander';
@@ -49,38 +47,31 @@ export function buildProgram(): Command {
     }
   });
 
-  // top-level: auth (login / status / logout)
   registerAuthCommands(program);
 
-  // top-level: whoami + version (bare verbs that ask about cli/server state)
   registerWhoamiCommand(program);
   registerVersionCommand(program);
 
-  // noun: roost — push / list / get / diff / versions / deploy
   program.command('roost').description('manage roosts + versions');
   registerPushCommand(program);
   registerRoostInspectCommands(program);
   registerRoostDeployCommand(program);
 
-  // a-tier nouns (wave 2): site / quota / machine / audit-log
   registerSiteCommands(program);
   registerKeyCommand(program);
   registerQuotaCommands(program);
   registerMachineCommands(program);
   registerAuditLogCommands(program);
 
-  // c-tier nouns (wave 3): chat is backed by canonical hoot routes;
-  // user / deploy / process / installer are progressively filled in.
-  // top-level `deploy` is the classic-installer group; the real
-  // content-addressed deploy lives at `roost deploy` above.
+  // top-level `deploy` is the classic-installer group; the content-addressed
+  // one is `roost deploy` above.
   registerChatCommands(program);
   registerUserCommands(program);
   registerDeployCommands(program);
   registerProcessCommands(program);
   registerInstallerCommands(program);
 
-  // top-level verbs (kept top-level for muscle memory; may move under
-  // nouns in a future restructure)
+  // top-level for muscle memory; may move under nouns later
   registerRollbackCommand(program);
   registerListenCommand(program);
   registerTriggerCommand(program);
@@ -93,7 +84,7 @@ export async function main(argv: readonly string[] = process.argv): Promise<void
   await program.parseAsync(argv as string[]);
 }
 
-// Only run main() when invoked as a script (not when imported for tests).
+// not when imported by tests
 if (require.main === module) {
   main().catch((err: unknown) => {
     console.error(`[owlette] ${(err as Error).message}`);

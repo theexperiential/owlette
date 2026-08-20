@@ -12,16 +12,12 @@ import {
 } from '@/components/ui/select';
 
 /**
- * The departure warning: how many talons this person wrote, what happens to
- * them, and who can take them over.
+ * Departure warning: how many talons this person wrote, what happens to them,
+ * and who can inherit. Shown in the two flows that revoke access (site removal,
+ * account deletion), which previously succeeded silently and left automations
+ * owned by someone who could no longer run them.
  *
- * Rendered inside the two flows that take someone's access away — removing a
- * member from a site, and deleting an account. Both used to succeed silently
- * while leaving the departing person's automations pointing at an author who
- * can no longer run them.
- *
- * Renders nothing when the count is zero: a confirmation dialog should not
- * grow a paragraph about talons for the common case where there are none.
+ * Renders nothing at zero — no paragraph about talons in the common case.
  */
 
 /** Radix Select has no empty-string value, so "nobody" needs a sentinel. */

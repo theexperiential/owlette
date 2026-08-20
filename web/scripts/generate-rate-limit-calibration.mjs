@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 /**
- * Generate the Wave 8.0 rate-limit calibration report from observe-only data.
+ * Rate-limit calibration report from observe-only data.
  *
- * Usage:
  *   node scripts/generate-rate-limit-calibration.mjs --since=2026-04-20 --until=2026-04-27
  *
- * The script reads top-level `rate_limit_observations` documents written by
- * RATE_LIMIT_OBSERVE_ONLY=true and writes the markdown file consumed by
- * scripts/check-lockdown-ready.mjs. It exits non-zero when the report is still
- * incomplete, so it is safe to use in automation.
+ * Reads top-level `rate_limit_observations` docs written under
+ * RATE_LIMIT_OBSERVE_ONLY=true and writes the markdown that
+ * scripts/check-lockdown-ready.mjs consumes. Exits non-zero while the report is
+ * incomplete, so it is automation-safe.
  */
 
 import admin from 'firebase-admin';

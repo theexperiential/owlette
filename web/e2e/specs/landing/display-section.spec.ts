@@ -1,10 +1,6 @@
 /**
- * Landing — display section regression spec.
- *
- * The headline + body copy here is load-bearing brand promise. The negative
- * assertion below (body does NOT contain "applies mosaic") is the safety
- * check: marketing copy must never overpromise that owlette applies mosaic
- * topologies. We only detect/protect them.
+ * Landing — display section. The negative assertion is the point: copy must
+ * never claim owlette APPLIES mosaic topologies. We only detect and protect them.
  */
 import { test, expect } from '@playwright/test';
 
@@ -16,27 +12,23 @@ test.describe('landing — display section', () => {
   test('renders headline, three storyboard frames, and api reference link', async ({ page }) => {
     await page.goto('/');
 
-    // Headline
     await expect(
       page.getByRole('heading', { name: DISPLAY_HEADLINE }),
     ).toBeVisible();
 
-    // Three storyboard frame containers (one <figure> per frame)
+    // One <figure> per storyboard frame.
     const section = page.locator('section', {
       has: page.getByRole('heading', { name: DISPLAY_HEADLINE }),
     });
     await expect(section.locator('figure')).toHaveCount(3);
 
-    // Body copy contains "mosaic-aware" — and crucially does NOT regress to
-    // "applies mosaic". If marketing copy ever changes to claim owlette
-    // applies mosaic configurations, this assertion fails.
+    // "mosaic-aware", never "applies mosaic".
     const body = await section.innerText();
     expect(body).toContain('mosaic-aware');
     expect(body).not.toContain('applies mosaic');
 
-    // Footer link to the display api reference. Points at the scalar reference
-    // root (/docs/api) — the prior #display-layout anchor was dropped because it
-    // does not resolve in the scalar-rendered reference.
+    // /docs/api root, not a #display-layout anchor — anchors don't resolve in
+    // the scalar-rendered reference.
     await expect(
       section.getByRole('link', { name: 'read the display api reference' }),
     ).toHaveAttribute('href', '/docs/api');

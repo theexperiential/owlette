@@ -4,15 +4,12 @@
  *
  * Bailing out of /setup-2fa.
  *
- * "cancel" used to be `router.back()`, and for a brand-new signup the previous
- * history entry is /register by construction. A real user (OWLETTE-WEB-46) got
- * dropped back onto the signup form they had just submitted, concluded the
- * account had not been created, filled it in again, and hit
- * auth/email-already-in-use with nowhere to go.
- *
- * So: never `back()`. Where cancel leads depends on whether 2FA setup is
- * mandatory here — /dashboard would bounce a `requiresMfaSetup` user straight
- * back (dashboard/page.tsx's 2FA guard), which is a loop, not an exit.
+ * OWLETTE-WEB-46: "cancel" was `router.back()`, and for a brand-new signup the previous
+ * history entry is /register — a real user landed back on the signup form they had just
+ * submitted, re-filled it, and hit auth/email-already-in-use with nowhere to go. So:
+ * never `back()`. Where cancel leads depends on whether setup is mandatory here;
+ * /dashboard would bounce a `requiresMfaSetup` user straight back (dashboard/page.tsx's
+ * 2FA guard) — a loop, not an exit.
  */
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
@@ -46,9 +43,8 @@ jest.mock('@/lib/toast', () => ({
   toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() },
 }));
 
-// jsdom has no WebAuthn, so `browserSupportsWebAuthn` would hide the passkey
-// option and the chooser would render half of itself. Stub the module: the
-// ceremonies themselves are never started in these tests.
+// jsdom has no WebAuthn, so `browserSupportsWebAuthn` would hide the passkey option and
+// the chooser would half-render. Stub the module; no ceremony is started in these tests.
 jest.mock('@simplewebauthn/browser', () => ({
   browserSupportsWebAuthn: () => true,
   startRegistration: jest.fn(),
@@ -132,11 +128,9 @@ describe('/setup-2fa cancel when enrolling voluntarily', () => {
 });
 
 /**
- * The chooser itself. A beta tester with no phone could not finish signup at
- * all while this page was a QR code and nothing else, so the two things worth
- * pinning are that the phone-free option is offered FIRST, and that the
- * authenticator option says out loud that a desktop app will do — not knowing
- * that was the cheaper half of the same complaint.
+ * The chooser itself. A beta tester with no phone couldn't finish signup while this page
+ * was a QR code and nothing else, so pin that the phone-free option is offered FIRST and
+ * that the authenticator option says out loud that a desktop app will do.
  */
 describe('/setup-2fa method chooser', () => {
   it('offers the passkey first and marks it recommended', async () => {

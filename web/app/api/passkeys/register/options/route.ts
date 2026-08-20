@@ -1,22 +1,13 @@
 /**
- * Passkey Registration Options API
+ * POST /api/passkeys/register/options — WebAuthn registration options for a
+ * logged-in user. Request `{ userId }`, response
+ * PublicKeyCredentialCreationOptionsJSON; the challenge is stored server-side
+ * with a 10-minute expiry.
  *
- * Generates WebAuthn registration options for a logged-in user.
- * The challenge is stored server-side with a 10-minute expiry.
- *
- * POST /api/passkeys/register/options
- * Request: { userId: string }
- * Response: PublicKeyCredentialCreationOptionsJSON
- *
- * SECURITY — the enrollment gate:
- *   `/api/*` is deliberately NOT MFA-gated (`proxy.ts` returns early for every
- *   `/api` path, and `requireSessionUser` only checks uid equality). Now that a
- *   UV-verified passkey satisfies MFA in a single ceremony, a session that has
- *   not cleared a challenge but CAN enroll a new factor can step straight up
- *   into a verified session — a full MFA bypass from a stolen `__session`
- *   cookie, plus a permanent attacker-controlled credential on the account.
- *   So: enrolling the FIRST factor stays open (that is the mandatory-setup
- *   path), and every enrollment after that requires `mfaVerified`.
+ * Enrollment gate: `/api/*` is deliberately not MFA-gated, so without it an
+ * unverified session could enroll a UV passkey and step straight up — a full
+ * MFA bypass from a stolen `__session` cookie. The FIRST factor stays open
+ * (mandatory setup); every one after requires `mfaVerified`.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -45,40 +36,31 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     await requireSessionUser(request, userId);
 
-    // The account labels baked into the credential come from the user document,
-    // never from the request body: the body is attacker-controlled, and whatever
-    // we pass here is what the authenticator shows the user at every future
-    // login. `assertActiveUser` returns that document and rejects soft-deleted
-    // accounts, matching the sibling register/verify route.
+    // Labels come from the user document, never the attacker-controlled body —
+    // they are what the authenticator shows at every future login.
+    // `assertActiveUser` also rejects soft-deleted accounts.
     const userData = await assertActiveUser(userId);
     const email = typeof userData.email === 'string' ? userData.email.trim() : '';
     const displayName =
       typeof userData.displayName === 'string' ? userData.displayName.trim() : '';
 
-    // `userName` is what 1Password and the OS credential picker print under the
-    // site name, so it must be human-readable — the raw uid used to land there
-    // as meaningless hex. The uid stays as `userID`, which is the actual handle
-    // the authenticator returns to us on login. Fall back to the uid only if a
-    // user document somehow carries no email; a blank label is worse than hex.
+    // `userName` is what 1Password and the OS picker print, so it must be
+    // human-readable (it used to show raw uid hex). The uid stays as `userID`,
+    // the handle the authenticator returns on login.
     const userName = email || userId;
     const userDisplayName = displayName || email || userId;
 
-    // Get existing passkeys to exclude (prevent re-registration)
+    // Excluded so an existing credential can't re-register.
     const existingPasskeys = await getUserPasskeys(userId);
     const excludeCredentials = existingPasskeys.map((p) => ({
       id: p.credentialId,
       transports: p.transports,
     }));
 
-    // THE ENROLLMENT GATE — one shared implementation for every factor-enrollment
-    // route (TOTP and WebAuthn alike); see `lib/mfaEnrollmentGate.server.ts` for
-    // the bypass it closes. The inventory is derived from the two reads already
-    // performed above — `normalizeMfaFactors` heals a legacy or half-written
-    // `mfaFactors` leg from the real subcollection size, which is exactly what
-    // `existingPasskeys` gives us — and passed in, so the gate costs no extra
-    // Firestore round-trip. Refuse BEFORE minting a challenge: an unusable
-    // ceremony is wasted work, and register/verify re-checks the same gate
-    // before it stores anything.
+    // Enrollment gate, shared by every factor-enrollment route — see
+    // `lib/mfaEnrollmentGate.server.ts` for the bypass it closes. The inventory
+    // comes from the two reads above so the gate costs no extra round-trip, and
+    // it runs BEFORE minting a challenge; register/verify re-checks it anyway.
     const gate = await checkMfaEnrollmentGate(
       userId,
       normalizeMfaFactors(userData, existingPasskeys.length),
@@ -95,12 +77,11 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       excludeCredentials,
       authenticatorSelection: {
         residentKey: 'preferred',
-        // Require user verification (PIN/biometric) — single-touch FIDO keys aren't sufficient for full account access.
+        // PIN/biometric required — single-touch FIDO keys aren't enough here.
         userVerification: 'required',
       },
     });
 
-    // Store challenge for verification
     await storeChallenge(userId, options.challenge, userId, 'registration');
 
     return NextResponse.json(options);

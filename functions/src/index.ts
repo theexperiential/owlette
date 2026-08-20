@@ -1,17 +1,9 @@
-/**
- * Owlette Cloud Functions
- *
- * - Metrics history aggregation
- * - Deployment status tracking (command completion → deployment doc updates)
- * - Stale deployment sweeper (catches agent crashes / timeouts)
- */
+/** Owlette Cloud Functions entry point. */
 
 import * as admin from 'firebase-admin';
 
-// Initialize Firebase Admin SDK
 admin.initializeApp();
 
-// Export all functions
 export { onMetricsWrite } from './metricsHistory';
 export { onCommandCompleted } from './deploymentStatus';
 export { sweepStaleDeployments } from './deploymentSweeper';
@@ -34,8 +26,7 @@ export { emitWebhook, processRetryQueue } from './webhookDispatch';
 export { sweepExpiredApiKeysDaily } from './apiKeyExpire';
 export { sweepExpiredIdempotencyCacheDaily } from './idempotencyCleanup';
 export { onTalonLogEventCreated } from './talonLogEvents';
-// reconcileDeploymentStatus / reconcileDistributionStatus (wave-2.4) removed
-// 2026-05-30: both triggered on commands/pending, but the agent only ever
-// writes command status to commands/completed, so they never fired (inert).
-// onCommandCompleted (deploymentStatus.ts, on commands/completed) is the
-// canonical deployment reconciler. v1 project-distribution is deprecated (roost).
+// reconcileDeploymentStatus / reconcileDistributionStatus were removed
+// 2026-05-30: they triggered on commands/pending, but the agent only writes
+// status to commands/completed, so they never fired. onCommandCompleted
+// (deploymentStatus.ts) is the canonical deployment reconciler.

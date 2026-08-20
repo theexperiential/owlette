@@ -1,26 +1,16 @@
-"""
-Watchdog state persistence — restart budget and history for the stuck-connection
+"""Watchdog state persistence — restart budget and history for the stuck-connection
 self-restart feature (see connection_manager._check_self_restart).
 
-Stored at:
-  C:\\ProgramData\\Owlette\\tmp\\watchdog_budget.owlette_service.json
-  C:\\ProgramData\\Owlette\\tmp\\watchdog_history.owlette_service.json
-
-Two files, two concerns:
-
-  budget  — rolling timestamp list for rate-limiting self-restarts. Prevents
-            restart-loop pathologies when the underlying issue isn't
-            environmental (e.g. revoked token, deleted project).
-
-  history — append-only record of recent restart diagnostic snapshots, capped
-            at 10 entries. Entries without a 'submitted_at' field are pending
+  budget  — tmp/watchdog_budget.owlette_service.json: rolling timestamp list
+            rate-limiting self-restarts, so a non-environmental fault (revoked
+            token, deleted project) can't turn into a restart loop.
+  history — tmp/watchdog_history.owlette_service.json: append-only diagnostic
+            snapshots, capped at 10. Entries without 'submitted_at' are pending
             Firestore submission; owlette_service flushes them on next connect.
 
-Both files are namespaced (.owlette_service.json suffix) so future multi-
-instance deployments (Cortex MCP etc.) don't collide.
-
-Depends only on shared_utils and stdlib — no firebase, no logging config
-dependencies.
+Both live under C:\\ProgramData\\Owlette. The .owlette_service.json suffix
+namespaces them so future multi-instance deployments (Cortex MCP etc.) don't
+collide. stdlib + shared_utils only — no firebase, no logging-config dependency.
 """
 
 import json
@@ -37,9 +27,8 @@ HISTORY_PATH = shared_utils.get_data_path('tmp/watchdog_history.owlette_service.
 
 SCHEMA_VERSION = 1
 
-# Sanitise timestamps on read: drop "clearly wrong" values caused by clock skew
-# or NTP corrections. 300s into the future is absurd; 24h ago is past our
-# longest meaningful window and any entry that old is noise.
+# Sanitise on read: 300s into the future is absurd and 24h ago is past our
+# longest meaningful window — both mean clock skew or an NTP correction.
 _FUTURE_TS_TOLERANCE_SECONDS = 300
 _ANCIENT_TS_HORIZON_SECONDS = 86400
 
@@ -53,9 +42,7 @@ _budget_lock = threading.Lock()
 _history_lock = threading.Lock()
 
 
-# =============================================================================
 # Budget — rolling-window rate limiter for self-restarts
-# =============================================================================
 
 def read_budget() -> dict:
     """Read the current budget state. Sanitises the timestamp list on read."""
@@ -66,14 +53,9 @@ def read_budget() -> dict:
 def consume_budget(config: dict) -> bool:
     """Attempt to consume one restart slot.
 
-    Returns True if the restart is allowed (and records the timestamp),
-    False if the budget is exhausted or the write failed.
-
-    Fail-closed: if we can't persist the increment, we refuse the restart so
-    we don't lose accounting and spiral into a restart loop.
-
-    Args:
-        config: {'max_per_window': int, 'window_seconds': int}
+    `config` is {'max_per_window': int, 'window_seconds': int}. Returns True if
+    the restart is allowed (and records the timestamp). Fail-closed: a failed
+    persist refuses the restart rather than losing accounting and spiralling.
     """
     max_per_window = int(config.get('max_per_window', 3))
     window_seconds = int(config.get('window_seconds', 3600))
@@ -139,9 +121,7 @@ def _migrate_budget(state: dict) -> dict:
     return {'schema': SCHEMA_VERSION, 'restarts': []}
 
 
-# =============================================================================
 # History — append-only snapshot log for deferred Firestore submission
-# =============================================================================
 
 def append_history(snapshot: dict) -> bool:
     """Append a restart snapshot to history. Caps at _HISTORY_MAX_ENTRIES.
@@ -153,7 +133,6 @@ def append_history(snapshot: dict) -> bool:
         state = _read_history_unlocked()
         entries = state.get('entries', [])
         entries.append(snapshot)
-        # Keep the last N; drop oldest.
         if len(entries) > _HISTORY_MAX_ENTRIES:
             entries = entries[-_HISTORY_MAX_ENTRIES:]
         state['entries'] = entries
@@ -206,9 +185,7 @@ def _migrate_history(state: dict) -> dict:
     return {'schema': SCHEMA_VERSION, 'entries': []}
 
 
-# =============================================================================
 # Shared file-I/O helpers (private)
-# =============================================================================
 
 def _read_json_or_empty(path: str, empty: dict) -> dict:
     if not os.path.exists(path):

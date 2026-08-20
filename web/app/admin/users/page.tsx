@@ -75,20 +75,16 @@ interface UserActivity {
 }
 
 /**
- * Audit target id recorded by platform routes that act on the platform itself
- * rather than one addressable resource. Admin-delete rows written before
- * `/api/users/{uid}` started passing `targetIdParam` carry this instead of the
- * deleted uid, so the feed shows "user not recorded" for them.
+ * Audit target id for platform-level actions with no addressable resource.
+ * Admin-delete rows predating `targetIdParam` carry this instead of the deleted
+ * uid, so the feed shows "user not recorded" for them.
  */
 const PLATFORM_TARGET_ID = '__platform__';
 
 /** Per-device pref field on `users/{uid}/devicePrefs/global`. */
 const SHOW_DELETED_USERS_PREF = 'adminShowDeletedUsers';
 
-/**
- * Compact tally chip. Lives in the page header (right of the title) rather
- * than in a full-width card row so the users table gets the vertical space.
- */
+/** Tally chip. In the header, not a card row, so the table keeps the height. */
 function StatChip({
   icon: Icon,
   iconBg,
@@ -113,15 +109,7 @@ function StatChip({
   );
 }
 
-/**
- * User Management Page
- *
- * Admin-only page for managing user roles and permissions.
- * Allows admins to:
- * - View all users
- * - Promote users to admin
- * - Demote admins to user
- */
+/** Admin-only page for viewing users and changing their roles. */
 export default function UserManagementPage() {
   const { user: currentUser, isSuperadmin } = useAuth();
   const { users, loading, error, updateUserRole, getUserCounts, assignSiteToUser, removeSiteFromUser, deleteUser } = useUserManagement(isSuperadmin);
@@ -143,17 +131,15 @@ export default function UserManagementPage() {
   const [activity, setActivity] = useState<Record<string, UserActivity>>({});
   const { fetchUserAuthored } = useTalonReassign();
 
-  // Successors for the deletion flow: the same successor named for site
-  // ownership also inherits the talons, so the operator is asked once. No
+  // The site-ownership successor also inherits the talons, so ask once. No
   // siteId — the API re-checks eligibility per site and reports refusals.
   const successorCandidates = useMemo(
     () => eligibleTalonSuccessors(users, { excludeUid: userToDelete?.uid }),
     [users, userToDelete?.uid],
   );
 
-  // Show/hide deleted accounts in the users table, persisted per device so the
-  // choice survives reloads. Defaults to shown — hiding them is opt-in, since
-  // silently dropping rows would be a surprise for anyone who never toggles it.
+  // Persisted per device. Defaults to shown: silently dropping rows would
+  // surprise anyone who never finds the toggle.
   const { value: showDeletedUsers, setValue: setShowDeletedUsers } = useDevicePrefFlag(
     SHOW_DELETED_USERS_PREF,
     true,
@@ -161,15 +147,15 @@ export default function UserManagementPage() {
 
   const counts = getUserCounts();
 
-  // The tally chips already count active accounts only, so hiding deleted rows
-  // keeps the table and the chips telling the same story.
+  // The chips count active accounts only, so hiding deleted rows keeps table
+  // and chips consistent.
   const visibleUsers = useMemo(
     () => (showDeletedUsers ? users : users.filter((u) => u.deletedAt == null)),
     [users, showDeletedUsers],
   );
 
-  // uid -> display label, so audit rows can name people instead of raw uids.
-  // Soft-deleted users stay in `users`, so deleted accounts still resolve.
+  // uid -> display label for audit rows. Soft-deleted users stay in `users`,
+  // so deleted accounts still resolve.
   const userLabels = useMemo(() => {
     const map: Record<string, string> = {};
     for (const u of users) {
@@ -178,8 +164,7 @@ export default function UserManagementPage() {
     return map;
   }, [users]);
 
-  // Fetch the account-deletion audit feed once. Non-fatal: on error we log and
-  // leave `deletions` empty so the panel renders its empty state.
+  // Non-fatal: on error the panel just renders its empty state.
   useEffect(() => {
     let cancelled = false;
 
@@ -206,10 +191,9 @@ export default function UserManagementPage() {
     };
   }, []);
 
-  // Fetch Firebase Auth sign-in metadata (last-seen) for the table. Page-level
-  // rather than in useUserManagement: that hook is also used by ManageSitesDialog
-  // on non-superadmin pages (roosts/dashboard/logs), where this superadmin-only
-  // endpoint would 403. Non-fatal — the column renders "never" if it fails.
+  // Page-level, not in useUserManagement: that hook also runs in
+  // ManageSitesDialog on non-superadmin pages, where this endpoint 403s.
+  // Non-fatal — the column renders "never" if it fails.
   useEffect(() => {
     let cancelled = false;
 
@@ -239,8 +223,7 @@ export default function UserManagementPage() {
   };
 
   const handleOpenRoleChangeDialog = (userId: string, email: string, currentRole: UserRole) => {
-    // Prevent self-demotion from superadmin — preserves the platform-admin guarantee
-    // so a lone superadmin can't accidentally lock themselves out of user management.
+    // A lone superadmin must not be able to lock themselves out of this page.
     if (userId === currentUser?.uid && currentRole === 'superadmin') {
       toast.error('cannot demote yourself', {
         description: 'promote another superadmin first, then they can demote you.',
@@ -248,7 +231,7 @@ export default function UserManagementPage() {
       return;
     }
 
-    // newRole starts equal to currentRole; user picks a new value in the dialog.
+    // Starts equal to currentRole; the dialog supplies the new value.
     setUserToChangeRole({ uid: userId, email, currentRole, newRole: currentRole });
     setRoleChangeDialogOpen(true);
   };
@@ -260,7 +243,7 @@ export default function UserManagementPage() {
   const handleConfirmRoleChange = async () => {
     if (!userToChangeRole) return;
     if (userToChangeRole.newRole === userToChangeRole.currentRole) {
-      // No-op — dialog shouldn't allow this state but guard anyway.
+      // The dialog shouldn't allow this, but guard anyway.
       setRoleChangeDialogOpen(false);
       setUserToChangeRole(null);
       return;
@@ -286,9 +269,7 @@ export default function UserManagementPage() {
   };
 
   const handleOpenMfaResetDialog = (userId: string, email: string) => {
-    // Self-reset is refused by the API too (a live session is exactly the case
-    // where the proof-of-possession path still works); catching it here saves
-    // the operator a round-trip to a 403.
+    // The API refuses this too; catching it here saves a round-trip to a 403.
     if (userId === currentUser?.uid) {
       toast.error('cannot reset your own 2FA', {
         description: 'remove your own factors from account settings, or ask another superadmin.',
@@ -319,9 +300,8 @@ export default function UserManagementPage() {
       const factorsCleared =
         (result.clearedTotp ? 1 : 0) + (result.deletedPasskeys ?? 0);
       toast.success('2FA reset', {
-        // A reset on an account that already held nothing is a legitimate
-        // outcome (it's what a retry after a partial failure looks like), so
-        // don't report it as "lost 0 factors".
+        // Resetting an account that held nothing is legitimate — it's what a
+        // retry after a partial failure looks like, not "lost 0 factors".
         description: factorsCleared === 0
           ? `${userToResetMfa.email} had no factors to remove, and will be asked to set up 2FA at next sign-in.`
           : `${userToResetMfa.email} lost ${factorsCleared} factor${
@@ -340,7 +320,6 @@ export default function UserManagementPage() {
   };
 
   const handleOpenDeleteDialog = (userId: string, email: string) => {
-    // Prevent user from deleting themselves
     if (userId === currentUser?.uid) {
       toast.error('cannot delete yourself', {
         description: 'you cannot delete your own account.',
@@ -353,9 +332,8 @@ export default function UserManagementPage() {
     setAuthoredTalons(null);
     setDeleteConfirmDialogOpen(true);
 
-    // Fleet-wide talon lookup, fired as the dialog opens: the operator has to
-    // see what the deletion breaks before they confirm it, not after. Failure
-    // is non-fatal — the dialog still works, it just can't warn.
+    // Fired as the dialog opens: the operator must see what the deletion breaks
+    // before confirming. Non-fatal — without it the dialog just can't warn.
     void (async () => {
       try {
         setAuthoredTalons(await fetchUserAuthored(userId));
@@ -375,8 +353,8 @@ export default function UserManagementPage() {
     try {
       const result = await deleteUser(userToDelete.uid, {
         successorUid: successor,
-        // Only when a successor was actually chosen — the API refuses the flag
-        // on its own, and an unchosen successor means "let them lapse".
+        // Only with a chosen successor: the API refuses the bare flag, and no
+        // successor means "let them lapse".
         reassignTalons: Boolean(successor) && (authoredTalons?.count ?? 0) > 0,
       });
       toast.success('user deleted', {
@@ -391,8 +369,8 @@ export default function UserManagementPage() {
           } moved to a new owner.`,
         });
       }
-      // A per-site refusal (successor isn't a member there) has to be visible:
-      // those talons are now authored by a deleted account and will not run.
+      // Surface per-site refusals: those talons are now authored by a deleted
+      // account and will not run.
       const failures = result.talonReassignFailures ?? [];
       if (failures.length > 0) {
         toast.error('some talons could not be reassigned', {
@@ -554,8 +532,8 @@ export default function UserManagementPage() {
                     {/* Sites */}
                     <td className="p-4">
                       {user.role === 'admin' ? (
-                        // Admins are site-scoped — show the exact sites they admin
-                        // so superadmins can see at a glance who's responsible for what.
+                        // Admins are site-scoped; name the sites so a superadmin
+                        // can see who is responsible for what.
                         user.sites && user.sites.length > 0 ? (
                           <div className="flex flex-wrap gap-1 max-w-sm">
                             {user.sites.map((siteId) => (
@@ -729,8 +707,7 @@ export default function UserManagementPage() {
             <ul className="divide-y divide-border mt-4">
               {deletions.map((d) => {
                 const selfDelete = d.capability === 'USER_SELF_DELETE';
-                // Legacy admin-delete rows recorded the platform sentinel rather
-                // than the deleted uid — surface that instead of the raw token.
+                // Legacy rows recorded the platform sentinel, not the uid.
                 const targetUid = d.uid && d.uid !== PLATFORM_TARGET_ID ? d.uid : null;
                 const targetLabel = targetUid ? userLabels[targetUid] ?? targetUid : null;
                 const actorLabel = d.actorUid ? userLabels[d.actorUid] ?? d.actorUid : 'an unknown actor';

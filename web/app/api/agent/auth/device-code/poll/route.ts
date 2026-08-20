@@ -31,38 +31,18 @@ function sanitizeMachineId(value: unknown): { ok: true; machineId: string | null
 }
 
 /**
- * POST /api/agent/auth/device-code/poll
+ * POST /api/agent/auth/device-code/poll — agent polls for authorization.
+ * 202 pending · 200 authorized · 410 expired · 404 unknown code.
  *
- * Agent polls this endpoint to check if the user has authorized the device code.
- * Returns pending (202), authorized with tokens (200), or expired (410).
- *
- * Request body (one of):
- * - deviceCode: string - The opaque device code from the generation step
- *   (interactive pairing flow; preferred — receives encrypted credentials)
- * - pairPhrase: string - The 3-word phrase, accepted ONLY for documents
- *   that were pre-authorised from the dashboard (`/ADD=` silent install).
- *   Interactive-flow docs reject phrase-based polling so the phrase
- *   shown on the installer screen cannot be used to redeem credentials.
- *
- * Response (202 - pending):
- * - status: 'pending'
- *
- * Response (200 - authorized, v1 / interactive):
- * - encryptedCredentials: string (base64 iv||tag||ciphertext)
- * - wrapVersion: 'v1'
- * - phrase: string (HKDF salt; equal to the doc id)
- *
- * Response (200 - authorized, legacy / pre-authorised):
- * - accessToken: string
- * - refreshToken: string
- * - expiresIn: number (3600)
- * - siteId: string
- *
- * Response (410 - expired):
- * - error: 'expired'
- *
- * Response (404 - not found):
- * - error: 'Invalid device code'
+ * Body is one of:
+ * - deviceCode — interactive flow, preferred; the 200 carries
+ *   `{ encryptedCredentials (base64 iv||tag||ciphertext), wrapVersion: 'v1',
+ *   phrase (HKDF salt, equal to the doc id) }`.
+ * - pairPhrase — accepted ONLY for docs pre-authorised from the dashboard
+ *   (`/ADD=` silent install); the 200 carries plaintext
+ *   `{ accessToken, refreshToken, expiresIn: 3600, siteId }`. Interactive docs
+ *   reject phrase polling so the phrase on the installer screen cannot redeem
+ *   credentials.
  */
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -76,14 +56,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Resolve the document reference first (outside transaction for query-based lookup).
-    //
-    // Lookup mode matters for security:
-    //   - deviceCode lookup → either flow; v1 docs return encrypted blob,
-    //     legacy docs return plaintext.
-    //   - pairPhrase lookup → only succeeds for pre-authorised docs.
-    //     Interactive-flow docs reject phrase polls inside the
-    //     transaction below.
+    // Resolve the doc ref first (the deviceCode path is a query, not a get).
+    // deviceCode → either flow; pairPhrase → only pre-authorised docs, enforced
+    // inside the transaction below.
     let docRef;
     let adminDb: ReturnType<typeof getAdminDb>;
     const lookupMode: 'deviceCode' | 'pairPhrase' = pairPhrase ? 'pairPhrase' : 'deviceCode';
@@ -159,9 +134,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       docRef = snapshot.docs[0].ref;
     }
 
-    // Use a transaction to atomically read tokens and delete the document,
-    // preventing race conditions where two concurrent poll requests both
-    // read 'authorized' and both receive the tokens.
+    // Transactional read-and-delete so two concurrent polls can't both read
+    // 'authorized' and both receive the tokens.
     const result = await adminDb.runTransaction(async (transaction) => {
       const doc = await transaction.get(docRef);
 
@@ -171,15 +145,13 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
       const data = doc.data()!;
 
-      // Check expiry
       const expiresAt = data.expiresAt?.toMillis?.() || data.expiresAt?.getTime?.() || 0;
       if (Date.now() > expiresAt) {
-        // Clean up expired document — no reason to retain it
+        // Expired docs are not worth retaining.
         transaction.delete(docRef);
         return { error: 'expired', status: 410 } as const;
       }
 
-      // Check status
       if (data.status === 'pending') {
         return { body: { status: 'pending' }, status: 202 } as const;
       }
@@ -192,12 +164,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         const isLegacyPlaintext =
           Boolean(data.accessToken && data.refreshToken && data.preauthorized === true);
 
-        // Phrase-based polling is only valid for pre-authorised docs.
-        // An interactive (v1) doc carrying a wrapped blob requires the
-        // caller to present the matching deviceCode — otherwise the
-        // phrase alone could be used to fetch the ciphertext and (with
-        // a separate firestore read) attempt offline attacks against
-        // the AES-GCM tag.
+        // Phrase polling is only valid for pre-authorised docs: an interactive (v1)
+        // doc requires the matching deviceCode, or the phrase alone could fetch the
+        // ciphertext for offline attacks on the AES-GCM tag.
         if (lookupMode === 'pairPhrase' && isV1) {
           return {
             error:
@@ -205,8 +174,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
             status: 403,
           } as const;
         }
-        // Same defensive check for legacy docs: phrase-based redemption
-        // is only allowed for the deferred-mint path or deploy-window plaintext docs.
+        // Same for legacy docs: phrase redemption only for the deferred-mint path
+        // or deploy-window plaintext docs.
         if (
           lookupMode === 'pairPhrase' &&
           !isV1 &&
@@ -272,7 +241,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         }
       }
 
-      // Unexpected state
       return { error: 'Invalid device code state', status: 400 } as const;
     });
 

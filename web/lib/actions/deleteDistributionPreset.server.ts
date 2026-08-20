@@ -1,18 +1,12 @@
 /**
- * deleteDistributionPreset action core
+ * deleteDistributionPreset action core — same pattern as the schedule/reboot
+ * preset actions, only the path differs:
+ * `config/{siteId}/project_distribution_presets/{presetId}`.
  *
- * security-boundary-migration wave 3.7. mirrors the schedule/reboot preset
- * pattern (wave 3.6) — only the firestore path differs.
- *
- * firestore path: `config/{siteId}/project_distribution_presets/{presetId}`
- *
- * Deleting a `builtin-*` preset removes the override doc — the hardcoded
- * default re-emerges on the next read. Deleting a custom preset removes it
- * permanently. Either way, this is a hard delete; there is no soft-delete
- * pattern for presets in the original hook.
- *
- * Returns silently if the doc doesn't exist (firebase-admin `delete()` is
- * idempotent), matching the original hook's behaviour.
+ * Hard delete, no soft-delete for presets. Deleting a `builtin-*` preset removes
+ * only the override doc, so the hardcoded default re-emerges on the next read;
+ * a custom preset is gone permanently. A missing doc is a silent no-op
+ * (firebase-admin `delete()` is idempotent).
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';

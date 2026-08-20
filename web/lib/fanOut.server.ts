@@ -1,47 +1,26 @@
 /**
- * Fan-out helper (security-boundary-migration wave 2.2).
+ * Per-machine fan-out on top of `writeCommandFanOut` (`lib/commandLifecycle.ts`),
+ * which only sends one identical body to a whole fleet. Here a
+ * `builder(machineId)` varies the command per machine while keeping map-merge
+ * semantics, lifecycle stamping, and an audit correlation id in `metadata`.
  *
- * Layered on top of `writeCommandFanOut` from wave 1.6
- * (`web/lib/commandLifecycle.ts`). The 1.6 primitive sends the SAME stamped
- * command body to every machine in a fleet; this helper lets the caller
- * vary the command per machine via a `builder(machineId)` callback, while
- * still benefiting from canonical map-merge semantics, lifecycle stamping,
- * and an audit correlation id woven into every entry's `metadata`.
+ * Concurrency is bounded: a naive `Promise.all` over 500 machines fires 500
+ * concurrent firestore writes. Batches of `FANOUT_CHUNK_SIZE` run sequentially,
+ * parallel within a batch.
  *
- * It also bounds concurrency. `writeCommandFanOut` is one map-merge per
- * machine — for a 500-machine deployment a naive `Promise.all` would
- * detonate 500 concurrent writes against firestore, hammering quotas and
- * producing pathological tail latencies. We instead chunk the input into
- * batches of `FANOUT_CHUNK_SIZE` and process them sequentially; within
- * each batch the writes still run in parallel.
- *
- * Each per-machine call to `writeCommandFanOut` is independent (siteId is
- * shared, but the prefix + commandData come from `builder(machineId)`), so
- * results are merged into a single `FanOutResult[]` preserving input order.
- * One bad machine never aborts the rest — failures are caught per-target
- * and surfaced through `ok: false` + `error`.
+ * Results preserve input order; a failing machine surfaces as `ok: false` and
+ * never aborts the rest.
  */
 
 import { writeCommandFanOut, type CommandData, type FanOutResult } from '@/lib/commandLifecycle';
 import { getAdminDb } from '@/lib/firebase-admin';
 
-/**
- * Maximum number of per-machine writes issued in parallel inside one
- * batch. Exported so tests can verify the chunking arithmetic against the
- * production constant. Sequential between batches; parallel within.
- */
+/** Parallel writes per batch. Exported so tests assert against the real value. */
 export const FANOUT_CHUNK_SIZE = 50;
 
 /**
- * Per-machine builder output. The caller decides the command's `type`,
- * payload, and the `commandIdPrefix` used to synthesize the per-machine
- * `commandId` inside `writeCommandFanOut`. The correlation id is added by
- * `fanOutToMachines` itself — builders should not duplicate it.
- *
- * `metadata` is reserved for the correlation id injection. If the caller
- * wants to attach their own metadata, they should put it inside
- * `commandData` under a different key — wave 2.2 owns the `metadata` slot
- * for audit threading.
+ * Per-machine builder output. `metadata` is reserved for the correlation id that
+ * `fanOutToMachines` injects — put caller metadata elsewhere in `commandData`.
  */
 export interface BuiltCommand {
   commandIdPrefix: string;
@@ -55,25 +34,13 @@ export interface FanOutToMachinesOptions {
   machineIds: readonly string[];
   builder: CommandBuilder;
   correlationId: string;
-  /**
-   * Inject a Firestore instance — tests pass a mock; production callers
-   * omit this and the helper uses `getAdminDb()`. Forwarded verbatim into
-   * each `writeCommandFanOut` call so all per-machine writes share one db.
-   */
+  /** Test seam; omitted in production. Shared by every per-machine write. */
   db?: ReturnType<typeof getAdminDb>;
-  /**
-   * Override the wall-clock `now` — unit tests use this for determinism.
-   * Forwarded into `writeCommandFanOut` so the synthesized command ids
-   * (which embed the timestamp) are predictable.
-   */
+  /** Test seam: command ids embed the timestamp, so this makes them predictable. */
   now?: () => number;
 }
 
-/**
- * Split an array into fixed-size chunks. Pure utility — no allocations
- * beyond the chunk arrays themselves. Empty input → empty output (zero
- * batches). Last chunk may be shorter than `chunkSize`.
- */
+/** Fixed-size chunks; empty input → empty output, last chunk may be short. */
 function chunk<T>(items: readonly T[], chunkSize: number): T[][] {
   if (chunkSize <= 0) {
     throw new Error('chunk: chunkSize must be > 0');
@@ -86,18 +53,12 @@ function chunk<T>(items: readonly T[], chunkSize: number): T[][] {
 }
 
 /**
- * Fan a per-machine command across a fleet with bounded concurrency.
+ * Fan a per-machine command across a fleet with bounded concurrency: each
+ * `builder(machineId)` result is stamped and written to that machine's
+ * `commands/pending`, in batches of `FANOUT_CHUNK_SIZE`.
  *
- * For each machine, `builder(machineId)` produces a `{ commandIdPrefix,
- * commandData }` pair; the helper stamps the command (lifecycle fields +
- * `auditCorrelationId` inside `metadata`) and writes it to that machine's
- * `commands/pending` doc via `writeCommandFanOut`. Per-machine calls are
- * batched in groups of `FANOUT_CHUNK_SIZE`, processed sequentially across
- * batches and in parallel within a batch.
- *
- * Returns one result per input machine in the same order. A failed
- * `builder(...)` call surfaces as `ok: false` with the thrown error
- * message — the failing machine does not poison the rest of the fan-out.
+ * One result per machine, in input order. A throwing builder yields
+ * `ok: false` without poisoning the rest of the fan-out.
  */
 export async function fanOutToMachines(
   options: FanOutToMachinesOptions,
@@ -112,20 +73,15 @@ export async function fanOutToMachines(
 
   if (machineIds.length === 0) return [];
 
-  // Resolve the db once so every batch shares the same Firestore instance.
-  // Without this, each `writeCommandFanOut` call would re-resolve via
-  // `getAdminDb()` and tests that omit `db` would still work, but we'd
-  // pay an unnecessary lookup per batch.
+  // Resolve once so every batch shares one instance instead of re-looking-up.
   const resolvedDb = db ?? getAdminDb();
 
   const batches = chunk(machineIds, FANOUT_CHUNK_SIZE);
   const results: FanOutResult[] = [];
 
   for (const batch of batches) {
-    // Within a batch, every machine gets its own `writeCommandFanOut` call
-    // because the (prefix, commandData) pair varies per machine. Each call
-    // hits exactly one `pending` doc, so concurrency here is bounded by
-    // batch size, not by some unrelated writeCommandFanOut internal.
+    // One call per machine because (prefix, commandData) varies; each touches a
+    // single `pending` doc, so concurrency is bounded by batch size.
     const batchResults = await Promise.all(
       batch.map<Promise<FanOutResult>>(async (machineId) => {
         let built: BuiltCommand;
@@ -139,12 +95,8 @@ export async function fanOutToMachines(
           };
         }
 
-        // Inject the audit correlation id under `metadata`. The 1.6 helper
-        // also writes `auditCorrelationId` as a top-level entry field
-        // (separate convention, kept for backward compat with the audit
-        // pipeline), but the documented per-command shape carries
-        // operator-visible context inside `metadata` — that's where
-        // routing/replay code looks first.
+        // Also written top-level by writeCommandFanOut for the audit pipeline,
+        // but routing/replay reads `metadata` first.
         const existingMetadata =
           built.commandData.metadata && typeof built.commandData.metadata === 'object'
             ? (built.commandData.metadata as Record<string, unknown>)

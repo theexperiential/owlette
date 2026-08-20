@@ -1,17 +1,14 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/commandLifecycle.ts` (security-boundary-migration
- * wave 1.6). Mocks the firebase-admin Firestore client at the doc-ref level
- * so we can assert exactly what the helper writes without standing up the
- * emulator.
+ * Unit tests for `web/lib/commandLifecycle.ts`, mocking firebase-admin at the
+ * doc-ref level so writes can be asserted without the emulator.
  */
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
-// Mock getAdminDb so the helper's default-path branch is exercised in one
-// of the writeCommandFanOut tests; per-test cases that need to inspect
-// internals pass an explicit `db` override instead.
+// Mocked so one writeCommandFanOut test exercises the default-db branch; the
+// rest pass an explicit `db`.
 const defaultSetMock = jest.fn().mockResolvedValue(undefined);
 const defaultDocChain = {
   set: defaultSetMock,
@@ -35,10 +32,8 @@ import {
 } from '@/lib/commandLifecycle';
 
 /**
- * `writeCommandFanOut`'s `db` option is typed as the admin-SDK `Firestore`,
- * which carries dozens of methods we never touch. The test fakes implement
- * only the call chain `collection().doc().collection().doc().set()`, so we
- * widen via `unknown` at the call sites — `as unknown as FakeFirestore`.
+ * The fakes implement only `collection().doc().collection().doc().set()`, so
+ * call sites widen through `unknown` (`as unknown as FakeFirestore`).
  */
 type FakeFirestore = Parameters<typeof writeCommandFanOut>[4] extends
   | { db?: infer D }
@@ -50,10 +45,7 @@ type DocStub = {
   set: jest.Mock<Promise<void>, [Record<string, unknown>, { merge?: boolean }?]>;
 };
 
-/**
- * Build a fake admin-SDK Firestore that records every `.set()` call so a
- * test can assert the exact path and payload the helper produced.
- */
+/** Fake admin Firestore recording every `.set()` path + payload. */
 function buildFakeDb(): {
   db: FakeFirestore;
   calls: Array<{ path: string[]; payload: Record<string, unknown>; options?: { merge?: boolean } }>;
@@ -87,17 +79,14 @@ function buildFakeDb(): {
   return { db: db as unknown as FakeFirestore, calls };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  stampCommand                                                              */
-/* -------------------------------------------------------------------------- */
+// stampCommand
 
 describe('stampCommand', () => {
   it('adds createdAt as a server-timestamp sentinel and expiresAt as Timestamp', () => {
     const input: CommandData = { type: 'restart_process', process_id: 'p1' };
     const stamped = stampCommand(input, { now: () => 1_700_000_000_000 });
 
-    // createdAt is FieldValue.serverTimestamp() — sentinel, not a value.
-    // Compare by identity to FieldValue.serverTimestamp()'s class.
+    // createdAt is a serverTimestamp() sentinel, not a value — compare by class.
     expect(stamped.createdAt).toBeInstanceOf(
       Object.getPrototypeOf(FieldValue.serverTimestamp()).constructor,
     );
@@ -140,13 +129,12 @@ describe('stampCommand', () => {
   it('omits auditCorrelationId when not provided', () => {
     const stamped = stampCommand({ type: 'restart_process' });
     expect(stamped.auditCorrelationId).toBeUndefined();
-    // Undefined values would break Firestore writes — guard explicitly.
+    // Undefined values break Firestore writes — guard explicitly.
     expect(Object.prototype.hasOwnProperty.call(stamped, 'auditCorrelationId')).toBe(false);
   });
 
   it('overwrites caller-supplied lifecycle fields', () => {
-    // If a caller sets createdAt/expiresAt themselves (e.g. a stale retry
-    // path), the helper is authoritative.
+    // The helper wins over caller-supplied createdAt/expiresAt (stale retries).
     const stamped = stampCommand(
       {
         type: 'restart_process',
@@ -170,9 +158,7 @@ describe('stampCommand', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  writeCommandFanOut                                                        */
-/* -------------------------------------------------------------------------- */
+// writeCommandFanOut
 
 describe('writeCommandFanOut', () => {
   beforeEach(() => {
@@ -261,7 +247,7 @@ describe('writeCommandFanOut', () => {
     const calls: Array<{ machineId: string }> = [];
     const fakeDb = {
       collection: () => ({
-        // The first `.doc(_siteId)` here is the site id; we don't branch on it.
+        // First `.doc()` is the site id; not branched on.
         doc: (_siteId: string) => ({
           collection: () => ({
             doc: (machineId: string) => ({

@@ -5,10 +5,9 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ScheduleBlock } from '@/lib/owletteConfig'
 
 /**
- * The exact array the web app writes for a freshly scheduled process, copied
- * out of a live `config.json` on a paired machine (the `touch` entry, authored
- * from the dashboard's process dialog). Every assertion about "the shape the
- * web writes" is measured against this, key for key.
+ * Copied verbatim from a live `config.json` on a paired machine (the `touch`
+ * entry, authored from the dashboard). Every "shape the web writes" assertion
+ * is measured against this, key for key.
  */
 const WEB_AUTHORED_DEFAULT: ScheduleBlock[] = [
   { days: ['mon', 'tue', 'wed', 'thu', 'fri'], ranges: [{ start: '09:00', stop: '17:00' }] },
@@ -68,8 +67,8 @@ describe('seeding the draft', () => {
   })
 
   it('falls back to the default when the only block on disk is unusable', () => {
-    // A hand-mangled config: no `days`, no `ranges`. Reading either off it is
-    // what would otherwise throw as the dialog opens.
+    // Hand-mangled: no `days`, no `ranges` — reading either would throw as
+    // the dialog opens.
     const { save } = setup([{ name: 'nonsense' } as unknown as ScheduleBlock])
 
     expect(save()).toStrictEqual(WEB_AUTHORED_DEFAULT)
@@ -89,8 +88,8 @@ describe('what gets written', () => {
   it('emits exactly the array the web writes for the default schedule', () => {
     const { save } = setup(null)
 
-    // toStrictEqual, not toEqual: an invented `name: undefined` or a colour slot
-    // the web never adds would change the document this app writes.
+    // toStrictEqual: an invented `name: undefined` or an extra colour slot
+    // would change the document this app writes.
     expect(save()).toStrictEqual(WEB_AUTHORED_DEFAULT)
   })
 
@@ -110,8 +109,8 @@ describe('what gets written', () => {
       },
     ])
 
-    // mouseDown, not click: on a fine pointer the pills toggle on press so a
-    // drag across them can extend the selection.
+    // mouseDown, not click — pills toggle on press so a drag can extend the
+    // selection.
     fireEvent.mouseDown(screen.getByTitle('tuesday'))
 
     expect(save()).toStrictEqual([
@@ -142,10 +141,8 @@ describe('what gets written', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /add schedule block/ }))
 
-    // Slot 1: the seeded block carries no `colorIndex`, but it RENDERS slot 0
-    // by position — so the allocator counts 0 as taken and the new block gets
-    // the first color an operator can actually tell apart (the two-blue-blocks
-    // bug, fixed 2026-08-13).
+    // The seeded block has no `colorIndex` but RENDERS slot 0 by position, so
+    // the allocator must count 0 as taken (two-blue-blocks bug, 2026-08-13).
     expect(save()).toStrictEqual([
       ...WEB_AUTHORED_DEFAULT,
       {

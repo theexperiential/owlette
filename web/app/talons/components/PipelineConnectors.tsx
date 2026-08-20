@@ -1,33 +1,21 @@
 'use client';
 
 /**
- * Presentational wiring between the three pipeline cards — trigger → condition
- * → outputs. No drag, no zoom, no persisted positions: it draws the graph and
- * gets out of the way.
+ * Wiring between the three pipeline cards: trigger → condition → outputs (1 → 1 → N).
+ * Condition→outputs is a fan — one elbow arm per output row — so N outputs read as N.
  *
- * The shape is 1 → 1 → N. Trigger to condition is a single arrow; condition to
- * outputs is a FAN, one elbow arrow per output row, so a talon with three
- * outputs reads as three outputs at a glance rather than as one arrow pointing
- * at a stack.
+ * Geometry is MEASURED, not derived from the box model: nodes carry `data-talon-node`
+ * and the overlay walks them with getBoundingClientRect. The overlay is `absolute inset-0`
+ * in the grid's relative wrapper, so its own rect is the coordinate origin. jsdom reports
+ * every rect as zero, which is why `computeConnectorPaths` is exported and unit-tested
+ * directly instead of asserting on a render.
  *
- * Geometry is MEASURED, not derived from the grid's box model: every card and
- * every output row carries a `data-talon-node` attribute, and the overlay walks
- * them with `getBoundingClientRect`. The overlay is `absolute inset-0` inside
- * the grid's `relative` wrapper, so its own rect is the coordinate origin —
- * subtracting it turns viewport coords into container coords with no ref
- * threading. `computeConnectorPaths` is exported and unit-tested on its own,
- * because in jsdom every rect is zero and a rendered assertion would prove
- * nothing.
+ * viewBox is the rendered pixel box (as in charts/DisplayCanvas.tsx) so stroke widths
+ * don't scale with the dialog.
  *
- * Sizing follows `DisplayCanvas` (charts/DisplayCanvas.tsx:12-17): the viewBox
- * is set to the rendered pixel box, so stroke widths stay visually constant
- * instead of scaling with the dialog.
- *
- * Below `md` the grid collapses to one column and this overlay is display:none
- * (every rect reports 0 and nothing is drawn). The stacked layout gets
- * `PipelineStackConnector` instead — a short vertical rule rendered as a grid
- * item between the cards, since an absolute overlay cannot know where the card
- * boundaries fall once they are stacked.
+ * Below `md` the grid is one column and this overlay is display:none; the stacked layout
+ * uses `PipelineStackConnector`, since an absolute overlay can't know where the stacked
+ * card boundaries fall.
  */
 
 import { useLayoutEffect, useRef, useState } from 'react';
@@ -54,11 +42,9 @@ export interface ConnectorNodes {
   trigger: ConnectorRect | null;
   condition: ConnectorRect | null;
   /**
-   * The outputs card's own box. Fan arms terminate HERE — at the card's outer
-   * edge, at each row's height — not at the rows' left edges inside the card.
-   * Ending inside the card dragged every wire across the card border and put
-   * the elbow spine right on top of it; ending at the card edge keeps the
-   * whole fan in the gutter between sections, where it reads as wiring.
+   * Outputs card box. Fan arms terminate at this outer edge (at each row's height), not
+   * at the rows' left edges — ending inside dragged every wire across the card border and
+   * laid the elbow spine on top of it.
    */
   outputsCard: ConnectorRect | null;
   outputRows: ConnectorRect[];
@@ -70,20 +56,15 @@ function px(value: number): number {
 }
 
 /**
- * Right-pointing chevron at a terminus, stroked as two lines off a single
- * moveto. Deliberately not an SVG marker: markers inherit `fill`, not
- * `stroke`, so a `stroke-border` arrowhead would need a second colour token
- * kept in sync by hand.
+ * Right-pointing chevron, two stroked lines off one moveto. Not an SVG marker: markers
+ * inherit `fill`, not `stroke`, so it would need a second colour token kept in sync.
  */
 function chevron(x: number, y: number): string {
   return `M ${px(x - ARROW)} ${px(y - ARROW)} L ${px(x)} ${px(y)} L ${px(x - ARROW)} ${px(y + ARROW)}`;
 }
 
-/**
- * Elbow from a source to a target: out horizontally to the midpoint of the
- * gap, across to the target's row, then in to its left edge. Collapses to a
- * straight run when the two ends already share a row.
- */
+/** Elbow: out to the gap midpoint, across to the target row, in to its left edge.
+ * Collapses to a straight run when both ends already share a row. */
 function elbow(sx: number, sy: number, ex: number, ey: number): string {
   if (Math.abs(sy - ey) < SAME_ROW_EPSILON) return `M ${px(sx)} ${px(sy)} H ${px(ex)}`;
   const midX = (sx + ex) / 2;
@@ -91,13 +72,10 @@ function elbow(sx: number, sy: number, ex: number, ey: number): string {
 }
 
 /**
- * The connector paths for one measurement, as SVG `d` strings in draw order:
- * trigger → condition first, then one fan arm per output row.
- *
- * All rects are viewport rects; `container` is the origin. Degenerate input —
- * a zero-size container (jsdom, or the stacked layout where the overlay is
- * display:none), a missing card, or a target that does not sit to the right of
- * its source — yields no path rather than a garbage one.
+ * SVG `d` strings in draw order: trigger→condition, then one fan arm per output row.
+ * All rects are viewport rects with `container` as the origin. Degenerate input — zero-size
+ * container (jsdom / stacked layout), missing card, target not to the right of its source —
+ * yields no path rather than a garbage one.
  */
 export function computeConnectorPaths(
   container: ConnectorRect,
@@ -129,8 +107,7 @@ export function computeConnectorPaths(
   const cardLeft = card && card.width > 0 && card.height > 0 ? toX(card.left) : null;
   for (const row of nodes.outputRows) {
     if (row.width <= 0 || row.height <= 0) continue;
-    // Terminate at the card edge (gutter-only wiring); fall back to the row's
-    // own edge only when the card was not found.
+    // Card edge keeps wiring in the gutter; row edge only when the card is missing.
     const endX = cardLeft ?? toX(row.left);
     if (endX <= conditionRight) continue;
     const rowMidY = toY(row.top + row.height / 2);
@@ -143,11 +120,8 @@ export function computeConnectorPaths(
 }
 
 interface PipelineConnectorsProps {
-  /**
-   * How many output rows are rendered. Adding or removing a row moves every
-   * terminus below it, and a ResizeObserver alone would miss the new row —
-   * this re-runs the measurement and re-attaches the observer.
-   */
+  /** Row count: a ResizeObserver alone misses an added/removed row, so this re-runs the
+   * measurement and re-attaches the observer. */
   outputCount: number;
 }
 
@@ -162,17 +136,10 @@ export function PipelineConnectors({ outputCount }: PipelineConnectorsProps) {
     const wrapper = el.parentElement;
     if (!wrapper) return;
 
-    /*
-     * Queried per measurement, never captured once.
-     *
-     * A node set captured on mount goes stale the moment React replaces an
-     * element, and a DETACHED node still answers getBoundingClientRect() — with
-     * all zeros. That read like "this row has no size", so the arm to it was
-     * skipped and the fan silently lost a wire. Applying a template did exactly
-     * this: it swaps an output's TYPE without changing the output COUNT, so the
-     * effect below never re-ran, and the row element it was holding had already
-     * been thrown away.
-     */
+    // Queried per measurement, never captured: a detached node still answers
+    // getBoundingClientRect() with all zeros, which read as "row has no size" and silently
+    // dropped its arm. Applying a template hit this — it swaps an output's type without
+    // changing the count, so the effect below never re-ran.
     const findNodes = () => Array.from(wrapper.querySelectorAll('[data-talon-node]'));
 
     const measure = () => {
@@ -211,27 +178,13 @@ export function PipelineConnectors({ outputCount }: PipelineConnectorsProps) {
       );
     };
 
-    // Measured before paint so the first frame already has the connectors.
+    // Measured before paint so the first frame already has connectors.
     measure();
 
-    /*
-     * ...and then again until the box stops moving.
-     *
-     * The dialog animates OPEN with a transform (Radix's `zoom-in-95`). A
-     * transform changes what `getBoundingClientRect()` reports but NOT the
-     * element's border-box size, so a ResizeObserver never fires for it — the
-     * measurement above is taken mid-animation, at 95%, and stays that way for
-     * the life of the dialog. Every arm then lands about a gutter short of the
-     * card it points at.
-     *
-     * The tell was that it looked correct with two or more outputs: changing
-     * `outputCount` re-runs this effect, which re-measures after the animation
-     * has finished. One output meant one measurement, taken at the wrong moment.
-     *
-     * So: re-measure per frame until the container's rect repeats, then stop.
-     * Bounded because a never-settling box (a looping animation) must not pin a
-     * rAF loop for the life of the dialog.
-     */
+    // ...then per frame until the rect repeats. The dialog opens with a transform
+    // (Radix `zoom-in-95`), which changes getBoundingClientRect() but not the border-box,
+    // so no ResizeObserver fires and the measurement above sticks at 95% — every arm lands
+    // a gutter short. Bounded so a looping animation can't pin the rAF loop.
     let frame = 0;
     let elapsed = 0;
     let previous = '';
@@ -251,9 +204,8 @@ export function PipelineConnectors({ outputCount }: PipelineConnectorsProps) {
     };
     frame = requestAnimationFrame(settle);
 
-    // Every node, not just the overlay: a row that grows (email → hoot swaps a
-    // hint line for a textarea) shifts the rows below it without changing the
-    // overlay's own box, since the grid row is sized by the tallest card.
+    // Every node, not just the overlay: a row that grows (email → hoot swaps a hint for a
+    // textarea) shifts rows below it without changing the overlay's own box.
     const observer = new ResizeObserver(measure);
     const observeAll = () => {
       observer.disconnect();
@@ -263,9 +215,8 @@ export function PipelineConnectors({ outputCount }: PipelineConnectorsProps) {
     };
     observeAll();
 
-    // Re-point the observer whenever the card subtree is rebuilt — a swapped
-    // output row is a NEW element, and an observer still watching the old one
-    // reports on a node nobody can see.
+    // Re-point on subtree rebuild: a swapped output row is a new element, and the old
+    // observer would keep reporting on a detached node.
     const mutations = new MutationObserver(observeAll);
     mutations.observe(wrapper, { childList: true, subtree: true });
 
@@ -299,10 +250,7 @@ export function PipelineConnectors({ outputCount }: PipelineConnectorsProps) {
   );
 }
 
-/**
- * Stacked-layout connector. Rendered as a grid item between two cards and
- * hidden at `md` and up, where `PipelineConnectors` takes over.
- */
+/** Stacked-layout connector: a grid item between two cards, hidden at `md` and up. */
 export function PipelineStackConnector() {
   return (
     <div aria-hidden="true" className="flex justify-center md:hidden">

@@ -1,25 +1,17 @@
 /**
- * Append-only audit log sink (roost wave 2b.7).
+ * Append-only audit log sink. Events: signed_url_issued,
+ * distribution_started, version_pointer_changed, api_key_used, gc_run.
  *
- * Captured events:
- *   signed_url_issued        — chunks/upload-urls + chunks/download-urls
- *   distribution_started     — version finalised, fan-out kicked
- *   version_pointer_changed  — currentVersionId flipped (fwd + rollback)
- *   api_key_used             — any owk_* authentication
- *   gc_run                   — chunkGcNightly completion
+ * Hash-chained (lib/auditLogLogic.ts): each record embeds hash(prev || record)
+ * so a verifier can prove nothing was modified or deleted.
  *
- * The store is **append-only + hash-chained** (see lib/auditLogLogic.ts).
- * Each record embeds hash(prev || record) so a verifier can prove no
- * record was silently modified or deleted.
- *
- * **What this file does NOT enforce**: the append-only property itself
- * lives in firestore.rules. `firestore.rules` is guarded per CLAUDE.md
- * and needs the operator to add (copied into wave 0.6 deploy notes):
+ * Append-only is NOT enforced here — it lives in firestore.rules, which is
+ * operator-owned and must carry:
  *
  *     match /sites/{siteId}/audit_log/{recordId} {
  *       allow read:   if isSiteAdmin(siteId);
  *       allow create: if isSiteAdmin(siteId) || isServiceAccount();
- *       allow update, delete: if false;   // append-only
+ *       allow update, delete: if false;
  *     }
  */
 
@@ -37,40 +29,22 @@ import {
   type AuditRecord,
 } from './lib/auditLogLogic';
 
-/* --------------------------------------------------------------------- */
-/*  Dependency interfaces                                                */
-/* --------------------------------------------------------------------- */
-
 export interface AuditStore {
-  /**
-   * Return the latest record's hash for this site, or GENESIS_HASH if
-   * the chain is empty. Used as `previousHash` for the next append.
-   */
+  /** Latest record hash for the site, or GENESIS_HASH — the next `previousHash`. */
   getLatestHash(siteId: string): Promise<string>;
   /**
-   * Append a new record. Implementations SHOULD assert the record's
-   * `previousHash` matches the current head inside a transaction so
-   * concurrent appends to the same site don't fork the chain.
+   * Implementations MUST assert `previousHash` still matches the head inside a
+   * transaction, or concurrent appends fork the chain.
    */
   append(record: AuditRecord): Promise<void>;
-  /**
-   * Read the full chain (or a prefix) for verification. Returned in
-   * recordedAt-ascending order.
-   */
+  /** Full chain (or a prefix) in recordedAt-ascending order. */
   readChain(siteId: string, limit?: number): Promise<AuditRecord[]>;
 }
 
 export interface AuditExporter {
-  /**
-   * Send a batch of records to the cold-storage sink (BigQuery in prod).
-   * Invoked by the daily export scheduled function.
-   */
+  /** Ship a batch to cold storage (BigQuery in prod); called by the daily job. */
   exportBatch(records: readonly AuditRecord[]): Promise<void>;
 }
-
-/* --------------------------------------------------------------------- */
-/*  Pure orchestrator — append                                           */
-/* --------------------------------------------------------------------- */
 
 export interface AppendDeps {
   store: AuditStore;
@@ -87,11 +61,8 @@ export interface AppendFailure {
 }
 
 /**
- * Validate the event, read head, build a chain-linked record, append.
- * Returns the persisted record on success (callers log the hash for
- * correlation).
- *
- * Stashes no state — all chain continuation comes from the store.
+ * Validate, read head, build a chain-linked record, append. Holds no state —
+ * chain continuation comes entirely from the store.
  */
 export async function appendAudit(
   raw: Partial<AuditEvent> | undefined,
@@ -110,9 +81,8 @@ export async function appendAudit(
   try {
     await deps.store.append(record);
   } catch (err) {
-    // If a concurrent writer beat us, the transactional store rejects
-    // the append with a distinctive error. Surface a 409 to the caller
-    // so it can retry (will pick up the new head on re-read).
+    // A concurrent writer moved the head; surface a 409 so the caller retries
+    // against the new head.
     return {
       ok: false,
       reason: `append_failed: ${(err as Error).message}`,
@@ -120,10 +90,6 @@ export async function appendAudit(
   }
   return { ok: true, record };
 }
-
-/* --------------------------------------------------------------------- */
-/*  Verification entrypoint                                              */
-/* --------------------------------------------------------------------- */
 
 export interface VerifyResult {
   ok: boolean;
@@ -147,10 +113,6 @@ export async function verifySiteChain(
   };
 }
 
-/* --------------------------------------------------------------------- */
-/*  Pure orchestrator — export                                           */
-/* --------------------------------------------------------------------- */
-
 export interface ExportDeps {
   store: AuditStore;
   exporter: AuditExporter;
@@ -168,8 +130,7 @@ export async function exportAllSites(
   for (const siteId of siteIds) {
     try {
       const chain = await deps.store.readChain(siteId);
-      // batch-export so we don't hold a single giant payload in memory.
-      // chain is ascending; stream as we go.
+      // Batched so a giant chain never sits in memory at once.
       let exported = 0;
       for (let i = 0; i < chain.length; i += batchSize) {
         const batch = chain.slice(i, i + batchSize);
@@ -185,10 +146,6 @@ export async function exportAllSites(
   }
   return out;
 }
-
-/* --------------------------------------------------------------------- */
-/*  Scheduled + HTTPS entrypoints                                        */
-/* --------------------------------------------------------------------- */
 
 export const recordAuditEvent = onRequest(
   { timeoutSeconds: 15, memory: '256MiB' },
@@ -242,10 +199,6 @@ export const exportAuditDaily = onSchedule(
   },
 );
 
-/* --------------------------------------------------------------------- */
-/*  Production wiring                                                    */
-/* --------------------------------------------------------------------- */
-
 function getDefaultStore(): AuditStore {
   const db = admin.firestore();
   const col = (siteId: string) =>
@@ -266,8 +219,7 @@ function getDefaultStore(): AuditStore {
       return data?.hash ?? GENESIS_HASH;
     },
     async append(record: AuditRecord) {
-      // transactional compare-and-swap on the head doc to serialise
-      // concurrent appends to the same site.
+      // CAS on the head doc serialises concurrent appends to one site.
       await db.runTransaction(async (tx) => {
         const headSnap = await tx.get(headDoc(record.event.siteId));
         const currentHead = headSnap.exists
@@ -303,10 +255,9 @@ function getDefaultDirectory() {
 }
 
 function getDefaultExporter(): AuditExporter {
-  // BigQuery wiring is deferred to wave 0.6. In the meantime, the
-  // in-firestore chain is the authoritative store and the 7-year
-  // retention is enforced by NOT running any delete job (firestore
-  // has no auto-TTL for this path).
+  // TODO(wave 0.6): wire BigQuery. Until then the firestore chain is
+  // authoritative and 7-year retention holds because no delete job runs
+  // (firestore has no auto-TTL on this path).
   return {
     async exportBatch(_records) {
       throw new Error(

@@ -1,10 +1,7 @@
 /**
- * Unit tests for per-site quota enforcement.
- *
- * Covers pure logic in lib/quotaLogic.ts and the dep-injected
- * orchestrators in quotaEnforce.ts with in-memory fakes.
- *
- * A flat SITE_STORAGE_BYTES allowance applies to every site.
+ * Unit tests for per-site quota enforcement: pure logic in lib/quotaLogic.ts and the
+ * dep-injected orchestrators in quotaEnforce.ts, with in-memory fakes. A flat
+ * SITE_STORAGE_BYTES allowance applies to every site.
  */
 
 import { describe, it } from 'node:test';
@@ -30,19 +27,11 @@ const GB = 1024 ** 3;
 const TB = 1024 ** 4;
 const NOW = new Date('2026-04-20T00:00:00Z');
 
-/* --------------------------------------------------------------------- */
-/*  storage allowance                                                    */
-/* --------------------------------------------------------------------- */
-
 describe('storage allowance', () => {
   it('every site carries 1 TiB of included storage', () => {
     assert.equal(SITE_STORAGE_BYTES, 1_099_511_627_776);
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  reportQuota                                                          */
-/* --------------------------------------------------------------------- */
 
 describe('reportQuota', () => {
   it('reports zero usage cleanly', () => {
@@ -97,10 +86,6 @@ describe('reportQuota', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  newAlarmCrossings                                                    */
-/* --------------------------------------------------------------------- */
-
 describe('newAlarmCrossings', () => {
   it('empty when stationary', () => {
     assert.deepEqual(newAlarmCrossings(0.5, 0.5), []);
@@ -125,10 +110,6 @@ describe('newAlarmCrossings', () => {
     for (const c of crossings) assert.ok(ALARM_LEVELS.includes(c));
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  admitUpload                                                          */
-/* --------------------------------------------------------------------- */
 
 describe('admitUpload', () => {
   it('admits a request that fits comfortably', () => {
@@ -181,10 +162,6 @@ describe('admitUpload', () => {
     assert.equal(d.reason, 'invalid_request');
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  runPreUploadCheck orchestrator                                       */
-/* --------------------------------------------------------------------- */
 
 interface FakeQuotaState {
   read: QuotaState;
@@ -296,10 +273,6 @@ describe('runPreUploadCheck', () => {
   });
 
 });
-
-/* --------------------------------------------------------------------- */
-/*  reconcileOneSite                                                     */
-/* --------------------------------------------------------------------- */
 
 describe('reconcileOneSite', () => {
   it('does not fire alarms when usage stays below 50%', async () => {

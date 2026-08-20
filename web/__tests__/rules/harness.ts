@@ -1,34 +1,13 @@
 /**
  * @jest-environment node
  *
- * Firestore rules test harness.
+ * Firestore rules test harness — boots `@firebase/rules-unit-testing` against
+ * the running emulator and exposes role-shaped auth contexts so rule specs
+ * skip the boilerplate.
  *
- * Boots a `@firebase/rules-unit-testing` environment against the running
- * Firestore emulator and exposes role-shaped helpers so individual rule
- * specs don't have to repeat the auth-context boilerplate.
- *
- * Helpers:
- *   - `asUser(uid, role, sites)`   — authenticated user. Mirrors the
- *                                    `users/{uid}` doc that the rules read
- *                                    via `canAccessSite()` / `isSiteAdmin()`,
- *                                    so the harness also seeds that doc
- *                                    (with rules disabled) for you.
- *   - `asAgent(siteId, machineId)` — OAuth agent context. Custom claims
- *                                    match what the rules' `isAgent()` /
- *                                    `agentCanAccessMachine()` helpers expect:
- *                                    `{ role: 'agent', site_id, machine_id }`.
- *                                    Claim names are snake_case (see top of
- *                                    `firestore.rules`).
- *   - `asUnauthenticated()`        — no Auth token at all.
- *
- * Lifecycle:
- *   - call `initRulesHarness()` once in `beforeAll`
- *   - call `clearFirestoreData()` between tests if you need a fresh slate
- *   - call `seedAsAdmin()` to write fixture data with rules disabled
- *   - call `cleanupRulesHarness()` in `afterAll` to close emulator sockets
- *
- * Designed for use by `baseline.test.ts` (this wave) and the denial /
- * tightened-rules suites in waves 6 + 7.
+ * Lifecycle: `initRulesHarness()` in `beforeAll`, `clearFirestoreData()`
+ * between tests, `seedAsAdmin()` to write fixtures with rules disabled,
+ * `cleanupRulesHarness()` in `afterAll` to close emulator sockets.
  */
 
 import { readFileSync } from 'fs';
@@ -52,12 +31,8 @@ const FIRESTORE_PORT = 8080;
 let env: RulesTestEnvironment | null = null;
 
 /**
- * Initialise the shared rules-test environment. Loads `firestore.rules`
- * from the repo root and points the SDK at the local Firestore emulator.
- *
- * Safe to call once in `beforeAll`. Throws if the emulator isn't reachable
- * — in CI/local that's surfaced via the `npm run test:rules` wrapper which
- * boots the emulator before jest.
+ * Load `firestore.rules` from the repo root and point the SDK at the local
+ * emulator. Throws if the emulator isn't up — `npm run test:rules` boots it.
  */
 export async function initRulesHarness(): Promise<RulesTestEnvironment> {
   if (env) return env;
@@ -78,19 +53,14 @@ export async function initRulesHarness(): Promise<RulesTestEnvironment> {
   return env;
 }
 
-/**
- * Tear down the rules-test environment. Call from `afterAll`.
- */
+/** Tear down the rules-test environment. Call from `afterAll`. */
 export async function cleanupRulesHarness(): Promise<void> {
   if (!env) return;
   await env.cleanup();
   env = null;
 }
 
-/**
- * Wipe all Firestore data for the harness project between tests. Does NOT
- * touch security rules or auth contexts.
- */
+/** Wipe harness Firestore data. Leaves rules and auth contexts alone. */
 export async function clearFirestoreData(): Promise<void> {
   if (!env) {
     throw new Error('clearFirestoreData() called before initRulesHarness()');
@@ -99,11 +69,8 @@ export async function clearFirestoreData(): Promise<void> {
 }
 
 /**
- * Run a callback with rules disabled — for seeding fixture data that the
- * rules wouldn't otherwise let any client write (e.g., site owner field,
- * users/{uid} role, agent_refresh_tokens).
- *
- * The callback receives a privileged Firestore instance.
+ * Run `fn` with a privileged Firestore instance (rules disabled), for fixtures
+ * no client may write: site owner, `users/{uid}.role`, agent_refresh_tokens.
  */
 export async function seedAsAdmin(
   fn: (db: Firestore) => Promise<void>,
@@ -117,11 +84,8 @@ export async function seedAsAdmin(
 }
 
 /**
- * Authenticated user context. Also seeds `users/{uid}` so the rule helpers
- * (`canAccessSite`, `isSiteAdmin`, `isSuperadmin`) can resolve role + sites
- * without each test having to remember.
- *
- * Returns the modular Firestore instance bound to that user's auth.
+ * Authenticated user context, with `users/{uid}` seeded so `canAccessSite` /
+ * `isSiteAdmin` / `isSuperadmin` can resolve role + sites.
  */
 export async function asUser(
   uid: string,
@@ -132,8 +96,7 @@ export async function asUser(
     throw new Error('asUser() called before initRulesHarness()');
   }
 
-  // Seed (or refresh) the users/{uid} doc with rules disabled so role-aware
-  // helpers in firestore.rules can resolve this user's role/sites.
+  // Rules disabled: no client may write users/{uid}.role.
   await seedAsAdmin(async (db) => {
     const { doc, setDoc } = await import('firebase/firestore');
     await setDoc(doc(db, 'users', uid), {
@@ -149,11 +112,9 @@ export async function asUser(
 }
 
 /**
- * OAuth agent context. The rules' `isAgent()` helper looks at three custom
- * claims: `role: 'agent'`, `site_id`, `machine_id` (snake_case — see top
- * of firestore.rules). The agent's auth uid is irrelevant for rules, but
- * we use a deterministic `agent-{machineId}` so failed-test logs identify
- * which agent triggered the deny.
+ * OAuth agent context. `isAgent()` reads three snake_case custom claims:
+ * `role: 'agent'`, `site_id`, `machine_id`. The uid is irrelevant to the
+ * rules; `agent-{machineId}` just makes failure logs identifiable.
  */
 export function asAgent(siteId: string, machineId: string): Firestore {
   if (!env) {
@@ -168,10 +129,7 @@ export function asAgent(siteId: string, machineId: string): Firestore {
   return ctx.firestore() as unknown as Firestore;
 }
 
-/**
- * Unauthenticated context — no Auth token. Used for testing public-read
- * paths (installer_metadata) and the global deny-all fallthrough.
- */
+/** No Auth token — for public-read paths and the global deny-all fallthrough. */
 export function asUnauthenticated(): Firestore {
   if (!env) {
     throw new Error('asUnauthenticated() called before initRulesHarness()');

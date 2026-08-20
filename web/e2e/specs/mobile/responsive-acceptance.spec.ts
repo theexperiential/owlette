@@ -1,26 +1,16 @@
 /**
- * Mobile — responsive acceptance gate (task 1.3)
+ * Mobile responsive acceptance gate. One test per route at 390x844 (viewport /
+ * isMobile / hasTouch come from the `mobile-chromium` project): navigate, wait
+ * for a real content anchor, assert the document does not scroll horizontally.
  *
- * One test per route: navigate at 390x844 (viewport/isMobile/hasTouch come from
- * the `mobile-chromium` project in playwright.config.ts, which owns every spec
- * under specs/mobile/**), wait for a real content anchor, then assert the
- * document does not scroll horizontally.
+ * `assertNoHorizontalOverflow` calls `stabilize` itself — do NOT call it again.
  *
- * `assertNoHorizontalOverflow` calls `stabilize` internally — animations off,
- * webfonts settled — so callers must NOT also call `stabilize`.
+ * Every content-driven route is seeded with real rows first: an empty view
+ * cannot overflow, so asserting one proves nothing.
  *
- * Empty views cannot overflow, so every content-driven route is seeded with
- * real rows first (machines, log events, hoot chats, roosts, an api key, a
- * webhook) via the existing helpers. A route asserted against a bare empty
- * state would be a green test that proves nothing.
- *
- * Routes that overflowed when this gate was written were declared with
- * `test.fixme(...)`, each naming the task that owned the fix. Every one of
- * those fixes has landed, so ZERO fixmes remain here — all routes assert live
- * and any regression turns the suite red immediately. If a future route
- * overflows, fix the route; never soften the assertion, and never re-introduce
- * a fixme for a route that already passes (unlike `test.fail()`, Playwright
- * does not flag a fixme that would have passed).
+ * Zero `test.fixme`s remain. If a route overflows, fix the route — never soften
+ * the assertion, and never re-add a fixme for a passing route (Playwright does
+ * not flag a fixme that would have passed).
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -51,9 +41,8 @@ const WEBHOOK_URL = 'https://example.com/mobile-overflow/hook';
 const API_KEY_NAME = 'e2e-mobile-overflow-key';
 
 /**
- * Write a webhook subscription in the exact shape `POST /api/webhooks` stores
- * (app/api/webhooks/route.ts) so the settings page renders a real card — long
- * url in a <code>, per-event badges — rather than its empty state.
+ * Webhook subscription in the exact shape `POST /api/webhooks` stores, so the
+ * settings page renders a real card (long url, per-event badges), not empty state.
  */
 async function seedWebhook(): Promise<void> {
   await getAdminDb()
@@ -81,11 +70,8 @@ async function seedWebhook(): Promise<void> {
 }
 
 /**
- * Dashboard fleet with enough state to render the surfaces that actually stress
- * 390px: an online machine carrying a two-monitor display profile plus a
- * reboot-pending banner (approve/dismiss buttons, card view only), and a second
- * machine whose heartbeat is stale enough to render offline. Both shapes come
- * from seedMachine's existing options — no bespoke fixture.
+ * Fleet stressing 390px: an online machine with a two-monitor profile and a
+ * reboot-pending banner (card view only), plus a stale/offline one.
  */
 async function seedDashboardMachines(): Promise<void> {
   await seedMachine(SITE_ID, MACHINE_ID, { rebootPending: true });
@@ -97,22 +83,18 @@ test.describe('mobile responsive acceptance — public routes', () => {
 
   test('/login does not scroll horizontally', async ({ page }) => {
     await page.goto('/login');
-    // Progressive form — the password field and submit button only mount once
-    // email receives focus, so a bare `goto` measures a two-button shell.
+    // Progressive form: password + submit only mount once email is focused, so
+    // a bare `goto` would measure a two-button shell.
     await page.getByLabel(/^email$/i).fill('mobile-overflow@e2e.test');
     await expect(page.getByRole('button', { name: /sign in with email/i })).toBeVisible();
     await assertNoHorizontalOverflow(page);
   });
 
-  // Task 4.4 lists /register as broken, but the expanded form fits at 390px on
-  // the current tree — so this asserts live rather than carrying a fixme that
-  // would pass. If 4.4 has a concrete /register defect, it is not document-level
-  // horizontal overflow.
+  // Task 4.4 calls /register broken, but the expanded form fits at 390px today,
+  // so this asserts live — whatever 4.4 saw, it is not document overflow.
   test('/register does not scroll horizontally', async ({ page }) => {
     await page.goto('/register');
-    // The form is progressive — name/password fields only expand once email
-    // receives focus (see auth/signup.spec.ts). Measure the full form, not the
-    // collapsed one-field state.
+    // Progressive form (see auth/signup.spec.ts) — measure the expanded state.
     await page.getByLabel(/^email$/i).fill('mobile-overflow@e2e.test');
     await expect(page.getByLabel(/first name/i)).toBeVisible();
     await assertNoHorizontalOverflow(page);
@@ -129,9 +111,8 @@ test.describe('mobile responsive acceptance — fresh-user routes', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
   /**
-   * /setup-2fa is only reachable as a signed-in user who has not yet enrolled.
-   * Mirrors mfa/setup-verify.spec.ts: seed a dedicated member, sign in through
-   * the real login form, then navigate to the setup page.
+   * /setup-2fa needs a signed-in, un-enrolled user — same setup as
+   * mfa/setup-verify.spec.ts: seed a member, sign in for real, then navigate.
    */
   async function signInFreshUser(page: Page): Promise<void> {
     const user = await seedDedicatedUser(
@@ -144,15 +125,12 @@ test.describe('mobile responsive acceptance — fresh-user routes', () => {
     await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
   }
 
-  // Task 4.4 lists /setup-2fa as broken, but the qr + secret card fits at 390px
-  // on the current tree — asserted live rather than fixme'd for the same reason
-  // as /register above.
+  // As with /register: 4.4 calls it broken, but it fits at 390px today.
   test('/setup-2fa does not scroll horizontally', async ({ page }) => {
     await signInFreshUser(page);
     await page.goto('/setup-2fa');
     await expect(page.getByText(/set up two-factor authentication/i).first()).toBeVisible();
-    // Both screens of the TOTP branch: the method chooser the page now lands
-    // on, then the QR step behind it.
+    // Both TOTP screens: the method chooser, then the QR step behind it.
     await assertNoHorizontalOverflow(page);
     await page.getByRole('button', { name: /authenticator app/i }).click();
     await expect(page.getByAltText(/2FA QR Code/i)).toBeVisible();
@@ -181,23 +159,21 @@ test.describe('mobile responsive acceptance — authenticated routes', () => {
   test('/dashboard (card view) does not scroll horizontally', async ({ page }) => {
     await seedDashboardMachines();
     await page.goto('/dashboard');
-    // Card is the default view (dashboard/page.tsx seeds viewType='card' and
-    // only overrides it from localStorage, which the role fixture never sets).
+    // Card is the default — dashboard/page.tsx only overrides viewType from
+    // localStorage, which the role fixture never sets.
     await expect(page.getByTestId('machine-card').first()).toBeVisible();
     await assertNoHorizontalOverflow(page);
   });
 
-  // Task 3.4 owns the dashboard, but only the CARD view overflows the document
-  // today — the list table is `table-layout: fixed` + `contain: layout`, so it
-  // clips rather than widening the page. Asserted live so 3.4 can't regress it.
+  // Only the CARD view can overflow: the list table is `table-layout: fixed` +
+  // `contain: layout`, so it clips instead of widening the page.
   test('/dashboard (list view) does not scroll horizontally', async ({ page }) => {
     await seedDashboardMachines();
     await page.goto('/dashboard');
     await expect(page.getByTestId('machine-card').first()).toBeVisible();
 
     await page.getByTestId('view-toggle-list').click();
-    // Park the pointer away from the toggle so its Radix tooltip isn't part of
-    // the measured layout.
+    // Park the pointer off the toggle — its Radix tooltip would be measured.
     await page.mouse.move(0, 0);
     await expect(page.getByTestId('machine-row').first()).toBeVisible();
     await assertNoHorizontalOverflow(page);
@@ -211,15 +187,13 @@ test.describe('mobile responsive acceptance — authenticated routes', () => {
     await assertNoHorizontalOverflow(page);
   });
 
-  // Task 3.3 owns /hoot, but the route does not overflow the DOCUMENT at 390px
-  // today (this gate's measurement — see helpers/mobile.ts). If 3.3 is chasing an
-  // inner-pane scroller, that needs its own assertion; this one asserts live so
-  // 3.3 can't regress the document width.
+  // /hoot does not overflow the DOCUMENT at 390px (what this gate measures — see
+  // helpers/mobile.ts); an inner-pane scroller would need its own assertion.
   test('/hoot does not scroll horizontally', async ({ page }) => {
     await seedHootFixture({ userId: TEST_USERS.admin.uid });
     await page.goto('/hoot');
-    // The seeded conversations live behind a collapsed sidebar at this width,
-    // so anchor on the always-mounted composer + target selector instead.
+    // Conversations sit behind a collapsed sidebar here — anchor on the
+    // always-mounted composer + target selector.
     await expect(page.getByLabel(/hoot target/i)).toBeVisible();
     await expect(page.getByPlaceholder(/ask about this machine/i)).toBeVisible();
     await assertNoHorizontalOverflow(page);

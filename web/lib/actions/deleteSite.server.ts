@@ -1,20 +1,12 @@
 /**
- * deleteSite action core (security-boundary-migration wave 3.9 — site CRUD).
+ * deleteSite action core, replacing the client-side `deleteDoc` in
+ * `useFirestore.ts:deleteSite`. Deliberately the SAME narrow delete: only the
+ * top-level `sites/{siteId}` doc, leaving subcollections and user-membership
+ * references intact, so callers migrate without behaviour drift. Adds an audit
+ * event.
  *
- * Replaces the client-side `deleteDoc` in `web/hooks/useFirestore.ts:deleteSite`.
- * The legacy hook deleted ONLY the top-level `sites/{siteId}` doc and
- * left subcollections (machines, deployments, audit_log, etc.) plus
- * user-membership references intact, with a `// TODO: Clean up user
- * references` comment. We preserve that exact behavior here — the
- * action core mirrors the hook's narrow delete + emits an audit event,
- * so callers can migrate without behaviour drift.
- *
- * Subcollection cleanup remains a follow-up (deferred to a dedicated site-
- * cascade pass; the cloud-function deployment reconciler already cleans
- * orphan deployment docs). Documented in the hook's TODO.
- *
- * Capability: site-scoped — wrapper enforces caller can administer the
- * target site.
+ * TODO: site-cascade pass for subcollections + user references (the cloud-function
+ * reconciler already cleans orphan deployment docs).
  */
 
 import type { Firestore } from 'firebase-admin/firestore';

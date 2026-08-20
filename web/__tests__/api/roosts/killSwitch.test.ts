@@ -1,17 +1,12 @@
 /** @jest-environment node */
 
 /**
- * Item 18: roost kill-switch is wired into every roost / chunk route.
+ * End-to-end wiring for the roost kill-switch (`gateOrProceed` itself is
+ * unit-tested in lib/roostKillSwitch.test.ts): with `roostEnabled = false`, a
+ * sample of the wired routes must answer 503 problem+json, not 200 or 500.
  *
- * The `gateOrProceed` helper is unit-tested in lib/roostKillSwitch.test.ts.
- * This file is the END-TO-END wiring test: for a representative sample of
- * the 17 wired routes, set `sites/{siteId}.roostEnabled = false` and
- * confirm the route returns 503 with a problem+json body indicating roost
- * is disabled (not a 200, not a 500, not a different problem type).
- *
- * Static-source assertion: at the bottom, we verify all 17 expected route
- * files import `gateOrProceed` so this test can't silently rot if a new
- * roost route ships without the gate.
+ * The static guard at the bottom checks every expected route file actually
+ * imports and calls the gate, so a new roost route can't ship without it.
  */
 
 import { readFileSync } from 'node:fs';
@@ -55,9 +50,8 @@ jest.mock('@/lib/apiAuth.server', () => {
 const SITE = 'site-disabled';
 
 function disableRoostForSite() {
-  // The site doc reader inside each route's `readSiteDocForGate` calls
-  // `getAdminDb().collection('sites').doc(siteId).get()`. The firestore-mock
-  // factory routes top-level site reads through `mocks.siteDocs`.
+  // `readSiteDocForGate` reads sites/{siteId}; the mock serves those from
+  // `mocks.siteDocs`.
   mocks.siteDocs.set(SITE, {
     owner: 'user-1',
     roostEnabled: false,
@@ -75,10 +69,6 @@ beforeEach(() => {
   mocks.siteDocs.clear();
   authed();
 });
-
-/* -------------------------------------------------------------------- */
-/*  Behavior: hitting a wired route with roostEnabled=false → 503        */
-/* -------------------------------------------------------------------- */
 
 describe('roost kill switch — wired route 503 behavior', () => {
   it('GET /api/roosts returns 503 when site has roostEnabled: false', async () => {
@@ -139,16 +129,7 @@ describe('roost kill switch — wired route 503 behavior', () => {
   });
 });
 
-/* -------------------------------------------------------------------- */
-/*  Static wiring guard: every roost route must import gateOrProceed     */
-/* -------------------------------------------------------------------- */
-
-/**
- * The 17 routes that ship with the kill switch wired (per dev docs +
- * `grep gateOrProceed app/api`). If any new roost route lands without the
- * gate, this test fails — it's cheap insurance against the most likely
- * regression for this feature: forgetting to wire a new endpoint.
- */
+/** Every route that must carry the kill switch. Add new roost routes here. */
 const WIRED_ROUTES: string[] = [
   'app/api/roosts/route.ts',
   'app/api/roosts/[roostId]/route.ts',
@@ -177,9 +158,7 @@ describe('roost kill switch — static wiring guard', () => {
   it.each(WIRED_ROUTES)('%s imports gateOrProceed from @/lib/roostKillSwitch', (relPath) => {
     const absPath = join(process.cwd(), relPath);
     const src = readFileSync(absPath, 'utf8');
-    // The route either imports the named export directly or imports the
-    // whole module — accept either. We additionally require an actual
-    // `gateOrProceed(` call to defend against import-without-use.
+    // Require a real call too — an unused import would still pass otherwise.
     expect(src).toMatch(
       /import\s+\{[^}]*gateOrProceed[^}]*\}\s+from\s+['"]@\/lib\/roostKillSwitch['"]/,
     );

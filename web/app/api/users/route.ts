@@ -18,7 +18,6 @@
  * Response:
  *   { users: UserView[], nextPageToken: string }
  *
- * api-sprint wave 3 track 3B (users-api).
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -99,10 +98,8 @@ export async function GET(request: NextRequest) {
       query = query.where('sites', 'array-contains', siteFilter);
     }
 
-    // Order by uid (doc id) for stable cursor pagination — there is no
-    // guaranteed indexable field across all user shapes (legacy users may
-    // have no createdAt). Doc id is always present and lexicographically
-    // stable.
+    // Order by doc id: no other field is guaranteed across all user shapes
+    // (legacy users have no createdAt), and it is lexicographically stable.
     const orderedQuery = query.orderBy('__name__');
 
     const page = await collectFilteredPage({

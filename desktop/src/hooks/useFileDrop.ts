@@ -4,29 +4,21 @@ import { useEffect, useRef, useState } from 'react'
 import { isRowDragging } from '@/lib/rowDrag'
 
 /**
- * OS file drops onto the window.
+ * OS file drops onto the window. Mount once at the app root — the whole window
+ * is the drop target.
  *
- * Tauri's own drag-drop events are used rather than the html5 ones, and that is
- * not a preference: with `dragDropEnabled` on (`tauri.conf.json`) the webview
- * hands drops to the host instead of the page, so `ondrop` never fires — and
- * the html5 event would only carry a `File`, while this carries the absolute
- * paths the service needs to launch anything.
+ * Tauri events, not html5: with `dragDropEnabled` (tauri.conf.json) the webview
+ * routes drops to the host so `ondrop` never fires, and html5 would only give a
+ * `File` where the service needs absolute paths.
  *
- * The window is the drop target, all of it, so this hook lives once at the top
- * of the app and reports whether something is currently hovering it.
- *
- * Reordering the process list is a *pointer* drag inside the same window
- * (`ProcessList`), which is a different gesture that happens to look identical
- * from here. It announces itself through `rowDrag`, and this hook ignores
- * everything while it is in progress rather than lighting up the drop overlay
- * mid-reorder.
+ * Pointer-drag reorders in `ProcessList` look identical from here, so they flag
+ * themselves via `rowDrag` and are ignored to avoid a mid-reorder overlay.
  */
 export function useFileDrop(onDrop: (paths: string[]) => void): boolean {
   const [dragOver, setDragOver] = useState(false)
 
-  // Kept in a ref so a caller that re-creates its handler every render — which
-  // is what a handler closing over the config normally does — does not tear
-  // down and re-register the host subscription with it.
+  // Ref so a caller re-creating its handler each render doesn't re-register the
+  // host subscription.
   const handler = useRef(onDrop)
   handler.current = onDrop
 
@@ -38,8 +30,7 @@ export function useFileDrop(onDrop: (paths: string[]) => void): boolean {
       .onDragDropEvent((event) => {
         const payload = event.payload
 
-        // A leave always clears, flag or not: nothing is over the window any
-        // more, whatever gesture put the overlay up.
+        // Leave always clears, flag or not — nothing is over the window.
         if (payload.type === 'leave') {
           setDragOver(false)
           return
@@ -59,8 +50,7 @@ export function useFileDrop(onDrop: (paths: string[]) => void): boolean {
         else unlisten = fn
       })
       .catch(() => {
-        // No host — `npm run dev` in a plain browser. There are no OS drops to
-        // receive there, and the rest of the window still works.
+        // No Tauri host (`npm run dev` in a plain browser) — no OS drops exist.
       })
 
     return () => {

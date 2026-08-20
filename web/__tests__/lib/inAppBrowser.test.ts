@@ -1,12 +1,10 @@
 /**
  * In-app browser detection (lib/inAppBrowser).
  *
- * The user-agent fixtures below are real strings, not invented ones — the
- * LinkedIn case is the exact UA from the production Sentry event that motivated
- * this module (OWLETTE-WEB-45). Detection here decides whether we hide a
- * working sign-in button, so the negative cases matter as much as the positive
- * ones: a false positive on real Safari would degrade the happy path for every
- * iPhone visitor.
+ * The UA fixtures are REAL strings; the LinkedIn one is verbatim from the Sentry
+ * event that motivated this module (OWLETTE-WEB-45). Detection decides whether a
+ * working sign-in button is hidden, so the negative cases matter as much as the
+ * positive ones — a false positive on real Safari breaks every iPhone visitor.
  */
 import {
   buildAndroidIntentUrl,
@@ -62,11 +60,9 @@ describe('detectInAppBrowser', () => {
     expect(detectInAppBrowser('')).toEqual({ isInApp: false });
   });
 
-  // An iOS Home Screen web app drops the Version/ and Safari/ tokens exactly
-  // like a webview does, so inapp-spy's catch-all iOS rule matches it and an
-  // installed PWA would otherwise be told it is "an in-app browser" inside its
-  // own window — and lose its passkey button. We ship an installable manifest
-  // (public/manifest.json, display: standalone), so this is a live path.
+  // An iOS Home Screen web app drops Version/ and Safari/ exactly like a webview,
+  // so inapp-spy's catch-all iOS rule matches an installed PWA and would strip its
+  // passkey button. We ship an installable manifest, so this path is live.
   describe('iOS standalone web app', () => {
     const setStandalone = (value: boolean | undefined) => {
       if (value === undefined) {
@@ -89,8 +85,7 @@ describe('detectInAppBrowser', () => {
 
     it('is still treated as in-app when navigator.standalone is absent', () => {
       setStandalone(undefined);
-      // Same ambiguous UA in a third-party webview that WebKit never flags —
-      // failing open here keeps unidentified host apps working.
+      // Same ambiguous UA in a webview WebKit never flags; fail open.
       expect(detectInAppBrowser(UA.iosStandalonePwa).isInApp).toBe(true);
     });
 
@@ -113,8 +108,8 @@ describe('isPopupUnavailableError', () => {
     expect(isPopupUnavailableError({ code })).toBe(true);
   });
 
-  // These already have their own handling in AuthContext — a user who closed
-  // the popup themselves must not be shown the in-app remediation.
+  // AuthContext handles these: a user who closed the popup must not see the
+  // in-app remediation.
   it.each([
     'auth/popup-closed-by-user',
     'auth/cancelled-popup-request',
@@ -159,8 +154,8 @@ describe('buildEscapeTarget', () => {
     expect(result).toContain('iab=1');
   });
 
-  // The marker is what tells the notice to escalate to manual instructions, so
-  // a second attempt must not accumulate duplicates in the URL.
+  // The marker escalates the notice to manual instructions, so a second attempt
+  // must not duplicate it in the URL.
   it('is idempotent', () => {
     const once = buildEscapeTarget('https://owlette.app/register');
     expect(buildEscapeTarget(once)).toBe(once);
@@ -182,9 +177,8 @@ describe('buildAndroidIntentUrl', () => {
     );
   });
 
-  // The `#Intent;…;end` block IS the fragment. A fragment left on the URL both
-  // breaks parsing and would let `#Intent;package=…` crafted on our own origin
-  // inject intent parameters, so it has to be dropped.
+  // The `#Intent;…;end` block IS the fragment: leaving one on the URL breaks
+  // parsing and lets a crafted `#Intent;package=…` inject intent parameters.
   it('drops any existing fragment', () => {
     const intent = buildAndroidIntentUrl(
       'https://owlette.app/register#Intent;scheme=https;package=com.attacker;end',
@@ -194,8 +188,8 @@ describe('buildAndroidIntentUrl', () => {
     expect(intent.match(/#Intent;/g)).toHaveLength(1);
   });
 
-  // `;` terminates an intent parameter, so a semicolon surviving unencoded in
-  // the query would let the query inject into the intent block.
+  // `;` terminates an intent parameter, so an unencoded one in the query injects
+  // into the intent block.
   it('percent-encodes semicolons carried in the query', () => {
     const intent = buildAndroidIntentUrl(
       buildEscapeTarget('https://owlette.app/register?redirect=%3Bpackage%3Dcom.attacker'),

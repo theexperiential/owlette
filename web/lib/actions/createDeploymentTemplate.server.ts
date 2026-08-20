@@ -1,12 +1,11 @@
 /**
- * createDeploymentTemplate action core (security-boundary-migration wave 3.6).
+ * createDeploymentTemplate action core, mirroring
+ * `useDeployments:createTemplate` (useDeployments.ts:130-142).
  *
- * Mirrors `useDeployments:createTemplate` (web/hooks/useDeployments.ts:130-142).
- * Note the different firestore path from the other preset types:
- * `sites/{siteId}/installer_templates/{templateId}` (not under `config/{siteId}`).
- *
- * Templates do NOT have a built-in/custom distinction — they are all
- * user-created. The route uses `setDoc` (no merge) for create.
+ * Unlike other preset types these live at
+ * `sites/{siteId}/installer_templates/{templateId}`, not under `config/{siteId}`,
+ * and have no built-in/custom split — all are user-created, so create is a
+ * plain `setDoc` with no merge.
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
@@ -106,9 +105,7 @@ export function validateDeploymentTemplateInput(
   }
 }
 
-/**
- * Mirrors useDeployments.ts:133 — `template-{epochMs}`.
- */
+/** Mirrors useDeployments.ts:133 — `template-{epochMs}`. */
 function generateTemplateId(): string {
   return `template-${Date.now()}`;
 }

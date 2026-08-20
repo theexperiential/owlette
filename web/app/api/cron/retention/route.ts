@@ -1,34 +1,20 @@
 /**
- * GET /api/cron/retention
+ * GET /api/cron/retention — deletes time-series data past its retention window.
+ * This is what actually enforces the privacy policy's §6 commitment.
  *
- * Deletes time-series data past its retention window. This is the job that
- * backs the retention commitment in the privacy policy (section 6) — before it
- * existed, the policy claimed "machine metrics: rolling 30-90 days" and
- * "event logs: up to 90 days" with nothing enforcing either.
+ * Prunes `metrics_history/{bucketId}` by document-id range (bucket ids encode
+ * UTC time, so no timestamp field and no composite index needed; the hourly
+ * `YYYY-MM-DD-HH` and legacy daily `YYYY-MM-DD` shapes sort correctly against
+ * a `YYYY-MM-DD` cutoff), and `sites/{siteId}/logs` by indexed `timestamp`.
  *
- * What it prunes:
- *   - `sites/{siteId}/machines/{machineId}/metrics_history/{bucketId}`
- *     Bucket ids encode UTC time (`YYYY-MM-DD-HH` hourly, `YYYY-MM-DD` legacy
- *     daily — see lib/metricsHistoryBuckets.ts), so these are deletable by
- *     document-id range with no timestamp field and no composite index. The
- *     two id shapes share a common date prefix and sort correctly against a
- *     `YYYY-MM-DD` cutoff: '2026-04-26-23' < '2026-04-27' < '2026-04-27-00'.
- *   - `sites/{siteId}/logs/{logId}` by the indexed `timestamp` field.
+ * NOT a Firestore TTL policy: TTL needs an `expireAt` on every document, i.e.
+ * changing every write path plus a backfill. This runs on cron-job.org.
  *
- * Deliberately NOT a Firestore TTL policy: TTL needs an `expireAt` field on
- * every document, which would mean changing the agent/function write paths and
- * backfilling existing data. This runs on cron-job.org alongside the other
- * scheduled jobs and needs no console-side configuration.
- *
- * Bounded by design. Each collection is drained page by page until it is empty
- * or the whole-run MAX_DELETES_PER_RUN budget is spent; hitting the budget is
- * the ONLY thing that sets `truncated: true`. Deleting oldest-first means
- * progress is monotonic across runs.
- *
- * `truncated` is a load-bearing signal, not decoration — it is how an operator
- * knows whether data older than the window still exists. Any change that can
- * leave stale documents behind while reporting `truncated: false` reintroduces
- * exactly the silent-underdelivery bug this job was written to remove.
+ * Bounded: each collection drains page by page, oldest-first, until empty or
+ * MAX_DELETES_PER_RUN is spent. Hitting the budget is the ONLY thing that sets
+ * `truncated: true` — that flag is how an operator knows stale data remains,
+ * so anything that can leave documents behind while reporting `false`
+ * reintroduces the silent-underdelivery bug this job was written to remove.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -37,20 +23,13 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { formatDayBucketId } from '@/lib/metricsHistoryBuckets';
 
 /**
- * Retention windows, in days. Mirrored in the privacy policy (section 6) — these
- * are a PUBLIC COMMITMENT, so the constant and the policy text move together.
+ * Retention windows in days. A PUBLIC COMMITMENT mirrored in privacy policy §6
+ * — the constant and the policy text move together.
  *
- * 400, not 365, and NOT 360. MetricsDetailPanel's "year" range resolves to
- * exactly `now - 365 days` (useHistoricalMetrics.getStartDate), so anything
- * below that silently truncates the chart — it renders fine, just with less
- * history than its own label claims, which is the kind of wrong nobody
- * notices. 365 exactly would leave the oldest bucket sitting on the deletion
- * boundary between cron runs; the extra ~5 weeks means the year view is always
- * fully backed.
- *
- * The "all" range is unbounded (`new Date(0)`), so no finite window satisfies
- * it by definition — it shows whatever is retained, which is the honest
- * reading of "all".
+ * 400, not 365: MetricsDetailPanel's "year" range is exactly `now - 365 days`
+ * (useHistoricalMetrics.getStartDate), so anything lower silently truncates
+ * the chart, and 365 exactly would sit the oldest bucket on the deletion
+ * boundary between cron runs. The extra ~5 weeks keeps the year view backed.
  */
 export const METRICS_RETENTION_DAYS = 400;
 export const LOGS_RETENTION_DAYS = 400;
@@ -67,17 +46,11 @@ function daysAgo(days: number): Date {
 }
 
 /**
- * Delete `refs` via BulkWriter.
- *
- * NOT db.batch(). A batched commit of 400 deletes failed in production with
- * `3 INVALID_ARGUMENT: Transaction too big` — the documented 500-writes-per-
- * commit figure is a ceiling, and the effective limit is lower because the
- * backend counts more than one unit per document. BulkWriter is Firestore's
- * supported primitive for bulk deletion: it batches internally, ramps
- * throughput to avoid contention, and retries retryable failures.
- *
- * Returns the number actually removed, so a partial failure is reported as a
- * smaller count rather than silently inflating the run's totals.
+ * Delete `refs` via BulkWriter, NOT db.batch(): a batched commit of 400 deletes
+ * failed in production with `3 INVALID_ARGUMENT: Transaction too big` — the
+ * 500-writes-per-commit figure is a ceiling and the backend counts more than
+ * one unit per document. Returns the count actually removed, so a partial
+ * failure shrinks the total instead of inflating it.
  */
 async function deleteRefs(
   db: FirebaseFirestore.Firestore,
@@ -98,8 +71,8 @@ async function deleteRefs(
   });
 
   for (const ref of refs) {
-    // The per-op promise rejects once onWriteError stops retrying; that case is
-    // already counted above, so swallow it here to avoid an unhandled rejection.
+    // Rejects once onWriteError stops retrying — already counted above, so
+    // swallow it to avoid an unhandled rejection.
     void writer.delete(ref).catch(() => undefined);
   }
 
@@ -127,11 +100,8 @@ export async function GET(request: NextRequest) {
     for (const site of sites.docs) {
       if (budget <= 0) break;
 
-      // --- event logs -------------------------------------------------
-      // Drain in pages rather than taking a single page per site. A single
-      // page left older data behind while the response still reported
-      // truncated:false, i.e. "nothing left to do" — which is exactly the
-      // silent-underdelivery failure this job exists to prevent.
+      // Drain in pages, not one page per site: a single page left older data
+      // behind while still reporting truncated:false.
       while (budget > 0) {
         const pageSize = Math.min(budget, QUERY_PAGE_SIZE);
         const staleLogs = await site.ref
@@ -153,7 +123,6 @@ export async function GET(request: NextRequest) {
 
       if (budget <= 0) break;
 
-      // --- metrics history --------------------------------------------
       const machines = await site.ref.collection('machines').get();
       for (const machine of machines.docs) {
         if (budget <= 0) break;
@@ -194,8 +163,7 @@ export async function GET(request: NextRequest) {
         metrics: METRICS_RETENTION_DAYS,
         logs: LOGS_RETENTION_DAYS,
       },
-      // true => the per-run ceiling was hit and older data remains; the next
-      // scheduled run continues from the same oldest-first position.
+      // true => ceiling hit, older data remains; next run resumes oldest-first.
       truncated,
     });
   } catch (error) {

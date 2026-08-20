@@ -1,42 +1,24 @@
 """
-owlette Site Configuration - Device Code Pairing Flow
+owlette site configuration — device code pairing flow.
 
-Runs during installer to configure Firebase site_id via device code authentication.
-
-This script:
-1. Requests a pairing phrase from the server (3 random words, e.g., "silver-compass-drift")
-2. Displays the phrase in the console and lets the operator opt in to opening
-   the pairing page in a browser
-3. User selects a site on owlette.app/add (or enters phrase on the dashboard)
-4. Agent polls for authorization until the user approves
-5. Receives and stores OAuth tokens securely (C:\\ProgramData\\owlette\\.tokens.enc)
-6. Writes minimal configuration to config.json (site_id, project_id, api_base)
-
-Three authorization methods:
-- Browser: Operator opens owlette.app/add with phrase pre-filled, then selects a site and authorizes
-- Manual: Visit owlette.app/add → enter phrase → select site → authorize
-- Dashboard: Click "+" on dashboard → enter phrase → authorize
-
-For silent/bulk deployment:
-    python configure_site.py --add silver-compass-drift
+Runs during install: requests a 3-word pairing phrase, shows it, polls until an
+operator authorizes it on owlette.app/add or the dashboard, then stores the OAuth
+tokens (C:\\ProgramData\\owlette\\.tokens.enc) and writes site_id / project_id /
+api_base into config.json.
 
 Usage:
     python configure_site.py [--url URL] [--add PHRASE] [--open-browser] [--no-browser]
 
     --url URL        Override the API base URL
     --add PHRASE     Pre-authorized pairing phrase (skips browser, polls immediately)
-    --open-browser   Open the pairing page immediately instead of waiting for
-                     the operator to press Enter.
-    --no-browser     Do not offer to open a browser on this machine; just print the
-                     pairing link and start polling. Use on kiosks/signage/media
-                     servers showing live content, headless boxes, or over RDP,
-                     where you'll authorize from your phone or another computer.
-                     Can also be set with the OWLETTE_NO_BROWSER=1 env var.
+    --open-browser   Open the pairing page immediately instead of waiting on Enter
+    --no-browser     Never offer a local browser; print the link and poll. For
+                     kiosks/signage/media servers/headless/RDP, where you
+                     authorize from another device. Also OWLETTE_NO_BROWSER=1.
 
 Headless modes (the desktop app's bridge into the agent — see
-`_run_headless_mode`). Each writes one JSON object per line to stdout and
-nothing else, so the caller can stream progress; the console/clipboard UI above
-is never touched:
+`_run_headless_mode`). Each writes one JSON object per line to stdout and nothing
+else, and never touches the console/clipboard UI above:
 
     --json-progress      Pair this machine, emitting phrase/status/authorized/error.
     --leave              Leave the current site (config, cache, service, machine doc).
@@ -57,7 +39,6 @@ from typing import Optional, Callable
 
 import shared_utils
 
-# Use ProgramData for config (proper Windows location)
 CONFIG_PATH = Path(shared_utils.get_data_path('config/config.json'))
 
 # Default timeout for polling (10 minutes, matching server-side expiry)
@@ -251,7 +232,6 @@ def _save_config(site_id: str, environment: str, api_base: str, project_id: str)
     config['firebase']['api_base'] = api_base
     config['environment'] = environment
 
-    # Remove legacy token field if present
     if 'token' in config.get('firebase', {}):
         del config['firebase']['token']
 
@@ -307,7 +287,6 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
     """
     from auth_manager import AuthManager, AuthenticationError
 
-    # Determine environment
     environment, default_api_base, project_id = _determine_environment(api_base or '')
     api_base = api_base or default_api_base
 
@@ -319,7 +298,6 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
         print(f"  {DIM}api: {api_base}{RESET}")
         print()
 
-    # Check if already configured
     if show_prompts and not add_phrase and CONFIG_PATH.exists():
         try:
             with open(CONFIG_PATH, 'r') as f:
@@ -343,52 +321,8 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                 print("Polling for authorization...")
                 print()
 
-            # We need the device code to poll. For pre-authorized phrases,
-            # the agent still needs to request a device code first, then poll.
-            # But in the /ADD= flow, the admin already generated the phrase
-            # from the dashboard. The agent needs to look up this phrase.
-            # The server returns a deviceCode when generating the phrase.
-            # For /ADD=, we call the device-code endpoint which returns
-            # both the phrase and deviceCode. But we already have the phrase.
-            # Solution: request a new device code, but the server will see
-            # the phrase is already authorized and the poll will return immediately.
-            #
-            # Actually, for /ADD= the flow is:
-            # 1. Admin generates phrase on dashboard (calls device-code endpoint)
-            # 2. Admin authorizes it immediately for their site
-            # 3. Admin gives phrase to deployment tech
-            # 4. Agent calls device-code endpoint with the phrase... but the
-            #    phrase is the document ID, not something the agent sends.
-            #
-            # Better approach: the /ADD= phrase IS the deviceCode-equivalent.
-            # The agent calls the poll endpoint with a special "pairPhrase" field
-            # instead of deviceCode. But that changes the API contract.
-            #
-            # Simplest approach: Agent requests its own device code, but passes
-            # the pre-authorized phrase. If the phrase was already authorized,
-            # the server can return tokens immediately. But the agent doesn't
-            # control the phrase...
-            #
-            # Cleanest approach for /ADD=: Add a dedicated exchange endpoint
-            # that takes a pairPhrase directly and returns tokens if authorized.
-            # For now, we'll use a workaround: request our own device code,
-            # then have the installer tech also manually authorize via dashboard.
-            #
-            # WAIT - rethinking this. The /ADD= flow should work like this:
-            # 1. Admin clicks "Generate Code" on dashboard
-            # 2. Server creates device_codes/{phrase} with status: 'pending'
-            # 3. Admin clicks "Authorize" on dashboard for that phrase
-            # 4. Server updates status to 'authorized' and generates tokens
-            # 5. Agent runs with /ADD=phrase, requests device-code endpoint
-            #    BUT this creates a NEW phrase, not the admin's phrase.
-            #
-            # The RIGHT approach: Agent needs to poll using the admin's phrase.
-            # The poll endpoint should accept either deviceCode OR pairPhrase.
-            # Let's modify the poll to also accept pairPhrase as a lookup key.
-            #
-            # For now: the agent will poll using the pairPhrase directly
-            # (the poll endpoint looks up by deviceCodeHash, but we can also
-            # look up the document directly by phrase since phrase = document ID).
+            # /ADD= polls with the pairPhrase directly: the admin's phrase IS the
+            # device_codes document id, so the agent needs no device code of its own.
             import requests as http_requests
 
             poll_url = f"{api_base}/agent/auth/device-code/poll"
@@ -424,13 +358,11 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                         if not access_token or not refresh_token or not site_id:
                             return (False, "Invalid response from server (missing tokens)", None)
 
-                        # Store tokens
                         expiry_timestamp = time.time() + expires_in
                         auth_manager.storage.save_refresh_token(refresh_token)
                         auth_manager.storage.save_access_token(access_token, expiry_timestamp)
                         auth_manager.storage.save_site_id(site_id)
 
-                        # Save config
                         _save_config(site_id, environment, api_base, project_id)
 
                         if show_prompts:
@@ -477,9 +409,8 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
             interval = device_data.get('interval', 5)
             expires_in = device_data.get('expiresIn', 600)
 
-            # Copy the phrase to the clipboard so the operator can paste it
-            # straight into owlette.app/add instead of retyping. Best-effort —
-            # a locked/unavailable clipboard never blocks pairing.
+            # Copy the phrase so the operator can paste it into owlette.app/add.
+            # Best-effort — a locked/unavailable clipboard never blocks pairing.
             phrase_copied = _copy_to_clipboard(pair_phrase) if copy_clipboard else False
 
             if show_prompts:
@@ -497,17 +428,16 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                 print(f"{DIM}{'=' * 60}{RESET}")
                 print()
 
-            # Notify an embedding caller (the GUI) so it can render its own
-            # phrase UI. Failures here must never break pairing.
+            # Let an embedding caller (the GUI) render its own phrase UI. A failing
+            # callback must never break pairing.
             if on_phrase:
                 try:
                     on_phrase({**device_data, 'clipboardCopied': phrase_copied})
                 except Exception as cb_err:
                     logging.warning(f"on_phrase callback failed: {cb_err}")
 
-            # Opening the local browser is opt-in. The console Enter prompt is
-            # handled on a daemon thread so polling still starts immediately.
-            # The GUI renders its own open button from on_phrase.
+            # Opening the local browser is opt-in; the Enter prompt runs on a daemon
+            # thread so polling starts immediately. The GUI uses on_phrase instead.
             browser_opened = _open_browser(pairing_url) if open_browser else False
 
             stop_open_prompt = None
@@ -523,8 +453,8 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                 print()
                 print(f"  {BOLD}waiting for authorization...{RESET}")
 
-            # Poll for authorization. Authorization from ANY device ends the
-            # wait; should_cancel lets a GUI Cancel abort it promptly.
+            # Authorization from ANY device ends the wait; should_cancel lets a GUI
+            # Cancel abort promptly.
             try:
                 success = auth_manager.poll_device_code(
                     device_code=device_code,
@@ -539,7 +469,6 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
             if success:
                 site_id = auth_manager._site_id
 
-                # Save config
                 _save_config(site_id, environment, api_base, project_id)
 
                 if show_prompts:
@@ -553,8 +482,7 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
 
                 return (True, "Configuration successful", site_id)
             else:
-                # poll_device_code returns False only on cancellation; a real
-                # failure/expiry raises AuthenticationError (handled below).
+                # False only on cancellation; failure/expiry raises AuthenticationError.
                 if should_cancel and should_cancel():
                     return (False, "Cancelled by user", None)
                 return (False, "Authorization failed", None)
@@ -581,7 +509,6 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
         if show_prompts:
             print(f"Error: {error_msg}")
 
-        # Log to debug file
         import traceback
         try:
             debug_log = Path(shared_utils.get_data_path('logs/pairing_debug.log'))
@@ -614,40 +541,28 @@ def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts
                             on_phrase=on_phrase, should_cancel=should_cancel)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Headless modes — the desktop app's bridge into the agent
-# ─────────────────────────────────────────────────────────────────────────────
+# Headless modes — the desktop app's bridge into the agent.
 #
-# The desktop app (`desktop/`) owns no cloud client and no token crypto; both
-# stay here, behind the bundled interpreter. It spawns
-# `{root}\python\python.exe {root}\agent\src\configure_site.py <mode>` and reads
-# stdout, so every mode below speaks one protocol: one JSON object per line,
-# `{"event": ..., "value": ...}`, flushed as it happens. Events:
+# The desktop app owns no cloud client and no token crypto; both stay here behind
+# the bundled interpreter. It spawns `configure_site.py <mode>` and reads stdout,
+# so every mode speaks one protocol: one JSON object per line,
+# `{"event": ..., "value": ...}`, flushed as it happens.
 #
-#   phrase      the pairing phrase and its URLs, once, as soon as the server
-#               issues a device code                          (--json-progress)
+#   phrase      pairing phrase and its URLs, once              (--json-progress)
 #   status      human-readable progress, safe to show verbatim      (all modes)
-#   authorized  pairing completed; value carries `siteId`    (--json-progress)
+#   authorized  pairing completed; value carries `siteId`     (--json-progress)
 #   done        a non-pairing mode completed; value carries its outcome
 #   error       the mode failed; value is the message to show
 #
-# Exactly one terminal event (`authorized`, `done` or `error`) is emitted per
-# run, and the exit code agrees with it: 0 for success, 1 for failure.
-#
-# Nothing here writes to stdout except `_emit`, and none of it touches the
-# console/clipboard affordances above — those belong to the installer flow,
-# which is left byte-for-byte as it was.
+# Exactly one terminal event (authorized/done/error) per run, and the exit code
+# agrees: 0 success, 1 failure. Only `_emit` writes to stdout.
 
-# How often --json-progress repeats its "waiting" status while polling. The
-# desktop app renders a live elapsed time from these; more often would be noise,
-# less often would let the window look stalled.
+# Cadence of the --json-progress "waiting" status; the desktop app renders a live
+# elapsed time from it.
 _STATUS_HEARTBEAT_SECONDS = 15
 
-# Settle time after stopping and after starting the service. Ported from
-# `owlette_gui.on_leave_site_click`, where it existed because `nssm stop`
-# returned before its child had died. `owlette-host stop`/`start` are
-# synchronous, so these are now only a margin for Firestore to catch up with the
-# write the agent made on its way out.
+# Settle margin around service stop/start — now only for Firestore to catch up
+# with the leave write (`owlette-host stop`/`start` are synchronous, unlike nssm).
 _SERVICE_STOP_SETTLE = 3
 _SERVICE_START_SETTLE = 2
 
@@ -756,8 +671,8 @@ def run_json_progress(api_base: str = None, timeout_seconds: int = TIMEOUT_SECON
     last_heartbeat = [time.monotonic()]
 
     def heartbeat() -> bool:
-        # Polled every ~0.25 s by `AuthManager.poll_device_code`; used here only
-        # to keep the window's status line alive. Never cancels.
+        # Polled every ~0.25 s by `AuthManager.poll_device_code`; keeps the status
+        # line alive. Never cancels.
         now = time.monotonic()
         if now - last_heartbeat[0] >= _STATUS_HEARTBEAT_SECONDS:
             last_heartbeat[0] = now
@@ -790,14 +705,10 @@ def run_json_progress(api_base: str = None, timeout_seconds: int = TIMEOUT_SECON
         _emit('error', message)
         return 1
 
-    # The service reads `firebase.site_id` once at startup, so it has to be
-    # restarted before this machine appears on the dashboard — the same thing
-    # `owlette_gui._restart_owlette_service` did after a successful join.
-    #
-    # Stopping OwletteService needs SERVICE_STOP, which a standard user does not
-    # have, so this genuinely fails in the field. The GUI only logged it and left
-    # the operator wondering why the machine never showed up; the outcome is
-    # reported here so the caller can say what to do instead.
+    # The service reads `firebase.site_id` once at startup, so it must restart
+    # before this machine appears on the dashboard. Stopping OwletteService needs
+    # SERVICE_STOP, which a standard user lacks — so the outcome is reported to
+    # the caller rather than only logged.
     _emit('status', 'restarting the service')
     stopped = _host_service('stop')
     time.sleep(_SERVICE_STOP_SETTLE)
@@ -838,8 +749,8 @@ def run_leave_site() -> int:
     shared_utils.save_config(config)
     logging.info("Firebase disabled and site_id cleared in config")
 
-    # The service prefers the cached cloud config when it has one; leaving it in
-    # place would hand the next start a stale site.
+    # The service prefers the cached cloud config; leaving it would hand the next
+    # start a stale site.
     try:
         cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
         if os.path.exists(cache_path):
@@ -862,8 +773,8 @@ def run_leave_site() -> int:
         deregistered = True
         logging.info("Machine document deleted from Firestore")
     except Exception as e:
-        # Non-fatal, exactly as in the GUI: the machine is already detached
-        # locally, and an admin can remove the row from the dashboard.
+        # Non-fatal as in the GUI: already detached locally, and an admin can
+        # remove the dashboard row.
         logging.warning(f"Failed to delete machine from Firestore (non-critical): {e}")
     finally:
         if client is not None:
@@ -1046,8 +957,8 @@ def run_reboot_now() -> int:
         import session_state
         session_state.set_intent('owlette_reboot')
     except Exception as e:
-        # A missing intent only costs a spurious "unexpected reboot" warning;
-        # it must never stop the reboot the operator asked for.
+        # A missing intent only costs a spurious "unexpected reboot" warning; it
+        # must never stop the reboot the operator asked for.
         logging.warning(f"session_state.set_intent failed before reboot: {e}")
 
     _emit('status', 'restarting windows')
@@ -1083,8 +994,7 @@ def run_dismiss_reboot() -> int:
     api_base = firebase_cfg.get('api_base') or shared_utils.get_api_base_url()
 
     if not site_id:
-        # Nothing to clear on an unpaired machine, and no reason to fail the
-        # operator's dismissal over it.
+        # Nothing to clear on an unpaired machine; never fail the dismissal over it.
         _emit('done', {'cleared': False, 'reason': 'not paired'})
         return 0
 
@@ -1188,18 +1098,15 @@ def main():
     if headless_exit_code is not None:
         return headless_exit_code
 
-    # Determine API base
     api_base = args.url
     if not api_base:
         env_url = os.environ.get("OWLETTE_SETUP_URL", "")
         if 'dev.owlette.app' in env_url:
             api_base = 'https://dev.owlette.app/api'
 
-    # Suppress the local browser prompt via flag or env var (for kiosks/
-    # headless/remote installs where you authorize from another device).
+    # Browser prompt suppressed by flag or env var (kiosks/headless/remote).
     no_browser = args.no_browser or os.environ.get('OWLETTE_NO_BROWSER', '').strip().lower() in ('1', 'true', 'yes')
 
-    # Write debug log
     debug_log = Path(shared_utils.get_data_path('logs/pairing_debug.log'))
     Path(shared_utils.get_data_path('logs')).mkdir(parents=True, exist_ok=True)
     with open(debug_log, 'w') as f:

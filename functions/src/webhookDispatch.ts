@@ -1,24 +1,12 @@
 /**
- * Roost webhook dispatcher cloud function (wave 5.1).
+ * Roost webhook dispatcher cloud function.
  *
- * Two entrypoints + one scheduled retry pump:
+ *   emitWebhook        — HTTPS POST `{event, siteId, data}` from roost
+ *                        producers; fans out to matching enabled subscriptions.
+ *   processRetryQueue  — scheduled every minute; re-attempts due `webhook_deliveries`.
  *
- *   emitWebhook   — HTTPS POST. Called by roost producers (the web API
- *                    routes + firestore-trigger-driven pipelines) with
- *                    `{event, siteId, data}`. Fans out to every enabled
- *                    subscription that matches the event and the site.
- *
- *   processRetryQueue — scheduled every minute. Walks the
- *                    `webhook_deliveries` collection, re-attempting any
- *                    pending delivery whose `nextAttemptAt` is due.
- *                    Applies backoff + give-up logic from webhookLogic.ts.
- *
- *   handleInboundProbe — HTTPS GET. Receives verifiable probe signatures
- *                    so operators can test their receiver wiring without
- *                    producing a real roost event.
- *
- * Pure decision logic lives in lib/webhookLogic.ts (canonicalisation,
- * signing, backoff, response classification, subscription filtering).
+ * Pure decision logic (canonicalisation, signing, backoff, response
+ * classification, subscription filtering) lives in lib/webhookLogic.ts.
  */
 
 import { onRequest } from 'firebase-functions/v2/https';
@@ -42,10 +30,6 @@ import {
   type WebhookPayload,
 } from './lib/webhookLogic';
 
-/* --------------------------------------------------------------------- */
-/*  Types                                                                */
-/* --------------------------------------------------------------------- */
-
 export interface DeliveryRecord {
   /** Stable id — also the firestore doc id. */
   id: string;
@@ -64,10 +48,9 @@ export interface DeliveryRecord {
   createdAt: number;
   completedAt?: number;
   /**
-   * Signing secret pinned at build time. Used by `attemptDelivery` to
-   * re-sign with a fresh `t=` on every retry — otherwise receivers
-   * that enforce the 5-min replay tolerance would reject any retry
-   * past the backoff window. Never shipped off-server.
+   * Signing secret pinned at build time so `attemptDelivery` can re-sign with a
+   * fresh `t=` per retry — receivers enforcing the 5-min replay tolerance would
+   * otherwise reject any retry past the backoff window. Never leaves the server.
    */
   secret: string;
 }
@@ -92,30 +75,18 @@ export interface SubscriptionStore {
   markDisabled(id: string, reason: string): Promise<void>;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Pure orchestrator: prepare a delivery                                */
-/* --------------------------------------------------------------------- */
-
-/**
- * Build a DeliveryRecord from a payload + subscription. No IO. Caller
- * persists the record so a scheduled retry pump can pick it up.
- */
+/** Build a DeliveryRecord from a payload + subscription. No IO; caller persists. */
 export function buildDelivery(
   payload: WebhookPayload,
   subscriber: Subscription,
   now: Date = new Date(),
 ): DeliveryRecord {
   const canonicalBody = canonicalJson(payload);
-  // The Roost-Delivery header is stable per (event, site, body) so the
-  // receiver can dedup retries cleanly. The firestore record id needs
-  // per-subscriber uniqueness — otherwise two subscribers for the same
-  // event would collide and only one delivery would be tracked. Combine
-  // `{publicId}__{subId}` for storage; the header stays the pure content
-  // hash so receivers see a stable id across retries. Signature is
-  // stripe-style `t=<unix>,v1=<hex>` — the timestamp is part of the
-  // signed material, so `nowMs` is pinned here to `now` rather than the
-  // `occurredAt` of the payload (a replay of a month-old event should
-  // still be rejectable on timestamp grounds).
+  // Roost-Delivery stays the pure content hash so receivers dedup retries; the
+  // firestore id appends `__{subId}` because two subscribers on one event would
+  // otherwise collide and only one delivery would be tracked. Signature is
+  // stripe-style `t=<unix>,v1=<hex>` signed over `now`, not `occurredAt`, so a
+  // month-old replay is still rejectable on timestamp grounds.
   const publicDeliveryId = deliveryId(payload, canonicalBody);
   const recordId = `${publicDeliveryId}__${subscriber.id}`;
   const signature = signPayload(canonicalBody, subscriber.secret, now.getTime());
@@ -141,10 +112,6 @@ export function buildDelivery(
   };
 }
 
-/* --------------------------------------------------------------------- */
-/*  Pure orchestrator: attempt one delivery                              */
-/* --------------------------------------------------------------------- */
-
 export interface AttemptDeps {
   http: HttpClient;
   store: DeliveryStore;
@@ -161,10 +128,9 @@ export interface AttemptResult {
 }
 
 /**
- * Attempt to deliver `record` once. Updates its state + the store atomically:
- *   - success: state=succeeded, completedAt
- *   - transient failure: attempt++, nextAttemptAt=now+backoff, state=pending
- *   - permanent failure or give-up: state=failed, completedAt, may disable subscription
+ * Deliver `record` once, updating state + store:
+ * success → succeeded; transient → pending with backoff; permanent/give-up →
+ * failed (may disable the subscription).
  */
 export async function attemptDelivery(
   record: DeliveryRecord,
@@ -173,12 +139,9 @@ export async function attemptDelivery(
   const now = deps.now ? deps.now() : new Date();
   const attempt = record.attempt + 1;
 
-  // Re-sign with the current wall-clock so receivers that enforce the
-  // 5-min tolerance accept retries past the backoff window. The stored
-  // signature in `record.headers` is just the last attempt's value; it's
-  // overwritten here for the new POST and then persisted back on the
-  // updated record below (so the ui shows the signature that was
-  // actually transmitted).
+  // Re-sign against the current wall-clock so receivers enforcing the 5-min
+  // tolerance accept retries past the backoff window. Persisted back onto the
+  // record so the UI shows the signature actually transmitted.
   const freshSignature = signPayload(record.canonicalBody, record.secret, now.getTime());
   const headers = { ...record.headers, 'Roost-Signature': freshSignature };
 
@@ -205,7 +168,6 @@ export async function attemptDelivery(
     return { outcome, record: updated };
   }
 
-  // permanent failure → give up now (no retry)
   if (outcome.kind === 'permanent_failure') {
     const updated: DeliveryRecord = {
       ...record,
@@ -220,7 +182,6 @@ export async function attemptDelivery(
     return { outcome, record: updated };
   }
 
-  // transient failure: check give-up gate, otherwise schedule next retry.
   if (shouldGiveUp(attempt, deps.backoff)) {
     const updated: DeliveryRecord = {
       ...record,
@@ -252,10 +213,6 @@ export async function attemptDelivery(
   return { outcome, record: updated };
 }
 
-/* --------------------------------------------------------------------- */
-/*  Emit: fan-out to subscribers                                         */
-/* --------------------------------------------------------------------- */
-
 export interface EmitDeps {
   subscriptions: SubscriptionStore;
   store: DeliveryStore;
@@ -263,11 +220,8 @@ export interface EmitDeps {
 }
 
 /**
- * Load subscriptions, filter by siteId + event, build one DeliveryRecord
- * each, persist them as `pending`. The retry pump will pick them up on
- * the next scheduled tick; we don't block the caller on HTTP.
- *
- * Returns the records created for observability.
+ * Filter subscriptions by siteId + event and persist one `pending` record each.
+ * The retry pump delivers on its next tick — the caller never blocks on HTTP.
  */
 export async function emit(
   payload: WebhookPayload,
@@ -285,10 +239,6 @@ export async function emit(
   }
   return records;
 }
-
-/* --------------------------------------------------------------------- */
-/*  Retry pump                                                           */
-/* --------------------------------------------------------------------- */
 
 export async function pumpRetryQueue(deps: AttemptDeps): Promise<{
   attempted: number;
@@ -314,10 +264,6 @@ export async function pumpRetryQueue(deps: AttemptDeps): Promise<{
 
   return { attempted, succeeded, failed, retried };
 }
-
-/* --------------------------------------------------------------------- */
-/*  HTTP + scheduled entrypoints                                         */
-/* --------------------------------------------------------------------- */
 
 export const emitWebhook = onRequest(
   { timeoutSeconds: 30, memory: '256MiB' },
@@ -354,7 +300,6 @@ export const emitWebhook = onRequest(
   },
 );
 
-/** Every minute — cheap to run; picks up due retries. */
 export const processRetryQueue = onSchedule(
   { schedule: 'every 1 minutes', timeoutSeconds: 180, memory: '256MiB' },
   async () => {
@@ -370,10 +315,6 @@ export const processRetryQueue = onSchedule(
   },
 );
 
-/* --------------------------------------------------------------------- */
-/*  Production wiring                                                    */
-/* --------------------------------------------------------------------- */
-
 function getDefaultHttpClient(): HttpClient {
   return {
     async post(url, headers, body) {
@@ -382,7 +323,7 @@ function getDefaultHttpClient(): HttpClient {
           method: 'POST',
           headers,
           body,
-          // receivers must respond within 10 s.
+          // receivers must respond within 10s
           signal: AbortSignal.timeout(10_000),
         });
         return { status: resp.status };
@@ -417,10 +358,9 @@ function getDefaultDeliveryStore(): DeliveryStore {
 
 function getDefaultSubscriptionStore(): SubscriptionStore {
   const db = admin.firestore();
-  // per-site subscriptions at sites/{siteId}/webhooks/{id}.
-  // keeping them site-scoped is the right isolation story; listAll
-  // collectionGroup-queries across sites so emit() can filter by siteId
-  // without knowing the whole site list.
+  // Subscriptions are site-scoped at sites/{siteId}/webhooks/{id} for isolation;
+  // listAll uses a collectionGroup query so emit() can filter by siteId without
+  // enumerating sites.
   const group = db.collectionGroup('webhooks');
   return {
     async listAll() {
@@ -431,7 +371,6 @@ function getDefaultSubscriptionStore(): SubscriptionStore {
       });
     },
     async markDisabled(id, reason) {
-      // find the doc via collection group; update in-place.
       const snap = await group.where('__name__', '==', id).limit(1).get();
       if (snap.empty) return;
       await snap.docs[0].ref.update({

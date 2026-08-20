@@ -1,13 +1,9 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/securityConfig.server.ts` — the kill-switch config
- * reader. Covers:
- *   - firestore doc read parses both flag fields
- *   - 5-second in-memory ttl cache behavior
- *   - env-var fallback when firestore throws
- *   - auto-expiry: stale `*_expiresAt` re-enables the flag
- *   - flip-state-change emits a warn-level metric
+ * Unit tests for `web/lib/securityConfig.server.ts` — the kill-switch config reader:
+ * flag parsing, the 5-second in-memory ttl cache, env-var fallback when firestore throws,
+ * auto-expiry (a stale `*_expiresAt` re-enables the flag), and the warn-level flip metric.
  */
 
 let getDocResult: { exists: boolean; data: unknown } | Error = { exists: false, data: undefined };

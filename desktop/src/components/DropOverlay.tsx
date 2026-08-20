@@ -1,16 +1,11 @@
 import { FilePlus2 } from 'lucide-react'
 
 /**
- * "Let go and I will take that."
+ * Whole-window drop affordance. A framed edge, not a scrim — the list underneath
+ * keeps its own empty-state highlight, which is the more specific hint.
  *
- * The whole window is the drop target, so the whole window says so — a framed
- * edge rather than a dimming scrim, because the list underneath keeps its own
- * empty-state highlight and covering it up would hide the more specific hint
- * behind the more general one.
- *
- * `pointer-events-none` is load-bearing: Tauri's drop events come from the host,
- * not from the page, but a full-window element that swallowed clicks would make
- * a stuck overlay lock the app rather than just look wrong.
+ * `pointer-events-none` is load-bearing: drop events come from the Tauri host,
+ * so swallowing clicks would turn a stuck overlay into a locked app.
  */
 export function DropOverlay() {
   return (

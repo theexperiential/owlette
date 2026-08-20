@@ -1,32 +1,24 @@
 /** @jest-environment node */
 
 /**
- * Tests for `/api/passkeys/register/verify` — the wave-2 factor-inventory,
- * enrollment-gate and first-factor session promotion behaviour.
+ * `/api/passkeys/register/verify`: factor inventory, enrollment gate, and
+ * first-factor session promotion. Three invariants:
  *
- * Three things have to hold:
+ *   1. First factor flips `mfaEnrolled`/`requiresMfaSetup` via
+ *      `applyMfaFactorChange` AND promotes the session. Without the promotion,
+ *      a passkey-only signup bounces to /verify-2fa with nothing to present.
+ *   2. Later factors must NOT re-promote — the ceremony substitutes for a
+ *      challenge exactly once.
+ *   3. `/api/*` is not MFA-gated, so an unchallenged session on an account that
+ *      already has a factor must 403 `mfa_challenge_required` before the
+ *      challenge is consumed — otherwise it could enroll its own credential
+ *      and step up with it.
  *
- *   1. FIRST factor. Enrolling a passkey on a zero-factor account flips
- *      `mfaEnrolled` true / `requiresMfaSetup` false (through
- *      `applyMfaFactorChange`, never a direct write) AND promotes the current
- *      session with `markSessionMfaVerified`. Without the promotion the very
- *      next AuthContext session-create bounces a passkey-only signup to
- *      /verify-2fa with nothing to present — a self-inflicted lockout.
- *   2. SUBSEQUENT factors do NOT re-promote. The promotion is the enrollment
- *      ceremony standing in for a challenge exactly once; after that a step-up
- *      must come from a real challenge.
- *   3. THE ENROLLMENT GATE. `/api/*` is not MFA-gated, so an unchallenged
- *      session on an account that ALREADY holds a factor must not be able to
- *      add an attacker-controlled credential and then step up with it: 403
- *      `mfa_challenge_required`, before the challenge is even consumed.
- *
- * `lib/mfaFactors.server.ts` is deliberately NOT mocked — the assertions are
- * about the fields that actually land on the user document, so the real
- * single-writer runs against the in-memory admin-SDK mock (the same store-backed
- * `getAdminDb` chain as `__tests__/lib/mfaFactors.test.ts`).
+ * `lib/mfaFactors.server.ts` is deliberately NOT mocked: the assertions are
+ * about the fields the real single-writer lands on the user doc.
  */
 
-// --- Mutable state backing the mocked admin SDK (reset in beforeEach). ---
+// Mutable state behind the mocked admin SDK; reset in beforeEach.
 let users: Map<string, Record<string, unknown>>;
 let passkeys: Map<string, string[]>;
 
@@ -51,8 +43,7 @@ jest.mock('@/lib/withRateLimit', () => ({
 }));
 
 jest.mock('@/lib/apiAuth.server', () => {
-  // Defined inline because the factory is hoisted ABOVE module-scope code
-  // by jest — top-level classes aren't yet initialised here.
+  // Inline: jest hoists this factory above module-scope class initialisation.
   class ApiAuthError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -92,8 +83,8 @@ jest.mock('@/lib/auditLogClient', () => ({
   emitMutation: (...a: unknown[]) => mockEmitMutation(...a),
 }));
 
-// Store-backed admin-SDK mock. The real `applyMfaFactorChange` runs on top of
-// it, so the payload assertions below are the payload the route really writes.
+// Store-backed so the real `applyMfaFactorChange` runs and the payload
+// assertions below are the route's actual write.
 function makePasskeyCollectionRef(uid: string) {
   return {
     get: async () => {
@@ -158,8 +149,7 @@ beforeEach(() => {
 
   mockRequireSessionUser.mockResolvedValue(UID);
   mockAssertActiveUser.mockImplementation(async () => users.get(UID) ?? {});
-  // Default: an unchallenged session. The zero-factor cases must pass anyway —
-  // that is the mandatory-setup path the gate deliberately leaves open.
+  // Unchallenged by default; zero-factor cases must still pass (setup path).
   mockGetSessionData.mockResolvedValue({ userId: UID, expiresAt: Date.now() + 1000 });
   mockMarkSessionMfaVerified.mockResolvedValue(undefined);
   mockGetAndDeleteChallenge.mockResolvedValue({
@@ -167,8 +157,7 @@ beforeEach(() => {
     userId: UID,
     type: 'registration',
   });
-  // Mirror the real `storePasskey`: the credential lands in the subcollection,
-  // which is what `recountPasskeys` reads back.
+  // Must land in the subcollection — that's what `recountPasskeys` reads.
   mockStorePasskey.mockImplementation(async (uid: string, credential: { credentialId: string }) => {
     passkeys.set(uid, [...(passkeys.get(uid) ?? []), credential.credentialId]);
   });
@@ -205,7 +194,6 @@ describe('POST /api/passkeys/register/verify — first factor', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ success: true, credentialId: NEW_CREDENTIAL_ID });
 
-    // Inventory written by the single writer — not by this route.
     const write = inventoryWrite();
     expect(write).toBeTruthy();
     expect(write!.payload).toMatchObject({
@@ -214,10 +202,8 @@ describe('POST /api/passkeys/register/verify — first factor', () => {
       requiresMfaSetup: false,
     });
 
-    // The enrollment ceremony stands in for a challenge exactly once.
     expect(mockMarkSessionMfaVerified).toHaveBeenCalledTimes(1);
 
-    // Audit row for the credential add.
     expect(mockEmitMutation).toHaveBeenCalledTimes(1);
     const audit = mockEmitMutation.mock.calls[0][0];
     expect(audit.kind).toBe('user_mutated');
@@ -231,8 +217,7 @@ describe('POST /api/passkeys/register/verify — first factor', () => {
   });
 
   it('counts the subcollection rather than trusting a stale stored tally', async () => {
-    // A drifted document claiming zero passkeys while one really exists: the
-    // recount must produce 2, not 1.
+    // Doc claims zero passkeys while one exists: recount must yield 2.
     users.set(UID, { mfaFactors: { totp: false, passkeys: 0 } });
     passkeys.set(UID, ['cred-old']);
     mockGetSessionData.mockResolvedValue({ userId: UID, mfaVerified: true });
@@ -269,8 +254,7 @@ describe('POST /api/passkeys/register/verify — subsequent factors', () => {
   });
 
   it('does not promote when TOTP already satisfies MFA', async () => {
-    // Zero passkeys but a TOTP factor: this is the account's first PASSKEY and
-    // still not its first FACTOR, so the session must not be promoted.
+    // First PASSKEY but not first FACTOR — no promotion.
     users.set(UID, {
       mfaFactors: { totp: true, passkeys: 0 },
       mfaEnrolled: true,
@@ -294,14 +278,13 @@ describe('POST /api/passkeys/register/verify — enrollment gate', () => {
       mfaEnrolled: true,
     });
     passkeys.set(UID, ['cred-old']);
-    // Session authenticated but never challenged.
     mockGetSessionData.mockResolvedValue({ userId: UID, mfaRequired: true, mfaVerified: false });
 
     const res = await POST(registerReq());
     expect(res.status).toBe(403);
     expect((await res.json()).code).toBe('mfa_challenge_required');
 
-    // Refused before the ceremony is consumed and before anything is persisted.
+    // Refused before consuming the ceremony or persisting anything.
     expect(mockGetAndDeleteChallenge).not.toHaveBeenCalled();
     expect(mockStorePasskey).not.toHaveBeenCalled();
     expect(setCalls).toEqual([]);
@@ -320,8 +303,7 @@ describe('POST /api/passkeys/register/verify — enrollment gate', () => {
   });
 
   it('stays open for a zero-factor account on an unverified session', async () => {
-    // The mandatory-setup path: no factor to challenge against, so enrollment
-    // must not require one.
+    // Mandatory-setup path: nothing to challenge against.
     mockGetSessionData.mockResolvedValue({ userId: UID, mfaVerified: false });
 
     const res = await POST(registerReq());

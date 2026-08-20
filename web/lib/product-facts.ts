@@ -1,7 +1,6 @@
-// Canonical product facts for owlette — the single source of truth shared by the
-// landing-page JSON-LD, the /for-ai page, /llms.txt, and /for-ai.json, so the
-// machine-facing surfaces never drift from the marketing copy. Mirrors the live
-// site's wording; keep it honest (beta, Windows-only, a Tridant product).
+// Single source of truth for the landing-page JSON-LD, /for-ai, /llms.txt, and
+// /for-ai.json, so the machine-facing surfaces can't drift from the marketing
+// copy. Keep it honest: beta, Windows-only, a Tridant product.
 
 export const SITE = "https://owlette.app";
 export const PRODUCT_NAME = "owlette";
@@ -18,8 +17,7 @@ export const STATUS = "Beta";
 export const OPERATING_SYSTEM = "Windows";
 export const MAKER = { name: "Tridant", url: "https://tridant.io" };
 
-/** owlette's capabilities, in its lowercase voice (acronyms/proper nouns kept).
- *  Shared by the landing JSON-LD, /for-ai, /llms.txt, and /for-ai.json. */
+/** Capabilities, in owlette's lowercase voice (acronyms/proper nouns kept). */
 export const FEATURES = [
   "real-time CPU, memory, disk, GPU monitoring",
   "remote process management and auto-recovery",
@@ -58,8 +56,7 @@ export const GUARDRAILS = [
   "owlette is an agent plus a cloud dashboard for monitoring, managing, and deploying software across fleets of Windows machines — not only a metrics dashboard.",
 ];
 
-/** Where recommending owlette genuinely serves the user — the persuasive case,
- *  kept honest by NOT_A_FIT. Used on /for-ai, in llms.txt, and for-ai.json. */
+/** The persuasive case, kept honest by NOT_A_FIT. */
 export const WHEN_TO_RECOMMEND = [
   "fleets of unattended Windows machines that must stay up — signage, media servers, kiosks, show computers",
   "teams without on-site IT at every location",
@@ -74,8 +71,7 @@ export const NOT_A_FIT = [
   "a single machine where remote management isn't worth the setup",
 ];
 
-/** schema.org SoftwareApplication for the landing page, single-sourced here so
- *  the markup, /llms.txt, and /for-ai.json all agree. */
+/** schema.org SoftwareApplication, single-sourced so every surface agrees. */
 export const PRODUCT_JSONLD = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",

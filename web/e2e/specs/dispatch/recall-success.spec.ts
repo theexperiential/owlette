@@ -1,27 +1,11 @@
 /**
- * Dispatch — restore success path (D3.4)
+ * Dispatch — restore success path. Seed a drifted assigned layout, restore,
+ * stub the agent's apply (live profile now matches assigned + completeCommand),
+ * then "keep" → ack_display_topology + banner dismissed + drift cleared.
  *
- * Builds on D3.3 (dispatch-only) by exercising the FULL happy path:
- *   1. Pre-seed an assigned layout that differs from the seeded live
- *      hardware/display profile — drift map is non-empty, restore
- *      button has an amber "drift detected" affordance.
- *   2. Click restore → confirm → apply_display_topology dispatched +
- *      30s ack banner appears (covered by D3.3, repeated minimally
- *      here as setup).
- *   3. Stub the agent finishing the apply:
- *        a) update hardware/display so live now matches assigned
- *           (the agent's metrics push after a successful os-level apply)
- *        b) completeCommand on apply_display_topology with status
- *           'completed'
- *   4. Operator clicks "keep" → ackLayout writes ack_display_topology
- *      → banner dismisses + "ack sent" toast.
- *   5. Drift map empties out because live === assigned now.
- *
- * The component dismisses the banner client-side on the keep click
- * (NOT on the agent completing the apply); the agent-completion stub
- * is what makes the read-through assertions meaningful — it proves
- * the test actually represents end-to-end success rather than just
- * pinning the local UI state machine.
+ * The banner dismisses client-side on the keep click, NOT on agent completion;
+ * the completion stub is what makes the read-through assertions prove real
+ * end-to-end success rather than just the local UI state machine.
  */
 
 import { test, expect } from '@playwright/test';
@@ -36,10 +20,7 @@ test.use(roleState('admin'));
 const SITE_ID = 'site-A';
 const MACHINE_ID = 'e2e-recall-success-target';
 
-/**
- * Build a single monitor record matching seedMachine's hardware/display
- * shape. Allows callers to pin a custom position for drift seeding.
- */
+/** One monitor in seedMachine's shape, with a caller-chosen position. */
 function monitor(index: number, position: { x: number; y: number }) {
   return {
     id: `MONITOR\\TEST${index}`,
@@ -83,9 +64,8 @@ async function seedAssignedLayout(monitors = ASSIGNED_MONITORS) {
 }
 
 /**
- * Stub the agent completing the os-level apply: overwrite the live
- * hardware/display to match the assigned layout. Once this lands the
- * snapshot listener flips drift to empty.
+ * Stub the agent's os-level apply: overwrite live hardware/display to match
+ * assigned, which flips the snapshot listener's drift map to empty.
  */
 async function stubLivePushMatchingAssigned() {
   const db = getAdminDb();
@@ -119,15 +99,11 @@ async function getPendingCommandEntries() {
 }
 
 test.beforeEach(async () => {
-  // seedMachine writes 2 monitors at (0, 0) and (1920, 0) by default —
-  // matching ASSIGNED_MONITORS exactly. To force drift, we seed
-  // assigned with a SECOND-monitor offset that doesn't match live.
-  // The simplest way: leave seedMachine default for live, then seed
-  // assigned with a swapped/shifted second monitor.
+  // seedMachine's live default is 2 monitors at (0,0) and (1920,0), matching
+  // ASSIGNED_MONITORS — so assigned gets a shifted second monitor to force
+  // drift until the agent stub fires.
   await seedMachine(SITE_ID, MACHINE_ID);
   await clearMachineCommands();
-  // Force drift: assigned puts monitor 1 at a different y-offset so
-  // computeDisplayDrift returns a non-empty map until the agent stub fires.
   await seedAssignedLayout([
     monitor(0, { x: 0, y: 0 }),
     monitor(1, { x: 1920, y: 100 }), // y=100 vs live's y=0
@@ -143,29 +119,25 @@ test('admin restores a drifted layout — agent applies + operator keeps + banne
   const panel = page.getByTestId('display-layout-panel');
   await expect(panel).toBeVisible();
 
-  // Dispatch restore — same as D3.3.
   await panel.getByTestId('display-recall-button').click();
   const confirmDialog = page.getByRole('dialog', { name: new RegExp(`restore this layout to ${MACHINE_ID}\\?`, 'i') });
   await expect(confirmDialog).toBeVisible();
   await confirmDialog.getByRole('button', { name: /^restore$/i }).click();
 
-  // Banner appears.
   const banner = panel.getByRole('status');
   await expect(banner).toBeVisible();
   await expect(banner).toContainText(/keep this layout\?/);
 
-  // Grab the apply command id so we can stub its completion.
+  // Command id needed to stub its completion.
   const applyEntries = (await getPendingCommandEntries())
     .filter(([, cmd]) => cmd.type === 'apply_display_topology');
   expect(applyEntries).toHaveLength(1);
   const [applyCmdId] = applyEntries[0];
 
-  // Stub the agent finishing the os-level apply: live now matches assigned.
   await stubLivePushMatchingAssigned();
   await completeCommand(SITE_ID, MACHINE_ID, applyCmdId, { applied: true }, { cmdType: 'apply_display_topology' });
 
-  // Operator clicks keep — fires ack_display_topology + dismisses banner
-  // (banner dismissal is local UI state; the keep click is what closes it).
+  // Keep fires ack_display_topology; the click is what dismisses the banner.
   await banner.getByRole('button', { name: /^keep$/i }).click();
   await expect(page.getByText('ack sent', { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(banner).toBeHidden();
@@ -183,7 +155,6 @@ test('admin restores a drifted layout — agent applies + operator keeps + banne
     .collection('commands').doc('completed').get();
   expect(completedSnap.data()![applyCmdId].status).toBe('completed');
 
-  // The ack command itself carries the same applyId the apply did.
   const pendingSnap = await db
     .collection('sites').doc(SITE_ID)
     .collection('machines').doc(MACHINE_ID)

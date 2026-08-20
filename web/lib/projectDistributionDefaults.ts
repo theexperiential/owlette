@@ -1,24 +1,19 @@
 export interface ProjectDistributionPresetDefinition {
   name: string;
   description?: string;
-  /**
-   * Optional URL. Built-ins typically leave this blank since they're shipped
-   * generic templates; users override URL when saving a custom preset.
-   */
+  /** Optional URL. Built-ins ship blank; users set it when saving a custom preset. */
   project_url?: string;
   extract_path?: string;
   verify_files?: string[];
 }
 
 /**
- * Built-in project distribution presets shipped with the app.
- * Merged client-side with site-level custom presets in
- * useProjectDistributionPresets.
+ * Built-in project distribution presets, merged client-side with site-level custom
+ * presets in useProjectDistributionPresets.
  *
- * Presets carry config (extract_path, verify_files) plus an optional
- * project_url for projects redistributed periodically. Distribution name
- * stays per-deployment since it's typically time-bound (e.g. "Summer Show
- * 2024"), not per-project.
+ * A preset carries config (extract_path, verify_files) plus an optional project_url for
+ * projects redistributed periodically. The distribution NAME stays per-deployment since
+ * it is usually time-bound ("Summer Show 2024"), not per-project.
  */
 export const BUILT_IN_PROJECT_DISTRIBUTION_PRESETS: ProjectDistributionPresetDefinition[] = [
   {

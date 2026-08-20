@@ -1,20 +1,15 @@
 /**
- * Action core: set the restart schedule on a machine's config doc.
+ * Action core: set the restart schedule on a machine's config doc. The agent's
+ * config listener mirrors it into local `config.json`, so the schedule still
+ * fires while Firestore is unreachable.
  *
- * Mirrors the client write at `useFirestore.updateRestartSchedule`. The
- * agent's existing config listener picks the new schedule up and propagates
- * it to local `config.json`, where the reboot state machine reads it. This
- * means the schedule survives Firestore disconnections — the agent fires
- * from local cache.
+ * `rebootSchedule`, the `set_reboot_schedule` audit verb and the
+ * `reboot-schedule` endpoint id keep the legacy "reboot" spelling ON PURPOSE —
+ * they are wire/storage contracts with deployed agents. Only UI and code
+ * identifiers were renamed to "restart".
  *
- * Storage note: the `rebootSchedule` config field, the `set_reboot_schedule`
- * audit verb, and the `reboot-schedule` endpoint id are wire/storage contracts
- * shared with deployed agents — they intentionally keep the legacy `reboot`
- * spelling. Only UI and code identifiers were renamed to "restart".
- *
- * No `configChangeFlag` is needed because the rule for the config doc
- * allows any user with site access to write directly. (Contrast: writes to
- * the machine status doc require configChangeFlag.)
+ * No `configChangeFlag`: the config doc's rule lets any user with site access
+ * write directly (unlike the machine status doc, which requires it).
  */
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';

@@ -1,48 +1,19 @@
 /** @jest-environment node */
 
 /**
- * Integration tests for the hoot async-turn architecture
- * (hoot-async-turns wave 5.1).
+ * Integration tests for the hoot async-turn architecture: real
+ * turnRunner.server + turnStore.server + repairMessages + hoot-utils.server
+ * (genuine dispatch + poll relay). Only three seams are faked — firestore
+ * (in-memory: transactions, merge, dotted paths, delete sentinels,
+ * serverTimestamp), the LLM (MockLanguageModelV3 through real streamText,
+ * decryptApiKey stubbed), and the agent (results written straight into the
+ * mock `commands/completed` doc).
  *
- * Unlike the sibling unit suites, this file wires the REAL modules together:
- * `turnRunner.server` + `turnStore.server` + `repairMessages` + the REAL
- * `hoot-utils.server` (`buildExecutableTools` / `executeToolOnAgent`, so the
- * agent command relay runs its genuine dispatch + poll loop). Only three seams
- * are replaced:
- *   - firebase-admin/firestore → an in-memory store (transactions, merge
- *     writes, dotted-path updates, FieldValue.delete, serverTimestamp
- *     materialization at the real clock)
- *   - the LLM (`@/lib/llm` createModel → MockLanguageModelV3 driving real
- *     streamText; decryptApiKey stubbed so resolveLlmConfig reads the turn
- *     owner's seeded key)
- *   - the agent itself: tool results are placed directly into the mock
- *     `commands/completed` doc, exactly where a real agent writes them
- *
- * Scenarios (task 5.1):
- *   1. Stream death ≠ turn death — cancelling the returned HTTP tee branch
- *      mid-turn does not stop the turn: final messages still persist to
- *      `chats/{chatId}` and the stream doc reaches `complete`.
- *   2. Supersede mid-tool → recovery — turn A blocks polling a dispatched
- *      command; turn B supersedes with A's dangling tool part +
- *      priorToolCommands; B's repair splices the REAL agent output into the
- *      model prompt; A's final persist no-ops on the turnId guard.
- *   3. Tier-3 approval round-trip — turn 1 ends at `approval-requested`
- *      with no dispatch; turn 2 (history carries the approved response)
- *      executes the tool (real pending-command write) and the model receives
- *      the real result.
- *      Delivery contract (previously a pinned bug, now fixed): the
- *      turn-2 stream dies with `UIMessageStreamError` because the runner
- *      never seeds prior-message state, so the turn never completes/persists.
- *   4. Error path — a model stream error marks the stream doc `error` and,
- *      for a brand-new chat, still persists the user's message (durability):
- *      a provider failure must not erase the conversation.
- *   5. Heartbeat — during a long agent poll the ~20s heartbeat (shrunk in the
- *      test) keeps bumping the stream doc's `updatedAt` while the stream is
- *      otherwise silent. (Per-poll touches were removed; the heartbeat alone
- *      covers TURN_STALE_MS.)
- *
- * The followup-fired-turn tier-re-resolution case is deliberately out of
- * scope here (deferred to Wave 4 with the feature).
+ * Scenarios: (1) stream death ≠ turn death; (2) supersede mid-tool, repair
+ * splices the real agent output and A's late persist no-ops on the turnId
+ * guard; (3) tier-3 approval round-trip; (4) model error still persists the
+ * user message; (5) the heartbeat is the sole freshness driver during a
+ * silent tool wait.
  */
 
 import type { InferUIMessageChunk, UIMessage } from 'ai';
@@ -53,9 +24,7 @@ import {
   STILL_RUNNING_ERROR,
 } from '@/lib/hoot/repairMessages';
 
-/* -------------------------------------------------------------------------- */
-/*  mocks (only the three allowed seams)                                      */
-/* -------------------------------------------------------------------------- */
+// mocks (only the three allowed seams)
 
 jest.mock('firebase-admin/firestore', () => {
   class FakeTimestamp {
@@ -73,8 +42,8 @@ jest.mock('firebase-admin/firestore', () => {
       return new FakeTimestamp(Date.now());
     }
   }
-  // Mirrors firebase-admin's FieldPath: literal segments, never split on '.'
-  // (so `recordToolCommand`'s nested write survives hyphenated machineIds).
+  // Mirrors firebase-admin FieldPath: literal segments, never split on '.', so
+  // `recordToolCommand`'s nested write survives hyphenated machineIds.
   class FakeFieldPath {
     readonly segments: string[];
     constructor(...segments: string[]) {
@@ -133,9 +102,7 @@ import {
   type StartTurnParams,
 } from '@/lib/hoot/turnRunner.server';
 
-/* -------------------------------------------------------------------------- */
-/*  in-memory firestore (transactions + merge + dotted paths + delete)        */
-/* -------------------------------------------------------------------------- */
+// in-memory firestore (transactions + merge + dotted paths + delete)
 
 type StoreShape = Record<string, Record<string, unknown>>;
 const store: StoreShape = {};
@@ -144,9 +111,8 @@ const SERVER_TS = '__SERVER_TS__';
 const FIELD_DELETE = '__FIELD_DELETE__';
 
 /**
- * Deterministic sequencing gate for scenario 2: while parked, reads of any
- * `commands/completed` doc block until released — freezing turn A inside its
- * poll loop so turn B's repair can read the agent result first.
+ * Sequencing gate for scenario 2: while parked, `commands/completed` reads block,
+ * freezing turn A in its poll loop so turn B's repair reads the result first.
  */
 let parkCompletedGets = false;
 const parkedGets: Array<() => void> = [];
@@ -165,8 +131,8 @@ function materializeTop(data: Record<string, unknown>): Record<string, unknown> 
   return out;
 }
 
-/** Descend (cloning nodes) to the parent of `segments`, then set or delete the
- *  leaf — preserving sibling keys, as firestore's nested-field updates do. */
+/** Descend (cloning) to the parent of `segments` and set/delete the leaf, keeping
+ *  siblings — as firestore's nested-field updates do. */
 function writeSegments(
   target: Record<string, unknown>,
   segments: string[],
@@ -195,8 +161,8 @@ function applyUpdate(target: Record<string, unknown>, patch: Record<string, unkn
   }
 }
 
-/** Apply a `update(ref, ...args)` in EITHER form: object patch, or the variadic
- *  `(fieldPathOrString, value, ...)` pairs `recordToolCommand` uses (FieldPath). */
+/** update(ref, ...args) in either form: object patch, or the variadic
+ *  `(fieldPathOrString, value, ...)` pairs `recordToolCommand` uses. */
 function applyUpdateArgs(target: Record<string, unknown>, args: unknown[]) {
   if (
     args.length === 1 &&
@@ -274,9 +240,7 @@ const fakeDb = {
   },
 } as unknown as FirebaseFirestore.Firestore;
 
-/* -------------------------------------------------------------------------- */
-/*  fixtures + helpers                                                        */
-/* -------------------------------------------------------------------------- */
+// fixtures + helpers
 
 const SITE_ID = 'site-A';
 const MACHINE_ID = 'machine-1';
@@ -400,13 +364,9 @@ function chatMessages(chatId: string) {
   }>;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  setup                                                                     */
-/* -------------------------------------------------------------------------- */
-
-// The runner's heartbeat interval is only cleared on a clean finish; the
-// known-bug scenario (approval resume) leaks it. Track every interval so a
-// leaked one can't keep the worker alive or touch later tests' stream docs.
+// The runner's heartbeat interval is only cleared on a clean finish (approval
+// resume leaks it). Track every interval so a leak can't keep the worker alive
+// or touch a later test's stream doc.
 const trackedIntervals: Array<ReturnType<typeof setInterval>> = [];
 const realSetInterval = global.setInterval;
 
@@ -445,8 +405,7 @@ beforeEach(() => {
   );
   (categorizeNewChat as jest.Mock).mockResolvedValue({ title: 't', category: 'General' });
 
-  // resolveLlmConfig (real) reads the turn owner's own key — the only scope
-  // there is.
+  // resolveLlmConfig (real) reads the turn owner's own key — the only scope there is.
   store[`users/${USER_ID}/settings/llm`] = {
     provider: 'anthropic',
     apiKeyEncrypted: 'encrypted-blob',
@@ -459,9 +418,7 @@ afterEach(() => {
   _setTurnTimingForTests();
 });
 
-/* -------------------------------------------------------------------------- */
-/*  1. stream death ≠ turn death                                              */
-/* -------------------------------------------------------------------------- */
+// 1. stream death ≠ turn death
 
 describe('stream death ≠ turn death', () => {
   it(
@@ -489,11 +446,9 @@ describe('stream death ≠ turn death', () => {
         baseParams({ chatId, turnId, messages: [userMsg('u1', 'check the cpu')] }),
       );
 
-      // Simulate the client dying mid-turn: read one chunk, then cancel the
-      // HTTP branch. The snapshot pump owns the other tee branch, so the
-      // source keeps flowing. (Not awaited: a tee branch's cancel promise
-      // only settles once the shared source closes — a dead client wouldn't
-      // wait for that.)
+      // Client dies mid-turn: read one chunk, cancel the HTTP branch. The pump
+      // owns the other tee branch so the source keeps flowing. Not awaited — a
+      // tee cancel only settles when the shared source closes.
       const reader = stream.getReader();
       await reader.read();
       void reader.cancel();
@@ -525,9 +480,7 @@ describe('stream death ≠ turn death', () => {
   );
 });
 
-/* -------------------------------------------------------------------------- */
-/*  2. supersede mid-tool → recovery                                          */
-/* -------------------------------------------------------------------------- */
+// 2. supersede mid-tool → recovery
 
 describe('supersede mid-tool → commandId recovery', () => {
   it(
@@ -535,9 +488,8 @@ describe('supersede mid-tool → commandId recovery', () => {
     async () => {
       const chatId = 'chat_supersede';
 
-      // ── turn A: dispatches get_system_info, then blocks polling ─────────
-      // (parked completed-doc reads freeze A inside executeToolOnAgent's
-      // poll loop, deterministically — the agent hasn't answered yet.)
+      // turn A: dispatches get_system_info, then parks in executeToolOnAgent's
+      // poll loop (parked completed-doc reads).
       parkCompletedGets = true;
 
       let aCalls = 0;
@@ -572,9 +524,8 @@ describe('supersede mid-tool → commandId recovery', () => {
           messages: [userMsg('u1', 'grab the system info')],
         }),
       );
-      // A's HTTP stream is already dead (that's the scenario). Not awaited:
-      // a tee branch's cancel promise only settles when the shared source
-      // closes, and A is about to be parked mid-poll — awaiting would deadlock.
+      // A's HTTP stream is already dead. Not awaited: the tee cancel only settles
+      // when the shared source closes, and A is about to park — awaiting deadlocks.
       void streamA.cancel();
 
       // Real relay: pending-command write + recovery index recorded.
@@ -616,7 +567,7 @@ describe('supersede mid-tool → commandId recovery', () => {
         }),
       ).rejects.toThrow(TurnActiveError);
 
-      // ── turn B: supersedes with A's dangling tool part in history ───────
+      // turn B: supersedes with A's dangling tool part in history
       parkCompletedGets = false; // new reads flow; A stays parked
 
       const bPrompts: unknown[] = [];
@@ -675,7 +626,7 @@ describe('supersede mid-tool → commandId recovery', () => {
       );
       expect(streamDoc(chatId)).toMatchObject({ status: 'complete', turnId: 'turn_B' });
 
-      // ── release A: it consumes the entry and finishes, but owns nothing ─
+      // release A: it consumes the entry and finishes, but owns nothing
       releaseParkedGets();
       await waitFor(
         () => store[completedPath(MACHINE_ID)][commandId] === undefined,
@@ -694,9 +645,7 @@ describe('supersede mid-tool → commandId recovery', () => {
   );
 });
 
-/* -------------------------------------------------------------------------- */
-/*  3. tier-3 approval round-trip through the runner                          */
-/* -------------------------------------------------------------------------- */
+// 3. tier-3 approval round-trip through the runner
 
 describe('tier-3 approval round-trip through the runner', () => {
   const chatId = 'chat_approval';
@@ -704,8 +653,8 @@ describe('tier-3 approval round-trip through the runner', () => {
 
   /** Turn 1: model calls execute_script (tier 3, requireTier3Approval on). */
   async function runTurn1() {
-    // sites/{siteId}/settings/cortex is absent → the REAL
-    // getHootRequireTier3Approval resolves true (default-on gate).
+    // sites/{siteId}/settings/cortex absent → real getHootRequireTier3Approval
+    // resolves true (default-on gate).
     currentModel = new MockLanguageModelV3({
       doStream: async () => ({
         stream: simulateReadableStream({
@@ -830,25 +779,11 @@ describe('tier-3 approval round-trip through the runner', () => {
   });
 
   /**
-   * KNOWN BUG (wave 2, turnRunner.server.ts `startTurn`): the delivery half
-   * of the approval round-trip is broken.
-   *
-   * The runner builds its UI-message state from scratch — neither
-   * `createUIMessageStream` gets `originalMessages` nor `readUIMessageStream`
-   * gets the prior assistant `message`. On an approval-resume turn the AI SDK
-   * executes the approved tool FIRST and emits `tool-output-available` for a
-   * toolCallId that only exists in the PREVIOUS assistant message, so the
-   * SDK's state processor throws
-   * `UIMessageStreamError: No tool invocation found for tool call ID …`.
-   * Both tee branches error, `onFinish` never fires: the stream doc is stuck
-   * `running` (kept fresh forever by the leaked heartbeat), `finishTurn` is
-   * never called, and the final messages are NEVER persisted — with client
-   * persist authority removed in wave 3, the approved tool's result is lost
-   * on reload even though the agent executed it.
-   *
-   * FIXED: the runner now seeds `originalMessages` (createUIMessageStream)
-   * and the snapshot pump's resume message (readUIMessageStream), and the
-   * final persist replaces-or-appends by responseMessage id.
+   * Regression pin: an approval-resume turn emits `tool-output-available` for a
+   * toolCallId that only exists in the PREVIOUS assistant message, so without
+   * seeded prior-message state the SDK throws `UIMessageStreamError: No tool
+   * invocation found…`, both tee branches die, and the result is never persisted.
+   * The runner must keep seeding `originalMessages` + the pump's resume message.
    */
   it(
     'turn 2 delivery contract: stream survives, turn completes, and the result persists',
@@ -877,15 +812,12 @@ describe('tier-3 approval round-trip through the runner', () => {
   );
 });
 
-/* -------------------------------------------------------------------------- */
-/*  4. error path                                                             */
-/* -------------------------------------------------------------------------- */
+// 4. error path
 
 describe('error path', () => {
   it('model stream error → stream doc error; brand-new chat still persists the user message', async () => {
-    // Brand-new chat (no doc yet). A provider failure must not make the whole
-    // conversation vanish — the user's message is persisted at turn start and
-    // the errored turn keeps it (finding 8: errored turns persist).
+    // Brand-new chat: a provider failure must not erase the conversation — the
+    // user message is persisted at turn start and survives the errored turn.
     const chatId = 'chat_error';
 
     currentModel = new MockLanguageModelV3({
@@ -920,18 +852,15 @@ describe('error path', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  5. heartbeat + touch during a long tool poll                              */
-/* -------------------------------------------------------------------------- */
+// 5. heartbeat + touch during a long tool poll
 
 describe('heartbeat keeps the stream doc fresh during a long tool poll', () => {
   it(
     "bumps the stream doc's updatedAt via the heartbeat while the agent is silent",
     async () => {
       const chatId = 'chat_touch';
-      // Poll-tick touches were removed — the heartbeat is now the sole
-      // freshness driver during a silent tool wait. Shrink it so its
-      // touch()es land inside the test window.
+      // The heartbeat is the sole freshness driver during a silent tool wait;
+      // shrink it so its touch()es land inside the test window.
       _setTurnTimingForTests({ heartbeatMs: 60 });
 
       let calls = 0;
@@ -972,9 +901,8 @@ describe('heartbeat keeps the stream doc fresh during a long tool poll', () => {
         [MACHINE_ID]: { commandId },
       });
 
-      // Let the dispatch-time snapshot writes settle; from here the stream is
-      // silent (agent hasn't answered), so bumps can only come from the
-      // heartbeat's touch().
+      // After dispatch-time writes settle the stream is silent, so any bump can
+      // only come from the heartbeat's touch().
       await sleep(400);
       const t0 = updatedAtMs(chatId);
       await waitFor(() => updatedAtMs(chatId) > t0, 'first heartbeat touch', 2500);

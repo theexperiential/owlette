@@ -1,10 +1,9 @@
 /**
  * Tests for lib/metricsDownsample.ts — time-uniform chart downsampling.
  *
- * The regression suite at the bottom replays the useHistoricalMetrics
- * streaming pipeline (oldest-first buckets, in-loop trim, final display
- * reduction, gap markers) that used to render month/year charts with only
- * their most recent half visible.
+ * The regression suite at the bottom replays the useHistoricalMetrics streaming
+ * pipeline (oldest-first buckets, in-loop trim, final display reduction, gap
+ * markers) that used to render month/year charts with only their recent half shown.
  */
 
 import { downsampleTimeUniform, insertGapMarkers } from '@/lib/metricsDownsample';
@@ -51,10 +50,9 @@ describe('downsampleTimeUniform', () => {
   });
 
   it('spreads kept samples uniformly over time, not array index', () => {
-    // Non-uniform density: first half of the window at 1 sample/10min, second
-    // half at 1 sample/min. An index-stepped downsample would keep ~10x more
-    // points in the dense half; a time-uniform one keeps them near-equal per
-    // unit time (the sparse half keeps everything it has).
+    // Non-uniform density: first half at 1 sample/10min, second at 1/min. An
+    // index-stepped downsample keeps ~10x more points in the dense half; a
+    // time-uniform one keeps them near-equal per unit time.
     const span = 10 * DAY;
     const sparse = makeSeries(start, (5 * DAY) / (10 * MINUTE), 10 * MINUTE);
     const dense = makeSeries(start + 5 * DAY, (5 * DAY) / MINUTE, MINUTE);

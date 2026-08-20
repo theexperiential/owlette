@@ -2,21 +2,16 @@
 
 /**
  * Route-level tests for POST /api/users/bootstrap — the signup-abuse controls
- * plus the verified-email pin (issue #22).
- *
- * The pure helpers (isDisposableEmailDomain, sanitizeDisplayName) are unit-
- * tested elsewhere; these tests pin the ROUTE wiring that those unit tests
- * can't see:
+ * plus the verified-email pin (issue #22). The pure helpers are unit-tested
+ * elsewhere; these pin the ROUTE wiring those tests can't see:
  *   - the persisted email is the VERIFIED Firebase Auth email (getUser(uid)),
- *     never the client-supplied body.email — so a bot can't authenticate with a
- *     disposable address and store a clean one, or vice-versa,
- *   - a disposable VERIFIED email is rejected with 400 BEFORE any DB write
- *     (bootstrapUser is never called), and
- *   - the per-IP signup rate limit short-circuits with 429 before the handler
- *     runs.
+ *     never body.email, so a bot can't authenticate with a disposable address
+ *     and store a clean one (or vice-versa);
+ *   - a disposable verified email 400s BEFORE any DB write (bootstrapUser is
+ *     never called);
+ *   - the per-IP signup limit 429s before the handler runs.
  * A regression that re-trusted body.email, dropped the withRateLimit wrap, or
- * moved the disposable check after the bootstrap write, would pass the old
- * tests but fail here.
+ * moved the disposable check after the write would pass the old tests, not these.
  */
 
 import { createMockRequest, parseResponse } from './helpers/utils';
@@ -26,9 +21,8 @@ jest.mock('@sentry/nextjs', () => ({
   captureMessage: jest.fn(),
 }));
 
-// Firebase Auth record lookup — the route reads the AUTHORITATIVE email from
-// getAdminAuth().getUser(uid). getAdminDb is also exported here and pulled in
-// transitively by apiAuth.server, so keep it present (unused in these tests).
+// The route reads the AUTHORITATIVE email from getAdminAuth().getUser(uid).
+// getAdminDb comes in transitively via apiAuth.server — keep it present.
 const mockGetUser = jest.fn();
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminAuth: () => ({ getUser: (...a: unknown[]) => mockGetUser(...a) }),

@@ -1,26 +1,13 @@
 /**
- * Agent-dispatch stubs (D1.1).
+ * Agent-dispatch stubs: mirror what the real agent does after running a command
+ * from `sites/{siteId}/machines/{machineId}/commands/pending`.
  *
- * When a web command is dispatched (reboot, shutdown, kill-process,
- * apply-display-layout, etc.) the agent picks it up from
- * `sites/{siteId}/machines/{machineId}/commands/pending`, runs it, and
- * then calls `_mark_command_completed` (or `_mark_command_failed`) to:
- *
- *   1. Write to `sites/{siteId}/machines/{machineId}/commands/completed`
- *      with `{ [commandId]: { result, status, completedAt, … } }`,
- *      merged into the existing doc.
- *   2. DELETE the commandId from `commands/pending` via a field-delete.
- *
- * The order matters: completed is written FIRST so that a crash between
- * the two ops leaves the command still in pending (safe to retry),
- * rather than losing it entirely.
- *
- * These helpers mirror that contract from the test side — Playwright
- * specs in D2/D3/D4/D5 will dispatch a UI command, wait for it to land
- * in `commands/pending`, then call `completeCommand(...)` or
- * `failCommand(...)` to simulate the agent finishing its work.
- *
- * Reference: `agent/src/firebase_client.py::_mark_command_completed`.
+ * Contract (see `agent/src/firebase_client.py::_mark_command_completed`):
+ *   1. merge `{ [commandId]: { result, status, completedAt, … } }` into
+ *      `commands/completed`
+ *   2. field-delete `commandId` from `commands/pending`
+ * Order matters — a crash between the two must leave the command in pending
+ * (retryable) rather than lose it.
  */
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
@@ -45,12 +32,7 @@ interface CompleteCommandOptions {
 }
 
 /**
- * Simulate the agent finishing a command successfully.
- *
- * Writes `{ [commandId]: { result, status, completedAt, [deployment_id], [type] } }`
- * to `commands/completed` (merged), then removes `commandId` from
- * `commands/pending` via `FieldValue.delete()` — same order-of-ops as
- * the real agent.
+ * Agent finished a command successfully. Same order-of-ops as the real agent.
  */
 export async function completeCommand(
   siteId: string,
@@ -69,22 +51,17 @@ export async function completeCommand(
   if (opts.deploymentId) payload.deployment_id = opts.deploymentId;
   if (opts.cmdType) payload.type = opts.cmdType;
 
-  // Write to completed FIRST — if this throws, the command stays in
-  // pending (safe to retry). Reversing would risk losing it entirely.
+  // completed FIRST: if this throws the command stays in pending (retryable).
   await completedRef.set({ [commandId]: payload }, { merge: true });
 
-  // Remove from pending. Use FieldValue.delete() to match the agent's
-  // per-field delete (rather than deleting the whole `pending` doc,
-  // which would discard any other in-flight commands).
+  // Per-field delete, not a doc delete — that would discard other in-flight
+  // commands.
   await pendingRef.update({ [commandId]: FieldValue.delete() });
 }
 
 /**
- * Simulate the agent failing a command.
- *
- * Identical to `completeCommand` but status='failed' and carries an
- * `error` string instead of `result` — mirrors
- * `_mark_command_failed` in firebase_client.py.
+ * Agent failed a command: like `completeCommand` but status='failed' with an
+ * `error` string instead of `result`. Mirrors `_mark_command_failed`.
  */
 export async function failCommand(
   siteId: string,
@@ -107,11 +84,7 @@ export async function failCommand(
   await pendingRef.update({ [commandId]: FieldValue.delete() });
 }
 
-/**
- * Read the current set of pending command IDs for a machine. Useful
- * for specs that dispatch a command and want to grab the generated
- * commandId before stubbing completion.
- */
+/** Pending command IDs — specs grab the generated commandId before stubbing. */
 export async function getPendingCommandIds(
   siteId: string,
   machineId: string,
@@ -122,32 +95,19 @@ export async function getPendingCommandIds(
   return Object.keys(snap.data() ?? {});
 }
 
-// ---------------------------------------------------------------------------
-// D1.2 — convenience helpers for state-mutation stubs
-//
-// Some agent behaviors aren't tied to a specific command doc — they're
-// observable only as changes to the machine's status fields. Two common ones:
-//   - a scheduled reboot completes (agent clears `rebooting` / `rebootScheduledAt`)
-//   - a screenshot capture lands (agent writes `lastScreenshot` with the
-//     Storage URL + size + timestamp)
-//
-// These stubs mutate the machine doc directly. They complement
-// completeCommand/failCommand: a reboot flow typically involves BOTH a
-// dispatched command (completeCommand) AND a status-field clear
-// (stubRebootSuccess) — spec code calls whichever subset it needs.
-// ---------------------------------------------------------------------------
+// Convenience stubs for agent behaviours that show up only as machine-doc
+// status changes rather than a command doc (reboot completion, screenshot
+// landing). A reboot flow typically needs BOTH completeCommand and
+// stubRebootSuccess.
 
 function machineRef(siteId: string, machineId: string) {
   return getAdminDb().collection('sites').doc(siteId).collection('machines').doc(machineId);
 }
 
 /**
- * Simulate the agent finishing a reboot cycle.
- *
- * Mirrors the agent's post-reboot clear at
- * `agent/src/owlette_service.py:4260` — clears the three reboot-state
- * flags on the machine doc so dashboard listeners flip the "rebooting"
- * pill back to a stable online state.
+ * Agent finished a reboot cycle: clears the three reboot-state flags so
+ * dashboard listeners flip the "rebooting" pill back to online. Mirrors
+ * `agent/src/owlette_service.py:4260`.
  */
 export async function stubRebootSuccess(siteId: string, machineId: string): Promise<void> {
   await machineRef(siteId, machineId).set(
@@ -161,17 +121,10 @@ export async function stubRebootSuccess(siteId: string, machineId: string): Prom
 }
 
 /**
- * Simulate the agent updating a single target on a deployment doc.
- *
- * Deployment targets are stored as an array on
- * `sites/{siteId}/deployments/{deploymentId}.targets`. The agent
- * mutates a single target's status / progress / error during the
- * downloading → installing → completed lifecycle. Firestore array
- * updates require a full read-modify-write of the array (no per-index
- * primitive). This helper does that atomically — read, patch, write.
- *
- * If the deployment doc doesn't exist or no target matches `machineId`,
- * this throws so the spec fails fast rather than silently no-op'ing.
+ * Patch one target on `sites/{siteId}/deployments/{deploymentId}.targets`.
+ * Firestore has no per-index array update, so this is a read-modify-write.
+ * Throws when the deployment or the target is missing, so specs fail fast
+ * instead of silently no-op'ing.
  */
 export async function stubDeploymentTarget(
   siteId: string,
@@ -197,11 +150,8 @@ export async function stubDeploymentTarget(
 }
 
 /**
- * Simulate a screenshot capture arriving on the machine doc.
- *
- * Mirrors the `lastScreenshot` field consumed by `useFirestore.ts:273`
- * — `{ url, timestamp, sizeKB }` — which the machine card + chart
- * components read to render the latest captured frame.
+ * Screenshot arriving on the machine doc as `lastScreenshot`
+ * ({ url, timestamp, sizeKB }) — the shape `useFirestore.ts:273` consumes.
  */
 export async function stubScreenshotCapture(
   siteId: string,
@@ -213,10 +163,8 @@ export async function stubScreenshotCapture(
     {
       lastScreenshot: {
         url,
-        // Tests use Timestamp.now() rather than FieldValue.serverTimestamp()
-        // because the emulator's clock is trusted and specs often want to
-        // assert on the written value immediately (serverTimestamp()
-        // resolves AFTER the set() resolves, introducing a readback race).
+        // Timestamp.now(), not serverTimestamp(): the latter resolves AFTER
+        // set() does, which races specs that read back immediately.
         timestamp: Timestamp.now(),
         sizeKB,
       },

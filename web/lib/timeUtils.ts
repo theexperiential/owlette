@@ -1,34 +1,20 @@
 /**
- * Time utility functions for heartbeat display with timezone support
- *
- * Heartbeat display rules:
- * - Online (< 5 min since heartbeat): Show HH:MM AM/PM in muted color
- * - Offline (> 5 min since heartbeat): Show relative time (e.g., "14h ago") in red
- * - Tooltip: Always shows full timestamp with timezone
+ * Heartbeat/timezone display helpers. Under 5 min: clock time, muted. Over:
+ * relative time, red. Tooltips always carry the full timestamp + tz.
  */
 
 import type { FirestoreTs } from '@/hooks/useFirestore';
 
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes in milliseconds
 
-/**
- * Check if a heartbeat is stale (> 5 minutes ago)
- *
- * @param timestampSeconds - Unix timestamp in seconds
- * @returns true if heartbeat is stale
- */
+/** Stale = heartbeat older than 5 min. `timestampSeconds` is unix seconds. */
 export function isHeartbeatStale(timestampSeconds: number): boolean {
   const now = Date.now();
   const heartbeatMs = timestampSeconds * 1000;
   return now - heartbeatMs > STALE_THRESHOLD_MS;
 }
 
-/**
- * Format relative time (e.g., "14h ago", "3m ago", "2d ago")
- *
- * @param timestampSeconds - Unix timestamp in seconds
- * @returns Relative time string
- */
+/** Unix seconds → "14h ago" / "3m ago" / "just now". */
 export function formatRelativeTime(timestampSeconds: number): string {
   const now = Date.now();
   const heartbeatMs = timestampSeconds * 1000;
@@ -49,14 +35,7 @@ export function formatRelativeTime(timestampSeconds: number): string {
   }
 }
 
-/**
- * Format time in the specified timezone with 12h or 24h format
- *
- * @param timestampSeconds - Unix timestamp in seconds
- * @param timezone - IANA timezone string (e.g., "America/New_York")
- * @param timeFormat - '12h' for 12-hour format (3:09 PM), '24h' for 24-hour format (15:09)
- * @returns Formatted time string
- */
+/** Unix seconds → clock time in an IANA `timezone`, lowercased. */
 export function formatTimeOnly(
   timestampSeconds: number,
   timezone: string = 'UTC',
@@ -73,7 +52,7 @@ export function formatTimeOnly(
       timeZone: timezone,
     }).toLowerCase();
   } catch {
-    // Fallback if timezone is invalid
+    // Invalid timezone — render in the browser's zone.
     return date.toLocaleTimeString('en-US', {
       hour: 'numeric',
       minute: '2-digit',
@@ -82,14 +61,7 @@ export function formatTimeOnly(
   }
 }
 
-/**
- * Format full timestamp for tooltip display
- *
- * @param timestampSeconds - Unix timestamp in seconds
- * @param timezone - IANA timezone string (e.g., "America/New_York")
- * @param timeFormat - '12h' for 12-hour format, '24h' for 24-hour format
- * @returns Full formatted timestamp (e.g., "January 2, 2026, 3:09:15 PM EST")
- */
+/** Unix seconds → "January 2, 2026, 3:09:15 PM EST" for tooltips. */
 export function formatFullTimestamp(
   timestampSeconds: number,
   timezone: string = 'UTC',
@@ -111,7 +83,7 @@ export function formatFullTimestamp(
       timeZoneName: 'short',
     });
   } catch {
-    // Fallback if timezone is invalid
+    // Invalid timezone — render in the browser's zone.
     return date.toLocaleString('en-US', {
       month: 'long',
       day: 'numeric',
@@ -124,20 +96,13 @@ export function formatFullTimestamp(
   }
 }
 
-/**
- * Format heartbeat time for display based on online status
- *
- * @param timestampSeconds - Unix timestamp in seconds
- * @param timezone - IANA timezone string (e.g., "America/New_York")
- * @param timeFormat - '12h' for 12-hour format, '24h' for 24-hour format
- * @returns Object with display text, stale status, and tooltip text
- */
+/** Heartbeat cell: clock time when fresh, relative time when stale. */
 export function formatHeartbeatTime(
   timestampSeconds: number,
   timezone: string = 'UTC',
   timeFormat: '12h' | '24h' = '12h'
 ): { display: string; isStale: boolean; tooltip: string } {
-  // Guard against missing/invalid timestamps (epoch 0, negative, etc.)
+  // Reject epoch 0 / negative / sub-day timestamps as "never seen".
   if (!timestampSeconds || timestampSeconds < 86400) {
     return { display: '--', isStale: true, tooltip: 'No heartbeat received' };
   }
@@ -145,14 +110,12 @@ export function formatHeartbeatTime(
   const tooltip = formatFullTimestamp(timestampSeconds, timezone, timeFormat);
 
   if (isStale) {
-    // Offline: show relative time
     return {
       display: formatRelativeTime(timestampSeconds),
       isStale: true,
       tooltip,
     };
   } else {
-    // Online: show time in chosen format
     return {
       display: formatTimeOnly(timestampSeconds, timezone, timeFormat),
       isStale: false,
@@ -161,11 +124,7 @@ export function formatHeartbeatTime(
   }
 }
 
-/**
- * Get browser's detected timezone
- *
- * @returns IANA timezone string (e.g., "America/New_York")
- */
+/** Browser-detected IANA timezone, 'UTC' if unavailable. */
 export function getBrowserTimezone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -174,38 +133,19 @@ export function getBrowserTimezone(): string {
   }
 }
 
-// ─── Multi-actor timezone helpers ────────────────────────────────────────────
-//
-// Owlette has three timezone actors:
-//   1. machine — the kiosk/render-node's own Windows local tz, written by the
-//      agent to Firestore as machine_timezone_iana on every heartbeat
-//   2. user — the dashboard viewer's preferred tz, set in user preferences
-//   3. site — the site's configured tz, set in manage-sites dialog
-//
-// The user picks ONE display mode in their preferences (`timeDisplayMode`),
-// and the dashboard renders absolute timestamps according to that mode for
-// every machine. Schedule editors are unaffected by this — they always show
-// times in the *machine's* local tz with an explicit chip label, because
-// schedules are wall-clock configuration tied to the physical machine.
+// Three timezone actors: machine (agent-reported `machine_timezone_iana`),
+// user (preferences), site (manage-sites). The user's `timeDisplayMode` picks
+// one frame for all absolute timestamps. Schedule editors ignore it — schedules
+// are wall-clock config tied to the physical machine, always shown in its tz.
 
 /** User-chosen reference frame for displaying absolute timestamps. */
 export type TimeDisplayMode = 'user' | 'machine' | 'site';
 
 /**
- * Resolve which IANA timezone to render absolute times in for a given
- * machine, given the user's chosen display mode and the available sources.
- *
- * Each call is per-machine because in `'machine'` mode two machines on the
- * same dashboard page may render in two different timezones.
- *
- * Fallback chain (when the primary source is missing):
- *   - 'user'    → user's tz → browser → 'UTC'
- *   - 'machine' → machine tz → site tz → browser → 'UTC'
- *   - 'site'    → site tz → browser → 'UTC'
- *
- * The 'machine' mode falls back to site (not user) because if the agent
- * hasn't reported its own tz yet, the site's tz is the closest "this
- * installation lives in X" approximation. Browser is the last resort.
+ * Per-machine (two machines on one page can render in different zones).
+ * Fallbacks: user → browser → UTC; machine → site → browser → UTC;
+ * site → browser → UTC. Machine falls back to SITE, not user — the site tz is
+ * the closest "this installation lives in X" guess.
  */
 export function getDisplayTimezone(
   mode: TimeDisplayMode,
@@ -224,17 +164,10 @@ export function getDisplayTimezone(
 }
 
 /**
- * Convert a wall-clock time (calendar components) in a given IANA timezone to
- * the corresponding UTC epoch milliseconds.
- *
- * Uses the standard offset-correction trick: interpret the components as if
- * they were UTC, see what wall-clock that instant renders as in the target
- * zone, and subtract the difference. Accurate except within the ~1-hour DST
- * fold, which is irrelevant for the day-boundary bounds this is used for.
- *
- * Needed because `new Date(y, m, d, …)` builds the instant in the *browser's*
- * timezone — wrong when the surface (e.g. logs) shows and operates on times in
- * the site/display timezone instead.
+ * Wall-clock components in `timeZone` → UTC epoch ms. `new Date(y, m, d, …)`
+ * would build the instant in the BROWSER's zone, which is wrong for surfaces
+ * operating in the site/display zone. Offset-correction trick; inaccurate only
+ * inside the ~1h DST fold, irrelevant for day-boundary bounds.
  */
 export function zonedTimeToUtcMs(
   year: number,
@@ -271,22 +204,15 @@ export function zonedTimeToUtcMs(
     );
     return asUtc - (tzAsUtc - asUtc);
   } catch {
-    // Invalid timezone — fall back to treating the components as UTC.
+    // Invalid timezone — treat the components as UTC.
     return asUtc;
   }
 }
 
 /**
- * Resolve the timezone AND the source label that explains where it came
- * from, in a single call. Used by surfaces that want to render a
- * `<TimezoneChip>` next to a list of times — the chip needs to know both
- * the IANA name (for display) and the source (for tooltip text).
- *
- * The `source` reflects which mode actually delivered a value, not the
- * mode the user originally picked. Example: in 'machine' mode for an old
- * agent that hasn't reported its tz yet, this returns
- * `{ tz: <site or browser>, source: 'site' }` so the chip tooltip
- * doesn't lie about where the value came from.
+ * Timezone plus the source that actually delivered it (for `<TimezoneChip>`
+ * tooltips). `source` is the mode that produced the value, not the one the
+ * user picked — so the chip can't lie about where the tz came from.
  */
 export function getDisplayTimezoneWithSource(
   mode: TimeDisplayMode,
@@ -297,9 +223,8 @@ export function getDisplayTimezoneWithSource(
   switch (mode) {
     case 'user':
       if (userTz) return { tz: userTz, source: 'user' };
-      // No user tz set — fall through to browser, but mislabeling as 'site'
-      // would be wrong. Show 'user' source so the tooltip points the user
-      // at where to fix it (their preferences).
+      // No user tz: still report source 'user' so the tooltip points at
+      // preferences, which is where the fix lives.
       return { tz: getBrowserTimezone() || 'UTC', source: 'user' };
     case 'machine':
       if (machineTz) return { tz: machineTz, source: 'machine' };
@@ -312,15 +237,8 @@ export function getDisplayTimezoneWithSource(
 }
 
 /**
- * Format the current wall-clock time in a specific machine's local
- * timezone — used for the live "22:35 local" label under each hostname
- * on the dashboard. Updates whenever the caller re-renders (typically
- * once per minute via a setInterval).
- *
- * @param machineTimezone IANA tz, or undefined if the machine hasn't
- *   reported yet
- * @param timeFormat '12h' or '24h' (defaults to 24h)
- * @returns Formatted clock string ("22:35"), or empty string if tz missing
+ * Current wall-clock in a machine's tz for the "22:35 local" hostname label.
+ * Recomputed on render (callers tick once a minute). '' when tz is unknown.
  */
 export function formatMachineLocalClock(
   machineTimezone: string | undefined,
@@ -339,32 +257,17 @@ export function formatMachineLocalClock(
   }
 }
 
-/**
- * Pretty-format an IANA timezone for display (e.g.
- * "America/Los_Angeles" → "Los Angeles"). Strips underscores and
- * shows the most-specific component.
- */
+/** "America/Los_Angeles" → "Los Angeles". */
 export function formatTimezoneShortName(tz: string | undefined): string {
   if (!tz) return 'unknown';
   return tz.replace(/_/g, ' ').split('/').pop() || tz;
 }
 
 /**
- * Format a timestamp for display on a SITE-SCOPED surface (deployments,
- * activity logs, projects, admin tokens) — i.e. surfaces where there is
- * no single "machine" to anchor to.
- *
- * Resolves the timezone via the user's chosen `timeDisplayMode`:
- *   - 'machine' mode → falls back to site → browser (since there's no machine here)
- *   - 'user' mode → user's preferred tz
- *   - 'site' mode → site tz
- *
- * Accepts anything `Date.parse`-able OR a Date / number / undefined.
- * Returns a fully-formatted "Month D, YYYY, HH:MM:SS TZ" string with
- * the timezone name suffix included so the user can always see which
- * frame the time is in.
- *
- * Returns '—' if the input is falsy or unparseable.
+ * Timestamp for SITE-SCOPED surfaces (deployments, activity, tokens) that have
+ * no single machine to anchor to; 'machine' mode therefore resolves to site →
+ * browser. Accepts Date / ms number / parseable string / Firestore Timestamp.
+ * Returns "Month D, YYYY, HH:MM:SS TZ", or '—' when unparseable.
  */
 export function formatSiteScopedTimestamp(
   input: FirestoreTs,
@@ -400,16 +303,12 @@ export function formatSiteScopedTimestamp(
   if (!Number.isFinite(ms) || ms <= 0) return '—';
 
   const seconds = Math.floor(ms / 1000);
-  // Site-scoped surfaces have no single machine — pass undefined for machineTz.
-  // In 'machine' mode this falls through to siteTz, then browser, then UTC.
+  // No machine here — 'machine' mode falls through to site, browser, UTC.
   const tz = getDisplayTimezone(mode, userTz, undefined, siteTz);
   return formatFullTimestamp(seconds, tz, timeFormat);
 }
 
-/**
- * Common timezone options for the timezone selector
- * Ordered by approximate UTC offset from west to east
- */
+/** Timezone selector shortlist, ordered west → east by UTC offset. */
 export const COMMON_TIMEZONES = [
   { value: 'Pacific/Honolulu', label: 'Hawaii (HST)' },
   { value: 'America/Anchorage', label: 'Alaska (AKST)' },
@@ -432,12 +331,7 @@ export const COMMON_TIMEZONES = [
   { value: 'Pacific/Auckland', label: 'Auckland (NZDT)' },
 ] as const;
 
-/**
- * Validate if a string is a valid IANA timezone
- *
- * @param timezone - String to validate
- * @returns true if valid IANA timezone
- */
+/** True if `timezone` is a valid IANA zone id. */
 export function isValidTimezone(timezone: string): boolean {
   try {
     Intl.DateTimeFormat(undefined, { timeZone: timezone });
@@ -447,9 +341,7 @@ export function isValidTimezone(timezone: string): boolean {
   }
 }
 
-/**
- * Timezone option for the searchable timezone picker
- */
+/** Option shape for the searchable timezone picker. */
 export interface TimezoneOption {
   value: string;
   label: string;
@@ -460,10 +352,7 @@ export interface TimezoneOption {
   aliases?: string[];
 }
 
-/**
- * Map of IANA timezone IDs → alternative search terms.
- * Covers renamed cities, transliterations, and common misspellings.
- */
+/** IANA id → extra search terms: renamed cities, transliterations, misspellings. */
 const TIMEZONE_SEARCH_ALIASES: Record<string, string[]> = {
   'Europe/Kiev': ['kyiv'],
   'Europe/Kyiv': ['kiev'],
@@ -479,9 +368,7 @@ const TIMEZONE_SEARCH_ALIASES: Record<string, string[]> = {
   'Africa/Abidjan': ['gmt', 'greenwich'],
 };
 
-/**
- * Get the current UTC offset for a timezone
- */
+/** Current UTC offset for a zone, in minutes plus a "UTC±HH:MM" label. */
 export function getTimezoneOffset(timezone: string): { offset: number; offsetLabel: string } {
   try {
     const now = new Date();
@@ -492,7 +379,7 @@ export function getTimezoneOffset(timezone: string): { offset: number; offsetLab
     const parts = formatter.formatToParts(now);
     const tzPart = parts.find((p) => p.type === 'timeZoneName')?.value || 'UTC';
 
-    // Parse "GMT+2", "GMT-5:30", "GMT+5:45", "GMT" etc.
+    // shortOffset yields "GMT+2", "GMT-5:30", "GMT+5:45", or bare "GMT".
     if (tzPart === 'GMT' || tzPart === 'UTC') {
       return { offset: 0, offsetLabel: 'UTC+00:00' };
     }
@@ -513,10 +400,7 @@ export function getTimezoneOffset(timezone: string): { offset: number; offsetLab
   }
 }
 
-/**
- * Format an IANA timezone ID as a readable label
- * e.g., "America/New_York" → "America / New York"
- */
+/** "America/New_York" → "America / New York". */
 export function formatTimezoneLabel(timezone: string): string {
   if (timezone === 'UTC') return 'UTC';
   return timezone.replace(/_/g, ' ').replace(/\//g, ' / ');
@@ -525,9 +409,8 @@ export function formatTimezoneLabel(timezone: string): string {
 let cachedTimezones: TimezoneOption[] | null = null;
 
 /**
- * Get all IANA timezones with labels and UTC offsets.
- * Uses Intl.supportedValuesOf (browser-native), cached after first call.
- * Falls back to COMMON_TIMEZONES if the API is unavailable.
+ * All IANA zones with labels and offsets, cached. Falls back to
+ * COMMON_TIMEZONES where `Intl.supportedValuesOf` is missing (SSR, old browsers).
  */
 export function getAllTimezones(): TimezoneOption[] {
   if (cachedTimezones) return cachedTimezones;
@@ -537,7 +420,6 @@ export function getAllTimezones(): TimezoneOption[] {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tzIds = (Intl as any).supportedValuesOf('timeZone');
   } catch {
-    // Fallback for SSR or old browsers
     cachedTimezones = COMMON_TIMEZONES.map((tz) => {
       const { offset, offsetLabel } = getTimezoneOffset(tz.value);
       const region = tz.value.includes('/') ? tz.value.split('/')[0] : 'Other';

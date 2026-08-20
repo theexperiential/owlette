@@ -1,12 +1,7 @@
 /**
- * Roosts — modal disambiguation: new roost vs new version (task 3.5)
- *
- * Asserts ProjectDistributionDialog opens in the right mode from each
- * entry point: "new roost" mode from the page-level create button vs
- * "publish new version of {name}" mode from the per-roost button in
- * the version-history panel. Pure UX correctness — no submits.
- *
- * Data plane: none.
+ * ProjectDistributionDialog opens in the right mode per entry point: "new roost"
+ * from the page-level button, "publish new version of {name}" from the per-roost
+ * one. No submits, no data plane.
  */
 
 import { test, expect } from '@playwright/test';
@@ -51,7 +46,6 @@ test('top-level "+ new roost" opens dialog in new-roost mode (name editable)', a
   await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: /^new roost$/i }).first().click();
 
-  // Title is the literal "new roost" — NOT "publish new version of …".
   const dialog = page.getByRole('dialog', { name: /^new roost$/i });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('heading', { name: /^new roost$/i })).toBeVisible();
@@ -75,18 +69,16 @@ test('per-roost "+ new version" opens dialog in new-version mode with locked fie
   await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
   await page.getByRole('button', { name: /^new version$/i }).click();
 
-  // Title is `publish new version of "lobby"` — the roost name disambiguates.
+  // The roost name in the title is what disambiguates the two modes.
   const dialog = page.getByRole('dialog', { name: /^publish new version of "lobby"$/i });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('heading', { name: /^publish new version of "lobby"$/i })).toBeVisible();
 
-  // Name is locked + pre-filled, extract path disabled.
   const nameInput = dialog.locator('#distribution-name');
   await expect(nameInput).toBeDisabled();
   await expect(nameInput).toHaveValue(ROOST_NAME);
   await expect(dialog.locator('#extract-path')).toBeDisabled();
 
-  // Targets — every checkbox disabled, section label gets "— locked" suffix.
   await expect(dialog.getByText(/target machines.*locked/i)).toBeVisible();
   const targetCheckboxes = dialog.getByRole('checkbox');
   const checkboxCount = await targetCheckboxes.count();
@@ -95,7 +87,7 @@ test('per-roost "+ new version" opens dialog in new-version mode with locked fie
     await expect(targetCheckboxes.nth(i)).toBeDisabled();
   }
 
-  // Description stays editable — it's the "what changed?" field.
+  // Editable: it is the "what changed?" field.
   await expect(dialog.locator('#distribution-description')).toBeEnabled();
 
   await page.keyboard.press('Escape');
@@ -104,15 +96,14 @@ test('per-roost "+ new version" opens dialog in new-version mode with locked fie
 });
 
 test('top-level button does not cross-wire into the new-version flow', async ({ page }) => {
-  // Regression guard — clicking the top-level button must produce
-  // new-roost mode, not new-version mode wired to a list-top roost.
+  // Regression: the top-level button once wired into new-version mode against
+  // whichever roost was at the top of the list.
   await page.goto('/roosts');
   await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: /^new roost$/i }).first().click();
 
   const dialog = page.getByRole('dialog', { name: /^new roost$/i });
   await expect(dialog).toBeVisible();
-  // No leak of the seeded roost name or version-mode title.
   await expect(dialog.getByRole('heading')).not.toContainText(ROOST_NAME);
   await expect(dialog.getByRole('heading')).not.toContainText(/publish new version/i);
 

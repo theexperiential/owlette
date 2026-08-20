@@ -1,16 +1,15 @@
 /**
- * `owlette installer list | upload | set-latest | delete` — superadmin only.
+ * `owlette installer list | latest | upload | set-latest | delete` — superadmin only.
  *
  * Drives:
  *   list        GET    /api/installer
  *   latest      GET    /api/installer/latest
- *   upload      POST   /api/installer/upload  → PUT <signedUrl> → PUT /api/installer/upload (finalize)
+ *   upload      POST   /api/installer/upload → PUT <signedUrl> → PUT /api/installer/upload (finalize)
  *   set-latest  POST   /api/installer/{version}/set-latest
  *   delete      DELETE /api/installer/{version}
  *
- * Mutations carry an auto-generated `Idempotency-Key`. For `upload` the
- * SAME key is used on both the POST (request signed url) and the PUT
- * (finalize) so API-call retries replay while the signed URL is still valid.
+ * Mutations carry an auto-generated `Idempotency-Key`; `upload` reuses the SAME
+ * key on POST and finalize so retries replay while the signed URL is still valid.
  *
  * Public API Wave 2.7 CLI route handlers.
  */
@@ -48,8 +47,7 @@ export function registerInstallerCommands(program: Command): void {
       .command('installer')
       .description('agent installer binary management (superadmin)');
 
-  // Overwrite any earlier description so the help text stays canonical
-  // regardless of registration order.
+  // Overwrite any earlier description so help text stays canonical.
   installer.description('agent installer binary management (superadmin)');
 
   // Drop any stub verbs left from earlier file-load ordering.
@@ -61,8 +59,6 @@ export function registerInstallerCommands(program: Command): void {
       if (idx >= 0) list.splice(idx, 1);
     }
   }
-
-  /* -------------------- list -------------------- */
 
   installer
     .command('list')
@@ -139,8 +135,6 @@ export function registerInstallerCommands(program: Command): void {
       }
     });
 
-  /* -------------------- latest -------------------- */
-
   installer
     .command('latest')
     .description('show the current latest installer version (superadmin)')
@@ -194,8 +188,6 @@ export function registerInstallerCommands(program: Command): void {
       );
     });
 
-  /* -------------------- upload -------------------- */
-
   installer
     .command('upload <file>')
     .description('upload a new installer binary (3-step: request → upload → finalize)')
@@ -210,10 +202,8 @@ export function registerInstallerCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      // Read the file synchronously — installers are typically <50 MiB so
-      // the simpler buffer path is fine; switching to a stream would force
-      // us to set Content-Length manually, and the signed url already has
-      // a size budget the server enforces.
+      // Sync read: installers are typically <50 MiB, and streaming would force a
+      // manual Content-Length while the signed url already has a server-side budget.
       let buffer: Buffer;
       let fileSize: number;
       try {
@@ -229,8 +219,7 @@ export function registerInstallerCommands(program: Command): void {
       const fileName = basename(file);
       const checksum = createHash('sha256').update(buffer).digest('hex');
 
-      // Same idempotency key on both POST + finalize PUT so API-call
-      // retries replay while the signed URL is still valid.
+      // Same key on POST and finalize so retries replay while the url is valid.
       const idempotencyKey = opts.idempotencyKey
         ? String(opts.idempotencyKey)
         : `cli-installer-upload-${randomUUID()}`;
@@ -241,7 +230,7 @@ export function registerInstallerCommands(program: Command): void {
         );
       }
 
-      // ── step 1: request signed upload url ────────────────────────────
+      // step 1: request the signed upload url
       const startBody: Record<string, unknown> = {
         version: opts.version,
         fileName,
@@ -296,7 +285,7 @@ export function registerInstallerCommands(program: Command): void {
         return;
       }
 
-      // ── step 2: PUT the binary to the signed url ─────────────────────
+      // step 2: PUT the binary to the signed url
       if (!json) process.stdout.write('owlette: uploading binary…\n');
       const putRes = await fetch(startData.uploadUrl, {
         method: 'PUT',
@@ -313,7 +302,7 @@ export function registerInstallerCommands(program: Command): void {
         return;
       }
 
-      // ── step 3: finalize ─────────────────────────────────────────────
+      // step 3: finalize
       if (!json) process.stdout.write('owlette: finalising…\n');
       let finalizeRes: Response;
       try {
@@ -361,8 +350,6 @@ export function registerInstallerCommands(program: Command): void {
           `  download url ${finalizeData.download_url}\n`,
       );
     });
-
-  /* -------------------- set-latest -------------------- */
 
   installer
     .command('set-latest <version>')
@@ -442,8 +429,6 @@ export function registerInstallerCommands(program: Command): void {
 
       process.stdout.write(`owlette: installer ${version} is now the latest\n`);
     });
-
-  /* -------------------- delete -------------------- */
 
   installer
     .command('delete <version>')
@@ -536,10 +521,6 @@ export function registerInstallerCommands(program: Command): void {
       }
     });
 }
-
-/* --------------------------------------------------------------------- */
-/*  util                                                                 */
-/* --------------------------------------------------------------------- */
 
 function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json: boolean } {
   const { apiUrl, token } = loadConfig({ profile: cmd.optsWithGlobals().profile });

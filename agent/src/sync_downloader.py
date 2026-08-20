@@ -49,19 +49,17 @@ from sync_state import SyncState
 
 logger = logging.getLogger(__name__)
 
-# default content store. one global pool shared across all distributions
-# (chunks are content-addressed, so dedup is automatic). kept in sync with
-# sync_assembler.DEFAULT_CONTENT_STORE — see _default_content_store() below.
+# one global pool for all distributions — chunks are content-addressed, so
+# dedup is automatic. must stay in sync with sync_assembler.DEFAULT_CONTENT_STORE.
 def _default_content_store() -> str:
     """
-    resolve the default content-store path.
+    default content-store path.
 
-    windows: %PROGRAMDATA%\\Owlette\\content  (typically C:\\ProgramData\\Owlette\\content)
+    windows: %PROGRAMDATA%\\Owlette\\content
     POSIX:   $XDG_DATA_HOME/owlette/content, else ~/.local/share/owlette/content
 
-    see sync_state._default_state_db_path() for the full rationale — same
-    argument: cache data has no business living under the user's Documents
-    or inside System32 under LocalSystem.
+    Same rationale as sync_state._default_state_db_path(): cache data belongs
+    neither in the user's Documents nor in System32 under LocalSystem.
     """
     if os.name == 'nt':
         program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
@@ -72,9 +70,8 @@ def _default_content_store() -> str:
     return os.path.join(os.path.expanduser('~'), '.local', 'share', 'owlette', 'content')
 
 
-# eager default (module import time) for backwards-compat with any external
-# reader. the live resolution inside download_all() calls _default_content_store()
-# fresh each time so test env overrides are honored.
+# Eager, for external readers. download_all() re-resolves each call so test env
+# overrides are honored.
 DEFAULT_CONTENT_STORE = _default_content_store()
 
 # tuning constants
@@ -82,9 +79,8 @@ DEFAULT_CONCURRENCY = 4
 DEFAULT_PER_CHUNK_RETRY_BUDGET = 5
 DEFAULT_RETRY_BACKOFF_BASE_S = 2.0
 DEFAULT_RETRY_BACKOFF_MAX_S = 60.0
-# bulk-prefetch batch size for URL provider. must be ≤ MAX_HASHES_PER_REQUEST
-# enforced server-side (currently 1000). 500 leaves headroom + keeps each
-# request's payload small enough to fit in a typical TLS write window.
+# Must stay <= the server's MAX_HASHES_PER_REQUEST (1000). 500 leaves headroom
+# and keeps each payload inside a typical TLS write window.
 URL_PREFETCH_BATCH_SIZE = 500
 
 # HTTP timing — same shape as installer_utils + sync_version.
@@ -109,20 +105,16 @@ class DownloadResult:
 
 def chunk_path(content_store: Path, chunk_hash: str) -> Path:
     """
-    return the canonical on-disk path for a content-addressed chunk.
-    sharded by first two hex chars to keep directory entry counts manageable
-    (a 500GB project = ~125k chunks; flat dir would be slow on NTFS).
+    canonical on-disk path for a chunk. sharded by the first two hex chars: a
+    500GB project is ~125k chunks and a flat dir is slow on NTFS.
     """
     return content_store / chunk_hash[:2] / chunk_hash
 
 
 def has_chunk(content_store: Path, chunk_hash: str, expected_size: int) -> bool:
     """
-    true if a fully-verified chunk is already in the content store.
-
-    a chunk file is considered "present" iff its size matches expected_size
-    AND its SHA-256 matches the filename. partial downloads (`<hash>.partial`)
-    are NOT considered present — they trigger a resume.
+    true only when size AND SHA-256 both match. a `<hash>.partial` is not
+    present — it triggers a resume.
     """
     target = chunk_path(content_store, chunk_hash)
     if not target.exists():
@@ -159,23 +151,20 @@ def download_all(
     progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> DownloadResult:
     """
-    fetch every chunk in `chunks` into the content store. chunks already
-    present (dedup) are skipped. progress is recorded in SyncState.
+    fetch every chunk into the content store, skipping dedup hits. progress is
+    recorded in SyncState.
 
-    url_provider(hashes) -> {hash: url}: BATCH form. takes a list of chunk
-    hashes (≤ URL_PREFETCH_BATCH_SIZE per call) and returns a dict of fresh
-    signed download URLs. called ONCE upfront in batches to populate a
-    cache, then again per-hash on 403 responses (single-element list).
+    url_provider(hashes) -> {hash: url}: BATCH form, <= URL_PREFETCH_BATCH_SIZE
+    hashes per call. called upfront to fill a cache, then per-hash on 403.
 
-    cancel_event: if set, workers stop after their current chunk completes.
+    cancel_event: workers stop after their current chunk.
 
     raises ChunkDownloadError if ANY chunk exhausts its retry budget.
     """
     if cancel_event is None:
         cancel_event = threading.Event()  # never-fires sentinel
-    # recompute each call so env-var overrides in tests are honored.
-    # expanduser is still applied to a caller-supplied path to preserve the
-    # existing public contract (tests + callers that pass `~/...` explicitly).
+    # Re-resolved per call for test env overrides. expanduser still applies to a
+    # caller-supplied path — callers pass `~/...` and that contract is public.
     if content_store is None:
         store = Path(_default_content_store())
     else:
@@ -187,9 +176,8 @@ def download_all(
     already_present = 0
     failed = 0
 
-    # filter out chunks already on disk before spawning workers — dedup
-    # avoids the per-thread overhead for the common re-publish case where
-    # most chunks are unchanged.
+    # Dedup before spawning workers: on the common re-publish most chunks are
+    # unchanged and not worth a thread.
     pending: List[dict] = []
     for c in chunks_list:
         if cancel_event.is_set():
@@ -212,10 +200,9 @@ def download_all(
         f"(concurrency={concurrency})"
     )
 
-    # bulk-prefetch URLs upfront in batches. for a 12,500-chunk distribution
-    # at batch size 500 = 25 round-trips instead of 12,500. workers then
-    # get their URLs from the in-memory cache; on 403 (URL expired mid-
-    # download) they fall back to a single-hash refetch via _per_hash_lookup.
+    # 25 round-trips instead of 12,500 for a 12.5k-chunk distribution. workers
+    # read the cache; a 403 (url expired mid-download) falls back to a
+    # single-hash refetch in _per_hash_lookup.
     url_cache: Dict[str, str] = {}
     cache_lock = _threading_for_lock.Lock()
     pending_hashes = [c['hash'] for c in pending]
@@ -242,27 +229,24 @@ def download_all(
         f"in {(len(pending_hashes) + URL_PREFETCH_BATCH_SIZE - 1) // URL_PREFETCH_BATCH_SIZE} batch(es)"
     )
 
-    # per-hash call counter. _download_one calls _per_hash_lookup once
-    # per attempt and retries on 403 / expiry. so the FIRST call returns
-    # the cached prefetched URL; SUBSEQUENT calls (= retries) treat the
-    # cache as stale and force a refetch. without this, retries on an
-    # expired URL would just re-receive the same expired URL forever.
+    # _download_one calls _per_hash_lookup once per attempt, so call 1 may use
+    # the prefetched url and every later call must force a refetch — otherwise a
+    # retry on an expired url just gets the same expired url forever.
     url_call_counts: Dict[str, int] = {}
 
     def _per_hash_lookup(chunk_hash: str) -> str:
-        """worker-facing per-hash provider: cache hit on first call, refetch on retries."""
+        """cache hit on the first call, forced refetch on every retry."""
         with cache_lock:
             n = url_call_counts.get(chunk_hash, 0) + 1
             url_call_counts[chunk_hash] = n
             if n == 1:
                 url = url_cache.get(chunk_hash)
             else:
-                # retry → assume previous URL was stale; clear cache entry.
+                # retry: assume the previous url is stale.
                 url_cache.pop(chunk_hash, None)
                 url = None
         if url:
             return url
-        # refetch single hash from upstream and refresh the cache.
         result = url_provider([chunk_hash])
         if not isinstance(result, dict):
             raise ChunkDownloadError(
@@ -277,21 +261,18 @@ def download_all(
             )
         return url
 
-    # was_externally_cancelled snapshots cancel_event BEFORE we (possibly)
-    # set it ourselves on per-chunk failure. lets us distinguish "user
-    # cancelled" from "chunk failure short-circuit" in the result.
+    # Snapshot BEFORE we set cancel_event ourselves on failure, so the result
+    # can tell "user cancelled" from "chunk failure short-circuit".
     was_externally_cancelled = cancel_event.is_set()
 
-    # Progress reporting: total includes both already-present (dedup) and
-    # the chunks we'll actually fetch, so the UI shows 100% when both
-    # legs finish. Emit an initial event immediately so the caller can
-    # see the already-present baseline before any download completes.
+    # Total spans dedup hits + fetches so the UI reaches 100%. Emit once
+    # up front to show the dedup baseline before any download lands.
     total_chunks = already_present + len(pending)
     if progress_cb:
         try:
             progress_cb(already_present, total_chunks)
         except Exception:
-            pass  # progress reporting is best-effort
+            pass  # best-effort
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         futures = {
@@ -314,11 +295,10 @@ def download_all(
                         pass
             except ChunkDownloadError:
                 failed += 1
-                # state already marked 'failed' by _download_one; signal
-                # cancel to short-circuit any in-flight workers.
+                # _download_one already marked state 'failed'; cancel to
+                # short-circuit in-flight workers.
                 cancel_event.set()
             except Exception as e:
-                # unexpected — log + treat as failure
                 logger.error(
                     f"sync_downloader: unexpected error on {c['hash'][:12]}…: {e}",
                     exc_info=True,
@@ -341,8 +321,8 @@ def download_all(
         f"fetched={fetched} dedup={already_present} failed={failed} "
         f"cancelled={result.cancelled}"
     )
-    # failure always raises so the caller gets a hard error. external
-    # cancellation returns peacefully (result.cancelled tells the story).
+    # Failure raises; external cancellation returns peacefully with
+    # result.cancelled set.
     if failed > 0:
         raise ChunkDownloadError(
             f"distribution {distribution_id}: {failed} chunk(s) failed "
@@ -374,7 +354,6 @@ def _download_one(
             logger.debug(f"sync_downloader: {chunk_hash[:12]}… cancelled before attempt {attempt}")
             return
         try:
-            # how far did we get last time? resume from there.
             offset = partial.stat().st_size if partial.exists() else 0
             if offset >= expected_size:
                 # corrupt partial — start over
@@ -396,7 +375,7 @@ def _download_one(
                 stream=True,
                 allow_redirects=True,
             )
-            # 403 = signed url expired; refetch url + retry without backoff
+            # Signed url expired: refetch and retry with no backoff.
             if resp.status_code in (403, 401):
                 logger.info(
                     f"sync_downloader: {chunk_hash[:12]}… got {resp.status_code}; "
@@ -404,8 +383,7 @@ def _download_one(
                 )
                 resp.close()
                 continue
-            # 416 = our range header is past the file — corrupt partial.
-            # delete + retry full.
+            # 416 means our Range is past the file — the partial is corrupt.
             if resp.status_code == 416:
                 logger.warning(
                     f"sync_downloader: {chunk_hash[:12]}… got 416 (range past file); "
@@ -428,14 +406,13 @@ def _download_one(
                     if buf:
                         f.write(buf)
 
-            # verify the completed download matches the expected hash.
             if partial.stat().st_size != expected_size:
                 raise ChunkDownloadError(
                     f"size mismatch: got {partial.stat().st_size} expected {expected_size}"
                 )
             actual = _hash_file(partial)
             if actual != chunk_hash:
-                # bad data on the wire, or storage corruption. delete + retry.
+                # bad bytes on the wire, or storage corruption.
                 logger.warning(
                     f"sync_downloader: {chunk_hash[:12]}… hash mismatch "
                     f"(got {actual[:12]}…); discarding + retrying"
@@ -445,7 +422,7 @@ def _download_one(
                 _backoff(attempt)
                 continue
 
-            # success — atomically move into final location.
+            # os.replace is atomic — a torn file is never visible as complete.
             os.replace(str(partial), str(target))
             state.set_chunk_state(distribution_id, chunk_hash, 'verified')
             return

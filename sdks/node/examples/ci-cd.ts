@@ -1,14 +1,9 @@
 /**
- * ci/cd: publish a new roost version on every git tag.
+ * ci/cd: publish a new roost version on every git tag. The curl + jq recipe in
+ * docs/api/examples/ci-cd-github-actions.md, as one `owlette.roosts.push()`.
  *
- * Mirrors docs/api/examples/ci-cd-github-actions.md but replaces curl + jq
- * with a single `owlette.roosts.push()` call.
- *
- * Required env vars:
- *   OWLETTE_TOKEN   api key with roost:<id>:write,deploy scope
- *   ROOST_SITE_ID   site hosting the roost
- *   ROOST_ID        target roost id
- *   BUILD_DIR       directory to publish (defaults to ./build)
+ * Required: OWLETTE_TOKEN (roost:<id>:write,deploy scope), ROOST_SITE_ID,
+ * ROOST_ID. Optional: BUILD_DIR (./build).
  */
 
 import { Owlette, OwletteApiError } from '@owlette/sdk';

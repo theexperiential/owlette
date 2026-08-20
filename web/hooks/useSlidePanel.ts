@@ -1,44 +1,18 @@
 'use client';
 
 /**
- * useSlidePanel
+ * Height-slide a single panel open/closed — the imperative parts CSS can't do:
+ * mount the panel clipped at height 0 then transition to the measured pixel
+ * height; settle at `auto` so later content changes reflow without animating;
+ * on close snap `auto` -> pixels, reflow, then transition to 0 while keeping the
+ * previous panel mounted ("held") so there is content to interpolate over; and a
+ * ResizeObserver to re-target the height when dynamic-imported children paint
+ * after the open measurement.
  *
- * Reveal/hide a single panel beneath a list with a smooth height
- * transition. The hook owns the imperative dance that pure CSS can't
- * pull off on its own:
- *
- *  - mount the next panel synchronously on open so it lays out *inside*
- *    a clipped wrapper (height: 0), then transition the wrapper to the
- *    measured pixel height once layout stabilizes;
- *  - on close, snap from `auto` to the measured pixel height, force a
- *    reflow, then transition to 0;
- *  - settle at `height: auto` after open so later content changes
- *    (tab switch, time-range tweak) reflow naturally with no animation;
- *  - keep the previous panel mounted ("held") for the duration of the
- *    close transition so the slide has visual content to interpolate
- *    over;
- *  - tolerate dynamic-imported children whose first paint lands AFTER
- *    the open measurement via a ResizeObserver that re-targets the
- *    pixel height while the wrapper is still in its transitioning
- *    phase.
- *
- * The hook distinguishes three kinds of state changes via caller-
- * supplied keys:
- *
- *  - **slide**: panel opens, closes, or `reanimateKey` changes between
- *    two non-null values (e.g. machine swap). Full height animation.
- *  - **reflow**: same `reanimateKey` but `reflowKey` changes (e.g.
- *    display ↔ metric panel on the same machine). The wrapper is
- *    locked at the previous content's pixel height under
- *    `overflow: hidden`; releasing it back to `auto` on the next frame
- *    lets the new content reflow without a slide.
- *  - **silent**: same key tuple (e.g. tab change inside the panel).
- *    The held value updates but no DOM-level reset runs.
- *
- * Returns refs the caller wires to the wrapper and inner content nodes,
- * the held panel value (for rendering), and a `slideAnimating` flag
- * (e.g. for content-visibility hints on offscreen siblings during the
- * transition).
+ * Caller keys select the behaviour: **slide** (open/close, or `reanimateKey`
+ * change between two non-null values), **reflow** (`reflowKey` change only —
+ * release the pixel lock back to `auto` next frame, no slide), **silent** (same
+ * key tuple, held value updates with no DOM reset).
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -46,20 +20,13 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 interface UseSlidePanelArgs<T> {
   value: T | null;
   /**
-   * Identity key — when this differs across two non-null values (or
-   * value goes null↔non-null), run the full height-slide animation.
-   * For the dashboard / demo this is the machineId. The function is
-   * invoked with the held / next non-null value; if it returns the
-   * same string for two different objects they're treated as the same
-   * panel (no slide).
+   * Identity key (machineId on the dashboard). Two objects returning the same
+   * string are the same panel — no slide.
    */
   reanimateKey: (v: T) => string;
   /**
-   * Reflow key — when the identity is unchanged but this differs
-   * (display↔metric panel kind on the same machine), snap the wrapper
-   * back to `auto` after the new content mounts so the differing
-   * natural height isn't clipped by a stale pixel lock. Optional;
-   * omit to opt out of reflow handling.
+   * Same identity, different panel kind: snap back to `auto` after the new
+   * content mounts so a stale pixel lock can't clip it. Omit to opt out.
    */
   reflowKey?: (v: T) => string;
 }
@@ -84,9 +51,8 @@ export function useSlidePanel<T>({
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
 
-  // Tracks the value seen by the previous effect run. Seeded with the
-  // initial value so the first run diffs against itself and short-
-  // circuits — matches the "panel already open on mount" case.
+  // Seeded with the initial value so the first run diffs against itself and
+  // short-circuits — the "panel already open on mount" case.
   const prevValueRef = useRef<T | null>(value);
 
   const heldRef = useRef<T | null>(value);
@@ -95,17 +61,11 @@ export function useSlidePanel<T>({
     setHeld(next);
   }, []);
 
-  // Seed the wrapper's resting height the instant the DOM node attaches —
-  // `auto` if something is visually mounted (`held`), `0px` if collapsed.
-  // This MUST be a callback ref, not a `useLayoutEffect([])`: callers render
-  // the wrapper behind a `loading` / `mounted` gate, so it isn't in the DOM
-  // on the component's first commit. A one-shot mount effect latches against
-  // that wrapper-less first commit and never re-fires, leaving the wrapper at
-  // its default `height: auto` — its inner padding then shows as a phantom
-  // gap below the header. A callback ref fires whenever the node actually
-  // mounts, no matter how many gated renders precede it. Reads `heldRef`
-  // (always current) rather than a closed-over `value` so the stable callback
-  // can't go stale.
+  // Seed the resting height as soon as the node attaches. MUST be a callback
+  // ref, not `useLayoutEffect([])`: callers render the wrapper behind a loading
+  // gate, so a one-shot mount effect latches on the wrapper-less first commit
+  // and leaves height at `auto` — the inner padding then shows as a phantom gap
+  // below the header. Reads `heldRef` so the stable callback can't go stale.
   const wrapperRefCallback = useCallback((node: HTMLDivElement | null) => {
     wrapperRef.current = node;
     if (node) node.style.height = heldRef.current ? 'auto' : '0px';
@@ -122,12 +82,9 @@ export function useSlidePanel<T>({
     const timers = timersRef.current;
     const wrapperEl = wrapperRef.current;
 
-    // Defensive terminal-state guarantee: whenever in-flight
-    // transition work tears down, the wrapper ends on a stable height
-    // matching the current visual state — `auto` if visually open
-    // (held value still mounted), `0px` if closed. Prevents stuck
-    // pixel values from clipping subsequent (taller) content when the
-    // user switches panels mid-transition.
+    // Terminal-state guarantee: teardown always leaves a stable height matching
+    // the visual state, so a mid-transition panel switch can't leave a stuck
+    // pixel value clipping taller content.
     const clearAll = () => {
       if (timers.fallback != null) { clearTimeout(timers.fallback); timers.fallback = null; }
       if (timers.raf != null) { cancelAnimationFrame(timers.raf); timers.raf = null; }
@@ -142,16 +99,12 @@ export function useSlidePanel<T>({
     const prevOpen = prev != null;
     const nextOpen = value != null;
 
-    // Identity-level change drives the slide. Open/close edges always
-    // qualify; identity-change between two non-null values (e.g.
-    // machine swap) does too because the natural content height can
-    // jump dramatically.
+    // Open/close edges and machine swaps both slide — content height can jump.
     const identityChanged =
       prevOpen && nextOpen && reanimateKey(prev!) !== reanimateKey(value!);
     const isOpenClose = prevOpen !== nextOpen || identityChanged;
 
-    // Reflow case: same identity but different `reflowKey` (panel kind
-    // swap). Re-measure on next frame and snap to `auto`.
+    // same identity, different panel kind: re-measure next frame and snap to `auto`
     const isKindSwap =
       prevOpen && nextOpen && !identityChanged && reflowKey != null &&
       reflowKey(prev!) !== reflowKey(value!);
@@ -163,9 +116,7 @@ export function useSlidePanel<T>({
         if (timers.raf != null) { cancelAnimationFrame(timers.raf); }
         timers.raf = requestAnimationFrame(() => {
           timers.raf = null;
-          // Browsers can't interpolate to/from `auto`, so writing
-          // `'auto'` while the wrapper holds a pixel value snaps
-          // instantly — no transition flash.
+          // browsers can't interpolate to/from `auto`, so this snaps — no flash
           wrapperEl.style.height = 'auto';
         });
       }
@@ -173,9 +124,7 @@ export function useSlidePanel<T>({
     }
     prevValueRef.current = value;
 
-    // Cancel any pending work from a previous transition so clicking
-    // between panels mid-slide can't leave dangling timers/listeners
-    // firing against the new target.
+    // else a mid-slide panel switch leaves timers/listeners firing at the new target
     clearAll();
 
     const wrapper = wrapperRef.current;
@@ -193,17 +142,13 @@ export function useSlidePanel<T>({
       };
       const handler = (e: TransitionEvent) => {
         if (e.target !== wrapper) return;
-        // Filters nested child transitions (hover tweens, fade-ins
-        // on inner content) so only the slide settling triggers.
+        // ignore nested child transitions (hover tweens, inner fade-ins)
         if (e.propertyName !== 'height') return;
         finish();
       };
       wrapper.addEventListener('transitionend', handler);
-      // 60ms past the 200ms transition duration — covers the
-      // pathological case where `transitionend` doesn't fire (tab
-      // hidden during animation, reduced-motion snap-to-end on some
-      // engines). On the happy path the listener fires first and
-      // clears this timer.
+      // 60ms past the 200ms transition: `transitionend` can never fire (tab
+      // hidden mid-animation, reduced-motion snap-to-end on some engines).
       timers.fallback = setTimeout(finish, SAFETY_MS);
       return () => {
         wrapper.removeEventListener('transitionend', handler);
@@ -211,32 +156,22 @@ export function useSlidePanel<T>({
     };
 
     if (value) {
-      // Opening (or machine swap while open). Mount the next held
-      // value synchronously so children lay out inside the wrapper on
-      // this same commit; clip to 0 immediately so they don't flash
-      // at full height before the next frame applies the target.
+      // Open/swap: mount synchronously so children lay out this commit, clipped
+      // to 0 so they don't flash at full height before the next frame.
       setHeldAndSync(value);
       wrapper.style.height = '0px';
-      // Force a reflow so the browser commits height: 0 before the
-      // target write — otherwise it may collapse the two writes and
-      // skip the transition entirely.
+      // force a reflow, else the browser coalesces both writes and skips the transition
       void wrapper.offsetHeight;
       setSlideAnimating(true);
       timers.raf = requestAnimationFrame(() => {
         timers.raf = null;
-        // Measure inner container — wrapper.scrollHeight collapses
-        // to 0 because of overflow: hidden + the inline height style.
+        // measure the inner node: wrapper.scrollHeight is 0 under overflow:hidden + inline height
         const measured = content ? content.scrollHeight : wrapper.scrollHeight;
         wrapper.style.height = `${measured}px`;
 
-        // Dynamic-imported children may finish parsing AFTER this
-        // measurement on a cold first-click — `measured` reads 0 or
-        // a partial value. ResizeObserver keeps the wrapper's pixel
-        // target in sync while content grows during the open ramp.
-        // Scoped to the open phase only: disconnected on
-        // transitionend (or safety timer) below, recreated on next
-        // open. Once settled at `auto`, natural reflow handles
-        // subsequent size changes.
+        // Dynamic-imported children can parse after this measurement on a cold
+        // first click, making `measured` 0/partial. Keep the pixel target in sync
+        // through the open ramp only — disconnected at transitionend below.
         if (content && typeof ResizeObserver !== 'undefined') {
           const observer = new ResizeObserver(() => {
             const h = wrapper.style.height;
@@ -250,8 +185,7 @@ export function useSlidePanel<T>({
 
         timers.cleanupListener = onSlideEnd(() => {
           timers.cleanupListener = null;
-          // Disconnect observer BEFORE switching to `auto` so a final
-          // content-size callback can't race the settle write.
+          // disconnect before switching to `auto` so a late callback can't race the settle
           if (timers.observer) { timers.observer.disconnect(); timers.observer = null; }
           wrapper.style.height = 'auto';
           setSlideAnimating(false);
@@ -260,10 +194,8 @@ export function useSlidePanel<T>({
       return clearAll;
     }
 
-    // Closing. Can't transition from `auto`; snap to the current
-    // measured height first, force a reflow, then transition to 0
-    // on the next frame. Held value stays mounted for the duration
-    // so the slide has smooth visual content to interpolate over.
+    // Close: can't transition from `auto`, so snap to the measured height, force
+    // a reflow, then go to 0 next frame. Held value stays mounted meanwhile.
     const currentMeasured = content ? content.scrollHeight : wrapper.scrollHeight;
     wrapper.style.height = `${currentMeasured}px`;
     void wrapper.offsetHeight;
@@ -278,17 +210,12 @@ export function useSlidePanel<T>({
       });
     });
     return clearAll;
-    // `reanimateKey` and `reflowKey` are caller-provided functions; we
-    // intentionally don't depend on them to avoid re-running this
-    // effect when callers pass fresh function references each render.
-    // The functions are only invoked against `value` and `prev`, both
-    // of which are tracked through React state / the prev ref.
+    // Key fns are excluded on purpose: callers pass fresh references each render
+    // and both are only invoked against `value`/`prev`, which are tracked.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, setHeldAndSync]);
 
-  // Cleanup any pending timers / observers on unmount so a slide in
-  // progress when the parent unmounts doesn't fire callbacks against
-  // detached nodes.
+  // else an in-flight slide fires callbacks against detached nodes
   useEffect(() => {
     const timers = timersRef.current;
     return () => {

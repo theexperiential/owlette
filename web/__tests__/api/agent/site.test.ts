@@ -1,14 +1,10 @@
 /** @jest-environment node */
 
 /**
- * GET /api/agent/site — the site display name an agent is allowed to learn.
- *
- * The agent cannot read `sites/{siteId}` through Firestore (rules scope it to
- * its machine subtree), so this route is the only path from a paired agent to
- * its site's operator-facing label. Two properties matter and are asserted
- * here: the site comes from the token's own `site_id` claim (never from the
- * request), and the response projects the name and nothing else — the site
- * document's `timezone` must not leak, because a non-null timezone flips
+ * GET /api/agent/site — the only path from a paired agent to its site's label
+ * (rules scope the agent to its machine subtree). Two asserted properties: the
+ * site comes from the token's `site_id` claim, never the request; and the
+ * response projects the name ONLY — leaking the site's `timezone` would flip
  * schedule evaluation fleet-wide.
  */
 

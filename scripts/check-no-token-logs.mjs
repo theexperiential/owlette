@@ -1,15 +1,9 @@
 #!/usr/bin/env node
 /**
- * check-no-token-logs — policy enforcement (roost wave 5.10).
+ * check-no-token-logs (roost wave 5.10) — fails CI on any log call referencing an
+ * auth token or credential. Tokens must never reach a log sink, not even
+ * partially, in any path; a leak is a P0.
  *
- * Greps the repo for log calls that reference auth tokens or credentials.
- * OAuth access tokens, refresh tokens, Firebase ID tokens, API keys, and
- * Authorization headers must never hit any log sink — not in debug, not in
- * error paths, not partial. Leaking tokens is a P0 incident.
- *
- * Exits 1 on any match so CI fails on the PR that introduces the leak.
- *
- * Usage:
  *   node scripts/check-no-token-logs.mjs          # scan repo
  *   node scripts/check-no-token-logs.mjs --test   # self-test against fixtures
  */
@@ -47,10 +41,8 @@ const SKIP_DIRS = new Set([
   '.mypy_cache',
 ]);
 
-// token-ish identifiers whose presence in a log call is disallowed.
-// word-boundary match so `authToken`, `refresh_token`, `ID_TOKEN` all catch,
-// but unrelated words like `token_stream` (e.g. a parser) only match if
-// they appear inside a log call — which the pattern requires.
+// Word-boundary matched, and only inside a log call — so `authToken` catches but
+// a `token_stream` parser identifier elsewhere does not.
 const TOKEN_IDENTIFIERS = [
   'token',
   'tokens',
@@ -79,8 +71,7 @@ const TOKEN_WORD_RE = new RegExp(
   'i',
 );
 
-// log-call prefixes to scan. order matters — longer first so we don't
-// double-match on substrings.
+// order matters: longer prefixes first, else substrings double-match
 const LOG_PATTERNS = [
   // javascript / typescript
   /\bconsole\.(log|info|warn|error|debug|trace)\s*\(/,
@@ -91,36 +82,26 @@ const LOG_PATTERNS = [
   /\bprint\s*\(/,
 ];
 
-// strings that look like log calls but are intentionally safe. exempting
-// by comment marker is explicit — the author has to opt-in to whitelist.
+// per-line opt-out marker; exempting has to be explicit
 const ALLOW_COMMENT = 'no-token-logs-allow';
 
-// files where references to token identifiers are part of the business
-// logic (schema definitions, token-handling code itself) — scanning them
-// produces only noise. scanner still checks their log calls — any log
-// that names a token triggers regardless of the file. what this list
-// suppresses is scanning of the file entirely.
+// Files skipped ENTIRELY — they name token identifiers as data, so scanning them
+// is all noise.
 const FILE_ALLOWLIST = new Set([
-  // the lint rule itself — this very file mentions token identifiers
-  // in the TOKEN_IDENTIFIERS array.
+  // this file's own TOKEN_IDENTIFIERS array
   join('scripts', 'check-no-token-logs.mjs').replace(/\\/g, '/'),
-  // eslint config may declare the no-restricted-syntax patterns using
-  // the same identifier words.
+  // declares no-restricted-syntax patterns using the same words
   join('web', 'eslint.config.mjs').replace(/\\/g, '/'),
 ]);
 
 /**
- * Extract the argument region of a log call, starting from the `(` after
- * the matched log prefix and collecting characters until the matching `)`.
- * Handles nested parens + string literals. Returns null if no balanced
- * close found in the line (multi-line call — we only scan the first line
- * for simplicity; cross-line calls that would otherwise leak will be
- * caught by identifier-level grep when that identifier appears in the
- * same line as the log call).
+ * Argument region of a log call, from `(` to the matching `)`, handling nested
+ * parens and string literals. Single-line only: a multi-line call returns
+ * whatever the first line held.
  */
 function extractCallArgs(line, openIdx) {
   let depth = 0;
-  let inStr = null; // "'", '"', '`', or null
+  let inStr = null; // the open quote char, or null
   let escape = false;
   for (let i = openIdx; i < line.length; i++) {
     const ch = line[i];
@@ -148,39 +129,28 @@ function extractCallArgs(line, openIdx) {
       }
     }
   }
-  // unbalanced on this line — return what we have. cross-line leak
-  // detection is best-effort; whole-argument scan still runs later.
+  // unbalanced on this line; cross-line detection is best-effort
   return line.slice(openIdx + 1);
 }
 
 /**
- * True if the given log-call argument region references a token identifier
- * as a name token (not just substring-inside-a-string).
- *
- * The check strips string literals so a log statement like
- *   logger.info("oauth_token is the pattern name")
- * doesn't false-positive on its own message text. We WANT to catch
- *   logger.info(f"oauth_token: {token}")
- * because the f-string interpolates the actual token — the identifier
- * `token` survives string stripping.
+ * True when the argument region names a token identifier as an identifier.
+ * String literals are stripped so `logger.info("oauth_token is a pattern")` is
+ * clean, while `logger.info(f"oauth_token: {token}")` still trips — the
+ * interpolated identifier survives stripping.
  */
 function argsReferenceToken(argsText) {
-  // strip string literals (single, double, backtick, python triple).
-  // this leaves identifiers + operators + template-expression content.
   let stripped = argsText
-    // python triple-quoted strings
+    // python triple-quoted
     .replace(/"""[\s\S]*?"""/g, '')
     .replace(/'''[\s\S]*?'''/g, '')
-    // regular strings (non-greedy; allow escaped quotes)
+    // regular strings, escaped quotes allowed
     .replace(/"(?:[^"\\]|\\.)*"/g, '')
     .replace(/'(?:[^'\\]|\\.)*'/g, '');
 
-  // template literals need care: strip the static text but KEEP ${...}
-  // expression contents so `console.log(\`token=${accessToken}\`)` catches.
-  // the inner char class deliberately allows `$` so `${expr}` segments are
-  // part of the match (prior bug: excluding `$` made the whole literal
-  // unmatchable whenever it contained an interpolation, leaving the
-  // static text to false-positive on tokens-the-word).
+  // Template literals: drop the static text, KEEP ${...} contents. The char
+  // class must allow `$` — excluding it made any interpolated literal
+  // unmatchable and let its static text false-positive on the word "token".
   stripped = stripped.replace(
     /`((?:[^`\\]|\\.)*)`/g,
     (_full, inner) => {
@@ -189,10 +159,7 @@ function argsReferenceToken(argsText) {
     },
   );
 
-  // python f-strings — similar: extract {expr} contents.
-  // (our string-stripping above already removed non-f quoted segments;
-  // f-strings are f"..." or f'...'. we reparse the original argsText
-  // for f-string contents since they'd have been stripped.)
+  // f-strings: reparse the ORIGINAL argsText, the stripping above ate them
   const fstringMatches = [
     ...argsText.matchAll(/\bf["']((?:[^"'\\]|\\.)*)["']/g),
   ];
@@ -233,7 +200,7 @@ function scanFile(absPath) {
           line: lineNum + 1,
           snippet: line.trim().slice(0, 200),
         });
-        break; // one finding per line is enough
+        break; // one finding per line
       }
     }
   }
@@ -279,7 +246,7 @@ function runScan() {
 }
 
 function runSelfTest() {
-  // fixture: should FLAG every entry.
+  // must flag
   const bad = [
     `console.log("access_token=" + accessToken);`,
     `console.error(\`auth failed for token=\${idToken}\`);`,
@@ -288,7 +255,7 @@ function runSelfTest() {
     `print(access_token)`,
     `Sentry.captureMessage("user token", { extra: { token } });`,
   ];
-  // fixture: should NOT flag.
+  // must not flag
   const good = [
     `console.log("authenticated")`,
     `logger.info("login ok for user %s", userId)`,

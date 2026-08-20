@@ -28,10 +28,8 @@ interface RouteParams {
 }
 
 /**
- * DELETE /api/keys/{keyId}
- *
- * Revoke the authenticated user's own API key. Deletes both the user
- * subcollection doc and the top-level `api_keys/{keyHash}` lookup so auth
+ * DELETE /api/keys/{keyId} — revoke the authenticated user's own API key. Deletes both
+ * the user subcollection doc and the top-level `api_keys/{keyHash}` lookup, so auth
  * resolution fails immediately.
  */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
@@ -96,33 +94,23 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 }
 
 /**
- * PATCH /api/keys/{keyId}
- *
- * Edit an existing key's scopes and/or name in place, without reissuing the
- * secret. Body: `{ scopes?: Scope[], name?: string }` — `scopes` is a full
+ * PATCH /api/keys/{keyId} — edit an existing key's scopes and/or name in place without
+ * reissuing the secret. Body `{ scopes?: Scope[], name?: string }`; `scopes` is a full
  * replacement, not a merge.
  *
- * Why both documents are written in one batch, and why that is not optional:
- * authorization reads scopes *exclusively* from the denormalised
- * `api_keys/{keyHash}` lookup (apiAuth.server.ts:185,230). The user
- * subcollection is never consulted on the auth path — only a fire-and-forget
- * `lastUsedAt` write touches it. Updating just the user doc would leave the
- * credential on its old permissions indefinitely while the dashboard claimed
- * otherwise. There is no cache in front of the lookup, so the commit takes
- * effect on the very next request.
+ * Both documents are written in one batch, and that is not optional: authorization reads
+ * scopes exclusively from the denormalised `api_keys/{keyHash}` lookup
+ * (apiAuth.server.ts:185,230), so updating only the user doc would leave the credential
+ * on its old permissions while the dashboard claimed otherwise. No cache fronts the
+ * lookup, so the commit takes effect on the very next request.
  *
- * Validation is the same code POST uses (`./_shared`) rather than a
- * reimplementation: a PATCH that validated more loosely than create would be
- * a privilege-escalation path around the superadmin gate — edit into scopes
- * you could never have been issued.
+ * Validation reuses POST's (`./_shared`) — a looser PATCH would be a privilege-escalation
+ * path around the superadmin gate. Auth mirrors POST (`rejectAgentTokens` +
+ * `assertActiveUser`), not DELETE, which has neither.
  *
- * Auth is copied from POST (`rejectAgentTokens` + `assertActiveUser`), not
- * from DELETE, which has neither.
- *
- * 409 on a rotated or revoked key: both have a successor or a terminal state
- * the caller should be acting on instead, and silently editing a key inside
- * its rotation grace window would change the predecessor's powers out from
- * under whoever still holds it.
+ * 409 on a rotated or revoked key: both have a successor or terminal state to act on
+ * instead, and editing inside a rotation grace window would change the predecessor's
+ * powers out from under whoever still holds it.
  */
 export const PATCH = withRateLimit(
   async (request: NextRequest, { params }: RouteParams) => {
@@ -228,10 +216,9 @@ export const PATCH = withRateLimit(
           endpoint: request.nextUrl.pathname,
           method: request.method,
           changedFields: Object.keys(patch).sort().join(','),
-          // Fingerprints, never raw scopes — the audit log is broadly readable
-          // and a scope list is a map of what the key can reach. The counts
-          // ride along because the fingerprint is opaque: they are what makes
-          // a key quietly going from one scope to nine visible on a scan.
+          // Fingerprints, never raw scopes — the audit log is broadly readable and a scope list is
+          // a map of what the key can reach. The counts ride along because the fingerprint is
+          // opaque: they make a key going from one scope to nine visible on a scan.
           ...(scopes
             ? {
                 scopeFingerprintBefore: scopeFingerprint(existing.scopes ?? null),

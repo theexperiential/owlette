@@ -2,21 +2,12 @@
 /**
  * @jest-environment jsdom
  *
- * Render tests for the auto-restore UI added in C3.3 + C3.4 of the display
- * layout panel. Covers:
- *  - the toggle's permission gate (visible iff `isSiteAdmin(siteId)`)
- *  - the toggle's disabled-state for the no-stored-layout / mosaic-active
- *    branches and that the tooltip text matches the spec
- *  - the toggle calls `useDisplayActions.setAutoRestore` with the right
- *    next-value + operator email
- *  - the breaker-tripped banner forks between admin (red, with reset) and
- *    read-only (amber, no button) variants
- *  - the reset button calls `useDisplayActions.resetAutoRestoreBreaker`
+ * Render tests for the display layout panel's auto-restore UI: the toggle's permission gate and
+ * disabled branches, the setAutoRestore call, the admin/read-only fork of the breaker banner, and
+ * the breaker reset button.
  *
- * The panel pulls in a few peer hooks (useDisplayDraft, useDisplayModes,
- * useDisplayEventFeed) — all mocked to inert state so the panel renders
- * with a single source of truth (the controlled mocks below) and the
- * tests don't depend on real Firestore / sessionStorage / subscriptions.
+ * Peer hooks (useDisplayDraft, useDisplayModes, useDisplayEventFeed) are mocked inert so the
+ * controlled mocks below are the single source of truth — no real Firestore or sessionStorage.
  */
 
 import React from 'react';
@@ -29,13 +20,8 @@ import type {
   MonitorInfo,
 } from '@/hooks/useDisplayState';
 
-// ----------------------------------------------------------------------------
 // Mocks — set up before importing the component under test.
-// ----------------------------------------------------------------------------
-
-// Preserve the pure helpers (`computeDisplayDrift`, `totalDriftCount`,
-// `normalizePrimaryToOrigin`) the panel imports alongside the hook. Only
-// `useDisplayState` itself becomes a controllable jest mock.
+// Keep the pure helpers real; only `useDisplayState` becomes a controllable mock.
 jest.mock('@/hooks/useDisplayState', () => {
   const actual = jest.requireActual('@/hooks/useDisplayState');
   return {
@@ -72,9 +58,7 @@ jest.mock('sonner', () => ({
   },
 }));
 
-// Heavy children we don't need to exercise here. Stubs keep the render
-// tree small + deterministic and avoid pulling in canvas/DOM-measurement
-// code that jsdom can't satisfy.
+// Stubs for heavy children — jsdom can't satisfy their canvas/DOM-measurement code.
 jest.mock('@/components/charts/DisplayCanvas', () => ({
   DisplayCanvas: () => <div data-testid="display-canvas-stub" />,
 }));
@@ -119,10 +103,6 @@ const mockedUseDisplayDraft = useDisplayDraft as jest.MockedFunction<typeof useD
 const mockedUseDisplayModes = useDisplayModes as jest.MockedFunction<typeof useDisplayModes>;
 const mockedUseDisplayEventFeed = useDisplayEventFeed as jest.MockedFunction<typeof useDisplayEventFeed>;
 const mockedUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
-
-// ----------------------------------------------------------------------------
-// Fixture builders
-// ----------------------------------------------------------------------------
 
 function makeMonitor(overrides: Partial<MonitorInfo> = {}): MonitorInfo {
   return {
@@ -197,10 +177,7 @@ interface SetupResult {
   setRemoteApplyEnabled: jest.Mock;
 }
 
-/**
- * Wire all five jest.fn-backed hooks to a controlled state. Returns the
- * action spies so individual tests can assert on them.
- */
+/** Wire all five mocked hooks to a controlled state; returns the action spies. */
 function setup(options: SetupOptions = {}): SetupResult {
   const {
     canSiteAdmin = true,
@@ -212,9 +189,7 @@ function setup(options: SetupOptions = {}): SetupResult {
     autoRestore = {},
   } = options;
 
-  // Auth — only `isSiteAdmin` and `user.email` are consumed by the panel.
-  // The full `AuthContextType` shape is large; cast the partial mock to
-  // the return type to keep test inputs focused.
+  // Only `isSiteAdmin` and `user.email` are consumed; cast the partial past AuthContextType.
   mockedUseAuth.mockReturnValue({
     isSiteAdmin: () => canSiteAdmin,
     user: userEmail ? ({ email: userEmail } as never) : null,
@@ -289,9 +264,7 @@ function setup(options: SetupOptions = {}): SetupResult {
 }
 
 function renderPanel() {
-  // Mirror the app's `layout.tsx` wrap so the panel's Radix Tooltips can
-  // resolve their TooltipProvider context. Without this every render throws
-  // "`Tooltip` must be used within `TooltipProvider`".
+  // Mirrors layout.tsx: without TooltipProvider every render throws on the panel's Radix tooltips.
   return render(
     <TooltipProvider>
       <DisplayLayoutPanel
@@ -303,10 +276,6 @@ function renderPanel() {
     </TooltipProvider>,
   );
 }
-
-// ----------------------------------------------------------------------------
-// Tests
-// ----------------------------------------------------------------------------
 
 describe('DisplayLayoutPanel — auto-restore UI', () => {
   it('renders the toggle when canSiteAdmin is true', () => {
@@ -357,9 +326,8 @@ describe('DisplayLayoutPanel — auto-restore UI', () => {
     setup({ canSiteAdmin: true, hasAssignedLayout: false });
     renderPanel();
     const toggle = screen.getByTestId('display-auto-restore-toggle');
-    // Radix Switch surfaces disabled via both the data-disabled attr and the
-    // underlying button's disabled DOM prop — assert on the prop directly so
-    // we're testing the actual user-facing state, not implementation detail.
+    // Assert the DOM `disabled` prop, not Radix's data-disabled attr — the former is what the
+    // user actually hits.
     expect(toggle).toBeDisabled();
   });
 
@@ -410,8 +378,7 @@ describe('DisplayLayoutPanel — auto-restore UI', () => {
 
     expect(screen.getByTestId('display-auto-restore-breaker-banner')).toBeInTheDocument();
     expect(screen.getByTestId('display-auto-restore-reset-button')).toBeInTheDocument();
-    // The banner copy carries the agent's last-error string so an admin can
-    // diagnose without opening the events tab.
+    // Banner carries the agent's last-error string so admins skip the events tab.
     expect(screen.getByText(/monitor disconnected/)).toBeInTheDocument();
     expect(
       screen.queryByTestId('display-auto-restore-breaker-readonly'),
@@ -480,18 +447,13 @@ describe('DisplayLayoutPanel — auto-restore UI', () => {
 });
 
 describe('DisplayLayoutPanel — drift dot persistence', () => {
-  // Repro for "does the orange drift dot dismiss itself when the user clicks
-  // the 'stored' pill?" The dot is purely derived from
-  // `mode !== 'edit' && hasDrift` — clicking the pill only flips `activeTab`,
-  // so the dot must survive the click. If a future refactor accidentally
-  // ties the dot to `activeTab` or to a "seen" flag, this test catches it.
+  // The drift dot derives purely from `mode !== 'edit' && hasDrift`, so clicking the 'stored' pill
+  // (which only flips activeTab) must not dismiss it. Catches a refactor tying it to activeTab.
   it('keeps the drift dot on the "stored" pill after clicking it', async () => {
     const user = userEvent.setup();
 
     setup({ canSiteAdmin: true });
-    // Override useDisplayState with a profile/assigned pair that drifts on
-    // position. Same edidHash so the monitor matches; different x so
-    // computeDisplayDrift records a per-field drift entry.
+    // Same edidHash so the monitor matches; different x so computeDisplayDrift records drift.
     mockedUseDisplayState.mockReturnValue({
       profile: makeProfile({
         monitors: [makeMonitor({ position: { x: 100, y: 0 } })],
@@ -507,9 +469,7 @@ describe('DisplayLayoutPanel — drift dot persistence', () => {
 
     renderPanel();
 
-    // The badge-bearing pill carries an aria-label with the drift count.
-    // No badge -> aria-label is just "stored". So this query is a strict
-    // proxy for "dot is rendered".
+    // aria-label carries the drift count only when the badge renders — a strict proxy for the dot.
     const storedButton = screen.getByRole('button', {
       name: /stored, \d+ display change/,
     });

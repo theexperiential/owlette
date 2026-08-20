@@ -1,26 +1,14 @@
 /**
  * Access-control — platform API 403 gates (server-side).
  *
- * Platform/global API routes require a superadmin role through the shared
- * `web/lib/apiAuth.server.ts`, which throws 403 "Forbidden: Superadmin
- * access required" for any authenticated user whose role isn't
- * `superadmin`. Member + site-admin must see 403 regardless of body,
- * method, or whether the endpoint exists semantically — the gate runs
- * before any handler logic.
+ * Platform/global routes require superadmin via `web/lib/apiAuth.server.ts`,
+ * which throws 403 before any handler logic runs, so member and site-admin must
+ * see 403 regardless of body or method. Automates the two "server-side gates
+ * (network tab)" rows of the permission-model-split smoke checklist.
  *
- * This spec automates the two "server-side gates (network tab)" rows in
- * the permission-model-split manual-smoke-checklist (closing the last
- * avoidable Playwright gap flagged in B4.1's coverage audit).
- *
- * Endpoint selection:
- *   - GET /api/platform/system-presets   → global template library
- *   - GET /api/installer                 → list installer versions
- *   - POST /api/installer/upload         → upload dialog (smoke-checklist row 2;
- *                                          body is irrelevant — the auth gate
- *                                          short-circuits before validation)
- *
- * Three endpoints is enough to prove the shared gate works for both GET
- * and POST. Adding more endpoints would mostly re-test the same middleware.
+ * Three endpoints (two GET, one POST) prove the shared gate; more would only
+ * re-test the same middleware. The POST body is irrelevant — the gate
+ * short-circuits before validation.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -32,13 +20,10 @@ const ADMIN_ENDPOINTS = [
   { method: 'POST', path: '/api/installer/upload', body: {} },
 ] as const;
 
-// We call through `page.evaluate(fetch(...))` instead of Playwright's
-// `request` or `page.request` because those sit on their own
-// APIRequestContext and drop the HttpOnly+Secure `__session` iron-session
-// cookie that `requireSession` needs — every attempt via those paths
-// returned 401 instead of the expected 403. A same-origin `fetch()` inside
-// the page's JS context uses the browser's cookie jar directly, so the
-// signed session cookie rides along unchanged.
+// `page.evaluate(fetch(...))` rather than Playwright's `request`/`page.request`:
+// those use their own APIRequestContext and drop the HttpOnly+Secure `__session`
+// cookie `requireSession` needs, returning 401 instead of the expected 403. A
+// same-origin fetch inside the page uses the browser's cookie jar.
 async function fetchStatus(
   page: Page,
   ep: (typeof ADMIN_ENDPOINTS)[number],
@@ -90,10 +75,8 @@ test.describe('admin API 403 — superadmin', () => {
     expect(status).toBe(200);
   });
 
-  // For the POST upload endpoint with an empty body, superadmin gets past the
-  // auth gate and then fails body validation — that's 400, not 403. The
-  // load-bearing assertion is "not 403" (i.e. the auth gate doesn't block
-  // superadmin); the 400 is incidental to sending an empty body.
+  // Superadmin clears the auth gate and then fails body validation on the empty
+  // POST body — the load-bearing assertion is "not 403"; the 400 is incidental.
   test('POST /api/installer/upload passes the auth gate (non-403)', async ({ page }) => {
     const status = await fetchStatus(page, { method: 'POST', path: '/api/installer/upload', body: {} });
     expect(status).not.toBe(403);

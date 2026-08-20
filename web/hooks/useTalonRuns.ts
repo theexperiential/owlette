@@ -1,15 +1,14 @@
 'use client';
 
 /**
- * useTalonRuns — real-time listener for one talon's execution history at
+ * Real-time listener for one talon's execution history at
  * `sites/{siteId}/talon_runs`, newest first.
  *
- * Read-only: run records are an audit surface written solely by the runner
- * (admin SDK), and firestore.rules 2.7.0 denies every client write while
- * allowing site members to read. Backed by the `(talonId ASC, startedAt DESC)`
- * composite index in firestore.indexes.json — the orderBy is required, not
- * cosmetic: without it Firestore would slice `limit` off a document-id-ordered
- * set, and run ids are random.
+ * Read-only — runs are an audit surface written only by the runner, and
+ * firestore.rules denies every client write. Backed by the
+ * `(talonId ASC, startedAt DESC)` composite index; the orderBy is required, not
+ * cosmetic: without it `limit` slices a document-id-ordered set, and run ids
+ * are random.
  */
 
 import { useEffect, useState } from 'react';
@@ -30,10 +29,9 @@ const DEFAULT_RUN_LIMIT = 20;
 const EMPTY_RUNS: TalonRun[] = [];
 
 /**
- * Milliseconds from any shape a `TalonTimestamp` can arrive in. Mirrors
- * `firestoreTsToMs` in `./useFirestore`, which types its input as the
- * client-SDK `FirestoreTs` union and so can't accept a `TalonTimestamp`
- * directly. Returns 0 for absent / unparseable values, which sorts them last.
+ * Milliseconds from any shape a `TalonTimestamp` arrives in. Mirrors
+ * `firestoreTsToMs`, which types its input as the client-SDK `FirestoreTs`
+ * union and can't take a `TalonTimestamp`. 0 for absent/unparseable — sorts last.
  */
 function talonTsToMs(ts: TalonTimestamp | undefined): number {
   if (ts == null) return 0;
@@ -57,21 +55,18 @@ function talonTsToMs(ts: TalonTimestamp | undefined): number {
 }
 
 /**
- * @param talonId  `null` disables the hook entirely — no listener is opened
- *                 and the result is an empty, non-loading list. That is the
- *                 state a run panel sits in before a talon is selected.
+ * @param talonId `null` opens no listener and yields an empty, non-loading
+ *                list — the state a run panel sits in before a talon is picked.
  */
 export function useTalonRuns(
   siteId: string,
   talonId: string | null,
   limitCount: number = DEFAULT_RUN_LIMIT,
 ) {
-  // Same pinning trick as useTalons, widened to the (site, talon) pair the
-  // listener is for: `loading` is derived from a key mismatch instead of being
-  // reset synchronously when the selected talon changes. `limitCount` is
-  // deliberately NOT part of the key — widening the window re-subscribes, but
-  // the already-rendered runs stay valid rather than flashing back to a
-  // skeleton.
+  // Same pinning as useTalons, keyed on (site, talon): `loading` derives from a
+  // key mismatch rather than a synchronous reset. `limitCount` is deliberately
+  // NOT in the key — widening the window re-subscribes without flashing a
+  // skeleton over already-valid runs.
   const requestedKey = db && siteId && talonId ? `${siteId}/${talonId}` : null;
 
   const [state, setState] = useState<{
@@ -103,17 +98,16 @@ export function useTalonRuns(
           id: docSnap.id,
         }));
 
-        // The query already orders these; re-sorting keeps the newest-first
-        // contract even for cache-served snapshots, which can surface a
-        // pending local write before the server assigns its timestamp.
+        // Re-sorted despite the query's orderBy: cache-served snapshots can
+        // surface a pending local write before the server timestamps it.
         runData.sort((a, b) => talonTsToMs(b.startedAt) - talonTsToMs(a.startedAt));
 
         setState({ runs: runData, loadedKey: requestedKey, error: null });
       },
       (err) => {
         console.error('Error fetching talon runs:', err);
-        // Pinned on the error path for the same reason as useTalons: the
-        // subscription is over, so consumers must leave `loading`.
+        // Pinned on the error path too — the subscription is over, so consumers
+        // must leave `loading`.
         setState({ runs: [], loadedKey: requestedKey, error: err.message });
       },
     );
@@ -124,8 +118,8 @@ export function useTalonRuns(
   const loaded = requestedKey !== null && state.loadedKey === requestedKey;
   const runs = loaded ? state.runs : EMPTY_RUNS;
   const loading = requestedKey !== null && !loaded;
-  // Scoped to the talon in view, so an error from a previously selected talon
-  // can't linger once the selection changes or clears.
+  // Scoped to the talon in view so a stale error can't linger past a selection
+  // change.
   const error = !db ? 'Firebase not configured' : (loaded ? state.error : null);
 
   return { runs, loading, error };

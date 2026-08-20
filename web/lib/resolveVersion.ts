@@ -1,21 +1,12 @@
 /**
- * Version-addressing resolver for roost `{versionRef}` path params +
- * CLI `--to` / `--against` flags.
+ * Resolves roost `{versionRef}` path params and CLI `--to`/`--against` flags to
+ * `{ versionId, versionNumber }`. Accepted forms: alias (`current`/`previous`/
+ * `first`), stable id (bare 64-char sha-256 hex, or legacy `vrs_<hex>`), or
+ * number (`3`/`#3`/`v3`/`V3`, the per-roost versionNumber).
  *
- * Accepted `ref` forms (all map to the same `{ versionId, versionNumber }`):
- *
- *   - alias:    `current` / `previous` / `first`
- *   - stable id: a bare 64-char sha-256 hex string, or legacy `vrs_<hex>`
- *   - number:    `3` / `#3` / `v3` / `V3` (the per-roost versionNumber)
- *
- * The resolver is side-effect free — mutating routes (rollback, deploy,
- * PATCH) call this first to translate user input into a real version
- * doc, then run their work against the resolved id.
- *
- * Errors use `ResolveVersionError` subclasses so callers can cleanly map
- * to a problem+json response at the route boundary. The server is the
- * single source of truth for ref grammar — SDKs/CLIs must forward the
- * user's raw input verbatim.
+ * Side-effect free: mutating routes resolve first, then work against the id.
+ * Errors are `ResolveVersionError` subclasses so routes can map to problem+json.
+ * The server owns the ref grammar — SDKs/CLIs forward raw user input verbatim.
  */
 import { getAdminDb } from '@/lib/firebase-admin';
 
@@ -61,17 +52,15 @@ export class VersionRefMalformedError extends ResolveVersionError {
 
 /**
  * Resolve a versionRef to a concrete `versions/{versionId}` doc. Throws
- * `ResolveVersionError` (VersionNotFoundError / VersionRefMalformedError)
- * on any failure — the caller is expected to catch and translate.
+ * `VersionNotFoundError` / `VersionRefMalformedError` for the caller to translate.
  */
 export async function resolveVersion(
   params: ResolveVersionParams,
 ): Promise<ResolvedVersion> {
   const { roostId, siteId } = params;
 
-  // Trim whitespace that callers sometimes include from shell pastes
-  // (`\n`, trailing spaces). An empty string after trimming is a
-  // malformed ref, not a not-found — fail fast with 400.
+  // Shell pastes carry `\n`/trailing spaces. Empty after trimming is malformed
+  // (400), not not-found.
   const ref = params.ref?.trim() ?? '';
   if (ref.length === 0) {
     throw new VersionRefMalformedError('versionRef must not be empty');
@@ -84,7 +73,7 @@ export async function resolveVersion(
     .collection('roosts')
     .doc(roostId);
 
-  // ── alias forms ──────────────────────────────────────────────────
+  // alias forms
   if (ref === 'current' || ref === 'previous' || ref === 'first') {
     const roostSnap = await roostRef.get();
     if (!roostSnap.exists) {
@@ -114,9 +103,8 @@ export async function resolveVersion(
     return lookupByNumber(roostRef, 1);
   }
 
-  // Stable content-addressed id forms. New publishes currently return a
-  // bare sha-256 hex string; accept the old vrs_ form as a compatibility
-  // alias so clients from the Roost-only API plan still resolve correctly.
+  // New publishes return bare sha-256 hex; the legacy `vrs_` form stays accepted
+  // so older clients still resolve.
   if (/^[0-9a-f]{64}$/.test(ref)) {
     return lookupById(roostRef, ref);
   }
@@ -132,11 +120,9 @@ export async function resolveVersion(
     return lookupById(roostRef, ref);
   }
 
-  // ── number forms: `3`, `#3`, `v3`, `V3` ──────────────────────────
-  // Strip the optional one-char prefix so the remainder is a pure
-  // positive integer. We re-validate via String(n) === stripped to
-  // reject inputs like `3abc` or `3.0` that `parseInt` would silently
-  // coerce.
+  // number forms: `3`, `#3`, `v3`, `V3`
+  // Strip the one-char prefix, then re-validate with String(n) === stripped to
+  // reject `3abc` / `3.0`, which parseInt would silently coerce.
   const stripped = ref.replace(/^[#vV]/, '');
   const n = parseInt(stripped, 10);
   if (

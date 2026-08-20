@@ -1,13 +1,11 @@
 /**
- * Scheduled cleanup of expired idempotency cache entries (roost public api
- * wave 3.12).
+ * Scheduled cleanup of expired idempotency cache entries (roost public api wave 3.12).
  *
- * Idempotency cache lives at `idempotency_cache/{hash}` with an `expiresAt`
- * unix-ms field. Entries are written by the web layer's `saveIdempotency`
- * with a 24h ttl. A daily sweep deletes anything past `expiresAt`.
+ * `idempotency_cache/{hash}` carries an `expiresAt` unix-ms field, written by the web
+ * layer's `saveIdempotency` with a 24h ttl; a daily sweep deletes anything past it.
  *
- * This is the only retention mechanism — firestore has no native ttl, so
- * without this the collection grows unbounded.
+ * The only retention mechanism — firestore has no native ttl, so without this the
+ * collection grows unbounded.
  */
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';

@@ -1,21 +1,18 @@
 /**
- * Wave 0 spike — prove headless agent pairing against LIVE dev, end to end,
- * with zero human and zero browser. This is the make-or-break assumption the
- * whole full-machine e2e gate rests on (dev/active/full-machine-e2e/plan.md).
+ * Wave 0 spike — headless agent pairing against LIVE dev, no human, no browser.
+ * The assumption the whole full-machine e2e gate rests on
+ * (dev/active/full-machine-e2e/plan.md).
  *
- * Flow: seed a least-privilege site-owner + e2e site in dev  ->  mint a
- * __session cookie via Identity Toolkit + /api/auth/session  ->  generate a
- * pairing phrase (preauthorizedIntent)  ->  authorize it (deferTokenMint)  ->
- * hand the phrase to the agent's real Python+requests poller with a SYNTHETIC
- * machineId  ->  assert real tokens come back and an agent_refresh_tokens doc
- * lands in dev Firestore  ->  tear everything down.
+ * Seed a least-privilege site-owner + e2e site -> mint a __session cookie
+ * (Identity Toolkit + /api/auth/session) -> generate a pairing phrase
+ * (preauthorizedIntent) -> authorize (deferTokenMint) -> run the agent's real
+ * Python+requests poller with a SYNTHETIC machineId -> assert tokens come back
+ * and an agent_refresh_tokens doc lands in dev Firestore -> tear down.
  *
- * Safety: hard-pins the dev project (aborts on any other), never runs
- * configure_site.py (so this box's live .tokens.enc is untouched), and tears
- * down user + site + token docs in a finally block.
- *
- * Run:  node e2e-machine/wave0/run_spike.mjs
- * Never commit real credentials — the generated password stays in memory only.
+ * SAFETY: hard-pinned to the dev project (aborts otherwise), never runs
+ * configure_site.py (this box's live .tokens.enc is untouched), and cleans up
+ * user + site + token docs in a finally. The generated password never leaves
+ * memory.
  */
 import { createRequire } from 'node:module';
 import { readFileSync, existsSync } from 'node:fs';
@@ -24,8 +21,7 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-// Derive the repo root from this script's own location so the spike runs
-// unchanged on any machine that clones the repo.
+// Repo root from this script's own location, so any clone works unchanged.
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
 const require = createRequire(path.join(REPO, 'web', 'package.json'));
@@ -37,17 +33,16 @@ const API_BASE = 'https://dev.owlette.app';
 const SA_PATH = path.join(REPO, 'agent', 'config', 'firebase-creds-dev.json');
 const POLL_SCRIPT = path.join(HERE, 'poll_agent.py');
 
-// Prefer the agent's bundled Python (most faithful Cloudflare/UA test); fall
-// back to an explicit override or the capture-native venv on a machine without
-// the agent installed. Whatever runs must have `requests`.
+// Prefer the agent's bundled Python (most faithful Cloudflare/UA test), else an
+// override or the capture-native venv. Whatever runs must have `requests`.
 const PY_CANDIDATES = [
   process.env.OWLETTE_AGENT_PY,
   'C:/ProgramData/Owlette/python/python.exe',
   path.join(REPO, 'dev', 'video-tutorials', 'capture-native', '.venv', 'Scripts', 'python.exe'),
 ].filter(Boolean);
 const AGENT_PY = PY_CANDIDATES.find((p) => existsSync(p)) || 'python';
-// Controller calls are allowed to look like curl (the plan permits curl for
-// setup calls); only the Python poller must use the agent's default UA.
+// Only the Python poller must carry the agent's default UA; setup calls may
+// look like curl.
 const CURL_UA = 'curl/8.4.0';
 
 if (!API_BASE.startsWith('https://dev.')) {
@@ -55,14 +50,14 @@ if (!API_BASE.startsWith('https://dev.')) {
   process.exit(2);
 }
 
-// Read the SA only to guard the project id — never logged, never committed.
+// Read only to guard the project id — never logged, never committed.
 const sa = JSON.parse(readFileSync(SA_PATH, 'utf8'));
 if (sa.project_id !== EXPECTED_PROJECT) {
   console.error(`ABORT: service account project '${sa.project_id}' != '${EXPECTED_PROJECT}'`);
   process.exit(2);
 }
 
-// Dev web API key (NEXT_PUBLIC — already in the client bundle) from env.local.
+// Dev web API key — NEXT_PUBLIC, already in the client bundle.
 const envLocal = readFileSync(path.join(REPO, 'web', '.env.local'), 'utf8');
 const apiKey = (envLocal.match(/NEXT_PUBLIC_FIREBASE_API_KEY\s*=\s*"?([^"\r\n]+)"?/) || [])[1];
 if (!apiKey) {

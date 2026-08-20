@@ -1,21 +1,17 @@
 'use client';
 
 /**
- * MinimizedUploadCard
+ * Floating bottom-right indicator for a roost upload running outside
+ * ProjectDistributionDialog. State comes from the parent's `useRoostUpload`:
+ *   uploading → progress bar + phase + throughput/ETA
+ *   success   → "synced" flash, auto-hides after 2s
+ *   error     → error state + dismiss button
+ *   cancelled → auto-hides after 1s
  *
- * Persistent floating indicator shown at the bottom-right of the page
- * while a roost upload is running outside the ProjectDistributionDialog.
- *
- * Lifecycle (driven by the parent `useRoostUpload` state):
- *   - uploading → live progress bar + phase label + throughput/ETA
- *   - success   → brief "synced" flash, auto-hides after 2s
- *   - error     → error state + dismiss button
- *   - cancelled → auto-hides after 1s
- *
- * Clicking the card body calls `onRestore()` to reopen the dialog —
- * the dialog reads the same `state.progress` and picks up mid-flight.
- * The X button cancels (with a two-click inline confirm, since losing
- * an in-flight multi-GB upload by accident is worse than one extra tap).
+ * Clicking the body calls `onRestore()`; the dialog reads the same
+ * `state.progress` and picks up mid-flight. The X cancels behind a two-click
+ * inline confirm — losing an in-flight multi-GB upload by mis-tap is worse
+ * than one extra tap.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -61,10 +57,9 @@ function phaseLabel(phase: string): string {
 }
 
 /**
- * Pull the active fraction from the progress payload. The lib can set
- * both hashFraction AND uploadFraction on the tick where it crosses
- * phases; we always pick the one that matches the current phase so the
- * bar is monotonic.
+ * The lib can set hashFraction AND uploadFraction on the tick where it crosses
+ * phases; always take the one matching the current phase so the bar stays
+ * monotonic.
  */
 function activeFraction(progress: {
   phase: string;
@@ -81,13 +76,10 @@ export function MinimizedUploadCard({ upload, onRestore }: MinimizedUploadCardPr
   const { state, cancel, reset } = upload;
   const [confirmingCancel, setConfirmingCancel] = useState(false);
 
-  // Auto-dismiss on terminal states. Success flashes "synced" for 2s so
-  // the user sees confirmation; cancelled vanishes quickly; error waits
-  // for an explicit dismiss so the user has a chance to read what went
-  // wrong. Calling `reset()` flips the hook back to `idle`, at which
-  // point the parent page stops rendering this component altogether —
-  // no local "hidden" flag needed (and the setState-in-effect lint rule
-  // is happy because `reset` is a stable external callback).
+  // Auto-dismiss on terminal states; error waits for an explicit dismiss so the
+  // failure can be read. `reset()` flips the hook to `idle` and the parent stops
+  // rendering this component — no local "hidden" flag, and the
+  // setState-in-effect lint rule is satisfied because `reset` is stable.
   useEffect(() => {
     if (state.status === 'success') {
       const t = setTimeout(reset, 2000);
@@ -102,10 +94,8 @@ export function MinimizedUploadCard({ upload, onRestore }: MinimizedUploadCardPr
 
   if (state.status === 'idle') return null;
 
-  // The inline cancel-confirm is only meaningful while actively uploading.
-  // Gating its visibility on `state.status === 'uploading'` means a stale
-  // "cancel? yes/no" prompt can't outlive the run — no effect-driven
-  // reset needed.
+  // Gating the inline cancel-confirm on `status === 'uploading'` means a stale
+  // "cancel? yes/no" can't outlive the run — no effect-driven reset needed.
   const showCancelConfirm = confirmingCancel && state.status === 'uploading';
 
   const progress = state.progress;
@@ -115,9 +105,8 @@ export function MinimizedUploadCard({ upload, onRestore }: MinimizedUploadCardPr
   const isSuccess = state.status === 'success';
   const isCancelled = state.status === 'cancelled';
 
-  // Rate/ETA copy. Only show once we've got a measurable rate (at least
-  // ~3s of samples) — anything sooner is too noisy to be useful and
-  // flashes a nonsense value for the first tick.
+  // Only once the rate is measurable (~3s of samples); sooner is noise and
+  // flashes a nonsense value on the first tick.
   const throughput = progress?.throughputBytesPerSec;
   const eta = progress?.etaSeconds;
   const showRate =
@@ -150,8 +139,8 @@ export function MinimizedUploadCard({ upload, onRestore }: MinimizedUploadCardPr
     onRestore();
   };
 
-  // z-index: sonner defaults to 9999 — sit above to avoid toast overlap.
-  // Fixed bottom-right with viewport insets to stay clear of the footer.
+  // z-index above sonner's 9999 to avoid toast overlap; viewport insets keep it
+  // clear of the footer.
   return (
     <div
       role="status"

@@ -1,14 +1,8 @@
 /**
- * Roosts — description 500-char cap (task 3.3).
- *
- * VersionRow.tsx caps the description via *silent truncation* on every
- * onChange (`setDraft(value.slice(0, 500))`) — there is no inline error
- * and no save-button-disabled state. The server PATCH route also rejects
- * > 500 chars with a 400, but the UI truncates before the request fires.
- *
- * UX gap flagged: typing past the cap is invisible. A char counter
- * (e.g. "500/500") or inline error would be a better signal, mirroring
- * ProjectDistributionDialog.tsx line 855 (`{description.length}/{MAX}`).
+ * Roosts — description 500-char cap. VersionRow.tsx truncates SILENTLY in
+ * onChange, so the server's 400 is never reached from the UI and typing past
+ * the cap gives no signal (known UX gap: no char counter as in
+ * ProjectDistributionDialog).
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -69,7 +63,6 @@ test('501-char input is silently truncated to 500 before PATCH fires', async ({ 
   page.on('pageerror', (e) => pageErrors.push(e));
 
   const textarea = await openDescriptionEditor(page);
-  // The onChange handler truncates to 500, so the textarea never holds 501.
   await textarea.fill('z'.repeat(501));
   await expect(textarea).toHaveValue('z'.repeat(500));
 
@@ -101,7 +94,6 @@ test('exactly 500 chars accepted — PATCH fires, UI updates', async ({ page }) 
   const body = response.request().postDataJSON() as Record<string, unknown>;
   expect(body).toMatchObject({ siteId: SITE_ID, description: exactCap });
 
-  // UI re-renders with the saved value once the editor closes.
   await expect(page.getByRole('button', { name: 'edit description' })).toContainText(exactCap, {
     timeout: 5_000,
   });

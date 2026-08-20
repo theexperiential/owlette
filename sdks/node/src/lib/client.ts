@@ -1,19 +1,12 @@
 /**
- * Low-level HTTP client used by every resource class in the node sdk.
+ * Low-level HTTP client behind every resource class in the node sdk. It
+ * attaches auth + `Roost-Version` + an auto-generated `Idempotency-Key` on
+ * mutating calls (so transparent retries can't duplicate writes), turns
+ * problem+json bodies into typed `OwletteApiError`s, and delegates retry to
+ * `./retry.ts` (5 attempts, exponential + jitter, 429 and 5xx only).
  *
- * Responsibilities kept tight on purpose:
- *   - attach `Authorization: Bearer owk_*` + `Roost-Version` + default
- *     `Idempotency-Key` on mutating calls (auto-generated per request
- *     so retries on transient failure don't create duplicate writes).
- *   - translate 4xx/5xx problem+json bodies into typed `OwletteApiError`
- *     instances so callers can `instanceof`-check for specific codes.
- *   - delegate retry to `./retry.ts` with a sensible default schedule
- *     (5 attempts, exponential with jitter, only for 429 + 5xx).
- *
- * This is intentionally NOT a feature-rich http library — it wraps
- * `globalThis.fetch` and nothing else. Bring your own proxy agents /
- * custom DNS via a `fetch` override passed to the constructor if you
- * need them.
+ * Deliberately thin — it wraps `globalThis.fetch` and nothing else. Pass a
+ * `fetch` override for proxy agents or custom DNS.
  */
 
 import { randomUUID } from 'crypto';
@@ -42,19 +35,13 @@ export interface OwletteClientOpts {
   /** Override the default retry schedule. */
   retry?: Partial<RetryOptions>;
   /**
-   * Invoked when a response carries the api's trial-countdown advisory
-   * (`X-Owlette-Billing-Warning`) — e.g. `"trial ends 2026-08-15T00:00:00.000Z;
-   * choose a plan to keep API access"`.
-   *
-   * Unset by default, and the sdk prints nothing on its own: a library has no
-   * business writing to its host application's stderr. Wire it up to surface
-   * the notice however your app already surfaces warnings.
+   * Called with the api's `X-Owlette-Billing-Warning` trial-countdown advisory.
+   * Unset by default — the sdk never writes to its host's stderr on its own.
    *
    *   new Owlette({ token, onBillingWarning: (w) => logger.warn(w) })
    *
-   * Fires once per response bearing the header — including retried attempts —
-   * so deduplicate on your side if you want at-most-once behaviour. Throwing
-   * from this callback is swallowed; it can never fail a request.
+   * Fires once per response bearing the header, retries included, so
+   * deduplicate if you want at-most-once. Throwing here is swallowed.
    */
   onBillingWarning?: (warning: string) => void;
 }
@@ -64,9 +51,8 @@ export interface RequestOptions {
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
   /**
-     * Opt-in idempotency key. When omitted on POST/PATCH/PUT/DELETE, the client
-   * auto-generates one of the form `node-sdk-<uuid>` so transparent retries
-   * remain safe.
+   * Omitted on POST/PATCH/PUT/DELETE, the client auto-generates
+   * `node-sdk-<uuid>` so transparent retries stay safe.
    */
   idempotencyKey?: string;
   /** Extra response headers to surface on the result object. */
@@ -128,11 +114,8 @@ export class OwletteClient {
   }
 
   /**
-   * Hand the trial-countdown advisory to the consumer's callback, if any.
-   *
-   * A throwing callback must never surface as a request failure — the
-   * advisory is informational and the caller is waiting on their data — so
-   * the error is swallowed here rather than propagated.
+   * Hand the trial advisory to the consumer's callback. A throwing callback
+   * must never fail the request, so the error is swallowed.
    */
   private _emitBillingWarning(headers: Headers): void {
     if (!this._onBillingWarning) return;
@@ -180,8 +163,7 @@ export class OwletteClient {
       if (bodyText !== undefined) fetchInit.body = bodyText;
       if (options.signal) fetchInit.signal = options.signal;
       const res = await this._fetch(url.toString(), fetchInit);
-      // Before the ok-check: a response carrying the advisory is worth
-      // surfacing whether or not it also carries an error.
+      // Before the ok-check — the advisory matters on errors too.
       this._emitBillingWarning(res.headers);
       const text = await res.text();
       let parsed: unknown = null;

@@ -1,37 +1,19 @@
 /**
- * Distribution fan-out cloud function (roost wave 2b.3).
+ * Distribution fan-out (roost wave 2b.3): two firestore triggers driving a
+ * canary → fleet rollout. `onRoostWritten` starts the canary when
+ * `currentVersionId` changes; `onTargetStateWritten` advances or aborts on
+ * agent reports. Pure decision logic lives in lib/fanoutLogic.ts (unit-tested);
+ * handlers only load state, call it, and write the outcome.
  *
- * Two firestore triggers implement a staged → canary → fleet rollout
- * when an operator publishes a new version:
+ * Fleet promotion is two-phase: the transaction writes the state transition
+ * with pendingCommandsDispatched=false, then command batches (<=400 ops) are
+ * written outside it so large fleets can't hit the transaction write ceiling.
+ * The flag flips true only after every chunk commits, so a later trigger can
+ * retry the merge-set writes without duplicating commands. A single-machine
+ * site has no fleet wave (the lone target IS the canary), so that promotion
+ * must complete inside the transaction — nothing would re-enter the trigger.
  *
- *   onRoostWritten          — fires when `currentVersionId` changes on
- *                             a roost. Issues canary sync commands
- *                             and creates a rollout state doc.
- *
- *   onTargetStateWritten    — fires when an agent reports a target_state
- *                             for a version under rollout. Advances the
- *                             state machine: canary → fleet, or aborts.
- *
- * The pure decision logic (who is in the canary, did it pass, did it
- * fail hard enough to abort) lives in lib/fanoutLogic.ts and is covered
- * by unit tests. Handlers below are thin: load firestore state, feed
- * to logic, write decisions.
- *
- * Fleet promotion flow:
- * - The target_state trigger transaction reads the current wave and writes
- *   only the rollout state transition. It marks fleet promotions with
- *   pendingCommandsDispatched: false.
- * - After the transaction commits, fleet sync commands are written in
- *   idempotent WriteBatch chunks capped at 400 ops. The rollout flips to
- *   pendingCommandsDispatched: true only after every chunk commits.
- * - If any chunk fails, a later target_state trigger can see the false flag
- *   and retry the same merge-set command writes without duplicating commands.
- * - A single-machine site has no fleet wave at all (the lone target is the
- *   canary). That promotion completes the rollout inside the same
- *   transaction — nothing else would ever re-enter the trigger to do it.
- *
- * **Why not all-at-once?** The cloudflare 2025-11-18 config push that
- * took down the fleet globally is the standing reminder: canary first.
+ * Canary first, never all-at-once: cf. the cloudflare 2025-11-18 config push.
  */
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
@@ -50,10 +32,6 @@ import { buildSyncPullCommand, syncPullCommandId } from './lib/syncPullCommand';
 const db = admin.firestore();
 const FLEET_COMMAND_BATCH_SIZE = 400;
 
-/* --------------------------------------------------------------------- */
-/*  Types                                                                */
-/* --------------------------------------------------------------------- */
-
 interface Roost {
   currentVersionId?: string;
   versionUrl?: string;
@@ -61,9 +39,8 @@ interface Roost {
   extractPath?: string;
 }
 
-// Fallback extraction root when the roost doc carries no explicit
-// extractPath. Matches agent DEFAULT_ROOTS in destination_allowlist.py —
-// keep these in sync.
+// Fallback when the roost doc has no extractPath. Must match agent
+// DEFAULT_ROOTS in destination_allowlist.py.
 const DEFAULT_EXTRACT_ROOT = '~/Documents/Owlette';
 
 interface RolloutDoc {
@@ -90,10 +67,6 @@ interface FleetDispatchPlan {
   machineIds: string[];
 }
 
-/* --------------------------------------------------------------------- */
-/*  Trigger 1: roost write → kick off canary                             */
-/* --------------------------------------------------------------------- */
-
 export const onRoostWritten = onDocumentWritten(
   'sites/{siteId}/roosts/{roostId}',
   async (event) => {
@@ -102,7 +75,7 @@ export const onRoostWritten = onDocumentWritten(
     const before = event.data?.before?.data() as Roost | undefined;
     const after = event.data?.after?.data() as Roost | undefined;
 
-    // deletion or no-op writes — nothing to do.
+    // deletion or no-op write
     if (!after) return;
     if (!after.currentVersionId || !after.versionUrl) return;
     if (before?.currentVersionId === after.currentVersionId) return;
@@ -133,8 +106,7 @@ export const onRoostWritten = onDocumentWritten(
       .collection('rollouts')
       .doc(versionId);
 
-    // idempotent initialisation: if the rollout doc already exists for
-    // this versionId, bail. trigger retries don't re-issue commands.
+    // idempotent: an existing rollout doc means a trigger retry, not a new publish
     const existing = await rolloutRef.get();
     if (existing.exists) {
       console.log(
@@ -167,10 +139,6 @@ export const onRoostWritten = onDocumentWritten(
   },
 );
 
-/* --------------------------------------------------------------------- */
-/*  Trigger 2: target_state write → advance rollout state                */
-/* --------------------------------------------------------------------- */
-
 export const onTargetStateWritten = onDocumentWritten(
   'sites/{siteId}/roosts/{roostId}/target_state/{machineId}',
   async (event) => {
@@ -190,12 +158,11 @@ export const onTargetStateWritten = onDocumentWritten(
       .collection('rollouts')
       .doc(reportedVersionId);
 
-    // transaction: read rollout, evaluate wave, write transition atomically.
-    // prevents two concurrent target_state writes from both trying to
-    // promote canary → fleet.
+    // Atomic read-evaluate-write: two concurrent target_state writes must not
+    // both promote canary → fleet.
     const fleetDispatchPlan = await db.runTransaction<FleetDispatchPlan | null>(async (tx) => {
       const snap = await tx.get(rolloutRef);
-      if (!snap.exists) return null; // no rollout for this version — ignore
+      if (!snap.exists) return null; // no rollout for this version
 
       const rollout = snap.data() as RolloutDoc;
       if (rollout.stage === 'complete' || rollout.stage === 'aborted') return null;
@@ -235,12 +202,9 @@ export const onTargetStateWritten = onDocumentWritten(
       if (!transition) return null; // still in flight
 
       if (transition.stage === 'fleet') {
-        // Single-machine site: `canarySizeFor(1) === 1`, so the lone target
-        // IS the canary and `rollout.fleet` is empty. There is no fleet
-        // command to dispatch and no fleet target_state write will ever
-        // re-enter this trigger — so run the empty fleet wave through the
-        // same state machine here and land on its terminal stage in this
-        // transaction. Without this the rollout parks at "fleet" forever.
+        // Single-machine site: the lone target IS the canary, `fleet` is empty,
+        // and no fleet target_state write will re-enter this trigger — so run the
+        // empty wave here or the rollout parks at "fleet" forever.
         const fleetTransition =
           rollout.fleet.length === 0
             ? nextStage('fleet', evaluateWave([]))
@@ -249,8 +213,7 @@ export const onTargetStateWritten = onDocumentWritten(
           tx.update(rolloutRef, {
             stage: 'complete',
             fleetStartedAt: FieldValue.serverTimestamp(),
-            // Nothing was queued and nothing is outstanding — the retry
-            // branch above must never pick this rollout back up.
+            // nothing outstanding; keeps the retry branch above off this rollout
             pendingCommandsDispatched: true,
             completedAt: FieldValue.serverTimestamp(),
           });
@@ -261,9 +224,7 @@ export const onTargetStateWritten = onDocumentWritten(
           return null;
         }
 
-        // promote: commit rollout state first; command batches happen after
-        // the transaction so large fleets don't hit Firestore's transaction
-        // write ceiling.
+        // state first; command batches run after the transaction (write ceiling)
         tx.update(rolloutRef, {
           stage: 'fleet',
           fleetStartedAt: FieldValue.serverTimestamp(),
@@ -315,16 +276,9 @@ export const onTargetStateWritten = onDocumentWritten(
   },
 );
 
-/* --------------------------------------------------------------------- */
-/*  Helpers                                                              */
-/* --------------------------------------------------------------------- */
-
 /**
- * Minimal shape we need from a batch or transaction for our writes.
- * Union of `WriteBatch | Transaction` doesn't narrow in TS because
- * each exposes set() with different generic signatures; this interface
- * captures the one call we actually make. Runtime behaviour is
- * identical for both SDKs.
+ * The subset of WriteBatch/Transaction we use. A `WriteBatch | Transaction`
+ * union doesn't narrow — their set() generics differ.
  */
 interface Writable {
   set(
@@ -421,11 +375,9 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 /**
- * Queue a `sync_pull` command in the machine's pending commands doc.
- * Agent's command_router dispatches it; result lands in completed/.
- *
- * Payload shape lives in `lib/syncPullCommand.ts` so it can be
- * contract-tested without firebase-admin.
+ * Queue a `sync_pull` in the machine's pending commands doc; the agent's
+ * command_router dispatches it and the result lands in completed/. Payload shape
+ * lives in `lib/syncPullCommand.ts` so it is contract-testable without firebase-admin.
  */
 function queueSyncCommand(
   writable: Writable,
@@ -444,9 +396,8 @@ function queueSyncCommand(
     .collection('commands')
     .doc('pending');
 
-  // one-doc-per-machine pending commands (matches existing pattern used
-  // by deploymentStatus.ts). command id is deterministic per version+roost
-  // so retries of this function don't duplicate.
+  // One pending doc per machine (as in deploymentStatus.ts). The command id is
+  // deterministic per version+roost so retries don't duplicate.
   const cmdId = syncPullCommandId(roostId, versionId);
   writable.set(
     pendingRef,
@@ -478,16 +429,14 @@ async function readWaveStates(
     .doc(roostId)
     .collection('target_state');
 
-  // firestore transactions require all reads before writes. fetch in
-  // parallel; unreported machines default to 'pending'.
+  // all reads must precede writes in a transaction; unreported => 'pending'
   const refs = machineIds.map((mid) => col.doc(mid));
   const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
   return snaps.map((snap, i) => {
     const data = snap.exists ? (snap.data() as any) : null;
     const reportedVersion = data?.reportedVersionId as string | undefined;
     const rawStatus = data?.status as string | undefined;
-    // only count status if the agent's report is for THIS version.
-    // a stale status from a prior version shouldn't inform this wave.
+    // a stale status from a prior version must not inform this wave
     const status: TargetStatus =
       reportedVersion === versionId && rawStatus
         ? coerceStatus(rawStatus)
@@ -496,10 +445,7 @@ async function readWaveStates(
   });
 }
 
-/**
- * Agents report fine-grained sync states. Collapse them to the four
- * terminal-or-in-flight categories the fan-out logic cares about.
- */
+/** Collapse the agent's fine-grained sync states to the four the fan-out cares about. */
 function coerceStatus(raw: string): TargetStatus {
   switch (raw) {
     case 'committed':
@@ -513,8 +459,7 @@ function coerceStatus(raw: string): TargetStatus {
     case 'pending':
       return 'pending';
     default:
-      // in_progress / downloading / assembling / any unknown in-flight
-      // state rolls up to in_progress.
+      // downloading / assembling / any unknown in-flight state
       return 'in_progress';
   }
 }

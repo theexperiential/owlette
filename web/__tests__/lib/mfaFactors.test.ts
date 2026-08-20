@@ -1,24 +1,19 @@
 /** @jest-environment node */
 
 /**
- * Tests for the MFA factor inventory (`lib/mfaFactors.server.ts`) — the single
- * writer of `mfaEnrolled` and `requiresMfaSetup`.
+ * MFA factor inventory (`lib/mfaFactors.server.ts`) — the single writer of
+ * `mfaEnrolled` and `requiresMfaSetup`.
  *
- * Two layers:
- *   1. Pure helpers (`deriveMfaEnrolled` / `normalizeMfaFactors`) — exercised
- *      directly with no mocks, including the legacy and half-written shapes
- *      the normalizer has to heal.
- *   2. Firestore I/O (`readMfaFactors` / `applyMfaFactorChange`) — exercised
- *      against a mutable in-memory admin-SDK mock, the same `getAdminDb`
- *      chain-mock pattern as `__tests__/lib/deviceTrust.test.ts`, extended with
- *      a `runTransaction(fn)` that hands the body a store-backed `tx`.
+ * Two layers: the pure helpers (deriveMfaEnrolled / normalizeMfaFactors), driven
+ * directly including the legacy and half-written shapes the normalizer heals;
+ * and Firestore I/O (readMfaFactors / applyMfaFactorChange) against an in-memory
+ * admin-SDK mock whose `runTransaction(fn)` hands the body a store-backed `tx`.
  *
- * The hot-path guard below (`readMfaFactors` never reads the passkeys
+ * The hot-path guard below (readMfaFactors never reads the passkeys
  * subcollection for a well-formed doc) protects the single-document read in
  * `resolveMfaStateForUser`, which runs on every page load. Do not delete it.
  */
-
-// --- Mutable state backing the mocked admin SDK (reset in beforeEach). ---
+// Mutable state backing the mocked admin SDK (reset in beforeEach).
 // users/{uid} document bodies.
 let users: Map<string, Record<string, unknown>>;
 // users/{uid}/passkeys — credential ids only; we just need the count.
@@ -32,10 +27,8 @@ const setCalls: Array<{
 }> = [];
 let passkeyCollectionGets = 0;
 let runTransactionCalls = 0;
-// Firestore runs transactions under serializable isolation: a contended commit
-// is re-run against fresh state, never interleaved with the winner. The fake
-// models that guarantee with a queue so concurrent callers observe the same
-// ordering they would in production.
+// Firestore re-runs a contended transaction against fresh state rather than
+// interleaving it; the fake models that with a queue.
 let txQueue: Promise<unknown>;
 
 interface MockReadable {
@@ -178,8 +171,8 @@ describe('normalizeMfaFactors', () => {
   });
 
   it('does not treat a stored mfaSecret as enrollment', () => {
-    // An in-flight TOTP setup parks its secret in `mfa_pending/{uid}`, so a
-    // secret on the user doc is not proof of a completed factor.
+    // An in-flight TOTP setup parks its secret in `mfa_pending/{uid}`, so a secret
+    // on the user doc is not proof of a completed factor.
     expect(normalizeMfaFactors({ mfaSecret: 'ENCRYPTED' }, 0)).toEqual({
       totp: false,
       passkeys: 0,
@@ -276,10 +269,9 @@ describe('readMfaFactors', () => {
   });
 
   it('recounts a legacy doc through the supplied transaction, not a bare read', async () => {
-    // Inside a caller's transaction the subcollection fallback must also go
-    // through `tx`. A bare `passkeysCol.get()` there is a non-transactional
-    // read of state the same transaction is about to write against, and
-    // Firestore rejects it outright once the caller has written.
+    // Inside a caller's transaction the subcollection fallback must also go through
+    // `tx`: a bare `passkeysCol.get()` is a non-transactional read of state the same
+    // transaction is about to write, which Firestore rejects after a write.
     users.set('u1', { mfaEnrolled: true });
     passkeys.set('u1', ['a', 'b']);
     const tx = makeTx();
@@ -357,12 +349,10 @@ describe('applyMfaFactorChange — counting', () => {
     expect(passkeyCollectionGets).toBe(0);
   });
 
-  // Regression: a legacy document (no `mfaFactors` leg at all) describes EVERY
-  // account until the backfill runs, so this is the common case during rollout,
-  // not an edge case. An earlier revision resolved the count to 0 whenever
-  // `recountPasskeys` was not set, which wrote `passkeys: 0` over accounts that
-  // really held credentials. Verified to FAIL against that revision before the
-  // fix landed: both cases reported `Received: 0`.
+  // Regression: a legacy doc (no `mfaFactors` leg) describes EVERY account until
+  // the backfill runs. An earlier revision resolved the count to 0 whenever
+  // `recountPasskeys` was unset, writing `passkeys: 0` over real credentials.
+  // Verified to FAIL against that revision (both cases reported `Received: 0`).
   it('recounts a legacy doc rather than erasing real passkeys', async () => {
     users.set('u1', { mfaEnrolled: false });
     passkeys.set('u1', ['a', 'b']);
@@ -374,9 +364,8 @@ describe('applyMfaFactorChange — counting', () => {
   });
 
   it('never demotes a legacy passkey holder to zero factors', async () => {
-    // The consequence of getting the above wrong: removing TOTP would report
-    // mfaEnrolled:false for an account that still holds two working
-    // credentials — the MFA gate failing OPEN.
+    // Getting this wrong reports mfaEnrolled:false for an account holding two
+    // working credentials — the MFA gate failing OPEN.
     users.set('u1', { mfaEnrolled: false });
     passkeys.set('u1', ['a', 'b']);
 
@@ -388,10 +377,8 @@ describe('applyMfaFactorChange — counting', () => {
   });
 
   it('treats an explicit passkeys: 0 as a value, not as "not supplied"', async () => {
-    // The check is `change.passkeys !== undefined`, deliberately not a
-    // truthiness test: a `||` here would carry the stored 3 forward and leave
-    // removed credentials counted — the inventory reading as enrolled for an
-    // account that holds nothing.
+    // `change.passkeys !== undefined`, deliberately not truthiness: a `||` would
+    // carry the stored 3 forward and leave removed credentials counted.
     users.set('u1', { mfaFactors: { totp: false, passkeys: 3 } });
     passkeys.set('u1', ['a', 'b', 'c']);
 
@@ -434,8 +421,8 @@ describe('applyMfaFactorChange — the derived flags', () => {
   });
 
   it('a passkey-only enrollment clears requiresMfaSetup', async () => {
-    // The regression this guards: without the false-write, a passkey-only
-    // signup finishes with the nag set and the dashboard loops it to /setup-2fa.
+    // Without the false-write a passkey-only signup keeps the nag and the
+    // dashboard loops it to /setup-2fa.
     users.set('u1', { requiresMfaSetup: true, mfaEnrolled: false });
 
     const result = await applyMfaFactorChange('u1', { passkeys: 1 });
@@ -526,9 +513,8 @@ describe('applyMfaFactorChange — the write', () => {
   });
 
   it('folds extraUpdate into the same single write on the ctx.tx path', async () => {
-    // The whole point of `extraUpdate` is that the caller's cleanup commits
-    // with the flags. Dropping it on the tx branch would leave a disabled
-    // account still holding its secret.
+    // `extraUpdate` exists so the caller's cleanup commits with the flags;
+    // dropping it on the tx branch leaves a disabled account holding its secret.
     users.set('u1', { mfaFactors: { totp: true, passkeys: 0 }, mfaSecret: 'ENCRYPTED' });
     const tx = makeTx();
 
@@ -552,12 +538,10 @@ describe('applyMfaFactorChange — the write', () => {
 
 describe('applyMfaFactorChange — concurrent callers', () => {
   it('composes two in-flight changes instead of losing a leg', async () => {
-    // Two tabs finishing enrollment at once: one completes TOTP setup while the
-    // other registers a passkey. Firestore serializes contended transactions
-    // and the fake models that, so what this pins on the MODULE is that every
-    // read happens inside the transaction body. Hoist the user-doc read above
-    // `runTransaction` and the second commit would write its pre-computed
-    // `totp: false` over the first one's enrollment — a factor silently lost.
+    // Two tabs finishing enrollment at once (TOTP vs passkey). What this pins on
+    // the MODULE is that every read happens inside the transaction body: hoist the
+    // user-doc read above `runTransaction` and the second commit writes its
+    // pre-computed `totp: false` over the first enrollment — a factor silently lost.
     users.set('u1', { mfaEnrolled: false }); // legacy doc — no mfaFactors leg
     passkeys.set('u1', ['a', 'b']);
 

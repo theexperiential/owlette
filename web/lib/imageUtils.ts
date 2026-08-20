@@ -9,12 +9,9 @@ export interface ProcessedImage {
 }
 
 /**
- * Center-crop an image file to a square and resize to the given edge length.
- * Returns a JPEG blob + data URL suitable for preview and upload.
- *
- * Why center-crop: users commonly upload non-square photos (portraits, landscapes).
- * A center crop produces a predictable square avatar without asking the user
- * to frame it, which would require a cropper library.
+ * Center-crop to a square and resize to `edge`, returning a JPEG blob + data
+ * URL for preview and upload. Center-crop rather than a cropper UI: it gives a
+ * predictable square from any aspect ratio with no extra dependency.
  */
 export async function cropAndResizeSquare(
   file: File,

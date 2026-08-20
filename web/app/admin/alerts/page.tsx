@@ -30,16 +30,10 @@ import { Bell, Plus, Trash2, Loader2, Zap, Pencil, Sparkles, X } from 'lucide-re
 import { toast } from '@/lib/toast';
 
 /**
- * [B4.3] Display alerts launch banner. Auto-hides after this date regardless
- * of whether the user has dismissed it; prevents the migration banner from
- * lingering forever as new users sign up months after the feature shipped.
- * 30 days from the feature launch date.
+ * [B4.3] Display-alerts launch banner cutoff — 30 days after launch. Auto-hides
+ * even if never dismissed, so users signing up months later never see it.
  */
 const DISPLAY_ALERTS_BANNER_END = new Date('2026-05-25T00:00:00Z');
-
-/* ------------------------------------------------------------------ */
-/*  Types                                                              */
-/* ------------------------------------------------------------------ */
 
 interface AlertRule {
   id: string;
@@ -52,10 +46,6 @@ interface AlertRule {
   enabled: boolean;
   cooldownMinutes: number;
 }
-
-/* ------------------------------------------------------------------ */
-/*  Constants                                                          */
-/* ------------------------------------------------------------------ */
 
 const METRICS = [
   { value: 'cpu_percent', label: 'CPU usage (%)' },
@@ -134,17 +124,10 @@ function getMetricLabel(metric: string): string {
   return METRICS.find((m) => m.value === metric)?.label ?? metric;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Component                                                          */
-/* ------------------------------------------------------------------ */
-
 export default function AlertsPage() {
   const { user, isSuperadmin, userSites, lastSiteId, updateLastSite, userPreferences, updateUserPreferences } = useAuth();
 
-  // [B4.3] Show the launch banner for any user who hasn't dismissed it AND
-  // for whom the time-window cutoff hasn't passed. Once both conditions
-  // are met (or the user clicks "got it"), the banner is hidden permanently
-  // for them. Render-time derivation — no extra state needed.
+  // [B4.3] Show until dismissed or past the cutoff — derived at render, no state.
   const showDisplayAlertsBanner =
     !userPreferences.displayAlertsBannerDismissed &&
     Date.now() < DISPLAY_ALERTS_BANNER_END.getTime();
@@ -162,13 +145,11 @@ export default function AlertsPage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [ruleToDelete, setRuleToDelete] = useState<AlertRule | null>(null);
 
-  // Form state
   const [formName, setFormName] = useState('');
   const [formMetric, setFormMetric] = useState('cpu_percent');
   const [formOperator, setFormOperator] = useState<string>('>');
@@ -178,7 +159,6 @@ export default function AlertsPage() {
   const [formWebhook, setFormWebhook] = useState(true);
   const [formCooldown, setFormCooldown] = useState('30');
 
-  // Load saved site
   useEffect(() => {
     if (sites.length > 0 && !selectedSiteId) {
       const savedSite = lastSiteId;
@@ -190,7 +170,6 @@ export default function AlertsPage() {
     }
   }, [sites, selectedSiteId, lastSiteId]);
 
-  // Fetch alert rules when site changes
   const fetchRules = useCallback(async (siteId: string) => {
     if (!db || !siteId) return;
     setLoading(true);
@@ -243,7 +222,6 @@ export default function AlertsPage() {
     updateLastSite(siteId);
   };
 
-  // Open create dialog
   const openCreateDialog = () => {
     setEditingRule(null);
     setFormName('');
@@ -257,7 +235,6 @@ export default function AlertsPage() {
     setDialogOpen(true);
   };
 
-  // Open edit dialog
   const openEditDialog = (rule: AlertRule) => {
     setEditingRule(rule);
     setFormName(rule.name);
@@ -271,7 +248,6 @@ export default function AlertsPage() {
     setDialogOpen(true);
   };
 
-  // Save rule (create or update)
   const handleSaveRule = async () => {
     if (!formName.trim()) {
       toast.error('Rule name is required');
@@ -320,7 +296,6 @@ export default function AlertsPage() {
     toast.success(editingRule ? 'Rule updated' : 'Rule created');
   };
 
-  // Toggle enabled
   const handleToggleEnabled = async (ruleId: string) => {
     const updatedRules = rules.map((r) =>
       r.id === ruleId ? { ...r, enabled: !r.enabled } : r
@@ -328,7 +303,6 @@ export default function AlertsPage() {
     await saveRules(updatedRules);
   };
 
-  // Delete rule
   const handleDeleteConfirm = async () => {
     if (!ruleToDelete) return;
     const updatedRules = rules.filter((r) => r.id !== ruleToDelete.id);
@@ -338,9 +312,7 @@ export default function AlertsPage() {
     toast.success('Rule deleted');
   };
 
-  // Add preset
   const handleAddPreset = async (preset: Omit<AlertRule, 'id'>) => {
-    // Check if a rule with the same name already exists
     if (rules.some((r) => r.name === preset.name)) {
       toast.error(`A rule named "${preset.name}" already exists`);
       return;

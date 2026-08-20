@@ -1,12 +1,8 @@
 /**
- * Shared surface recipes.
- *
- * MENU_SURFACE is the app-wide treatment for floating menu panels — the class
- * string is ported verbatim from the web app, where it lives as a module const
- * in `web/components/PageHeader.tsx` and is applied to every
- * `<DropdownMenuContent>` in the header. Popovers and dropdowns in the desktop
- * app must read as the same object as their web counterparts, so the recipe
- * lives here rather than being retyped per call site.
+ * MENU_SURFACE — app-wide treatment for floating menu panels, ported verbatim
+ * from `web/components/PageHeader.tsx` so desktop popovers/dropdowns read as the
+ * same object as their web counterparts. Shared here rather than retyped per
+ * call site.
  *
  * Usage: `<DropdownMenuContent className={`${MENU_SURFACE} w-56`}>`
  */

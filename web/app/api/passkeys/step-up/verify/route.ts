@@ -1,41 +1,26 @@
 /**
- * Passkey Step-Up Verification API
- *
- * Verifies a WebAuthn assertion produced by `/api/passkeys/step-up/options` and,
- * on success, marks the CALLER'S EXISTING session as having cleared the MFA
- * challenge. Nothing else happens: no session is created, no Firebase custom
- * token is minted, no factor state is written. Contrast
- * `/api/passkeys/authenticate/verify`, which is a pre-login endpoint and does
- * both of those things for an unauthenticated caller — reusing it here would
- * hand a fresh credential to anyone who reached this route.
- *
- * The ceremony itself lives in `lib/mfaProof.server.ts`
- * (`verifyPasskeyStepUpAssertion`) because a passkey assertion is one of the
- * three interchangeable proofs of possession — `/api/mfa/backup-codes` accepts
- * the same one. This route contributes the session promotion on top of it, and
- * nothing else. The uid handed to the ceremony comes from the session and from
- * nowhere else; in particular `credential.response.userHandle` is IGNORED,
- * because it is attacker-controlled and the sign-in route only trusts it
- * because it has no session to trust instead.
- *
- * Three independent checks inside that ceremony bind the assertion to the
- * session's own account:
- *   1. the stored challenge must have been minted for this uid,
- *   2. the asserted credential id must be one of this uid's registered
- *      passkeys (a credential belonging to another user simply will not be
- *      found — we never look outside `users/{uid}/passkeys`), and
- *   3. `requireUserVerification: true`, so possession alone is not enough.
- *
- * DEPENDENCY — do not remove silently: task 2.3 gates passkey REGISTRATION
- * behind an already-satisfied MFA challenge. That gate is what prevents an
- * attacker who holds only a `__session` cookie from registering a fresh
- * attacker-controlled credential and immediately stepping up with it. If
- * registration is ever reopened to an unverified session, this route becomes a
- * full MFA bypass.
- *
  * POST /api/passkeys/step-up/verify
- * Request: { credential: AuthenticationResponseJSON, challengeId: string }
- * Response: { success: true }
+ * { credential: AuthenticationResponseJSON, challengeId } -> { success: true }
+ *
+ * Verifies an assertion from `/api/passkeys/step-up/options` and marks the
+ * CALLER'S EXISTING session as having cleared MFA. Nothing else: no session
+ * created, no custom token minted, no factor state written. Do NOT reuse
+ * `/api/passkeys/authenticate/verify` here — it is a pre-login endpoint and would
+ * hand a fresh credential to anyone reaching this route.
+ *
+ * The ceremony is `verifyPasskeyStepUpAssertion` in `lib/mfaProof.server.ts`, one
+ * of three interchangeable proofs of possession. The uid comes from the session
+ * ONLY; `credential.response.userHandle` is ignored because it is
+ * attacker-controlled (the sign-in route trusts it only for lack of a session).
+ *
+ * The ceremony binds the assertion to this account three ways: the challenge was
+ * minted for this uid, the credential id is one of `users/{uid}/passkeys`, and
+ * `requireUserVerification: true`.
+ *
+ * DEPENDENCY — do not remove silently: passkey REGISTRATION is gated behind an
+ * already-satisfied MFA challenge (task 2.3). Reopen registration to an unverified
+ * session and this route becomes a full MFA bypass — an attacker with only a
+ * `__session` cookie could enroll their own credential and step up with it.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -72,9 +57,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       return mfaProofErrorResponse(proof);
     }
 
-    // Flip the existing session's MFA gate. This is the ONLY state this route
-    // writes to the session — it never calls createSession (which would re-mint
-    // expiry and re-read factor state) and never mints a custom token.
+    // The ONLY session state this route writes. Never createSession (it re-mints
+    // expiry and re-reads factor state) and never a custom token.
     await markSessionMfaVerified();
 
     return NextResponse.json({ success: true });

@@ -1,19 +1,15 @@
 /**
- * Unit tests for metric-threshold alert freshness gating.
+ * Metric-threshold alert freshness gating.
  *
- * Regression guarded: an offline machine's frozen metrics were re-evaluated
- * every time an unrelated write (e.g. the health-check cron) re-triggered
- * onMetricsWrite, re-firing "disk 87.2% > 85" hourly for a machine that had
- * been offline for a week. The gate skips sample + alert eval when telemetry is
- * stale.
+ * Regression guarded: an offline machine's frozen metrics were re-evaluated on
+ * every unrelated write that re-triggered onMetricsWrite, re-firing "disk
+ * 87.2% > 85" hourly for a machine offline for a week.
  *
- * IMPORTANT — production field shape: the agent writes the metrics freshness
- * timestamp via the dot-notation key 'metrics.timestamp', and its Firestore
- * REST client backtick-escapes dotted SERVER_TIMESTAMP keys, so it lands in a
- * LITERAL top-level field named "metrics.timestamp" (NOT nested under the
- * metrics map). These tests therefore use the literal field as the primary
- * shape, and also cover the nested fallback and the lastHeartbeat legacy
- * fallback.
+ * Field-shape gotcha: the agent writes freshness via the dotted key
+ * 'metrics.timestamp', and its REST client backtick-escapes dotted
+ * SERVER_TIMESTAMP keys, so it lands as a LITERAL top-level field of that
+ * name, NOT nested under the metrics map. That literal is the primary shape
+ * here; the nested and lastHeartbeat fallbacks are also covered.
  */
 
 import { describe, it } from 'node:test';
@@ -59,9 +55,8 @@ describe('telemetryAgeMs', () => {
   });
 
   it('dates by the metrics timestamp even when lastHeartbeat is fresher (offline-write guard)', () => {
-    // The agent's offline-marking write (_update_presence(False)) re-stamps
-    // lastHeartbeat to ~now while leaving the metrics (and "metrics.timestamp")
-    // frozen; we must NOT treat that as fresh telemetry.
+    // _update_presence(False) re-stamps lastHeartbeat to ~now while leaving
+    // the metrics frozen — must NOT read as fresh telemetry.
     const data = {
       'metrics.timestamp': ts(NOW - 8 * 60_000),
       lastHeartbeat: ts(NOW - 60_000),
@@ -76,10 +71,8 @@ describe('telemetryAgeMs', () => {
   });
 
   it('treats a RAW NUMBER timestamp as undatable (Timestamp-only contract)', () => {
-    // Firestore SERVER_TIMESTAMP materialises as a Timestamp with .toMillis().
-    // A plain epoch number is intentionally NOT datable (fails closed to stale)
-    // rather than being silently misread as ms-vs-seconds. If a future agent
-    // change/backfill ever writes a number, this contract break is now loud.
+    // A plain epoch number is intentionally NOT datable — fails closed to
+    // stale rather than being misread as ms-vs-seconds.
     assert.equal(telemetryAgeMs({ 'metrics.timestamp': NOW - 30_000 }, NOW), null);
     assert.equal(telemetryAgeMs({ lastHeartbeat: NOW - 30_000 }, NOW), null);
     assert.equal(isTelemetryStale({ 'metrics.timestamp': NOW - 30_000 }, NOW), true);
@@ -99,8 +92,7 @@ describe('metricsWriteDisposition (the onMetricsWrite gate ordering)', () => {
   });
 
   it('checks metrics-presence BEFORE freshness (no-metrics wins over a stale timestamp)', () => {
-    // No metrics map but a stale literal timestamp + ancient heartbeat: still
-    // skip-no-metrics, not skip-stale — the ordering must not regress.
+    // skip-no-metrics must win over skip-stale; the ordering must not regress.
     assert.equal(
       metricsWriteDisposition({ 'metrics.timestamp': ts(WEEK_AGO), lastHeartbeat: ts(WEEK_AGO) }, NOW),
       'skip-no-metrics',
@@ -117,8 +109,7 @@ describe('metricsWriteDisposition (the onMetricsWrite gate ordering)', () => {
   });
 
   it('skips a just-gone-offline write — fresh lastHeartbeat but frozen metrics (the real prod shape)', () => {
-    // _update_presence(False) re-stamps lastHeartbeat to ~now while the metrics
-    // map and the literal "metrics.timestamp" stay frozen from before. Must skip.
+    // lastHeartbeat re-stamped to ~now, metrics frozen. Must skip.
     const data = {
       metrics: { disks: {} },
       'metrics.timestamp': ts(NOW - 30 * 60_000),

@@ -1,21 +1,11 @@
 /**
- * Machine command polling workflow.
+ * Machine command polling workflow. Safe default: polls OWLETTE_COMMAND_ID;
+ * dispatching a new command needs OWLETTE_DISPATCH_COMMAND=1.
  *
- * Safe default: poll an existing command when OWLETTE_COMMAND_ID is set.
- * To dispatch a new command, set OWLETTE_DISPATCH_COMMAND=1 explicitly.
- *
- * Required env:
- *   OWLETTE_TOKEN
- *   OWLETTE_SITE_ID
- *   OWLETTE_MACHINE_ID
- *
- * Optional:
- *   OWLETTE_API_URL defaults to https://owlette.app
- *   OWLETTE_COMMAND_ID polls an existing command instead of dispatching
- *   OWLETTE_COMMAND_TYPE defaults to capture_screenshot
- *   OWLETTE_MONITOR defaults to primary for capture_screenshot
- *   OWLETTE_POLL_SECONDS defaults to 1.5
- *   OWLETTE_TIMEOUT_SECONDS defaults to 60
+ * Required: OWLETTE_TOKEN, OWLETTE_SITE_ID, OWLETTE_MACHINE_ID.
+ * Optional: OWLETTE_API_URL (https://owlette.app), OWLETTE_COMMAND_ID,
+ * OWLETTE_COMMAND_TYPE (capture_screenshot), OWLETTE_MONITOR (primary),
+ * OWLETTE_POLL_SECONDS (1.5), OWLETTE_TIMEOUT_SECONDS (60).
  */
 
 import {

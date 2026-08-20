@@ -2,10 +2,9 @@
  * Core chat API endpoint — async turn architecture (hoot-async-turns).
  *
  * POST authenticates, verifies site access, acquires the per-chat turn lock
- * (`chats/{chatId}/stream/current`), and starts a detached turn runner. The
- * runner owns the LLM loop + tool relay and persists progress to Firestore,
- * so the turn survives a dead HTTP stream; the stream returned here is a
- * best-effort live branch of the same turn (clients reattach via Firestore).
+ * (`chats/{chatId}/stream/current`) and starts a detached turn runner. The runner owns
+ * the LLM loop + tool relay and persists to Firestore, so the turn survives a dead HTTP
+ * stream; the stream returned here is a best-effort live branch (clients reattach).
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -28,8 +27,7 @@ import {
 
 const SITE_TARGET_ID = '__site__';
 
-// Note: Streaming responses are incompatible with withRateLimit's header injection,
-// so we handle rate limiting manually if needed in the future.
+// Streaming responses are incompatible with withRateLimit's header injection.
 export async function POST(request: NextRequest) {
   try {
     // Accept session, ID-token, or scoped API key. Session/ID-token callers
@@ -63,29 +61,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Scope check is only enforced for API-key callers; session/ID-token
-    // auth bypasses (own-site dashboard access is checked below via
-    // verifyUserSiteAccess). Throws 403 scope_insufficient on mismatch.
+    // Scope is enforced for API-key callers only; session / ID-token auth is checked
+    // below via verifyUserSiteAccess. Throws 403 scope_insufficient on mismatch.
     requireScope(auth, 'chat', siteId, 'write');
 
     const db = getAdminDb();
     const isSiteMode = machineId === SITE_TARGET_ID;
 
-    // Verify access and resolve tier ceiling. Session/id-token callers use
-    // their site role. API-key callers are capped to read-only tools so a
-    // chat-scoped key cannot inherit the owner's admin role and dispatch
-    // destructive machine/process/deploy tools.
+    // Verify access and resolve the tier ceiling. API-key callers are capped to
+    // read-only tools so a chat-scoped key cannot inherit the owner's admin role and
+    // dispatch destructive machine/process/deploy tools.
     const access = await verifyUserSiteAccess(db, userId, siteId);
     const effectiveAccess = auth.keyContext
       ? { ...access, isSuperadmin: false, isSiteAdmin: false }
       : access;
 
-    // Chat ownership guard. Site access alone is not enough — a chat belongs to
-    // the user who created it. When the chat doc already exists it must match
-    // the caller (userId) and target site; a mismatch is a cross-user write
-    // attempt (the runner persists via the admin SDK, bypassing Firestore
-    // rules, so this is the only gate). A non-existent doc is allowed — the
-    // first turn of a new chat legitimately creates it.
+    // Chat ownership guard: site access alone is not enough — a chat belongs to its
+    // creator. An existing doc must match (userId, siteId); a mismatch is a cross-user
+    // write, and since the runner persists via the admin SDK (bypassing rules) this is
+    // the only gate. A non-existent doc is fine — the first turn legitimately creates it.
     const existingChatSnap = await db.collection('chats').doc(chatId).get();
     if (existingChatSnap.exists) {
       const chatData = existingChatSnap.data();
@@ -95,7 +89,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (isSiteMode) {
-      // ─── Site-Wide Mode ────────────────────────────────────────────────
+      // Site-Wide Mode
       // User-facing 503 before committing a turn. The runner refetches the
       // online-machine list itself; the double fetch is accepted so an empty
       // site fails here instead of inside an already-locked turn.
@@ -107,7 +101,7 @@ export async function POST(request: NextRequest) {
         );
       }
     } else {
-      // ─── Single Machine Mode ───────────────────────────────────────────
+      // Single Machine Mode
       if (!machineId) {
         return NextResponse.json(
           { error: 'machineId is required for single-machine mode' },
@@ -170,10 +164,9 @@ export async function POST(request: NextRequest) {
       priorToolCommands,
     });
 
-    // Client disconnect: cancel the HTTP tee branch so we don't hold the
-    // response open. The turn itself keeps running (the snapshot pump owns the
-    // other tee branch), so nothing is lost — the client reattaches via the
-    // stream doc.
+    // Client disconnect: cancel the HTTP tee branch so the response isn't held open.
+    // The turn keeps running (the snapshot pump owns the other branch), so nothing is
+    // lost — the client reattaches via the stream doc.
     request.signal.addEventListener('abort', () => {
       void stream.cancel().catch(() => {});
     });

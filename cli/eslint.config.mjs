@@ -1,9 +1,6 @@
-// Flat ESLint config for the @owlette/cli package.
-//
-// Uses the typescript-eslint recommended preset (non-type-aware) so it
-// runs fast against `src/**/*.ts` and `__tests__/**/*.ts` without the
-// project-wide TypeScript program load. Tightening to type-aware rules
-// is a follow-up — would catch more but adds noticeable lint latency.
+// Flat ESLint config for @owlette/cli. Non-type-aware preset on purpose: it
+// skips the project-wide TS program load. Type-aware rules are a follow-up —
+// more coverage, noticeably slower.
 
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
@@ -13,7 +10,6 @@ export default [
   ...tseslint.configs.recommended,
   {
     rules: {
-      // Honour `_`-prefixed identifiers as intentionally unused.
       '@typescript-eslint/no-unused-vars': [
         'error',
         {
@@ -23,15 +19,13 @@ export default [
           destructuredArrayIgnorePattern: '^_',
         },
       ],
-      // The CLI talks to APIs whose response shapes are validated by
-      // hand at the call site — `as` and `unknown` are common idioms,
-      // not smells worth blocking on at the lint layer.
+      // API response shapes are hand-validated at the call site, so `as` and
+      // `unknown` are idiomatic here rather than smells.
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },
   {
-    // Test files: relax the empty-function + no-namespace rules; jest
-    // matchers and module-augmentation patterns trip them often.
+    // jest matchers and module augmentation trip these constantly.
     files: ['__tests__/**/*.ts'],
     rules: {
       '@typescript-eslint/no-empty-function': 'off',

@@ -1,27 +1,14 @@
 /**
- * displayEventRouting — single source of truth for how `display_*` audit
- * events fan out across the alert pipeline.
+ * Single source of truth for how `display_*` audit events fan out. Read by
+ * `webhookSender.server.ts` (EVENT_META + extractFields) and `/api/agent/alert`
+ * (digest vs. synchronous webhook).
  *
- * Two downstream consumers read this table:
- *   1. `webhookSender.server.ts` — derives EVENT_META + extractFields entries
- *      so the 10 events render with correct colors / titles in Slack/Discord.
- *   2. `/api/agent/alert` — uses `email` / `webhook` to decide whether to
- *      enqueue a digest entry vs. fire the webhook synchronously.
+ * Severity split is locked in plan.md's decision log: email+webhook for events
+ * the operator must see in seconds, webhook-only for chat-worthy warnings, and
+ * neither for routine signals that just land in the events feed.
  *
- * Severity rationale (locked in plan.md decision log):
- *   - Email+webhook: critical events the operator MUST notice within seconds
- *     (panel disappeared, apply failed, auto-revert fired, sync dropped).
- *   - Webhook only: warnings worth shipping to a chat channel but not loud
- *     enough to warrant an inbox-cluttering email (drift, swap, mosaic flip,
- *     mosaic-refused-apply — operator just saw the refusal in the UI).
- *   - In-dashboard only: routine signals (monitor added, apply succeeded)
- *     that surface in the events feed but don't need an out-of-band ping.
- *
- * Event-type naming: the agent emits snake_case (`display_drift`) into the
- * audit log; the webhook protocol uses dotted notation (`display.drift`) to
- * stay consistent with `process.crashed` / `webhook.test`. The `webhookEventName`
- * field is the dotted form receivers see; the keys in this table are the
- * snake_case agent form so lookup from incoming agent payloads is direct.
+ * Keys are the agent's snake_case form so incoming payloads look up directly;
+ * `webhookEventName` is the dotted form receivers see (matching `process.crashed`).
  */
 
 export interface DisplayEventRoute {
@@ -29,32 +16,20 @@ export interface DisplayEventRoute {
   email: boolean;
   /** Outbound webhook delivery via `webhookSender`. */
   webhook: boolean;
-  /**
-   * Dotted event name surfaced over webhooks (matches the existing
-   * `process.crashed` / `webhook.test` convention so receivers' filters
-   * stay consistent across event categories).
-   */
+  /** Dotted name over webhooks, per the `process.crashed` / `webhook.test` convention. */
   webhookEventName: string;
-  /**
-   * Stable identifier for the email subject template — keeps the rendering
-   * decoupled from this routing table so a copy edit doesn't ripple through
-   * every consumer.
-   */
+  /** Email subject template id; keeps copy edits out of this table. */
   emailSubjectKey: string;
   /**
-   * Critical-path flag — `true` for events that bypass the 3-min digest
-   * window and email immediately (with the standard 1-hour throttle).
-   * Today: `display_monitor_removed` and `display_auto_revert_fired`. The
-   * digest is fine for everything else; these two need sub-minute delivery
-   * because they're either an outage signal (operator's wall just lost a
-   * panel) or a silent failure recovery (the operator's apply attempt died
-   * without their knowing). See B3.3 for the bypass implementation.
+   * Bypasses the 3-min digest window and emails immediately (1-hour throttle
+   * still applies). Only for outage / silent-failure signals — today
+   * `display_monitor_removed` and `display_auto_revert_fired`. Bypass: B3.3.
    */
   criticalPath?: boolean;
 }
 
 export const DISPLAY_EVENT_ROUTING: Record<string, DisplayEventRoute> = {
-  // ---- email + webhook (4 critical events) ----
+  // email + webhook
   display_monitor_removed: {
     email: true,
     webhook: true,
@@ -82,7 +57,7 @@ export const DISPLAY_EVENT_ROUTING: Record<string, DisplayEventRoute> = {
     emailSubjectKey: 'display_sync_lost',
   },
 
-  // ---- webhook only (4 warning events) ----
+  // webhook only
   display_drift: {
     email: false,
     webhook: true,
@@ -108,10 +83,8 @@ export const DISPLAY_EVENT_ROUTING: Record<string, DisplayEventRoute> = {
     emailSubjectKey: 'display_apply_refused_mosaic',
   },
 
-  // ---- in-dashboard only (2 routine events) ----
-  // Routed through this table so the simulator can still trigger them and
-  // the dashboard's recent-events feed reads from a single registry, but
-  // both flags off so neither email nor webhook fires.
+  // In-dashboard only: listed here so the simulator and the events feed keep one
+  // registry, but both flags off so nothing is delivered out of band.
   display_monitor_added: {
     email: false,
     webhook: false,
@@ -126,21 +99,14 @@ export const DISPLAY_EVENT_ROUTING: Record<string, DisplayEventRoute> = {
   },
 };
 
-/**
- * True when `eventType` is one of the registered `display_*` events. Use as
- * a guard at API boundaries before dereferencing the routing table — keeps
- * arbitrary external strings from leaking through.
- */
+/** Guard at API boundaries before dereferencing the table with an external string. */
 export function isDisplayEventType(
   eventType: string,
 ): eventType is keyof typeof DISPLAY_EVENT_ROUTING {
   return Object.prototype.hasOwnProperty.call(DISPLAY_EVENT_ROUTING, eventType);
 }
 
-/**
- * Convenience: every dotted webhook event name in this table. Webhook config
- * UIs (B4.2) consume this to render the event-subscription checklist.
- */
+/** Every dotted webhook name here; the B4.2 subscription checklist renders from it. */
 export const DISPLAY_WEBHOOK_EVENT_NAMES: readonly string[] = Object.values(
   DISPLAY_EVENT_ROUTING,
 ).map((r) => r.webhookEventName);

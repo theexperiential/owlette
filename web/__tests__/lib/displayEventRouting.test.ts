@@ -7,10 +7,9 @@ import {
 } from '@/lib/alerts/displayEventRouting';
 
 /**
- * Locks in the contract of DISPLAY_EVENT_ROUTING. Two downstream consumers
- * read this table (webhookSender, /api/agent/alert)
- * so any drift here is a wire-format break — these tests must fail loudly if
- * the table is mutated without coordinated updates.
+ * Locks the DISPLAY_EVENT_ROUTING contract. webhookSender and /api/agent/alert
+ * both read this table, so drift is a wire-format break — these tests must fail
+ * loudly on an uncoordinated change.
  */
 
 const CRITICAL_EVENTS = [
@@ -39,8 +38,7 @@ describe('DISPLAY_EVENT_ROUTING — completeness', () => {
   });
 
   it('contains every expected snake_case agent event key', () => {
-    // Sort both sides so a re-ordering of the table doesn't fail the test
-    // (order isn't part of the contract — membership is).
+    // Sorted: membership is the contract, order is not.
     expect(Object.keys(DISPLAY_EVENT_ROUTING).sort()).toEqual([...ALL_EVENTS].sort());
   });
 
@@ -92,9 +90,8 @@ describe('DISPLAY_EVENT_ROUTING — severity-to-channel mapping', () => {
 
 describe('DISPLAY_EVENT_ROUTING — invariants', () => {
   it('no info-tier event has email enabled (programmatic check)', () => {
-    // Defense-in-depth: even if someone adds a new info-classed event later,
-    // this assertion still enforces the rule by inspecting the (webhook=false)
-    // tier directly rather than checking each known key by name.
+    // Inspects the whole webhook=false tier rather than named keys, so a new
+    // info-classed event is covered automatically.
     const infoTier = Object.entries(DISPLAY_EVENT_ROUTING).filter(
       ([, r]) => r.webhook === false,
     );
@@ -104,8 +101,7 @@ describe('DISPLAY_EVENT_ROUTING — invariants', () => {
   });
 
   it('any event with email=true also has webhook=true (email implies webhook)', () => {
-    // Channel hierarchy: email is louder than webhook, so we never want to
-    // ship to inboxes without also shipping to chat. Lock that in.
+    // Email is louder than webhook: never inbox without also chatting.
     for (const [key, route] of Object.entries(DISPLAY_EVENT_ROUTING)) {
       if (route.email) {
         expect({ key, webhook: route.webhook }).toEqual({ key, webhook: true });

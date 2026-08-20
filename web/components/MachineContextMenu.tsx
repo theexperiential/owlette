@@ -27,19 +27,17 @@ import type { RestartSchedule } from '@/hooks/useFirestore';
 interface MachineContextMenuProps {
   machineId: string;
   machineName: string;
-  /** IANA timezone for this machine — passed through to RestartScheduleDialog
-   * so the schedule editor's chip + "next at" preview reflect the machine's
-   * own local time, not the browser's. */
+  /** IANA timezone for this machine — RestartScheduleDialog renders its chip and
+   * "next at" preview in the machine's local time, not the browser's. */
   machineTimezone?: string;
   siteId: string;
   isOnline: boolean;
   rebooting?: boolean;
   shuttingDown?: boolean;
   /**
-   * Site-scoped admin gate. When false, the menu hides every write action
-   * (restart/shutdown/cancel, revoke token, remove machine) and keeps only
-   * the user-scoped + read-only items (mute alerts, screenshot, live view).
-   * Matches the permission-model-split contract in
+   * Site-scoped admin gate. When false the menu hides every write action
+   * (restart/shutdown/cancel, revoke token, remove machine) and keeps only the
+   * user-scoped + read-only items. Contract:
    * dev/active/permission-model-split/manual-smoke-checklist.md.
    */
   isSiteAdmin?: boolean;
@@ -91,9 +89,8 @@ export function MachineContextMenu({
     });
   };
 
-  // scope 'latest' revokes only this machine's current (most-recently-used)
-  // token — safe when several machines share this hostname. scope 'all' revokes
-  // every token for the hostname (disconnects any sibling that shares it too).
+  // scope 'latest' revokes only this machine's most-recently-used token — safe
+  // when several machines share a hostname; 'all' disconnects every sibling too.
   const handleRevokeToken = async (scope: 'latest' | 'all') => {
     setIsRevoking(true);
     setRevokingScope(scope);

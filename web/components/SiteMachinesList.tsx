@@ -34,11 +34,10 @@ interface SiteMachinesListProps {
 /**
  * Expanded machine list for one site row in the manage-sites dialog.
  *
- * Fetches through GET /api/sites/{siteId}/machines (admin-SDK, scope-checked
- * server side) rather than a client Firestore listener, so superadmins can
- * inspect sites they aren't members of without loosening any rules. Mounted
- * only while its row is expanded — collapsing unmounts and re-expanding
- * refetches, which is the freshness a support scenario wants.
+ * Uses GET /api/sites/{siteId}/machines (admin-SDK, scope-checked server side)
+ * rather than a client Firestore listener, so superadmins can inspect sites
+ * they aren't members of without loosening rules. Mounted only while expanded,
+ * so collapsing unmounts and re-expanding refetches.
  */
 export function SiteMachinesList({ siteId, onCountLoaded }: SiteMachinesListProps) {
   const [machines, setMachines] = useState<SiteMachine[] | null>(null);
@@ -69,8 +68,7 @@ export function SiteMachinesList({ siteId, onCountLoaded }: SiteMachinesListProp
     if (!restartTarget) return;
     setIsRestarting(true);
     try {
-      // 'reboot_machine' is the wire command verb the agent matches on — the
-      // UI says "restart" but the wire name deliberately stays "reboot".
+      // UI says "restart"; the wire verb deliberately stays "reboot".
       const response = await fetch(
         `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(restartTarget.id)}/commands`,
         {

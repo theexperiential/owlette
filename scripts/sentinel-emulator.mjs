@@ -1,23 +1,14 @@
 #!/usr/bin/env node
 /**
- * Emulator Admin SDK Sentinel Test
- *
- * Proves the Admin SDK emulator branch in web/lib/firebase-admin.ts actually
- * routes writes to the local emulator (not prod). This is a one-time
- * verification for Wave A1.4 of the Playwright E2E plan.
- *
- * Why: without the emulator branch, `verifyIdToken` may succeed against the
- * emulator while Firestore writes silently hit production — a nasty footgun.
- *
- * Run via firebase emulators:exec so emulator lifecycle is managed:
+ * Proves the Admin SDK emulator branch in web/lib/firebase-admin.ts really routes
+ * writes to the local emulator. Without it, `verifyIdToken` can succeed against
+ * the emulator while Firestore writes silently hit PRODUCTION.
  *
  *   firebase emulators:exec --only firestore --project demo-playwright-e2e \
  *     'node scripts/sentinel-emulator.mjs'
  *
- * Exits 0 on success. Exits 1 if the sentinel doc doesn't appear in the
- * emulator's REST surface — indicating the Admin SDK is NOT routing to
- * emulator (most likely the env-var branch isn't triggering or prod creds are
- * shadowing it).
+ * Exit 1 means the sentinel doc never appeared — the env-var branch isn't firing,
+ * or prod creds are shadowing it.
  */
 
 import { createRequire } from 'module';
@@ -28,8 +19,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 
-// Set emulator env vars BEFORE requiring firebase-admin — the SDK checks these
-// on initializeApp and only then decides whether to route to emulator.
+// BEFORE requiring firebase-admin: the SDK reads these at initializeApp.
 if (!process.env.FIREBASE_AUTH_EMULATOR_HOST) {
   process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
 }
@@ -43,7 +33,7 @@ const PROJECT_ID = 'demo-playwright-e2e';
 
 admin.initializeApp({
   projectId: PROJECT_ID,
-  // Explicitly omit credential.cert — emulator mode requires no creds.
+  // No credential.cert — emulator mode needs none.
 });
 
 const db = admin.firestore();
@@ -58,13 +48,10 @@ async function main() {
     marker,
   });
 
-  // Read back via Admin SDK. This proves:
-  //   1. The write went to emulator (otherwise the read wouldn't find the doc —
-  //      Admin SDK without cert can't read prod).
-  //   2. The SDK is consistently routing to emulator for both reads and writes.
-  // We use the Admin SDK here (not raw REST) because the emulator REST surface
-  // still evaluates firestore.rules, which deny anonymous access to the
-  // sentinel collection.
+  // A successful read proves both that the write went to the emulator (a
+  // cert-less Admin SDK cannot read prod) and that reads route there too.
+  // Admin SDK, not raw REST: the emulator's REST surface still evaluates
+  // firestore.rules, which deny anonymous access to this collection.
   const snapshot = await db.collection('_playwright_sentinel').doc(sentinelId).get();
   if (!snapshot.exists) {
     console.error(`❌ Sentinel doc not readable via Admin SDK right after write.`);
@@ -78,10 +65,8 @@ async function main() {
     process.exit(1);
   }
 
-  // Additional check: confirm the SDK actually targeted the demo project (not
-  // a prod project sneaking in via env vars). Any prod project ID leaking in
-  // here would be a red flag that `FIREBASE_PROJECT_ID` is shadowing our
-  // `demo-playwright-e2e` choice.
+  // Confirm the demo project was targeted: a prod id here means
+  // FIREBASE_PROJECT_ID is shadowing `demo-playwright-e2e`.
   const resolvedProjectId = admin.app().options.projectId;
   if (resolvedProjectId !== PROJECT_ID) {
     console.error(`❌ Admin SDK is targeting project "${resolvedProjectId}", expected "${PROJECT_ID}".`);

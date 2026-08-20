@@ -1,17 +1,12 @@
 /**
- * Shared branded email layout and helpers.
- *
- * All Owlette emails should use wrapEmailLayout() to produce a consistent
- * dark-themed, branded experience matching the web dashboard.
- *
- * IMPORTANT: Server-side only — never import in client components.
+ * Shared branded email layout and helpers. Server-side only — never import in a client
+ * component. Every Owlette email goes through wrapEmailLayout() for a consistent
+ * dark-themed look matching the dashboard.
  */
 
 import { ENV_LABEL, isProduction } from '@/lib/resendClient.server';
 
-/* ------------------------------------------------------------------ */
-/*  Color palette (OKLCH dashboard values → email-safe hex)            */
-/* ------------------------------------------------------------------ */
+// Color palette (OKLCH dashboard values → email-safe hex)
 
 export const EMAIL_COLORS = {
   bodyBg: '#141726',
@@ -26,9 +21,7 @@ export const EMAIL_COLORS = {
   blue: '#42a5f5',
 } as const;
 
-/* ------------------------------------------------------------------ */
-/*  Severity + metric maps (moved from alerts/trigger/route.ts)        */
-/* ------------------------------------------------------------------ */
+// Severity + metric maps (moved from alerts/trigger/route.ts)
 
 export const SEVERITY_COLORS: Record<string, string> = {
   info: EMAIL_COLORS.blue,
@@ -47,15 +40,10 @@ export const METRIC_LABELS: Record<string, string> = {
   network_packet_loss: 'Packet Loss (%)',
 };
 
-/* ------------------------------------------------------------------ */
-/*  Data table helper                                                  */
-/* ------------------------------------------------------------------ */
-
 /**
- * Escape a dynamic value before interpolating it into email HTML. Alert emails
- * carry operator/admin-controlled free text (site names, machine/process names,
- * error messages) — escaping prevents stored markup (phishing links, broken
- * layout) from rendering in emails sent to other recipients.
+ * Escape a dynamic value before interpolating it into email HTML. Alert emails carry
+ * operator/admin-controlled free text (site, machine, process names, error messages) —
+ * escaping stops stored markup (phishing links, broken layout) rendering for recipients.
  */
 export function escapeHtml(value: string): string {
   return String(value)
@@ -68,14 +56,10 @@ export function escapeHtml(value: string): string {
 
 /**
  * Sanitize a value used as an email Subject. Subjects are plain text (Resend
- * JSON-serializes them), so HTML escaping is wrong here — instead collapse
- * CR/LF and other control characters (defence against header-injection-shaped
- * values) and cap the length. Use for any subject that includes dynamic text
- * (site names, rule/process/machine names).
+ * JSON-serializes them), so HTML escaping is wrong — collapse CR/LF and other control
+ * characters (header-injection-shaped values) and cap the length instead.
  */
 export function safeEmailSubject(value: string): string {
-  // Drop control characters (CR/LF/tab/etc. — header-injection-shaped values)
-  // without HTML-escaping (subjects are plain text), then collapse + cap.
   let out = '';
   for (const ch of String(value)) {
     const code = ch.charCodeAt(0);
@@ -91,15 +75,13 @@ interface DataRow {
   highlight?: string;
 }
 
-/**
- * Build a styled two-column key-value table for email content.
- */
+/** Build a styled two-column key-value table for email content. */
 export function emailDataTable(rows: DataRow[]): string {
   const trs = rows
     .map(
       (r) => {
         const valColor = r.highlight || EMAIL_COLORS.text;
-        // Wrap value in a span to override email client auto-link styling
+        // Span wrapper overrides email-client auto-link styling.
         const valHtml = `<span style="color:${valColor};${r.highlight ? 'font-weight:700;' : ''}">${escapeHtml(r.value)}</span>`;
         return `<tr><td style="padding:10px 14px;font-weight:600;color:${EMAIL_COLORS.muted};background:${EMAIL_COLORS.altRow};border-bottom:1px solid ${EMAIL_COLORS.border};white-space:nowrap;font-size:13px;">${r.label}</td><td style="padding:10px 14px;color:${valColor};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${valHtml}</td></tr>`;
       }
@@ -108,10 +90,6 @@ export function emailDataTable(rows: DataRow[]): string {
 
   return `<table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">${trs}</table>`;
 }
-
-/* ------------------------------------------------------------------ */
-/*  Layout wrapper                                                     */
-/* ------------------------------------------------------------------ */
 
 interface EmailLayoutOptions {
   /** Show the environment badge in the header (default: true). */
@@ -123,10 +101,8 @@ interface EmailLayoutOptions {
 }
 
 /**
- * Wrap email body content in the branded Owlette layout.
- *
- * Structure: dark outer bg → 600px card → header (logo + brand) → content → footer.
- * All CSS is inline for maximum email client compatibility.
+ * Wrap email body content in the branded Owlette layout: dark outer bg → 600px card →
+ * header (logo + brand) → content → footer. All CSS inline for email-client compatibility.
  */
 export function wrapEmailLayout(content: string, options: EmailLayoutOptions = {}): string {
   const { showEnvBadge = true, unsubscribeUrl, preheader } = options;
@@ -142,12 +118,10 @@ export function wrapEmailLayout(content: string, options: EmailLayoutOptions = {
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${escapeHtml(preheader)}</div>`
     : '';
 
-  // One-line footer actions: "manage alerts · unsubscribe". An alert email is
-  // signalled by passing the `unsubscribeUrl` option AT ALL (alert senders
-  // always include the key, even when its value is undefined for the tokenless
-  // fallback admin recipient; transactional emails never pass it). "manage
-  // alerts" shows on EVERY alert email so there is always a way to turn alerts
-  // off; the one-click unsubscribe only when we have a per-user token.
+  // One-line footer actions: "manage alerts · unsubscribe". Passing the `unsubscribeUrl`
+  // key AT ALL marks an alert email (alert senders always pass it, sometimes undefined for
+  // the tokenless admin fallback; transactional emails never do). "manage alerts" shows on
+  // every alert email; one-click unsubscribe only when we have a per-user token.
   const isAlertEmail = 'unsubscribeUrl' in options;
   const footerLinks: string[] = [];
   if (isAlertEmail) {
@@ -164,19 +138,10 @@ export function wrapEmailLayout(content: string, options: EmailLayoutOptions = {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"><title>owlette</title></head><body style="margin:0;padding:0;background-color:${EMAIL_COLORS.bodyBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">${preheaderHtml}<table width="100%" bgcolor="${EMAIL_COLORS.bodyBg}" cellpadding="0" cellspacing="0" role="presentation" style="background-color:${EMAIL_COLORS.bodyBg};"><tr><td align="center" style="padding:32px 16px;"><table width="600" style="max-width:600px;background-color:${EMAIL_COLORS.cardBg};border-radius:8px;border:1px solid ${EMAIL_COLORS.border};" cellpadding="0" cellspacing="0" role="presentation"><tr><td style="padding:28px 32px 20px;text-align:center;border-bottom:1px solid ${EMAIL_COLORS.border};"><a href="https://owlette.app" style="text-decoration:none;"><img src="${logoUrl}" width="48" height="48" alt="owlette" style="display:block;margin:0 auto 12px;border-radius:50%;"></a><table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;"><tr><td><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};font-size:20px;font-weight:700;text-transform:lowercase;letter-spacing:0.5px;text-decoration:none;line-height:1;">owlette</a></td>${envBadgeHtml}</tr></table></td></tr><tr><td style="padding:28px 32px;color:${EMAIL_COLORS.text};font-size:14px;line-height:1.7;">${content}</td></tr><tr><td style="padding:20px 32px;border-top:1px solid ${EMAIL_COLORS.border};text-align:center;">${actionsHtml}<p style="color:${EMAIL_COLORS.muted};font-size:11px;margin:0;"><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};text-decoration:none;">owlette.app</a></p></td></tr></table></td></tr></table></body></html>`;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Password reset email                                               */
-/* ------------------------------------------------------------------ */
-
 /**
- * Build the branded password-reset email — same dark-theme layout, logo, and
- * tridant footer as every other Owlette email (this is what replaces
- * Firebase's plain built-in template).
- *
- * `resetUrl` is the in-app /reset-password link carrying the Firebase oobCode.
- * `expiryMinutes` documents the link's lifetime in the body copy (Firebase
- * password-reset codes default to 1 hour). No unsubscribe link: this is a
- * transactional security email, not an alert.
+ * Branded password-reset email — replaces Firebase's plain built-in template.
+ * `resetUrl` is the in-app /reset-password link carrying the oobCode; `expiryMinutes` is
+ * body copy only (Firebase codes default to 1 hour). Transactional — no unsubscribe link.
  */
 export function buildPasswordResetEmail(resetUrl: string, expiryMinutes = 60): string {
   const ctaButton =
@@ -196,18 +161,10 @@ export function buildPasswordResetEmail(resetUrl: string, expiryMinutes = 60): s
   return wrapEmailLayout(content, { preheader: 'reset your owlette password' });
 }
 
-/* ------------------------------------------------------------------ */
-/*  Timestamp helper                                                   */
-/* ------------------------------------------------------------------ */
-
 /**
- * Format a date for email display in a locale-independent way.
- *
- * `timezone` must be an IANA name (e.g. "America/New_York") — `Intl` throws a
- * RangeError on Windows registry names like "Eastern Standard Time". We guard
- * against that here so a malformed value can never throw and silently abort an
- * alert email; on any failure (or when no timezone is supplied) we fall back to
- * UTC, which is the deploy server's timezone on Railway/Vercel.
+ * Format a date for email display, locale-independently.
+ * `timezone` must be an IANA name — Intl throws RangeError on Windows registry names like
+ * "Eastern Standard Time", which would silently abort an alert email. Falls back to UTC.
  */
 export function emailTimestamp(date: Date = new Date(), timezone?: string): string {
   const options: Intl.DateTimeFormatOptions = {
@@ -238,14 +195,11 @@ export function emailTimestamp(date: Date = new Date(), timezone?: string): stri
   return `${date.toLocaleString('en-US', options)} UTC`;
 }
 
-// ---------------------------------------------------------------------------
 // [B3.2] Display digest email
-// ---------------------------------------------------------------------------
 
 /**
- * Single pending display alert as it lands in `pending_display_alerts`.
- * Mirrors the queue-write shape from `/api/agent/alert` (B3.1) — keeps
- * the cron + critical-path immediate-send (B3.3) reading from the same type.
+ * Single pending display alert as written to `pending_display_alerts` by /api/agent/alert
+ * (B3.1) — shared by the cron digest and the immediate-send path (B3.3).
  */
 export interface PendingDisplayAlert {
   docId: string;
@@ -259,10 +213,8 @@ export interface PendingDisplayAlert {
 }
 
 /**
- * Operator-facing event labels. Snake_case agent type → human phrase used
- * in subject + body. Critical events read as actions ("monitor removed");
- * warnings as states ("display drift detected"). Lowercase per the project's
- * UI copy convention.
+ * Operator-facing event labels (snake_case agent type → human phrase). Critical events
+ * read as actions ("monitor removed"), warnings as states. Lowercase per UI copy style.
  */
 const DISPLAY_EVENT_LABEL: Record<string, string> = {
   display_monitor_removed: 'monitor removed',
@@ -277,10 +229,7 @@ const DISPLAY_EVENT_LABEL: Record<string, string> = {
   display_apply_succeeded: 'display apply succeeded',
 };
 
-/**
- * Severity color for an event — drives the heading + table row accents.
- * Critical: red; warning: amber; everything else (info / success): blue.
- */
+/** Severity color for an event: critical red, warning amber, else blue. */
 function displayEventColor(eventType: string): string {
   if (
     eventType === 'display_monitor_removed' ||
@@ -302,10 +251,8 @@ function displayEventColor(eventType: string): string {
 }
 
 /**
- * Pull `monitor.friendlyName` (or fallback) out of the alert's `data`
- * payload. Display events emitted by the agent (B2.2) carry a
- * `monitor: {friendlyName, port, edidHash}` blob. Returns empty string
- * when absent so callers can fall through to "—" placeholders.
+ * Pull `monitor.friendlyName` out of the alert's `data` payload — agent display events
+ * (B2.2) carry `monitor: {friendlyName, port, edidHash}`. Empty string when absent.
  */
 function monitorLabel(data: Record<string, unknown>): string {
   const monitor = data?.monitor as Record<string, unknown> | undefined;
@@ -316,11 +263,7 @@ function monitorLabel(data: Record<string, unknown>): string {
   return name || port || '';
 }
 
-/**
- * Per-event detail string for the table body. Drift surfaces the field
- * list; apply_failed surfaces the error text; everything else returns
- * empty so callers can fall through to a placeholder.
- */
+/** Per-event detail: drift lists changed fields, apply_failed the error, else ''. */
 function displayEventDetail(eventType: string, data: Record<string, unknown>): string {
   if (eventType === 'display_drift' && Array.isArray(data?.changes)) {
     const changes = (data.changes as unknown[]).filter(
@@ -345,14 +288,10 @@ function displayAlertRow(label: string, value: string, alt: boolean, highlight?:
 }
 
 /**
- * Render the email body for a batch of pending display alerts. Single-alert
- * payloads use a focused key/value layout; multi-alert payloads render a
- * digest table grouped by event severity color. Caller supplies the
- * unsubscribe link + recipient timezone; this helper handles the layout.
- *
- * Used by both the digest cron (B3.2 — drains `pending_display_alerts` every
- * 3 min) and the critical-path immediate-send (B3.3 — bypasses the digest
- * for `display_monitor_removed` / `display_auto_revert_fired`).
+ * Render the email body for a batch of pending display alerts: single-alert payloads get
+ * a focused key/value layout, multi-alert payloads a digest table color-coded by severity.
+ * Used by the digest cron (B3.2, drains `pending_display_alerts` every 3 min) and the
+ * immediate-send path (B3.3, display_monitor_removed / display_auto_revert_fired).
  */
 export function buildDisplayDigestEmail(
   siteLabel: string,
@@ -360,8 +299,7 @@ export function buildDisplayDigestEmail(
   unsubscribeUrl?: string,
   timezone?: string,
 ): string {
-  // Single alert: focused key/value layout, mirrors the single-process
-  // email shape so operators in mixed alert categories get a consistent feel.
+  // Single alert: focused key/value layout, matching the single-process email shape.
   if (alerts.length === 1) {
     const a = alerts[0];
     const label = DISPLAY_EVENT_LABEL[a.eventType] ?? a.eventType;

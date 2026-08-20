@@ -26,9 +26,6 @@ def client(mock_auth):
     return FirestoreRestClient(project_id="test-project", auth_manager=mock_auth)
 
 
-# ---------------------------------------------------------------------------
-# TestToFirestoreValue — Python -> Firestore value format
-# ---------------------------------------------------------------------------
 class TestToFirestoreValue:
     def test_string_value(self, client):
         result = client._to_firestore_value("hello")
@@ -112,9 +109,6 @@ class TestToFirestoreValue:
         assert values[3] == {"nullValue": None}
 
 
-# ---------------------------------------------------------------------------
-# TestFromFirestoreValue — Firestore value format -> Python
-# ---------------------------------------------------------------------------
 class TestFromFirestoreValue:
     def test_string_value(self, client):
         result = client._from_firestore_value({"stringValue": "hello"})
@@ -185,9 +179,6 @@ class TestFromFirestoreValue:
         assert result == ["one", 2, False]
 
 
-# ---------------------------------------------------------------------------
-# TestCRUD — get/set/update/delete with mocked HTTP session
-# ---------------------------------------------------------------------------
 class TestCRUD:
     def test_get_document_success(self, client):
         """get_document should parse Firestore response into a Python dict."""
@@ -200,7 +191,7 @@ class TestCRUD:
                 "uptime": {"integerValue": "3600"},
             },
         }
-        # FirestoreRestClient uses self.session.get, not requests.get
+        # The client uses self.session.get, not requests.get.
         client.session.get = MagicMock(return_value=mock_response)
 
         result = client.get_document("test/doc1")
@@ -231,7 +222,6 @@ class TestCRUD:
 
         assert client.session.patch.called
         call_kwargs = client.session.patch.call_args
-        # Verify the JSON body has Firestore 'fields' format
         body = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
         assert "fields" in body
         assert "name" in body["fields"]
@@ -260,7 +250,6 @@ class TestCRUD:
 
         client.session.delete = MagicMock(return_value=mock_response)
 
-        # Should not raise
         client.delete_document("test/nonexistent")
 
     def test_update_document_with_field_mask(self, client):
@@ -277,7 +266,6 @@ class TestCRUD:
         call_kwargs = client.session.patch.call_args
         params = call_kwargs.kwargs.get("params") or call_kwargs[1].get("params")
         assert params is not None
-        # updateMask.fieldPaths should contain the field names
         field_paths = params.get("updateMask.fieldPaths")
         assert "cpu" in field_paths
         assert "memory" in field_paths

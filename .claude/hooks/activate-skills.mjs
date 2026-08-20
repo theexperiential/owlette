@@ -1,8 +1,6 @@
 /**
- * UserPromptSubmit Hook — Skill Activation
- *
- * Analyzes prompt keywords and recently edited files to determine
- * which skills should activate, then prepends a reminder to the prompt.
+ * UserPromptSubmit hook: scores skills against prompt keywords and recently
+ * edited files, then prepends an activation reminder to the prompt.
  */
 
 import { readFileSync, existsSync } from 'fs'
@@ -14,7 +12,6 @@ const RULES_FILE = join(__dirname, 'skill-rules.json')
 const SESSION_FILE = join(__dirname, '..', 'session-edits.json')
 const MAX_AGE_MS = 10 * 60 * 1000
 
-// Read JSON from stdin
 let input = ''
 for await (const chunk of process.stdin) {
   input += chunk
@@ -25,7 +22,6 @@ try {
   const prompt = data.prompt || ''
   const promptLower = prompt.toLowerCase()
 
-  // Load skill rules
   if (!existsSync(RULES_FILE)) {
     output(prompt)
     process.exit(0)
@@ -33,14 +29,12 @@ try {
   const config = JSON.parse(readFileSync(RULES_FILE, 'utf-8'))
   const maxSkills = config.activationConfig?.maxSkillsPerPrompt || 3
 
-  // Score each skill
   const scored = []
 
   for (const [name, rule] of Object.entries(config.skills)) {
     let score = 0
     const reasons = []
 
-    // Keyword matching
     for (const kw of rule.promptTriggers?.keywords || []) {
       if (promptLower.includes(kw.toLowerCase())) {
         score += 10
@@ -48,7 +42,6 @@ try {
       }
     }
 
-    // Intent pattern matching
     for (const pattern of rule.promptTriggers?.intentPatterns || []) {
       try {
         if (new RegExp(pattern, 'gi').test(prompt)) {
@@ -58,7 +51,7 @@ try {
       } catch { /* skip bad regex */ }
     }
 
-    // File trigger matching (from session-edits.json)
+    // File triggers come from session-edits.json.
     const recentFiles = getRecentFiles()
     for (const filePath of recentFiles) {
       for (const glob of rule.fileTriggers?.pathPatterns || []) {
@@ -76,7 +69,6 @@ try {
     }
   }
 
-  // Sort by priority then score, take top N
   scored.sort((a, b) => b.priority - a.priority || b.score - a.score)
   const top = scored.slice(0, maxSkills)
 
@@ -85,7 +77,6 @@ try {
     process.exit(0)
   }
 
-  // Build activation message
   const skillList = top.map((s, i) => `  ${i + 1}. ${s.name} (${s.reasons[0]})`).join('\n')
   const message = [
     '<skill-activation>',
@@ -98,7 +89,7 @@ try {
   output(`${message}\n\n${prompt}`)
 
 } catch {
-  // On error, pass prompt through unchanged
+  // Fail open: pass the prompt through unchanged.
   try {
     const data = JSON.parse(input)
     output(data.prompt || '')

@@ -1,30 +1,15 @@
 /**
- * `owlette process …` — process lifecycle on machines.
+ * `owlette process …` — process lifecycle on machines, over the scoped process
+ * API: /api/sites/{siteId}/machines/{machineId}/processes[/{processId}] plus
+ * /kill, /restart, /start, /stop and /schedule.
  *
- * Drives the wave-2B public scoped process api:
- *   GET    /api/sites/{siteId}/machines/{machineId}/processes
- *   POST   /api/sites/{siteId}/machines/{machineId}/processes
- *   GET    /api/sites/{siteId}/machines/{machineId}/processes/{processId}
- *   PATCH  /api/sites/{siteId}/machines/{machineId}/processes/{processId}
- *   DELETE /api/sites/{siteId}/machines/{machineId}/processes/{processId}
- *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/kill
- *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/restart
- *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/start
- *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/stop
- *   POST   /api/sites/{siteId}/machines/{machineId}/processes/{processId}/schedule
+ * `--site` and `--machine` are required on every verb. Mutations auto-generate an
+ * `Idempotency-Key`, which the server caches the response against for 24h.
+ * Control verbs and `schedule` return 202 with a `commandId` the cli prints so
+ * callers can poll the command-state endpoint.
  *
- * Every verb is machine-scoped: `--site <s> --machine <m>` is required on
- * every call. Mutations auto-generate an `Idempotency-Key` so retries are
- * safe — the server caches the response for 24h on the same key.
- *
- * The control verbs (kill / restart / start / stop) and `schedule` queue
- * commands (or write through process-config) and return 202 with a
- * `commandId` — the cli prints the id so callers can poll the
- * command-state endpoint.
- *
- * Server envelope is `{ ok: true, data: ... }` for all 2B routes; errors
- * are RFC-7807 problem+json with stable `code` strings (e.g.
- * `duplicate_process_name`, `process_not_found`, `scope_insufficient`).
+ * Responses are `{ ok: true, data }`; errors are RFC-7807 problem+json with
+ * stable `code` strings (`duplicate_process_name`, `process_not_found`, …).
  */
 
 import { Command } from 'commander';
@@ -91,8 +76,7 @@ export function registerProcessCommands(program: Command): void {
     (program.commands.find((c) => c.name() === 'process') as Command | undefined) ??
     program.command('process').description('process lifecycle on machines');
 
-  // Overwrite any earlier stub description so help text stays canonical
-  // regardless of registration order.
+  // Overwrite any earlier stub description so help text stays canonical.
   proc.description('process lifecycle on machines');
 
   // Drop any stubs left by earlier file-load ordering.
@@ -116,7 +100,7 @@ export function registerProcessCommands(program: Command): void {
     }
   }
 
-  /* -------------------- list -------------------- */
+  // list
 
   proc
     .command('list')
@@ -160,7 +144,7 @@ export function registerProcessCommands(program: Command): void {
       );
     });
 
-  /* -------------------- get -------------------- */
+  // get
 
   proc
     .command('get <processId>')
@@ -196,7 +180,7 @@ export function registerProcessCommands(program: Command): void {
       process.stdout.write(formatProcessDetail(p));
     });
 
-  /* -------------------- create -------------------- */
+  // create
 
   proc
     .command('create')
@@ -272,7 +256,7 @@ export function registerProcessCommands(program: Command): void {
       process.stdout.write(`owlette: process ${opts.name} created (processId=${processId})\n`);
     });
 
-  /* -------------------- update -------------------- */
+  // update
 
   proc
     .command('update <processId>')
@@ -293,9 +277,8 @@ export function registerProcessCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      // The server rejects `id` / `processId` in the body; commander filters
-      // unknown options out so a user can't pass `--id` directly. We also
-      // guard `--launch-mode` for early feedback.
+      // The server rejects `id` / `processId` in the body; commander already
+      // filters unknown options. `--launch-mode` is guarded here for early feedback.
       if (opts.launchMode && !VALID_SCHEDULE_MODES.includes(opts.launchMode as ScheduleMode)) {
         return usageFatal(`--launch-mode must be one of ${VALID_SCHEDULE_MODES.join(', ')}`);
       }
@@ -352,7 +335,7 @@ export function registerProcessCommands(program: Command): void {
       process.stdout.write(`owlette: process ${processId} updated\n`);
     });
 
-  /* -------------------- delete -------------------- */
+  // delete
 
   proc
     .command('delete <processId>')
@@ -404,14 +387,14 @@ export function registerProcessCommands(program: Command): void {
       );
     });
 
-  /* -------------------- kill / restart / start / stop (control verbs) -------------------- */
+  // kill / restart / start / stop (control verbs)
 
   registerControlVerb(proc, 'kill', 'forcibly terminate a running managed process');
   registerControlVerb(proc, 'restart', 'restart a managed process (graceful stop, then start)');
   registerControlVerb(proc, 'start', 'start a managed process');
   registerControlVerb(proc, 'stop', 'gracefully stop a managed process');
 
-  /* -------------------- schedule -------------------- */
+  // schedule
 
   proc
     .command('schedule <processId>')
@@ -498,9 +481,7 @@ export function registerProcessCommands(program: Command): void {
     });
 }
 
-/* --------------------------------------------------------------------- */
-/*  control-verb helper (kill / restart / start / stop share the shape)  */
-/* --------------------------------------------------------------------- */
+/* control-verb helper — kill / restart / start / stop share the shape */
 
 function registerControlVerb(
   proc: Command,
@@ -567,9 +548,7 @@ function registerControlVerb(
     });
 }
 
-/* --------------------------------------------------------------------- */
-/*  formatters                                                           */
-/* --------------------------------------------------------------------- */
+/* formatters */
 
 function formatProcessDetail(p: ProcessSummary): string {
   const out: string[] = [];
@@ -590,9 +569,7 @@ function formatProcessDetail(p: ProcessSummary): string {
   return out.join('\n') + '\n';
 }
 
-/* --------------------------------------------------------------------- */
-/*  util                                                                 */
-/* --------------------------------------------------------------------- */
+/* util */
 
 function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json: boolean } {
   const { apiUrl, token } = loadConfig({ profile: cmd.optsWithGlobals().profile });
@@ -611,10 +588,7 @@ function fatal(msg: string): void {
   process.exitCode = 1;
 }
 
-/**
- * Render an RFC-7807 problem+json error from the server. Pulls `code` +
- * `detail` and adds a hint for the stable codes we care about.
- */
+/** Render an RFC-7807 problem: `code` + `detail`, plus a hint for known codes. */
 function fatalProblem(operation: string, status: number, env: ProblemEnvelope): void {
   const code = env.code ?? '(no code)';
   const detail = env.detail ?? JSON.stringify(env);

@@ -4,14 +4,13 @@
  * Browser -> our API -> siteverify. Never called from the client: the secret
  * would leak and the verdict would be attacker-controlled.
  *
- * Scope note (deliberate): Turnstile guards `/api/users/bootstrap` (the write
- * that creates the `users/{uid}` record) and `/api/auth/forgot-password`. It is
- * NOT on login, and register is only partially covered, because
- * `signInWithEmailAndPassword` / `createUserWithEmailAndPassword` talk to
- * Firebase `identitytoolkit` directly from the browser — our server is not in
- * that path, so there is no request to gate. Firebase App Check is the correct
- * instrument for that hole. Do not "fix" this by adding a widget to the login
- * page: it would look like protection without being any.
+ * Deliberate scope: guards `/api/users/bootstrap` and
+ * `/api/auth/forgot-password` only. Login is NOT covered and register only
+ * partly, because `signInWithEmailAndPassword` /
+ * `createUserWithEmailAndPassword` hit Firebase identitytoolkit straight from
+ * the browser — our server is not in that path. App Check is the right
+ * instrument there. Do NOT add a widget to the login page: it would look like
+ * protection without being any.
  */
 
 import type { NextRequest } from 'next/server';
@@ -54,12 +53,9 @@ interface SiteverifyResponse {
 }
 
 /**
- * Verify a Turnstile token for a given surface.
- *
- * Fails closed on every uncertain path — network error, non-2xx, unparseable
- * body, missing config in production. The only permissive branch is a
- * non-production deployment with no secret configured, so local `next dev`
- * without Turnstile credentials still works.
+ * Verify a Turnstile token for a surface. Fails closed on every uncertain path
+ * (network error, non-2xx, unparseable body, missing prod config). The one
+ * permissive branch is non-production with no secret, so local `next dev` works.
  */
 export async function verifyTurnstileToken(
   request: NextRequest,
@@ -109,11 +105,9 @@ export async function verifyTurnstileToken(
     return { ok: false, reason: (result['error-codes'] ?? []).join(',') || 'rejected' };
   }
 
-  // Cloudflare's documented testing keys return neither an `action` nor a
-  // real `hostname` (they answer `example.com` with
-  // `metadata.result_with_testing_key`). This branch is safe to trust because
-  // only OUR secret can produce that marker — an attacker cannot induce it.
-  // It keeps the E2E suite exercising this exact code path instead of a bypass.
+  // Cloudflare's testing keys return no `action` and a fake `hostname`, marked
+  // by `metadata.result_with_testing_key`. Safe to trust: only OUR secret can
+  // produce that marker. Keeps E2E on this code path instead of a bypass.
   const usingTestingKey = result.metadata?.result_with_testing_key === true;
 
   if (!usingTestingKey && result.action !== action) {

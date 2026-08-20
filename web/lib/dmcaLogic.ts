@@ -1,43 +1,29 @@
 /**
- * Pure DMCA takedown + 3-strike logic (wave 0.2).
+ * Pure DMCA takedown + 3-strike logic.
  *
  * Safe-harbor under 17 U.S.C. § 512 requires a "reasonably implemented"
- * repeat-infringer policy. `BMG v. Cox` made clear this is not optional.
- * This module implements the evaluation + side-effect-plan pieces of
- * that policy; the firestore I/O lives in the handler.
+ * repeat-infringer policy (`BMG v. Cox` — not optional). Evaluation and
+ * side-effect planning live here; the firestore I/O lives in the handler.
  *
- * No imports from firestore / next — tests can exercise every branch
- * without a firebase emulator.
+ * No firestore/next imports, so every branch is testable without an emulator.
  */
-
-/* --------------------------------------------------------------------- */
-/*  Notice shape                                                         */
-/* --------------------------------------------------------------------- */
 
 /** The six § 512(c)(3)(A) elements that make a notice actionable. */
 export interface DmcaNoticeInput {
-  /** Signature (typed name acceptable for electronic notices). */
+  /** Typed name is acceptable for electronic notices. */
   signature: string;
-  /** Description of the copyrighted work claimed to be infringed. */
   copyrightedWork: string;
-  /** URL / content-id / path identifying the allegedly infringing material. */
+  /** URL / content-id / path of the allegedly infringing material. */
   identifiedMaterial: string;
-  /** Complainant contact info. */
   complainant: {
     name: string;
     email: string;
     phone?: string;
     address: string;
   };
-  /**
-   * Good-faith-belief attestation that the use is not authorized by
-   * the copyright owner, its agent, or the law.
-   */
+  /** Attests the use is unauthorized by owner, agent, or law. */
   goodFaithBelief: boolean;
-  /**
-   * Accuracy + perjury attestation (under penalty of perjury, info is
-   * accurate, complainant is the owner or authorised agent).
-   */
+  /** Under penalty of perjury: info accurate, complainant is owner or agent. */
   accuracyAndPerjuryAttestation: boolean;
 }
 
@@ -49,24 +35,16 @@ export type NoticeStatus =
   | 'rejected_abuse'
   | 'counter_noticed';
 
-/* --------------------------------------------------------------------- */
-/*  Element-completeness validator                                       */
-/* --------------------------------------------------------------------- */
-
 export interface ValidationResult {
-  /** True if the notice contains all six § 512(c)(3)(A) elements. */
   elementsComplete: boolean;
-  /** Machine-readable list of missing/malformed fields. */
+  /** Missing / malformed field names. */
   missing: string[];
 }
 
 /**
- * Check a raw notice for the six required elements. This is the
- * "reasonably implemented" threshold — a notice missing any of these
- * is not actionable and does NOT count toward the uploader's strikes.
- *
- * Does NOT judge the merits of the claim — the copyright owner's
- * good-faith belief is what they certified, not something we evaluate.
+ * Check for the six § 512(c)(3)(A) elements — the "reasonably implemented"
+ * threshold. A notice missing any is not actionable and does NOT count toward
+ * the uploader's strikes. Merits are never judged here.
  */
 export function validateNotice(input: Partial<DmcaNoticeInput>): ValidationResult {
   const missing: string[] = [];
@@ -96,26 +74,20 @@ function isNonEmptyString(x: unknown): x is string {
 
 function isValidEmail(x: unknown): boolean {
   if (typeof x !== 'string') return false;
-  // deliberately permissive; email-validity gate is "looks like an email",
-  // not full RFC 5322 — complainant email bounces are caught at delivery.
+  // Deliberately permissive — "looks like an email", not RFC 5322. Bad addresses
+  // surface as delivery bounces.
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x.trim());
 }
 
-/* --------------------------------------------------------------------- */
-/*  Strike policy                                                        */
-/* --------------------------------------------------------------------- */
-
 /**
- * Per-user strike record — the uploader's DMCA history. Strikes expire
- * after 12 months (industry convention — YouTube, Google Drive — and
- * defeats weaponised serial-takedown targeting).
+ * Per-user strike record. Strikes expire after 12 months — industry convention
+ * (YouTube, Google Drive), and it defeats weaponised serial-takedown targeting.
  */
 export interface StrikeRecord {
-  /** ISO-8601 timestamp of the takedown that created this strike. */
+  /** ISO-8601 timestamp of the originating takedown. */
   at: string;
-  /** Firestore doc id of the originating DMCA notice. */
   noticeId: string;
-  /** Set to true if the strike was cleared by a successful counter-notice. */
+  /** True once cleared by a successful counter-notice. */
   cleared?: boolean;
 }
 
@@ -124,16 +96,14 @@ export type StrikeOutcome =
   | { tier: 'suspension'; newCount: number; nextAction: 'suspend_14_days' }
   | { tier: 'termination'; newCount: number; nextAction: 'terminate_account' };
 
-/** Strikes older than this are not counted. 12 months = 365 days. */
+/** Strikes older than this don't count. */
 export const STRIKE_EXPIRY_MS = 365 * 24 * 60 * 60 * 1000;
 
 /**
- * Count active (not cleared, not expired) strikes from history + decide
- * which tier the next takedown lands in.
+ * Count active (uncleared, unexpired) strikes and pick the next tier.
  *
- * Inputs are the PRIOR strikes — caller is about to record one new strike
- * and wants to know what to do AFTER that. So a user with 2 prior active
- * strikes who gets a third takedown lands in `termination`.
+ * Takes PRIOR strikes and answers for the takedown about to be recorded — so 2
+ * prior active strikes returns `termination`, not `suspension`.
  */
 export function evaluateStrike(
   priorStrikes: readonly StrikeRecord[],
@@ -158,23 +128,13 @@ export function evaluateStrike(
   return { tier: 'warning', newCount, nextAction: 'email_warning' };
 }
 
-/* --------------------------------------------------------------------- */
-/*  Rate-limiting (anti-abuse)                                           */
-/* --------------------------------------------------------------------- */
-
 /**
- * Guard the public form against notice-flooding. A single complainant
- * email / IP is limited to N notices per hour — past that, we 429 and
- * the review queue doesn't drown.
- *
- * The window + cap are deliberately loose for legit complainants — a
- * studio submitting a list of pirated assets might file 30 in a day.
- * Tuned against the abuse pattern: thousands per hour from one source.
+ * Anti-flood caps for the public form. Deliberately loose — a studio filing a
+ * list of pirated assets might submit 30 in a day; the target is the abuse
+ * pattern of thousands per hour from one source.
  */
 export const RATE_LIMIT = {
-  /** Notices per complainant email per hour. */
   perEmailPerHour: 10,
-  /** Notices per source IP per hour. */
   perIpPerHour: 30,
 };
 

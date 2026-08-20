@@ -1,31 +1,20 @@
 /**
- * `owlette.installer` — superadmin-only installer-version management.
+ * `owlette.installer` — superadmin-only installer-version management over the
+ * wave-1B installer-api routes: GET /api/installer, GET /api/installer/latest,
+ * POST+PUT /api/installer/upload, POST /api/installer/{version}/set-latest,
+ * DELETE /api/installer/{version}.
  *
- * Wraps the wave-1B installer-api routes:
+ * `upload` is a 3-step flow: POST for a signed URL → PUT the binary → PUT to
+ * finalize. The sha-256 is computed client-side and handed to finalize so the
+ * server can reject a corrupted upload.
  *
- *   GET    /api/installer
- *   GET    /api/installer/latest
- *   POST   /api/installer/upload                 — request signed upload URL
- *   PUT    /api/installer/upload                 — finalize the upload
- *   POST   /api/installer/{version}/set-latest
- *   DELETE /api/installer/{version}
- *
- * The `upload` flow is a 3-step convenience: POST → PUT to the signed URL
- * with the binary → PUT (finalize). The sha-256 of the binary is computed
- * client-side via `crypto.createHash` and passed to the finalize call so
- * the server can reject a corrupted upload.
- *
- * Mutations auto-generate `Idempotency-Key` headers when the caller omits
- * one. Errors surface as `OwletteApiError`.
+ * Mutations auto-generate `Idempotency-Key` when the caller omits one. Errors
+ * surface as `OwletteApiError`.
  */
 import { createHash, randomUUID } from 'crypto';
 import { createReadStream } from 'fs';
 import { stat } from 'fs/promises';
 import type { OwletteClient } from '../lib/client';
-
-/* --------------------------------------------------------------------- */
-/*  types                                                                */
-/* --------------------------------------------------------------------- */
 
 export interface InstallerVersion {
   version: string;
@@ -69,10 +58,8 @@ export interface UploadRequestOptions {
   startIdempotencyKey?: string;
   /** @deprecated Use idempotencyKey; retained for compatibility. */
   finalizeIdempotencyKey?: string;
-  /**
-   * Optional override of the upload PUT. Defaults to `client._fetch` so that
-   * any custom proxy/agent the user passed at construction time is honoured.
-   */
+  /** Override the upload PUT; defaults to `client._fetch` so a custom proxy/agent
+   * passed at construction time is honoured. */
   signedUploadFetch?: typeof fetch;
 }
 
@@ -82,10 +69,6 @@ export interface UploadResult {
   checksum_sha256: string;
   file_size: number;
 }
-
-/* --------------------------------------------------------------------- */
-/*  resource                                                             */
-/* --------------------------------------------------------------------- */
 
 export class Installer {
   constructor(private readonly client: OwletteClient) {}
@@ -113,17 +96,15 @@ export class Installer {
   }
 
   /**
-   * Three-step upload: request signed URL, PUT the binary, finalize.
-   *
-   * Computes a sha-256 of the file once (streamed) and passes it to the
-   * finalize call. Returns the finalized version metadata.
+   * Three-step upload: request a signed URL, PUT the binary, finalize. Streams
+   * the file once for its sha-256. Returns the finalized version metadata.
    */
   async upload(opts: UploadRequestOptions): Promise<UploadResult> {
     const fileName =
       opts.fileName ?? opts.filePath.split(/[\\/]/).pop() ?? 'installer.exe';
     const contentType = opts.contentType ?? 'application/octet-stream';
 
-    // ── 1. POST /api/installer/upload — request signed URL ───────────────
+    // 1. POST /api/installer/upload — request the signed URL.
     const startBody: Record<string, unknown> = {
       version: opts.version,
       fileName,
@@ -149,7 +130,7 @@ export class Installer {
     });
     const { uploadUrl, uploadId } = startRes.data;
 
-    // ── 2. PUT signed URL — upload the binary ─────────────────────────────
+    // 2. PUT the signed URL — upload the binary.
     const fileStat = await stat(opts.filePath);
     const fileSize = fileStat.size;
     const sha256 = await sha256OfFile(opts.filePath);
@@ -168,7 +149,7 @@ export class Installer {
       );
     }
 
-    // ── 3. PUT /api/installer/upload — finalize ──────────────────────────
+    // 3. PUT /api/installer/upload — finalize.
     const finalizeRes = await this.client.request<UploadResult>(
       '/api/installer/upload',
       {
@@ -210,10 +191,6 @@ export class Installer {
     return res.data;
   }
 }
-
-/* --------------------------------------------------------------------- */
-/*  helpers                                                              */
-/* --------------------------------------------------------------------- */
 
 async function sha256OfFile(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {

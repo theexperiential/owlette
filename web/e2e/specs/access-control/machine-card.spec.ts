@@ -1,36 +1,19 @@
 /**
- * Access-control — machine card / row (site-scoped admin gates)
+ * Access-control — machine card / row: per-machine write actions are hidden
+ * from any viewer failing `isSiteAdmin(siteId)`. Automates the "dashboard —
+ * site access + machine panel" rows of
+ * dev/active/permission-model-split/manual-smoke-checklist.md.
  *
- * The dashboard's per-machine affordances hide a family of write actions
- * from any viewer who fails `isSiteAdmin(siteId)`. That's the
- * member/admin/superadmin site-scoping contract in action. This spec
- * automates the "dashboard — site access + machine panel" rows of the
- * permission-model-split manual smoke checklist
- * (dev/active/permission-model-split/manual-smoke-checklist.md), namely:
+ * Three gated surfaces:
+ *   1. MachineContextMenu — restart/shutdown/cancel/revoke-token/remove.
+ *   2. MachineStatusPill — countdown is clickable only when
+ *      `isSiteAdmin && onCancel && remaining > 5`; members get a text pill.
+ *   3. MachineCardView's amber "restart pending" banner — members see the
+ *      banner without approve/dismiss.
  *
- *   - restart/shutdown button visible on a machine card
- *   - cancel-countdown pill clickable during active restart
- *   - delete machine menu item visible
- *   - amber "restart pending" restart/cancel buttons visible
- *
- * The actions live in three places:
- *   1. MachineContextMenu — renders the restart / shutdown / cancel /
- *      revoke-token / remove-machine items, now gated on `isSiteAdmin`
- *      (added as part of B3.2 — the menu previously rendered them to
- *      every viewer).
- *   2. MachineStatusPill — the countdown variant is only clickable when
- *      `isSiteAdmin && onCancel && remaining > 5`. Non-admins see the
- *      text-only "restarting…" pill.
- *   3. MachineCardView's amber "restart pending" banner — already gated on
- *      `isSiteAdmin` (site-admins see approve/dismiss buttons, members
- *      see the banner without the action buttons).
- *
- * We seed three machines on site-A to exercise the three states in parallel:
- *   - e2e-machine-baseline — online, no restart in flight
- *   - e2e-machine-rebooting — online, in-flight restart with a 120s-future
- *     scheduledAt (well above the 5s cancel-lockout threshold)
- *   - e2e-machine-pending — online, rebootPending.active = true (amber
- *     banner shown, card-view only)
+ * Three machines seeded on site-A cover the states: baseline (no restart),
+ * rebooting (scheduledAt 120s out, above the 5s cancel lockout), pending
+ * (rebootPending.active, card view only).
  */
 
 import { test, expect, type Page, type Locator } from '@playwright/test';
@@ -43,17 +26,15 @@ const REBOOTING_MACHINE_ID = 'e2e-machine-rebooting';
 const PENDING_MACHINE_ID = 'e2e-machine-pending';
 
 test.beforeAll(async () => {
-  // Three states, three machines — seeds coexist so a single dashboard
-  // render exposes all of them at once.
+  // Seeds coexist so one dashboard render exposes all three states.
   await seedMachine(SITE_ID, BASELINE_MACHINE_ID);
   await seedMachine(SITE_ID, REBOOTING_MACHINE_ID, { rebootingInSec: 120 });
   await seedMachine(SITE_ID, PENDING_MACHINE_ID, { rebootPending: true });
 });
 
 /**
- * Scope to the card for a given machine on the dashboard's default (card)
- * view. The card title contains the raw machineId, so filtering by hasText
- * is unambiguous as long as IDs don't share substrings — ours don't.
+ * Scope to a machine's card in the default (card) view. hasText on the raw
+ * machineId is unambiguous only because our seeded IDs share no substrings.
  */
 async function cardFor(page: Page, machineId: string): Promise<Locator> {
   await page.goto('/dashboard');
@@ -62,10 +43,7 @@ async function cardFor(page: Page, machineId: string): Promise<Locator> {
   return card;
 }
 
-/**
- * Scope to the row for a given machine after flipping to list view. The
- * row's hostname cell contains the raw machineId; filter by hasText.
- */
+/** Scope to a machine's row in list view; the hostname cell holds the raw id. */
 async function rowFor(page: Page, machineId: string): Promise<Locator> {
   await page.goto('/dashboard');
   await page.getByTestId('view-toggle-list').click();
@@ -75,10 +53,8 @@ async function rowFor(page: Page, machineId: string): Promise<Locator> {
 }
 
 /**
- * Open the machine context menu (the MoreVertical ⋮ trigger) within a
- * previously-scoped card/row locator. Returns the open menu's popover —
- * the shadcn DropdownMenuContent portals out of the card, so we reach
- * for it via its role, not a descendant locator.
+ * Open a card/row's ⋮ menu and return the popover. DropdownMenuContent portals
+ * out of the card, so it must be reached by role, not as a descendant.
  */
 async function openContextMenu(page: Page, scope: Locator): Promise<Locator> {
   await scope.getByTestId('machine-context-menu-trigger').click();
@@ -110,14 +86,12 @@ test.describe('machine card — member on site-A', () => {
   test('cancel-countdown pill during active reboot is read-only (no click handler)', async ({ page }) => {
     const card = await cardFor(page, REBOOTING_MACHINE_ID);
 
-    // Admin variant is a <button data-testid="machine-status-cancel-pill">;
-    // the member variant is a non-interactive <Badge> with no click handler and
-    // no testid. Asserting count 0 is the contract: the button isn't rendered.
+    // Admin gets a <button data-testid="machine-status-cancel-pill">; members
+    // get a testid-less <Badge>. Count 0 is the contract.
     await expect(card.getByTestId('machine-status-cancel-pill')).toHaveCount(0);
 
-    // The pill itself is still rendered — a non-interactive icon + countdown
-    // whose accessible name carries the "restarting" state (role=img aria-label).
-    // Assert on the accessible name so we're not asserting on a missing pill.
+    // The pill is still rendered; assert on its accessible name (role=img
+    // aria-label) so this is not just an assertion about a missing element.
     await expect(card.getByRole('img', { name: /restarting/i })).toBeVisible();
   });
 
@@ -170,9 +144,8 @@ test.describe('machine card — admin on site-A', () => {
   test('cancel-countdown pill during active reboot is clickable', async ({ page }) => {
     const card = await cardFor(page, REBOOTING_MACHINE_ID);
 
-    // Clickable variant is a <button> element carrying the testid; the
-    // badge-only variant renders without it. Visibility + tagName check
-    // together pin the role contract.
+    // Visibility + tagName together pin the role contract: only the clickable
+    // variant is a <button> carrying the testid.
     const pill = card.getByTestId('machine-status-cancel-pill');
     await expect(pill).toBeVisible();
     await expect(pill).toHaveAttribute('type', 'button');

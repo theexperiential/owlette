@@ -1,23 +1,14 @@
 /**
- * uploadInstaller action core (security-boundary-migration wave 3.11).
+ * uploadInstaller action core — the metadata-commit step of the 3-step
+ * request-URL → upload → finalize flow. Writes
+ * `installer_metadata/data/versions/{version}` and, when `setAsLatest`,
+ * `installer_metadata/latest`.
  *
- * Mirrors the metadata-write half of `useInstallerManagement:uploadVersion`
- * (web/hooks/useInstallerManagement.ts:137-191) and the existing
- * `PUT /api/installer/upload` finalize step.
+ * Signed-URL request, binary upload and sha256 verify stay in the route layer:
+ * they coordinate Storage plus upload-state tracking, not just a metadata write.
  *
- * Two writes happen atomically per call:
- *
- *   1. `installer_metadata/data/versions/{version}` — the version doc.
- *   2. `installer_metadata/latest`                  — only if `setAsLatest`.
- *
- * The signed-URL request + binary upload + sha256 verify steps stay in the
- * route layer (they coordinate Firebase Storage + Firestore upload-state
- * tracking, not just a metadata write). This action core handles the final
- * metadata commit only — keeping the 3-step request URL → upload → finalize
- * flow exactly intact per the build-and-upload guide in `.claude/CLAUDE.md`.
- *
- * firestore paths: platform-level (NOT site-scoped). Wrapped at the route
- * layer with `authorizedPlatformHandler({ capability: 'INSTALLER_MANAGE' })`.
+ * Paths are PLATFORM-level, not site-scoped — the route wraps this in
+ * `authorizedPlatformHandler({ capability: 'INSTALLER_MANAGE' })`.
  */
 
 import { Timestamp } from 'firebase-admin/firestore';
@@ -106,7 +97,7 @@ export async function uploadInstaller(
     throw new InstallerValidationError('setAsLatest', 'setAsLatest must be a boolean');
   }
 
-  const setAsLatest = input.setAsLatest !== false; // default true to match existing route
+  const setAsLatest = input.setAsLatest !== false; // default true, matching the route
   const now = Date.now();
   const uploadedBy = input.uploaded_by ?? ctx.actor.userId;
 
@@ -134,8 +125,8 @@ export async function uploadInstaller(
     const latestRef = db.collection('installer_metadata').doc('latest');
     await latestRef.set({
       ...versionData,
-      // The legacy `/latest` doc stored release_date as an ISO string for
-      // compatibility with agents that parse it as text. Preserve that.
+      // `/latest` must keep release_date as an ISO STRING — deployed agents
+      // parse it as text.
       release_date: new Date(now).toISOString(),
     });
   }

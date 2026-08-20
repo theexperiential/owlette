@@ -1,27 +1,13 @@
 #!/usr/bin/env node
 /**
- * check-system-invoker-callers — policy enforcement
- * (security-boundary-migration wave 2.3).
+ * check-system-invoker-callers — CI gate: `web/lib/systemInvoker.server` may only
+ * be imported from `web/lib/hoot/**`, `web/lib/jobs/**`, `web/__tests__/**`, or
+ * itself. Anywhere else, a code path just took system-actor authority that belongs
+ * to the `authorizedHandler` wrapper or a feature helper.
  *
- * Walks every TS/JS file under `web/` and `scripts/` and asserts that
- * any import of `web/lib/systemInvoker.server` originates from one of
- * the allowlisted directories:
+ * The `no-restricted-imports` eslint rule is the editor-time twin; this runs even
+ * when eslint is bypassed or stale. Exits 1 on any violation.
  *
- *   web/lib/hoot/**
- *   web/lib/jobs/**
- *   web/__tests__/**
- *   web/lib/systemInvoker.server.ts (the file itself, transitively from re-exports)
- *
- * Importing `systemInvoker.server` from anywhere else means a code path
- * just acquired system-actor authority that should be using the http
- * `authorizedHandler` wrapper or a feature-specific helper instead. The
- * eslint rule `no-restricted-imports` (added in `web/eslint.config.mjs`
- * in this same wave) is the editor-time gate; this script is the ci-time
- * gate that runs even when eslint is bypassed or stale.
- *
- * Exits 1 on any violation so ci fails on the pr that introduces it.
- *
- * Usage:
  *   node scripts/check-system-invoker-callers.mjs           # scan repo
  *   node scripts/check-system-invoker-callers.mjs --test    # self-test
  */
@@ -37,9 +23,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const WEB_DIR = join(ROOT, 'web');
 
-// `typescript` lives in `web/node_modules`; the repo root has no
-// package.json. Use createRequire scoped at web so resolution works
-// when this script runs from anywhere.
+// `typescript` lives in web/node_modules and the repo root has no package.json,
+// so scope createRequire at web to resolve from any cwd.
 const requireFromWeb = createRequire(pathToFileURL(join(WEB_DIR, 'package.json')).href);
 let ts;
 try {
@@ -68,22 +53,16 @@ const SKIP_DIRS = new Set([
   '.firebase-config',
 ]);
 
-// Module specifiers that resolve to `web/lib/systemInvoker.server`.
 const MODULE_NAME = 'systemInvoker.server';
 const ABSOLUTE_ALIAS = '@/lib/systemInvoker.server';
 
-// Allowlist patterns matched against the *posix* repo-relative path of
-// the importing file. Order doesn't matter; any match passes.
+// Matched against the POSIX repo-relative path of the importer; any match passes.
 const ALLOWED_PATTERNS = [
   /^web\/lib\/hoot\//,
   /^web\/lib\/jobs\//,
   /^web\/__tests__\//,
   /^web\/lib\/systemInvoker\.server\.ts$/,
 ];
-
-/* -------------------------------------------------------------------------- */
-/*  walker                                                                    */
-/* -------------------------------------------------------------------------- */
 
 function* walk(dir) {
   let entries;
@@ -118,42 +97,31 @@ function toPosixRelative(absPath) {
 }
 
 /**
- * True when `specifier` resolves (possibly with extension elision) to
- * `web/lib/systemInvoker.server`. Handles:
- *   - `@/lib/systemInvoker.server`
- *   - `@/lib/systemInvoker.server.ts`
- *   - relative imports like `../systemInvoker.server` from within `web/lib/*`
- *   - relative imports from tests like `../../lib/systemInvoker.server`
+ * True when `specifier` resolves (extension elision included) to
+ * `web/lib/systemInvoker.server`, via the `@/` alias or a relative path.
  */
 function isSystemInvokerImport(specifier, importerPosixPath) {
   if (!specifier) return false;
-  // Path alias forms first.
   if (specifier === ABSOLUTE_ALIAS) return true;
   if (specifier === `${ABSOLUTE_ALIAS}.ts`) return true;
 
-  // Bare specifier mentioning the module name without alias — treat as
-  // suspicious and inspect more carefully. The repo doesn't publish the
-  // module by bare name so this would only match if someone re-exported.
+  // Un-aliased specifier naming the module: only reachable via a re-export, so
+  // inspect it rather than trusting it.
   if (specifier.endsWith(`/${MODULE_NAME}`) || specifier.endsWith(`/${MODULE_NAME}.ts`)) {
     if (specifier.startsWith('.')) {
-      // Resolve relative to importer.
       const importerDir = dirname(importerPosixPath);
       const resolved = posix.normalize(posix.join(importerDir, specifier));
       const trimmed = resolved.replace(/\.ts$/, '');
-      // The canonical absolute path (repo-relative posix) for the module:
       return trimmed === 'web/lib/systemInvoker.server';
     }
-    // Non-relative bare-ish specifier ending with /systemInvoker.server —
-    // treat conservatively as a hit; eslint will catch the same.
-    return true;
+    return true; // conservative: eslint flags the same shape
   }
   return false;
 }
 
 /**
- * Extract every import / require specifier from `source`, returning the
- * array of module strings used. Uses the typescript compiler's parser so
- * comments, dynamic imports, and re-exports are all handled correctly.
+ * Every import/require specifier in `source`. Uses the typescript parser so
+ * comments, dynamic imports and re-exports are all handled.
  */
 function extractImports(source, fileName) {
   const sf = ts.createSourceFile(
@@ -166,12 +134,10 @@ function extractImports(source, fileName) {
   const specifiers = [];
 
   function visit(node) {
-    // import ... from '...'  /  import '...'
     if (ts.isImportDeclaration(node)) {
       const ms = node.moduleSpecifier;
       if (ms && ts.isStringLiteral(ms)) specifiers.push(ms.text);
     } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
-      // re-exports: export { x } from '...';
       specifiers.push(node.moduleSpecifier.text);
     } else if (ts.isCallExpression(node)) {
       // dynamic import('...') / require('...')
@@ -201,10 +167,6 @@ function isAllowedImporter(posixPath) {
   return ALLOWED_PATTERNS.some((re) => re.test(posixPath));
 }
 
-/* -------------------------------------------------------------------------- */
-/*  main                                                                      */
-/* -------------------------------------------------------------------------- */
-
 function scan(roots) {
   const violations = [];
   for (const root of roots) {
@@ -216,16 +178,13 @@ function scan(roots) {
       } catch {
         continue;
       }
-      // Cheap guard: skip files that don't even mention the module name.
-      if (!source.includes(MODULE_NAME)) continue;
+      if (!source.includes(MODULE_NAME)) continue; // cheap guard
 
       let imports;
       try {
         imports = extractImports(source, file);
       } catch (err) {
-        // Parse error — non-fatal. Surface as a warning so it gets fixed
-        // but don't block ci on it (parser issues are typically
-        // syntactically broken files that ts/eslint will fail on anyway).
+        // Non-fatal: a file that won't parse fails ts/eslint anyway.
         process.stderr.write(`[check-system-invoker-callers] parse failure: ${posixRel}: ${err.message}\n`);
         continue;
       }
@@ -260,14 +219,9 @@ function runMain() {
   process.exit(1);
 }
 
-/* -------------------------------------------------------------------------- */
-/*  self-test                                                                 */
-/* -------------------------------------------------------------------------- */
-
 function runSelfTest() {
   const tempRoot = mkdtempSync(join(tmpdir(), 'sysinv-test-'));
   try {
-    // Build a fake repo layout under tempRoot/web/...
     const okDir = join(tempRoot, 'web', 'lib', 'hoot');
     const badDir = join(tempRoot, 'web', 'app', 'api', 'foo');
     mkdirP(okDir);
@@ -284,8 +238,7 @@ function runSelfTest() {
       'utf8',
     );
 
-    // Rewire the scanner to use the temp root by re-walking + re-using
-    // the same logic but with a fresh "ROOT" via path-relative checks.
+    // Same logic as scan(), but rooted at tempRoot.
     const violations = [];
     for (const file of walk(join(tempRoot, 'web'))) {
       const rel = relative(tempRoot, file).split(sep).join(posix.sep);

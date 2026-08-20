@@ -15,9 +15,7 @@ import time
 import pytest
 
 
-# ---------------------------------------------------------------------------
-#  Real-world installer test data
-# ---------------------------------------------------------------------------
+# Real-world installer test data
 INSTALLERS = {
     "nsis": {
         "name": "7-Zip (NSIS)",
@@ -51,17 +49,8 @@ INSTALLERS = {
         "verify_path": "C:/Program Files/Notepad++/notepad++.exe",
         "search_name": "Notepad++ (64-bit",
     },
-    # NOTE: MSI test (Python) excluded — this machine's MSI subsystem has a
-    # stale install lock (error 1603) from previous test runs. Needs a reboot
-    # to clear. Re-enable after reboot with:
-    # "msi_native": {
-    #     "name": "Python 3.11 (MSI)",
-    #     "installer_name": "python-3.11.9-amd64.exe",
-    #     "installer_url": "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe",
-    #     "silent_flags": "/quiet InstallAllUsers=1 PrependPath=0",
-    #     "verify_path": "C:/Program Files/Python311/python.exe",
-    #     "search_name": "Python 3.11",
-    # },
+    # TODO: re-add the msi_native (Python 3.11 MSI) case — dropped because this
+    # machine's MSI subsystem holds a stale install lock (1603) until a reboot.
 }
 
 # TouchDesigner versions — latest 3 builds, both web and full installers
@@ -77,9 +66,7 @@ TD_VERIFY_PATH = "C:/Program Files/Derivative/TouchDesigner/bin/TouchDesigner.ex
 TARGET_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "uninstalled"}
 
 
-# ---------------------------------------------------------------------------
-#  Helpers
-# ---------------------------------------------------------------------------
+# Helpers
 
 def deployment_path(site_id, deployment_id=None, action=None):
     path = f"/api/sites/{site_id}/deployments"
@@ -184,9 +171,7 @@ def send_uninstall(api_client, site_id, machine_id, software_entry, deployment_i
     return resp.json()["commandId"]
 
 
-# ---------------------------------------------------------------------------
-#  Fixtures
-# ---------------------------------------------------------------------------
+# Fixtures
 
 @pytest.fixture
 def deploy_timeout():
@@ -200,9 +185,7 @@ def td_deploy_timeout():
     return int(os.environ.get("OWLETTE_TD_DEPLOY_TIMEOUT", "2400"))
 
 
-# ---------------------------------------------------------------------------
-#  TestDeploymentLifecycle — API CRUD (no agent interaction)
-# ---------------------------------------------------------------------------
+# TestDeploymentLifecycle — API CRUD (no agent interaction)
 
 @pytest.mark.api
 @pytest.mark.integration
@@ -308,9 +291,7 @@ class TestDeploymentLifecycle:
         assert resp.status_code == 404
 
 
-# ---------------------------------------------------------------------------
-#  TestDeploymentE2E — Install → Verify → Uninstall
-# ---------------------------------------------------------------------------
+# TestDeploymentE2E — Install → Verify → Uninstall
 
 @pytest.mark.api
 @pytest.mark.integration
@@ -333,7 +314,7 @@ class TestDeploymentE2E:
         deploy_timeout, installer_key, installer,
     ):
         """Install {installer_key}, verify, then uninstall."""
-        # --- Phase 1: Install ---
+        # phase 1: install
         resp = api_client.post(
             deployment_path(site_id),
             json=deployment_payload(installer, [machine_id]),
@@ -346,7 +327,7 @@ class TestDeploymentE2E:
         deployment_id = resp.json()["deploymentId"]
         deployment_cleanup.append((deployment_id, [machine_id]))
 
-        # --- Phase 2: Wait for install to complete ---
+        # phase 2: wait for install
         target = poll_deployment_target(
             api_client, site_id, deployment_id, machine_id,
             timeout=deploy_timeout,
@@ -355,8 +336,7 @@ class TestDeploymentE2E:
             f"{installer_key} install finished with status '{target['status']}'"
         )
 
-        # --- Phase 3: Look up uninstall command from software inventory ---
-        # Wait a moment for the agent to sync inventory after install
+        # phase 3: look up the uninstall command; the agent needs a moment to sync inventory
         time.sleep(5)
 
         software = lookup_software(
@@ -370,10 +350,10 @@ class TestDeploymentE2E:
             f"No uninstall_command found for '{software['name']}'"
         )
 
-        # --- Phase 4: Send uninstall command ---
+        # phase 4: uninstall
         send_uninstall(api_client, site_id, machine_id, software, deployment_id)
 
-        # --- Phase 5: Wait for uninstall to complete ---
+        # phase 5: wait for uninstall
         target = poll_deployment_target(
             api_client, site_id, deployment_id, machine_id,
             timeout=deploy_timeout,
@@ -383,13 +363,11 @@ class TestDeploymentE2E:
             f"{installer_key} uninstall finished with status '{target['status']}'"
         )
 
-        # Success — remove from cleanup, keep visible in dashboard
+        # keep it visible in the dashboard
         deployment_cleanup.remove((deployment_id, [machine_id]))
 
 
-# ---------------------------------------------------------------------------
-#  TestTouchDesignerDeployment — Deploy latest 3 TD versions
-# ---------------------------------------------------------------------------
+# TestTouchDesignerDeployment — Deploy latest 3 TD versions
 
 @pytest.mark.api
 @pytest.mark.integration
@@ -424,7 +402,6 @@ class TestTouchDesignerDeployment:
             name = f"TouchDesigner 2025.{build} (Full)"
             installer_name = f"TouchDesigner.2025.{build}.exe"
 
-        # --- Create deployment ---
         resp = api_client.post(
             deployment_path(site_id),
             json={
@@ -444,7 +421,6 @@ class TestTouchDesignerDeployment:
         deployment_id = resp.json()["deploymentId"]
         deployment_cleanup.append((deployment_id, [machine_id]))
 
-        # --- Wait for install to complete ---
         target = poll_deployment_target(
             api_client, site_id, deployment_id, machine_id,
             timeout=td_deploy_timeout,
@@ -453,13 +429,11 @@ class TestTouchDesignerDeployment:
             f"TD {build} ({installer_type}) finished with status '{target['status']}'"
         )
 
-        # Keep installed — remove from cleanup
+        # keep installed
         deployment_cleanup.remove((deployment_id, [machine_id]))
 
 
-# ---------------------------------------------------------------------------
-#  TestMultiMachineDeployment
-# ---------------------------------------------------------------------------
+# TestMultiMachineDeployment
 
 @pytest.mark.api
 @pytest.mark.integration
@@ -530,9 +504,7 @@ class TestMultiMachineDeployment:
         assert t2["status"] == "cancelled"
 
 
-# ---------------------------------------------------------------------------
-#  TestDeploymentValidation — Error cases, no agent interaction
-# ---------------------------------------------------------------------------
+# TestDeploymentValidation — Error cases, no agent interaction
 
 @pytest.mark.api
 @pytest.mark.integration

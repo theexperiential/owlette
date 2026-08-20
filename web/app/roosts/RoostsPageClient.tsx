@@ -67,12 +67,11 @@ export default function RoostsPageClient() {
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
-  // Pending row-level actions. `null` = no prompt open. Each object carries
-  // the roost + whatever the action handler needs to fire off after confirm.
+  // Pending row actions; `null` = no prompt open. Each carries the roost plus
+  // whatever the handler needs after confirm.
   const [pendingDelete, setPendingDelete] = useState<{ roostId: string; name: string } | null>(null);
   const [pendingResync, setPendingResync] = useState<{ roostId: string; name: string; targetCount: number } | null>(null);
-  // Bumped after a successful upload terminal — propagates to VersionHistory
-  // so the expanded panel re-fetches and shows the freshly-published row.
+  // Bumped on upload success so VersionHistory re-fetches the new row.
   const [versionRefreshKey, setVersionRefreshKey] = useState(0);
   const router = useRouter();
 
@@ -84,14 +83,12 @@ export default function RoostsPageClient() {
   // Main page IS the history. Source of truth is roosts (v2).
   const { roosts, loading: roostsLoading, error: roostsError } = useRoosts(currentSiteId);
 
-  // URL-backed selection (?roost=<id>). Surviving across reload + browser
-  // back/forward so the panel state is shareable and bookmarkable.
+  // URL-backed (?roost=<id>) so the panel survives reload/back-forward and is
+  // shareable.
   const { selectedRoostId, setSelectedRoostId } = useSelectedRoost();
 
-  // Viewport-aware branching between the desktop aside and the mobile sheet.
-  // `lg:hidden` on the sheet wrapper is NOT sufficient — Radix Portal renders
-  // the overlay + content in document.body, escaping the wrapper. Only JS
-  // gating keeps the mobile overlay off the desktop viewport.
+  // JS gating, not `lg:hidden`: Radix Portal renders the sheet's overlay and
+  // content into document.body, escaping any className on the wrapper.
   const [isDesktop, setIsDesktop] = useState(true);
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 1024px)');
@@ -105,11 +102,9 @@ export default function RoostsPageClient() {
     [roosts, selectedRoostId]
   );
 
-  // Held copy of the selected roost so the aside can play its
-  // `slide-out-to-right` animation before unmounting. When `selectedRoost`
-  // goes from null → roost we update immediately (so the enter animation
-  // runs); when it goes roost → null we delay clearing for the duration of
-  // the exit animation (200ms — matches `tw-animate-css` defaults).
+  // Held copy so the aside can finish `slide-out-to-right` before unmounting:
+  // null -> roost updates immediately, roost -> null clears after the 200ms
+  // exit animation (tw-animate-css default).
   const [displayRoost, setDisplayRoost] = useState(selectedRoost);
   useEffect(() => {
     if (selectedRoost) {
@@ -119,23 +114,20 @@ export default function RoostsPageClient() {
     const t = setTimeout(() => setDisplayRoost(null), 200);
     return () => clearTimeout(t);
   }, [selectedRoost]);
-  // Tracked across renders so the mobile sheet (and aside) close path can
-  // restore focus to the originating row button.
+  // So the close path can restore focus to the originating row button.
   const prevSelectedIdRef = useRef<string | null>(null);
 
-  // Disappearance: if the selected roost is no longer in the list (deleted
-  // by another tab, site changed, direct nav with bogus id), clear the URL.
-  // Gating on `!roostsLoading` is non-negotiable — clearing while loading
-  // would race with hydration on direct nav and lose a valid selection.
+  // Clear the URL when the selection vanishes (deleted elsewhere, site change,
+  // bogus id). The `!roostsLoading` gate is non-negotiable: clearing mid-load
+  // races hydration on direct nav and drops a valid selection.
   useEffect(() => {
     if (!roostsLoading && selectedRoostId && !roosts.some((r) => r.id === selectedRoostId)) {
       setSelectedRoostId(null);
     }
   }, [roostsLoading, roosts, selectedRoostId, setSelectedRoostId]);
 
-  // Focus restoration: when the panel transitions to "no selection", move
-  // focus back to the originating row button. Critical on mobile (Radix
-  // Portal pulls focus when the sheet opens) and good practice on desktop.
+  // On deselect, return focus to the row button — required on mobile, where
+  // Radix Portal pulled focus when the sheet opened.
   useEffect(() => {
     const prev = prevSelectedIdRef.current;
     if (prev && !selectedRoostId) {
@@ -149,9 +141,8 @@ export default function RoostsPageClient() {
     prevSelectedIdRef.current = selectedRoostId;
   }, [selectedRoostId]);
 
-  // Keyboard: Esc closes, ↓/↑ move selection within the current list with
-  // edge-wrap. Skipped while focus is in an input/textarea/contenteditable
-  // so the dialog and inline edits keep their native behaviour.
+  // Esc closes; up/down move selection with edge-wrap. Skipped inside
+  // input/textarea/contenteditable so native behaviour survives.
   useEffect(() => {
     if (!selectedRoostId) return;
     const handler = (e: KeyboardEvent) => {
@@ -178,21 +169,17 @@ export default function RoostsPageClient() {
     return () => window.removeEventListener('keydown', handler);
   }, [selectedRoostId, roosts, setSelectedRoostId]);
 
-  // wave 3.9: used by EmptyStateUpload to branch between "install agent first"
-  // onboarding and "create your first roost" CTA.
+  // EmptyStateUpload branches on this: "install agent first" vs "create your
+  // first roost".
   const { machines } = useMachines(currentSiteId);
 
-  // Upload execution lives at the page level so a multi-GB run survives
-  // dismissal of ProjectDistributionDialog. When the dialog is closed
-  // while `upload.state.status === 'uploading'`, the MinimizedUploadCard
-  // below takes over as the visible progress indicator.
+  // Page-level so a multi-GB run survives dismissing ProjectDistributionDialog;
+  // MinimizedUploadCard becomes the progress surface while it's closed.
   const upload = useRoostUpload();
   const showMinimizedCard =
     upload.state.status !== 'idle' && !distributionDialogOpen;
 
-  // When an upload terminates successfully, refresh the version-history
-  // panel for whichever roost the user expanded. Cheap to invalidate
-  // unconditionally; collapsed panels don't fetch on key bumps.
+  // Invalidate unconditionally — collapsed panels don't fetch on a key bump.
   useEffect(() => {
     if (upload.state.status === 'success') {
       setVersionRefreshKey((k) => k + 1);
@@ -203,12 +190,9 @@ export default function RoostsPageClient() {
     selectSite(siteId);
   };
 
-  // Discreet copy-to-clipboard helper used by the "copy roost id" /
-  // "copy version id" dropdown items. Most operators never touch these
-  // — they exist for the rare debugging / support-ticket moment. Falls
-  // back to a "couldn't copy" toast when the Clipboard API isn't
-  // available (older browser, insecure context), which also reveals the
-  // id so the user can copy it manually.
+  // Backs the "copy roost/version id" dropdown items. Without the Clipboard
+  // API (old browser, insecure context) the fallback toast shows the id so it
+  // can still be copied by hand.
   const copyToClipboard = async (text: string, label: string) => {
     try {
       if (navigator.clipboard?.writeText) {
@@ -328,8 +312,8 @@ export default function RoostsPageClient() {
           open={distributionDialogOpen}
           onOpenChange={(open) => {
             setDistributionDialogOpen(open);
-            // Drop the new-version pre-fill once the dialog actually closes;
-            // otherwise the next "new roost" click would reopen in version mode.
+            // Drop the pre-fill on close, or the next "new roost" click
+            // reopens in version mode.
             if (!open) setNewVersionContext(null);
           }}
           siteId={currentSiteId}
@@ -395,28 +379,18 @@ export default function RoostsPageClient() {
           </div>
         </div>
 
-        {/* Roosts list + detail panel. Above lg, the panel renders as a
-            sticky aside next to the list; below lg, the same panel renders
-            inside a right-slide sheet. Both branches are always mounted so
-            CSS controls visibility — no flicker on resize. */}
+        {/* Above lg the panel is a sticky aside; below, the same panel is a
+            right-slide sheet. Both stay mounted so resizing never flickers. */}
         <div
           className={`flex items-start transition-[gap] duration-200 ease-out ${
             selectedRoost ? 'gap-4' : 'gap-0'
           }`}
         >
           <div className="flex-1 min-w-0 rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
-            {/*
-              Order matters. `hasNoSites` is checked before the spinner: it is
-              only true once the site list has settled, and it is a terminal
-              state, not a transient one. The previous gate folded it into the
-              loading condition via a bare `!currentSiteId`, so an account with
-              no sites spun forever with no error and no next step.
-
-              The spinner still covers every genuinely-unresolved source —
-              sites in flight, or the roosts listener yet to deliver its first
-              batch — so users who do have roosts never see a flash of empty
-              state.
-            */}
+            {/* Order matters: `hasNoSites` is terminal and only true once the
+                site list settles, so it must precede the spinner. Folding it
+                into the loading condition via a bare `!currentSiteId` left
+                site-less accounts spinning forever with no next step. */}
             {hasNoSites ? (
               <div className="p-8">
                 <NoSitesEmptyState action="manage roosts" />
@@ -583,18 +557,13 @@ export default function RoostsPageClient() {
             )}
           </div>
 
-          {/* Desktop detail panel — slot transitions width so the list
-              (flex-1) responsively grows/shrinks to fill the freed space,
-              and the panel inside (right-anchored, w-[480px], parent has
-              overflow-hidden) appears to slide in/out from the right edge
-              as the slot resizes. The slot is always rendered on desktop
-              so width transitions both directions; the panel itself uses
-              `displayRoost` (held copy that lingers ~200ms after close)
-              so its content stays visible during the slide-out. The
-              `key={displayRoost.id}` is non-negotiable: RoostContentsRow
-              and VersionHistory carry internal state, and remounting on
-              selection swap is the only way to guarantee no stale data
-              flashes between roosts. */}
+          {/* Desktop detail panel. The slot animates width so the flex-1 list
+              reflows and the right-anchored panel reads as sliding in; it is
+              always rendered so the transition runs both ways, and the panel
+              uses `displayRoost` so content survives the slide-out.
+              `key={displayRoost.id}` is non-negotiable: RoostContentsRow and
+              VersionHistory hold internal state, and remounting is the only
+              thing preventing stale data flashing between roosts. */}
           {isDesktop && (
             <div
               className={`flex justify-end flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${
@@ -651,10 +620,8 @@ export default function RoostsPageClient() {
           )}
         </div>
 
-        {/* Mobile detail sheet — same panel, different shell. Rendered only
-            when the viewport is below the lg breakpoint. CSS gating is not
-            sufficient because Radix Portal relocates the overlay + content
-            into document.body, which escapes any className on the wrapper. */}
+        {/* Same panel, sheet shell. JS-gated, not CSS: Radix Portal moves the
+            overlay and content into document.body. */}
         {!isDesktop && (
           <RoostMobileSheet
             open={selectedRoost !== null}
@@ -707,11 +674,8 @@ export default function RoostsPageClient() {
         )}
       </main>
 
-      {/* Floating minimized-upload card. Only rendered when an upload is
-          running (or recently terminated) and the dialog isn't open —
-          otherwise the dialog IS the progress surface and duplicating it
-          on-screen would be noise. Clicking the card reopens the dialog,
-          which re-reads `upload.state` and resumes rendering progress. */}
+      {/* Only while an upload runs with the dialog closed — otherwise the
+          dialog is already the progress surface. Clicking reopens it. */}
       {showMinimizedCard && (
         <MinimizedUploadCard
           upload={upload}
@@ -725,9 +689,7 @@ export default function RoostsPageClient() {
         onOpenChange={setAccountSettingsOpen}
       />
 
-      {/* Row-action confirmations. ConfirmDialog is the app's standard
-          pattern (see UninstallDialog, DeleteSite, etc.) — no native
-          window.confirm() prompts. */}
+      {/* ConfirmDialog is the app-wide pattern — never window.confirm(). */}
       <ConfirmDialog
         open={!!pendingDelete}
         onOpenChange={(open) => !open && setPendingDelete(null)}

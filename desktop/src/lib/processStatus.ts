@@ -1,17 +1,13 @@
 /**
  * `tmp/app_states.json` — the service's live process table — and the join that
- * turns it into a dot next to a name.
- *
- * The file is keyed by OS pid, and each value carries the config entry it
- * belongs to plus the last status the service wrote for it:
+ * turns it into a dot next to a name. Keyed by OS pid:
  *
  * ```json
  * { "18244": { "id": "e38d36a5-…", "status": "RUNNING", "timestamp": 1786562574 } }
  * ```
  *
- * A config entry can own several pids at once — the service leaves the previous
- * generation behind when a process crashes and is relaunched, and pids are
- * recycled by Windows — so every lookup here has to pick one deliberately.
+ * A config entry can own several pids at once (crashed generations are left
+ * behind, and Windows recycles pids), so every lookup must pick one deliberately.
  */
 
 export const PROCESS_STATUSES = [
@@ -29,13 +25,10 @@ export const PROCESS_STATUSES = [
 export type ProcessStatus = (typeof PROCESS_STATUSES)[number]
 
 /**
- * The two statuses this app writes itself, both of them a message to the
- * service about an exit it is about to see (`owlette_service.py:2598-2630`).
- *
- * `KILLED` says "intended, leave it alone"; `RESTARTING` says "intended, and
- * the operator asked for it" — same suppression of the crash alert, plus a
- * `process_restarted` audit event, and the relaunch decided by launch mode as
- * usual. Everything else in {@link PROCESS_STATUSES} is the service's to write.
+ * The two statuses this app writes itself, both telling the service an exit it
+ * is about to see was intended. `KILLED` = leave it alone; `RESTARTING` = same
+ * crash-alert suppression plus a `process_restarted` audit event. Everything
+ * else in {@link PROCESS_STATUSES} is the service's to write.
  */
 export type ProcessMarker = Extract<ProcessStatus, 'KILLED' | 'RESTARTING'>
 
@@ -49,12 +42,10 @@ export interface AppState {
 export type AppStates = Record<string, AppState>
 
 /**
- * Take the parsed document down to the entries we can actually use.
- *
- * The service has written malformed entries before (a `None` pid key was a real
- * bug), and this file is read on every watcher event, so anything that is not a
- * numeric pid mapping to an object is dropped rather than crashing the list.
- * Unknown keys inside an entry are kept — a status write must not lose them.
+ * Keep only usable entries. The service has written malformed ones before (a
+ * `None` pid key), and this is read on every watcher event, so a non-numeric
+ * pid or non-object value is dropped rather than crashing the list. Unknown
+ * keys inside an entry are preserved — a status write must not lose them.
  */
 export function parseAppStates(raw: unknown): AppStates {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
@@ -88,12 +79,10 @@ function asStatus(value: unknown): ProcessStatus | null {
 }
 
 /**
- * The status to show for a config entry: the most recent generation's.
- *
- * Deliberately not "prefer RUNNING" — a killed process keeps its timestamp when
- * the marker is written, so preferring RUNNING would leave a stale green dot on
- * a process the operator just stopped. An entry the service has never launched,
- * or one whose statuses are all unrecognised, reads INACTIVE.
+ * Status for a config entry: the most recent generation's. Deliberately NOT
+ * "prefer RUNNING" — a killed process keeps its timestamp, so that would leave
+ * a stale green dot on a process the operator just stopped. Never-launched or
+ * all-unrecognised reads INACTIVE.
  */
 export function statusForProcess(states: AppStates, processId: string): ProcessStatus {
   const [newest] = entriesFor(states, processId).sort(byRecency)
@@ -101,19 +90,12 @@ export function statusForProcess(states: AppStates, processId: string): ProcessS
 }
 
 /**
- * The statuses whose pid generation is the one running right now.
+ * Statuses whose pid generation is running right now.
  *
  * `STALLED` belongs here: the service writes it when a process stops answering
- * but before it decides to kill anything (`owlette_service.py:2828-2829`), so
- * the process is very much alive and is precisely the one an operator wants to
- * restart. Omitting it made a hung process read `INACTIVE` — an unrecognised
- * status falls through {@link statusForProcess}'s default — and greyed out the
- * restart control that answers it. The dashboard has always treated it as
- * actionable (`MachineListView.tsx`, `MachineCardView.tsx`).
- *
- * Everything else describes a generation that has ended (`KILLED`, `STOPPED`,
- * `LAUNCH_FAILED`), one that never began (`QUEUED`), or an entry owlette is not
- * managing (`INACTIVE`) — none of which there is a live process to act on.
+ * but before killing anything, so it is alive and exactly what an operator
+ * wants to restart. Omitting it made a hung process read `INACTIVE` and greyed
+ * out the restart control. The dashboard treats it as actionable too.
  */
 const LIVE_STATUSES: readonly ProcessStatus[] = ['RUNNING', 'LAUNCHING', 'RESTARTING', 'STALLED']
 
@@ -123,17 +105,12 @@ export function isLive(status: ProcessStatus): boolean {
 }
 
 /**
- * When the newest generation of this entry was *launched*, in unix
- * milliseconds, or null when the service has never recorded one.
+ * When the newest generation was *launched*, in unix ms, or null.
  *
- * This is the only time the seam carries, and it is worth being exact about
- * what it means: the service stamps `timestamp` once, when it starts the
- * process (`owlette_service.py:2380-2403`), and never touches it again — status
- * changes are written without it (`shared_utils.update_process_status_in_json`).
- * So it is a launch time, not the moment the current status began, and the only
- * statuses it describes honestly are the ones {@link isLive} accepts: for those,
- * the process has been up since this instant. Presenting it beside `killed` or
- * `stopped` would be a claim the file cannot support.
+ * The service stamps `timestamp` once at launch and never again — status
+ * changes are written without it. So this is a launch time, not the start of
+ * the current status, and it is only honest beside a status {@link isLive}
+ * accepts; showing it next to `killed`/`stopped` claims more than the file says.
  */
 export function launchedAtForProcess(states: AppStates, processId: string): number | null {
   const [newest] = entriesFor(states, processId).sort(byRecency)
@@ -142,12 +119,9 @@ export function launchedAtForProcess(states: AppStates, processId: string): numb
 }
 
 /**
- * The pid to act on for a kill or restart.
- *
- * Mirrors `owlette_gui.get_os_pid_by_process_id`: a RUNNING generation wins
- * (newest, if there are several), otherwise the newest generation of any status
- * — it may well be dead, which is exactly what the caller's identity check on
- * `terminate_pid` is there to find out.
+ * The pid to act on for a kill or restart: newest RUNNING generation, else the
+ * newest of any status. That one may be dead — the caller's identity check in
+ * `terminate_pid` is what catches it.
  */
 export function livePidForProcess(states: AppStates, processId: string): number | null {
   const entries = entriesFor(states, processId)
@@ -159,11 +133,8 @@ export function livePidForProcess(states: AppStates, processId: string): number 
 }
 
 /**
- * Stamp a marker on one pid, leaving the rest of the document alone.
- *
- * Same shape as `shared_utils.update_process_status_in_json`: the status is
- * replaced and the config id is (re)asserted, while the timestamp and anything
- * else the service put there is preserved.
+ * Stamp a marker on one pid, leaving the rest of the document alone: status
+ * replaced, config id re-asserted, timestamp and unknown keys preserved.
  */
 export function markProcess(
   states: AppStates,
@@ -186,26 +157,18 @@ export function markRestarting(states: AppStates, pid: number, processId: string
 }
 
 /**
- * Put a pid's row back the way it was.
- *
- * `RESTARTING` has to be written before the process is terminated, which means
- * it is sometimes written for a termination that does not happen — the pid had
- * already exited, or refused to. Left in place it would be a claim nothing ever
- * corrects: the service only rewrites rows for processes it is monitoring, so
- * an unmanaged entry would sit at "restarting" until the next reboot, and a
- * process that really had just crashed would have its crash alert suppressed.
+ * Put a pid's row back the way it was. `RESTARTING` must be written BEFORE
+ * termination, so it is sometimes written for one that never happens. Nothing
+ * corrects it — the service only rewrites rows it monitors — so an unmanaged
+ * entry would sit at "restarting" until reboot and suppress a real crash alert.
  */
 export function restoreState(states: AppStates, pid: number, previous: AppState): AppStates {
   return { ...states, [String(pid)]: previous }
 }
 
 /**
- * Dot colours.
- *
- * The hues are `shared_utils.STATUS_COLORS`, which are the same tailwind steps
- * the web dashboard paints its process badges with (green for running, red for
- * the failure family, slate for idle). INACTIVE is a hollow ring rather than a
- * filled dot, as in the legacy GUI.
+ * Dot colours — the same tailwind steps as `shared_utils.STATUS_COLORS` and the
+ * dashboard's process badges. INACTIVE is a hollow ring, as in the legacy GUI.
  */
 export const STATUS_DOT: Record<ProcessStatus, string> = {
   RUNNING: 'bg-green-500',

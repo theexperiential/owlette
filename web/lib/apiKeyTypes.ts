@@ -10,32 +10,22 @@ export type ApiKeyResource =
   | 'user' // platform-wide user administration (superadmin)
   | 'installer'; // platform-wide installer-binary management (superadmin)
 /**
- * The union keeps `test` even though nothing mints it any more.
- *
- * `test` never gated authorization or data access — auth reads the field and
- * never branches on it — so it promised a sandbox it did not provide, and the
- * option is gone from every create surface. But it is NOT inert: it is the
- * second component of the idempotency cache key
- * (`hashCacheKey(userId, environment, key, routeScope)`, lib/idempotency.ts),
- * so narrowing this union would re-namespace idempotency for every existing
- * `owk_test_*` key and orphan its cached responses. Existing test keys keep
- * working; only new mints are forced to `live`.
+ * `test` is kept in the union although nothing mints it: it is the second
+ * component of the idempotency cache key (`hashCacheKey(userId, environment,
+ * key, routeScope)`, lib/idempotency.ts), so narrowing would re-namespace
+ * idempotency for every existing `owk_test_*` key and orphan its cached
+ * responses. It never gated authorization. New mints are forced to `live`.
  */
 export type ApiKeyEnvironment = 'live' | 'test';
 
 /**
- * The environment every newly minted key gets. Never read from user input —
- * requests may still send `environment` (the shipped CLI and both SDKs do) and
- * it is accepted and ignored rather than rejected, so older clients keep
- * working. Rotation is the one exception: it inherits the old key's value.
+ * Environment for every newly minted key. Never read from user input — a request
+ * may still send `environment` (the shipped CLI and both SDKs do) and it is
+ * ignored rather than rejected. Rotation inherits the old key's value instead.
  */
 export const MINTED_API_KEY_ENVIRONMENT: ApiKeyEnvironment = 'live';
 
-/**
- * Canonical list of every accepted resource type. Imported by route
- * validators + the dashboard scope picker so the allowlist can't drift
- * across multiple call sites.
- */
+/** Canonical accepted resource types; imported by route validators and the scope picker so the allowlist can't drift. */
 export const ALL_RESOURCES: readonly ApiKeyResource[] = [
   'roost',
   'site',
@@ -47,11 +37,7 @@ export const ALL_RESOURCES: readonly ApiKeyResource[] = [
   'installer',
 ];
 
-/**
- * Resources that require superadmin to grant. Route validators reject
- * scope creation if a non-superadmin attempts to mint a key carrying
- * any of these.
- */
+/** Resources only a superadmin may grant; route validators reject the rest. */
 export const SUPERADMIN_ONLY_RESOURCES: readonly ApiKeyResource[] = ['user', 'installer'];
 
 export interface ApiKeyScope {
@@ -61,10 +47,7 @@ export interface ApiKeyScope {
   permissions: ApiKeyPermission[];
 }
 
-/**
- * Stored in users/{userId}/api_keys/{keyId}.
- * The raw key is never stored — only the SHA-256 hash.
- */
+/** Stored in users/{userId}/api_keys/{keyId}. Raw key is never stored — SHA-256 hash only. */
 export interface ApiKeyRecord {
   name: string;
   keyHash: string;
@@ -85,10 +68,7 @@ export interface ApiKeyRecord {
   revokedAt?: number;
 }
 
-/**
- * Stored in api_keys/{keyHash} (top-level lookup table).
- * Denormalized for O(1) auth resolution — one doc read, no join.
- */
+/** Stored in api_keys/{keyHash}: denormalized lookup table for O(1) auth, no join. */
 export interface ApiKeyLookup {
   userId: string;
   keyId: string;
@@ -127,14 +107,9 @@ export const SCOPE_PRESET_KEYS: readonly ApiKeyScopePreset[] = [
 ];
 
 /**
- * Display labels for the presets.
- *
- * The keys are code identifiers — they index SCOPE_PRESETS, back the
- * `ApiKeyScopePreset` union, and are the `<SelectItem value>` in every picker.
- * Rendering them raw leaked `readonly` into the UI as a scope's name. The
- * identifier stays; only what a human reads changes. Nothing persists or
- * transmits the preset name (a preset expands to `scopes` before the POST),
- * so this is purely presentational.
+ * Display labels. The keys are code identifiers (they index SCOPE_PRESETS and are
+ * `<SelectItem value>`), and rendering them raw leaked `readonly` into the UI.
+ * Purely presentational — a preset expands to `scopes` before the POST.
  */
 export const SCOPE_PRESET_LABELS: Record<ApiKeyScopePreset, string> = {
   readonly: 'read only',
@@ -155,11 +130,7 @@ export const DEFAULT_TTL_DAYS = 90;
 export const MAX_TTL_DAYS = 365;
 export const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
 
-/**
- * Returns true if a resolved key has at least one scope entry matching
- * (resource, id, permission). Wildcard id ('*') in the stored scope matches
- * any requested id.
- */
+/** True if any scope matches (resource, id, permission); stored id '*' matches any id. */
 export function scopeMatches(
   scopes: ApiKeyScope[],
   resource: ApiKeyResource,
@@ -177,19 +148,14 @@ export function scopeMatches(
 /**
  * The shape `GET /api/keys` returns, and the only shape the key UIs read.
  *
- * Declared here rather than beside a component on purpose. It used to live in
- * KeyCard.tsx, where it described fields the route never actually sent —
- * `expired`, `retired` and `expiredMarkedAt` were always `undefined`, so the
- * "expired" badge could not render, and an expired key sat under a heading
- * that called it active. Sharing the type makes that a compile error instead.
+ * Shared rather than declared beside KeyCard.tsx, where it once described fields
+ * the route never sent (`expired`, `retired`, `expiredMarkedAt` were always
+ * undefined, so an expired key rendered under the active heading).
  *
- * Every instant here is epoch milliseconds. The stored record is not
- * consistent — `createdAt` is a Firestore Timestamp (written with
- * serverTimestamp()) while `lastUsedAt` is a plain number (written with
- * Date.now()) — so the route normalises through {@link toEpochMillis} before
- * serialising. Returning the raw Timestamp made `new Date(...)` yield
- * "Invalid Date" in the dashboard for every key created after the switch to
- * serverTimestamp().
+ * Every instant is epoch milliseconds: the stored record mixes Firestore
+ * Timestamps (`createdAt`, serverTimestamp) with plain numbers (`lastUsedAt`), so
+ * the route normalises through {@link toEpochMillis} — a raw Timestamp made
+ * `new Date(...)` yield "Invalid Date" in the dashboard.
  */
 export interface ApiKeyListItem {
   id: string;
@@ -212,13 +178,10 @@ export interface ApiKeyListItem {
 }
 
 /**
- * Coerce any instant this codebase has ever stored into epoch milliseconds.
- *
- * Handles the three shapes that reach it: a plain number, a live
- * Firestore Timestamp (Admin SDK, has `toMillis()`), and a Timestamp that has
- * already been through JSON (`{_seconds, _nanoseconds}` or `{seconds, ...}`).
- * Anything else — including a FieldValue sentinel read back before the write
- * lands — returns null rather than a nonsense date.
+ * Coerce any instant this codebase has stored into epoch milliseconds: plain
+ * number, live Firestore Timestamp (`toMillis()`), or a JSON-round-tripped one
+ * (`{_seconds,_nanoseconds}` / `{seconds,...}`). Anything else — including a
+ * FieldValue sentinel read back before the write lands — returns null.
  */
 export function toEpochMillis(value: unknown): number | null {
   if (value === null || value === undefined) return null;
@@ -248,10 +211,8 @@ export function toEpochMillis(value: unknown): number | null {
 }
 
 /**
- * Build the list item the UIs consume from a stored record.
- *
- * `now` is injected so a single listing classifies every key against one
- * instant, and so the derivation is testable without faking the clock.
+ * Build the list item the UIs consume. `now` is injected so one listing
+ * classifies every key against a single instant, and to keep it testable.
  */
 export function buildApiKeyListItem(
   id: string,
@@ -278,8 +239,7 @@ export function buildApiKeyListItem(
     revokedAt: toEpochMillis(data.revokedAt),
     expiredMarkedAt: toEpochMillis(data.expiredMarkedAt),
     expired: expiresAt !== null && expiresAt <= now,
-    // A rotated key stops working once its grace window closes. Without
-    // rotatedAt there is no grace window and the key is simply live.
+    // No rotatedAt means no grace window, so the key is simply live.
     retired: rotatedAt !== null && retiresAt !== null && retiresAt <= now,
   };
 }

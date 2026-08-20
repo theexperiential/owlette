@@ -2,14 +2,9 @@
  * GET   /api/roosts/{roostId}/versions/{versionRef}?siteId=...
  *       → Full OCI version (body fetched from R2) + history metadata + stats.
  *
- * PATCH /api/roosts/{roostId}/versions/{versionRef}
- *       body: { siteId, description? }
- *       → Edit a published version's description ONLY. The version's
- *         content (files, chunks) is immutable once published — any other
- *         field in the body is rejected with `version_content_immutable`.
- *
- * `versionRef` is resolved to a concrete versionId in task 1.5. Until the
- * resolver ships, the lookup accepts the stable `vrs_*` / hash form only.
+ * PATCH /api/roosts/{roostId}/versions/{versionRef}  body: { siteId, description? }
+ *       → Description ONLY. A published version's content (files, chunks) is
+ *         immutable; any other body field is rejected `version_content_immutable`.
  *
  * roost public api wave 3.2.
  */
@@ -48,9 +43,8 @@ async function readSiteDocForGate(siteId: string): Promise<Record<string, unknow
 }
 
 /**
- * Map a resolver error to an RFC 7807 response. Called from every route
- * that translates a `{versionRef}` path segment — centralising the
- * mapping keeps error envelopes identical across GET/PATCH/files/diff.
+ * Map a resolver error to an RFC 7807 response — centralised so GET / PATCH / files /
+ * diff all return identical error envelopes.
  */
 function problemFromResolveError(
   err: ResolveVersionError,
@@ -150,20 +144,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-/* --------------------------------------------------------------------- */
-/*  PATCH — edit description (only)                                      */
-/* --------------------------------------------------------------------- */
-
 interface PatchBody {
   siteId?: unknown;
   description?: unknown;
   [key: string]: unknown;
 }
 
-// Fields PATCH is allowed to touch. Anything else in the body triggers
-// the `version_content_immutable` rejection below — once a version is
-// published its content (files/chunks) is frozen; only metadata like
-// description can move.
+// Fields PATCH may touch. Anything else triggers the `version_content_immutable`
+// rejection below — a published version's files/chunks are frozen; metadata can move.
 const PATCHABLE_FIELDS = new Set(['siteId', 'description']);
 
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
@@ -183,9 +171,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
     if (gateRes) return gateRes;
 
-    // Reject any body field other than siteId/description up front. Makes
-    // the immutability guarantee explicit to the caller — they'd otherwise
-    // silently discover it by observing the updated doc is unchanged.
+    // Reject unknown body fields up front, making the immutability guarantee explicit
+    // instead of something the caller discovers from an unchanged doc.
     const offending = Object.keys(body).filter((k) => !PATCHABLE_FIELDS.has(k));
     if (offending.length > 0) {
       return problem({
@@ -200,9 +187,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // Idempotency replay support — matches the webhook PATCH pattern so
-    // a retried PATCH (e.g. same key after a network blip) returns the
-    // cached response instead of double-writing the timestamp.
+    // Idempotency replay, matching the webhook PATCH pattern: a retried PATCH returns
+    // the cached response instead of double-writing the timestamp.
     const idem = await checkIdempotency(
       request,
       {
@@ -215,8 +201,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       return idem.response;
     }
 
-    // Description validation mirrors the POST handler in ../route.ts so
-    // the two surfaces stay consistent: same cap, same empty-string-as-null
+    // Mirrors the POST handler in ../route.ts: same cap, same empty-string-as-null
     // normalisation.
     if (body.description === undefined) {
       return problemValidation('description is required', {
@@ -263,10 +248,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    // Mirror the description onto the roost doc when the edited version is
-    // the current pointer — the /roost list reads denormalised
-    // `currentVersionDescription` for the row preview, so without this the
-    // preview would lag until the next publish.
+    // Mirror the description onto the roost doc when this version is the current
+    // pointer: the /roost list reads denormalised `currentVersionDescription`, so the
+    // row preview would otherwise lag until the next publish.
     const roostRef = resolved.doc.ref.parent.parent;
     let mirroredToRoost = false;
     if (roostRef) {

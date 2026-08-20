@@ -1,26 +1,13 @@
 'use client';
 
 /**
- * DisplayLayoutPanel Component
+ * Expanded panel for inspecting and (admin-only) managing a machine's display
+ * topology; chrome mirrors MetricsDetailPanel.
  *
- * Expanded panel for inspecting and (for admins) managing a machine's display
- * topology. Mirrors the chrome of MetricsDetailPanel (Card shell, title row,
- * controls row, body, stat-card grid) so the two feel like siblings in the
- * dashboard.
- *
- * Two tabs:
- *  - `live`: what the agent most recently reported (real-time via Firestore
- *    subscription in useDisplayState).
- *  - `assigned`: the admin-authored layout the agent is expected to maintain.
- *    When an assigned layout exists, the live tab overlays the assigned
- *    monitors as dashed "ghost" rectangles so drift is visually obvious.
- *
- * Action buttons (store / restore) are wired via useDisplayActions. Restore
- * is the single primary action — when drift is detected, its border turns
- * amber so the same button reads as "undo drift" in that context.
- *
- * Permission gating: store / restore are write operations and are hidden
- * entirely for non-admins (read-only view).
+ * Tabs: `live` (agent's latest report, via useDisplayState) and `assigned` (the
+ * admin-authored target). When an assigned layout exists the live tab overlays
+ * it as dashed ghosts so drift is visible. store/restore are writes and are
+ * hidden entirely for non-admins.
  */
 
 import {
@@ -96,11 +83,9 @@ const DISPLAY_EVENT_LABEL: Record<string, string> = {
 };
 
 /**
- * Compact relative-time formatter for the events tab. Takes epoch ms and
- * returns "just now" / "Nm ago" / "Nh ago" / "Nd ago" for the last week,
- * or a "MMM D" date for older. The shared `formatRelativeTime` in
- * `lib/timeUtils.ts` takes seconds and never falls back to a date, so we
- * keep this one local.
+ * Epoch ms → "just now" / "Nm ago" / "Nh ago" / "Nd ago", "MMM D" past a week.
+ * Local because the shared `formatRelativeTime` takes seconds and never
+ * falls back to a date.
  */
 function formatEventRelativeTime(epochMs: number): string {
   if (!epochMs) return '—';
@@ -132,11 +117,7 @@ function parseEventDetails(details: string): Record<string, unknown> {
   }
 }
 
-/**
- * Pull the operator-friendly monitor name from a parsed event payload, when
- * the agent attached one. Shapes: `{monitor: {friendlyName}}` for per-monitor
- * events, falls back to `''` so the column renders an em-dash.
- */
+/** Monitor name from a parsed event payload (`{monitor:{friendlyName}}`); '' renders an em-dash. */
 function eventMonitorName(payload: Record<string, unknown>): string {
   const monitor = payload.monitor;
   if (monitor && typeof monitor === 'object') {
@@ -147,10 +128,8 @@ function eventMonitorName(payload: Record<string, unknown>): string {
 }
 
 /**
- * Per-action details snippet:
- *  - `display_drift`        → `changes.join(', ')`
- *  - `display_apply_failed` → `error`
- *  - everything else        → '' (em-dash placeholder in the cell)
+ * Per-action details: `display_drift` → `changes.join(', ')`,
+ * `display_apply_failed` → `error`, everything else → '' (em-dash cell).
  */
 function eventDetailsSnippet(
   action: string,
@@ -170,8 +149,7 @@ function eventDetailsSnippet(
   return '';
 }
 
-/** Severity badge classes — matches the amber-500 / destructive tokens used
- *  elsewhere in this file (restore banner, drift overlay). */
+/** Severity badge classes — amber-500 / destructive tokens used elsewhere here. */
 function eventLevelBadgeClass(level: string): string {
   if (level === 'critical') {
     return 'bg-destructive/20 text-destructive border-destructive/30';
@@ -182,10 +160,7 @@ function eventLevelBadgeClass(level: string): string {
   return 'bg-muted text-muted-foreground border-border';
 }
 
-/**
- * Sort monitors left-to-right, top-to-bottom by virtual-desktop position so
- * the stat-card grid below the canvas matches the visual order on screen.
- */
+/** Sort left-to-right, top-to-bottom by virtual-desktop position so the stat-card grid matches on-screen order. */
 function sortByPosition(monitors: MonitorInfo[]): MonitorInfo[] {
   return [...monitors].sort((a, b) => {
     if (a.position.x !== b.position.x) return a.position.x - b.position.x;
@@ -194,9 +169,8 @@ function sortByPosition(monitors: MonitorInfo[]): MonitorInfo[] {
 }
 
 /**
- * True if any two monitors occupy overlapping virtual-desktop rects. Windows
- * tolerates overlaps, so this is strictly advisory — shown as a warning, never
- * a block. Rotation swaps effective width/height (portrait panels).
+ * True if any two monitors overlap in virtual-desktop space. Advisory only —
+ * Windows tolerates overlaps. Rotation swaps effective width/height.
  */
 function hasOverlappingMonitors(monitors: MonitorInfo[]): boolean {
   const rect = (m: MonitorInfo) => {
@@ -231,8 +205,7 @@ export function DisplayLayoutPanel({
   const { isSiteAdmin, user } = useAuth();
   const canSiteAdmin = isSiteAdmin(siteId);
   const { profile, assigned, autoRestore, remoteApplyEnabled, loading, error } = useDisplayState(siteId, machineId);
-  // `applying` drives the disabled-state on every write button so repeat-clicks
-  // during in-flight operations are blocked at the UI boundary.
+  // `applying` disables every write button so in-flight repeat-clicks are blocked.
   const actions = useDisplayActions(siteId, machineId);
 
   const [activeTab, setActiveTab] = useState<DisplayTab>('live');
@@ -245,28 +218,18 @@ export function DisplayLayoutPanel({
   const [applyDialogOpen, setApplyDialogOpen] = useState(false);
   const [enableRemoteApplyDialogOpen, setEnableRemoteApplyDialogOpen] = useState(false);
   const [closeUnsavedDialogOpen, setCloseUnsavedDialogOpen] = useState(false);
-  // [A2.6] Id of the monitor currently being edited via DisplayEditorDialog.
-  // Double-click a rect in the canvas or a row in the table (in edit mode on
-  // the assigned tab) to open. Dialog saves flow through the draft via
-  // `updateMonitor`, not directly to Firestore.
+  // [A2.6] Monitor being edited in DisplayEditorDialog (double-click a rect or
+  // row). Dialog saves go through the draft via `updateMonitor`, not Firestore.
   const [editingMonitorId, setEditingMonitorId] = useState<string | null>(null);
-  // [A4.2] Start-from-live handoff. The "start from live" button in the
-  // empty-assigned state flips this + mode='edit' together; the effect below
-  // reads the flag post-commit and replaces useDisplayDraft's default
-  // "seed from assigned" (empty here) with a clone of the live topology,
-  // then clears it. Also read by the render-phase guard so an edit session
-  // mid-seed doesn't get snapped back to view before the draft lands.
-  // State (not ref) so render reads are lint-clean.
+  // [A4.2] Start-from-live handoff: flag + mode='edit' flip together, and the
+  // effect below replaces useDisplayDraft's (empty) assigned seed with a clone
+  // of live, then clears it. Also read by the render-phase guard so a mid-seed
+  // session isn't snapped back to view. State, not ref, so render reads lint clean.
   const [pendingSeedFromLive, setPendingSeedFromLive] = useState(false);
 
-  // [A4.3] Topology signatureHash at the moment edit mode was entered. Used
-  // to detect "hardware changed during edit" — if the live profile's hash
-  // diverges from this baseline, the prompt below asks the operator whether
-  // to reload the draft from the new live topology or keep editing the
-  // potentially-stale draft. Captured during render on view -> edit
-  // transition (mirrors `useDisplayDraft`'s prevMode pattern) rather than
-  // in a useEffect to avoid a one-render window where the baseline is still
-  // `null` and the change would be spuriously reported.
+  // [A4.3] signatureHash captured on view→edit, so a diverging live hash can
+  // prompt "hardware changed: reload or keep editing". Captured during render
+  // (not an effect) to avoid a one-render null baseline reporting a spurious change.
   const [editEntryHash, setEditEntryHash] = useState<string | null>(null);
   const [prevModeForHash, setPrevModeForHash] = useState<'view' | 'edit'>(
     mode,
@@ -279,18 +242,14 @@ export function DisplayLayoutPanel({
     editEntryHash === null &&
     profile?.signatureHash
   ) {
-    // Profile snapshot arrived after edit-mode entry (panel opened before
-    // first Firestore read). Backfill the baseline so the very-first hash
-    // doesn't get mis-reported as a change.
+    // Profile arrived after edit-mode entry; backfill so the first hash isn't
+    // mis-reported as a change.
     setEditEntryHash(profile.signatureHash);
   }
 
-  // [A3.3 / A3.4] Supported-display-modes catalogue, feeding the resolution +
-  // refresh dropdowns in the table. Subscription is gated on edit mode so we
-  // don't keep a live listener open on every panel — the dashboard card view
-  // opens the panel frequently. `triggerForHash` fires the agent-side
-  // enumerate command exactly once per (site, machine, topology-hash) per
-  // tab lifetime; the hook dedups internally.
+  // [A3.3/A3.4] Display-mode catalogue for the resolution/refresh dropdowns.
+  // Gated on edit mode so every opened panel doesn't hold a live listener.
+  // `triggerForHash` fires the agent enumerate once per (site, machine, hash).
   const { catalogue: displayModes } = useDisplayModes(siteId, machineId, {
     enabled: mode === 'edit',
     triggerForHash: profile?.signatureHash,
@@ -310,8 +269,7 @@ export function DisplayLayoutPanel({
     mode,
   });
 
-  // Drag-to-reposition callback — only the assigned canvas in edit mode wires
-  // this in, so a no-op outside edit mode keeps the existing read-only flow.
+  // Only the assigned canvas in edit mode wires this in; no-op keeps read-only elsewhere.
   const handleMonitorMove = useCallback(
     (id: string, position: { x: number; y: number }) => {
       updateMonitor(id, { position });
@@ -319,10 +277,8 @@ export function DisplayLayoutPanel({
     [updateMonitor],
   );
 
-  // Primary-drag callback — translates a drag of the primary rect into an
-  // inverse shift of every secondary so the operator sees the primary "move"
-  // while the data model keeps primary pinned at (0, 0). Delta arrives as
-  // incremental (frame-over-frame) virtual units from the canvas.
+  // Dragging the primary becomes an inverse shift of every secondary, keeping
+  // primary pinned at (0,0) in the model. Delta is incremental virtual units.
   const handleLayoutShift = useCallback(
     (dx: number, dy: number) => {
       shiftSecondariesBy(dx, dy);
@@ -330,26 +286,17 @@ export function DisplayLayoutPanel({
     [shiftSecondariesBy],
   );
 
-  // Wave 6.5(f) — per-machine ack banner state lives in a module-level
-  // hook so the countdown survives the panel closing and re-opening.
-  // `useAckBanner` exposes derived `ackSecondsLeft` (recomputed each tick
-  // from an absolute wall-clock deadline) plus the `pendingApplyId` we
-  // thread into `actions.ackLayout`. The auto-revert toast on deadline
-  // crossing is fired inside the hook so it surfaces even when the panel
-  // is unmounted.
+  // Per-machine ack-banner state lives in a module-level hook so the countdown
+  // (derived each tick from an absolute deadline) and the auto-revert toast
+  // survive the panel closing.
   const { ackSecondsLeft, pendingApplyId, ackInFlight } = useAckBanner(
     siteId, machineId,
   );
 
-  // Wave 6.4 capability handshake. Subscribes to the machine doc's
-  // `capabilities.displayRemoteApply` field (written by the agent's
-  // `_upload_metrics` heartbeat). When absent or below version 1 the
-  // restore button disables itself with an "agent too old" tooltip so a
-  // pre-Wave-3 agent can't be sent a command it can't dispatch. `null`
-  // means "first snapshot hasn't landed" — distinct from `0` ("agent
-  // sent it explicitly as not supported"). Both are treated as
-  // unsupported by the gate, but holding them apart leaves room for a
-  // future "loading" state if ever needed.
+  // Capability handshake on `capabilities.displayRemoteApply` (written by the
+  // agent heartbeat): below version 1 disables restore so a pre-Wave-3 agent
+  // never gets a command it can't dispatch. `null` = no snapshot yet, `0` =
+  // agent said unsupported; both gate off, kept distinct for a future loading state.
   const [capabilityVersion, setCapabilityVersion] = useState<number | null>(null);
   useEffect(() => {
     if (!db || !siteId || !machineId) return;
@@ -366,12 +313,9 @@ export function DisplayLayoutPanel({
   }, [siteId, machineId]);
   const agentSupportsApply = capabilityVersion !== null && capabilityVersion >= 1;
 
-  // Full drift report, computed from the live+assigned snapshot. Callers
-  // pick the key they need: live-id for the live tab's table and canvas,
-  // assigned-id for the stored tab. `addedHashes` / `removedHashes` cover
-  // the "layout changed" case the per-field maps can't express — a
-  // disconnected monitor that used to be in the stored layout still counts
-  // as drift even though neither side has a per-field row for it.
+  // Full drift report, keyed by live-id (live tab) or assigned-id (stored tab).
+  // `addedHashes`/`removedHashes` cover what per-field maps can't express, e.g.
+  // a disconnected monitor still present in the stored layout.
   const driftReport = useMemo(
     () =>
       computeDisplayDrift(
@@ -384,18 +328,13 @@ export function DisplayLayoutPanel({
   const driftCount = totalDriftCount(driftReport);
   const hasDrift = driftCount > 0;
 
-  // [RECONSTRUCTED — Wave A1.4] Drift signals are zeroed in edit mode so the
-  // user isn't flagged for changes they are deliberately making. Raw hasDrift
-  // stays available for non-UI math paths; UI surfaces use the hasDriftVisible
-  // / effectiveDriftCount forms.
+  // [A1.4] Drift signals zeroed in edit mode so deliberate edits aren't flagged.
+  // Raw hasDrift stays for non-UI math; UI uses hasDriftVisible/effectiveDriftCount.
   const effectiveDriftCount = mode === 'edit' ? 0 : driftCount;
   const hasDriftVisible = mode === 'edit' ? false : hasDrift;
 
-  // Stable Set of drifted monitor ids — passed to the canvas so it can
-  // amber-stroke drifted rects. The canvas renders from the live- or
-  // assigned-keyed monitor array depending on the active tab, so we pick
-  // the matching side of the drift report. Memoized so the Set identity
-  // is stable across renders when the underlying drift map hasn't changed.
+  // Drifted monitor ids for the canvas's amber stroke, taken from whichever
+  // side of the drift report matches the active tab. Memoized for stable identity.
   const driftedMonitorIds = useMemo(
     () =>
       new Set(
@@ -406,9 +345,8 @@ export function DisplayLayoutPanel({
     [driftReport, activeTab],
   );
 
-  // Stable array references across renders so the sort/drift useMemos below
-  // don't thrash on every parent render. Without this, `profile?.monitors ?? []`
-  // allocates a fresh array when the profile hasn't arrived yet.
+  // Stable array refs so the sort/drift memos don't thrash: `profile?.monitors ?? []`
+  // allocates a fresh array every render before the profile arrives.
   const liveMonitors = useMemo<MonitorInfo[]>(
     () => profile?.monitors ?? [],
     [profile],
@@ -418,9 +356,8 @@ export function DisplayLayoutPanel({
     [assigned],
   );
 
-  // [A2.1 / Wave A1.5] In edit mode the draft is the source of truth — the
-  // table, canvas, and ghost overlay on the live tab all reflect draft edits
-  // in real time. Outside edit mode this collapses back to the persisted value.
+  // [A2.1/A1.5] In edit mode the draft is the source of truth for table, canvas
+  // and ghost overlay; outside edit mode this collapses to the persisted value.
   const effectiveAssignedMonitors = useMemo<MonitorInfo[]>(
     () => (mode === 'edit' && draft ? draft : assignedMonitors),
     [mode, draft, assignedMonitors],
@@ -432,26 +369,19 @@ export function DisplayLayoutPanel({
     [effectiveAssignedMonitors],
   );
 
-  // [A4.1] Overlap check runs only while editing — outside edit mode an
-  // overlapping saved layout is the operator's deliberate choice and not
-  // worth nagging.
+  // [A4.1] Overlap check only while editing — a saved overlapping layout is deliberate.
   const draftHasOverlap = useMemo(() => {
     if (mode !== 'edit') return false;
     return hasOverlappingMonitors(effectiveAssignedMonitors);
   }, [mode, effectiveAssignedMonitors]);
 
-  // Cards and canvas render from the same slice of data so selection stays
-  // in sync AND the index labels match. Previously the canvas took the
-  // unsorted array while the table took the position-sorted one, so
-  // "monitor #1" on the canvas could be "monitor #2" in the table —
-  // subtle, confusing, and easy to miss unless you happened to watch both
-  // panes at once.
+  // Cards and canvas must share this sorted slice so selection and index labels
+  // agree — they once diverged (canvas unsorted, table sorted) and "monitor #1"
+  // meant different monitors in each pane.
   const cardsMonitors = activeTab === 'live' ? sortedLive : sortedAssigned;
   const canvasMonitors = cardsMonitors;
-  // [Wave A1.5 — RECONSTRUCTED] In edit mode the ghost overlay on the live tab
-  // mirrors the current draft (not persisted assigned) so operators see the
-  // draft-vs-live comparison live. The drift filter is relaxed in edit mode
-  // because the whole point is to surface every pending change.
+  // [A1.5] In edit mode the live tab's ghost overlay mirrors the draft (not
+  // persisted assigned) and the drift filter relaxes — showing every pending change.
   const ghostMonitors = useMemo<MonitorInfo[] | undefined>(() => {
     if (activeTab !== 'live' || !assigned) return undefined;
     const source = mode === 'edit' && draft ? draft : assignedMonitors;
@@ -470,12 +400,9 @@ export function DisplayLayoutPanel({
     });
   }, [activeTab, assigned, assignedMonitors, liveMonitors, driftedMonitorIds, mode, draft]);
 
-  // Single source of truth for the active tab's semantic color. Threaded into
-  // the canvas (selection ring), monitor cards (left border + selected ring),
-  // and the apply button (drift-state accent) so every visible signal of the
-  // current mode reads as one coherent color. The events tab is read-only and
-  // doesn't drive any canvas/cards, but a neutral accent keeps the tab pill
-  // styling consistent with the active-tab ring above.
+  // One accent per tab, threaded into canvas selection ring, card borders and
+  // the apply button so every signal of the current mode reads as one color.
+  // The read-only events tab keeps a neutral accent for pill consistency.
   const tabAccentColor =
     activeTab === 'live'
       ? 'var(--primary)'
@@ -483,9 +410,8 @@ export function DisplayLayoutPanel({
         ? 'var(--chart-4)'
         : 'var(--muted-foreground)';
 
-  // Display-event feed for the events tab. Subscription only opens while the
-  // tab is active so the dashboard doesn't hold dozens of 50-event listeners
-  // open across panels in the background.
+  // Event feed subscription opens only while the tab is active — otherwise every
+  // background panel holds a 50-event listener.
   const {
     events: displayEvents,
     loading: eventsLoading,
@@ -497,22 +423,17 @@ export function DisplayLayoutPanel({
   const hasLiveProfile = !!profile && liveMonitors.length > 0;
   const hasAssignedLayout = !!assigned && assignedMonitors.length > 0;
 
-  // [A4.3] Hardware-changed detection: edit mode + baseline captured +
-  // current live hash diverges from the baseline. Drives the prompt below.
-  // Non-null baseline guard prevents a spurious fire on first profile
-  // arrival when edit opened before any snapshot landed.
+  // [A4.3] Hardware-changed prompt: edit mode + baseline captured + live hash
+  // diverged. Non-null guard avoids firing on first profile arrival.
   const hardwareChangedDuringEdit =
     mode === 'edit' &&
     editEntryHash !== null &&
     !!profile?.signatureHash &&
     profile.signatureHash !== editEntryHash;
 
-  // [A4.4] Stale-edidHash set: edidHashes referenced by the assigned-tab
-  // monitors that aren't in the current live topology. Drives the
-  // "⚠ not connected" badge on canvas rects. Only computed for the
-  // assigned tab; the live tab's monitors are by definition connected.
-  // Includes the draft when in edit mode so a live-seeded draft that
-  // already references a now-disconnected hash gets flagged immediately.
+  // [A4.4] Assigned-tab edidHashes absent from live topology — drives the
+  // "not connected" badge. Live-tab monitors are connected by definition.
+  // Includes the draft in edit mode so a live-seeded draft flags immediately.
   const staleEdidHashes = useMemo<Set<string> | undefined>(() => {
     if (activeTab !== 'assigned') return undefined;
     const liveHashes = new Set<string>();
@@ -526,19 +447,12 @@ export function DisplayLayoutPanel({
     return stale;
   }, [activeTab, liveMonitors, effectiveAssignedMonitors]);
 
-  // [RECONSTRUCTED — Wave A1.2 / relaxed A4.2] Defensive render-phase guard.
-  // If the admin flag disappears mid-edit, snap back to view. If the assigned
-  // layout gets cleared AND we have no draft to fall back on AND we're not
-  // in the middle of a start-from-live handoff, snap back as well. The
-  // relaxed condition lets the live-seed flow linger in edit mode even
-  // before an `assigned` layout exists: the draft itself is the authority,
-  // and save writes it as the first-ever assigned.
-  //
-  // Also discards the sessionStorage draft. If we only flip the mode, the
-  // stale draft survives in storage; next time an assigned layout exists
-  // and the operator enters edit, useDisplayDraft's own staleness check
-  // catches most cases by edidHash — but the admin-flag case can't be
-  // detected there, so we handle both reasons the same way here.
+  // [A1.2 / relaxed A4.2] Render-phase guard: snap back to view if the admin
+  // flag disappears mid-edit, or if assigned is cleared with no draft and no
+  // start-from-live handoff in flight (during that flow the draft is the
+  // authority and save writes the first-ever assigned).
+  // Also drops the sessionStorage draft — useDisplayDraft's edidHash staleness
+  // check can't see the admin-flag case, so both reasons are handled here.
   const draftHasMonitors = !!draft && draft.length > 0;
   if (
     mode === 'edit' &&
@@ -552,40 +466,29 @@ export function DisplayLayoutPanel({
     setPendingSeedFromLive(false);
   }
 
-  // Button disabled-state logic:
-  //  - store: needs live data to store (otherwise there's nothing to save)
-  //  - restore: needs an assigned layout to push, a capable agent, and the
-  //    per-machine `displays.remoteApplyEnabled` write-path switch. The
-  //    capability says the agent can handle the command; the config switch
-  //    says this machine is allowed to mutate Windows display state.
-  // `actions.applying` blocks repeat-clicks during in-flight writes.
+  // store needs live data; restore needs an assigned layout, a capable agent and
+  // the per-machine `displays.remoteApplyEnabled` switch (capability = agent can
+  // dispatch, switch = machine may mutate Windows display state).
   const captureDisabled = !hasLiveProfile || actions.applying;
   const applyDisabled =
     !hasAssignedLayout || actions.applying || !agentSupportsApply || !remoteApplyEnabled;
   const editDisabled = !hasAssignedLayout || !!profile?.mosaicActive;
 
-  // Stable click handler so memoized children (DisplayCanvas, DisplayMonitorCard)
-  // can shallow-compare props and skip re-renders when only unrelated parent
-  // state changed (e.g. `actions.applying` flipping, tab switches that don't
-  // touch this row).
+  // Stable handler so memoized children skip re-renders on unrelated parent state.
   const handleMonitorClick = useCallback((id: string) => {
     setSelectedMonitorId((prev) => (prev === id ? undefined : id));
   }, []);
 
-  // Drift-detection toast. Fires once per (machineId, signatureHash) tuple when
-  // drift first appears mid-session — NOT on initial mount (users who open the
-  // panel while drift already exists shouldn't be toasted for pre-existing
-  // state; the tab badge already signals it). Dedup is keyed on the agent's
-  // signature hash so signature flaps on the same baseline don't re-toast.
+  // Toast once per (machineId, signatureHash) when drift first appears mid-session,
+  // never on mount — the tab badge already signals pre-existing drift.
   const seenDriftKeysRef = useRef(new Set<string>());
   const isInitialMountRef = useRef(true);
 
   useEffect(() => {
-    // [RECONSTRUCTED — Wave A1.4] Suppress drift toasts during edit mode.
+    // [A1.4] No drift toasts while editing.
     if (mode === 'edit') return;
 
-    // First commit: record current state but don't toast — user just opened
-    // the panel and shouldn't get a toast for pre-existing drift.
+    // First commit: record state without toasting (pre-existing drift).
     if (isInitialMountRef.current) {
       isInitialMountRef.current = false;
       if (hasDrift && profile?.signatureHash) {
@@ -609,11 +512,7 @@ export function DisplayLayoutPanel({
     );
   }, [hasDrift, profile?.signatureHash, machineId, machineName, driftCount, setActiveTab, mode]);
 
-  /**
-   * Extract a readable error string from unknown throwables. Firestore errors
-   * carry `.message`; plain strings pass through; everything else gets
-   * `String()`-coerced so we never render `[object Object]` in a toast.
-   */
+  /** Readable error string; String()-coerce the rest so no toast shows `[object Object]`. */
   const formatError = (e: unknown): string => {
     if (e instanceof Error) return e.message;
     if (typeof e === 'string') return e;
@@ -621,16 +520,10 @@ export function DisplayLayoutPanel({
   };
 
   /**
-   * Pick a specific apply-failure toast message based on the agent's error
-   * code when the error string carries one. The service handler serializes
-   * failures as `"Error: {code}: {message}"` (see owlette_service.py
-   * `enumerate_display_modes` / `apply_display_topology` branches) so a
-   * simple substring check is all we need here — no JSON parsing, no
-   * command-result subscription.
-   *
-   * Today `applyLayout` only throws for Firestore-write failures; agent
-   * apply-result parsing is deferred to a follow-up. The specific-toast
-   * hook is wired here so that flow has somewhere to land when it ships.
+   * Map an agent error code to a specific apply-failure toast. The service
+   * serializes failures as `"Error: {code}: {message}"` (owlette_service.py),
+   * so substring matching suffices. Today only Firestore-write failures reach
+   * here; agent apply-result parsing lands in a follow-up.
    */
   const applyErrorToast = (e: unknown): string => {
     const msg = formatError(e);
@@ -644,10 +537,8 @@ export function DisplayLayoutPanel({
     return `restore failed: ${msg}`;
   };
 
-  // Capture writes the current live arrangement as the assigned layout. We
-  // snapshot `liveMonitors` at confirm-time (not at dialog-open-time) so any
-  // updates that arrive while the dialog is open are persisted. ConfirmDialog
-  // closes itself on confirm; on error we reopen so the user can retry.
+  // Snapshot `liveMonitors` at confirm-time, not dialog-open, so updates during
+  // the dialog persist. ConfirmDialog self-closes on confirm; reopen on error.
   const handleCaptureConfirm = async () => {
     try {
       await actions.captureLayout(liveMonitors, user?.email ?? 'unknown');
@@ -672,16 +563,12 @@ export function DisplayLayoutPanel({
     }
   };
 
-  // Apply dispatches the assigned layout to the agent. On success we start
-  // the 30s ack countdown via `startAckCountdown` — module-level state so
-  // the banner survives the panel closing. The operator must click "keep"
-  // in the banner or the agent auto-reverts. ConfirmDialog closes itself
-  // on confirm; on error we reopen so the user can retry.
+  // Dispatch the assigned layout, then start the 30s ack countdown (module-level
+  // so the banner survives panel close). Without a "keep" click the agent reverts.
   const handleApplyConfirm = async () => {
     try {
       const { applyId } = await actions.applyLayout(assignedMonitors);
-      // Wave 6.5(c) — honest copy: the Firestore write succeeded but the
-      // agent hasn't even seen the command yet, let alone applied it.
+      // Honest copy: the write landed; the agent hasn't seen the command yet.
       toast.success('restore dispatched — monitors will change shortly');
       startAckCountdown(siteId, machineId, applyId, Date.now() + 30_000);
     } catch (e) {
@@ -691,18 +578,11 @@ export function DisplayLayoutPanel({
     }
   };
 
-  // Dispatch ack and clear the countdown banner. The applyId threaded
-  // through ensures the agent only acks the apply this banner corresponds
-  // to — a stale click on a prior apply is rejected.
-  //
-  // Banner state is cleared only after the ack write resolves. If we cleared
-  // optimistically and the write then failed, the operator would have no
-  // countdown to retry against and the agent's auto-revert watchdog would
-  // keep running on the far side — the "keep" click would silently turn
-  // into a revert.
-  //
-  // Wave 6.5(b) — `setAckInFlight` flips the keep button's disabled state
-  // through the module store so a double-click can't dispatch two acks.
+  // applyId scopes the ack to this banner's apply; a stale click is rejected.
+  // Clear the banner only after the write resolves — clearing optimistically on
+  // a failed write leaves the agent's auto-revert watchdog running with no
+  // countdown to retry against, silently turning "keep" into a revert.
+  // setAckInFlight disables the keep button so a double-click can't double-ack.
   const handleAckKeep = async () => {
     const applyId = pendingApplyId;
     if (!applyId) return;
@@ -710,9 +590,8 @@ export function DisplayLayoutPanel({
     try {
       await actions.ackLayout(applyId);
       clearAckCountdown(siteId, machineId);
-      // Wave 6.5(c) — honest copy: the agent confirms the keep when it
-      // emits `display_apply_acked`; from the dashboard's perspective we
-      // only know the ack command was written.
+      // Honest copy: we only know the ack was written; the agent confirms via
+      // `display_apply_acked`.
       toast.success('ack sent');
     } catch (e) {
       console.error('Failed to ack display layout', e);
@@ -721,12 +600,9 @@ export function DisplayLayoutPanel({
     }
   };
 
-  // Wave 6.3 — apply self-test ("test" button). Dispatches a
-  // `test_display_apply` command and subscribes to its completed-doc entry so
-  // the result text lands inline next to the button. The button is hidden when
-  // remote apply is already enabled (the operator no longer needs to verify
-  // the helper IPC) so there's no per-machine timeout to manage if the
-  // command never lands — closing the panel just discards the pending state.
+  // Apply self-test: dispatch `test_display_apply` and subscribe to its completed
+  // doc for an inline result. Hidden once remote apply is enabled, so a command
+  // that never lands needs no timeout — closing the panel discards pending state.
   const [testApplyCmdId, setTestApplyCmdId] = useState<string | null>(null);
   const [testApplyResult, setTestApplyResult] = useState<string | null>(null);
   const [testApplyInFlight, setTestApplyInFlight] = useState(false);
@@ -762,16 +638,11 @@ export function DisplayLayoutPanel({
     return () => unsubscribe();
   }, [testApplyCmdId, siteId, machineId]);
 
-  // Wave 6.5(a/f) — countdown derivation + auto-revert toast both live
-  // inside `useAckBanner`'s shared 250ms tick. No per-panel effect needed
-  // here; the hook fires the toast and clears the entry on deadline cross
-  // even when the panel is unmounted.
+  // Countdown + auto-revert toast live in useAckBanner's shared 250ms tick, so
+  // they fire even when this panel is unmounted.
 
-  // [RECONSTRUCTED — Wave A1.2] Close-with-unsaved-changes gate. Wave 6.5(f)
-  // dropped the previous "block close while ack countdown active" guard —
-  // the banner now lives in a per-machine module store so closing the
-  // panel during the countdown is safe (re-opening the panel resurfaces
-  // the banner; deadline elapsing fires the toast regardless).
+  // [A1.2] Close-with-unsaved-changes gate. No countdown guard: banner state is
+  // per-machine module state, so closing mid-countdown is safe.
   const handleCloseClick = () => {
     if (mode === 'edit' && isDirty) {
       setCloseUnsavedDialogOpen(true);
@@ -780,7 +651,7 @@ export function DisplayLayoutPanel({
     onClose();
   };
 
-  // [RECONSTRUCTED — Wave A1.2] Discard + close confirmation.
+  // [A1.2] Discard + close confirmation.
   const handleDiscardAndClose = () => {
     clearDraft();
     setMode('view');
@@ -793,56 +664,39 @@ export function DisplayLayoutPanel({
     setPendingSeedFromLive(false);
   };
 
-  // [A4.2] Empty-assigned seed-from-live. When the assigned tab is empty and
-  // the operator clicks "start from live", skip the store-then-edit dance:
-  // set the handoff ref, flip into edit mode, and let the effect below
-  // clone live into the draft AFTER useDisplayDraft's mode-transition seed
-  // (which would otherwise stomp our call with a null from empty assigned).
+  // [A4.2] "start from live" on an empty assigned tab: set the handoff flag and
+  // flip to edit, letting the effect below clone live into the draft AFTER
+  // useDisplayDraft's mode-transition seed (which would stomp it with null).
   const handleSeedFromLive = () => {
     if (liveMonitors.length === 0) return;
     setPendingSeedFromLive(true);
     setMode('edit');
   };
 
-  // Runs post-commit; the mode transition has landed and useDisplayDraft has
-  // already seeded draft=null (because assigned is empty). Overwrite with a
-  // clone of the current live topology and clear the handoff flag. Guarded
-  // on !draft so a re-entry where the draft already exists doesn't clobber
-  // the operator's in-progress edits.
-  //
-  // Note on `set-state-in-effect`: the setPendingSeedFromLive(false) calls
-  // below are intentional — the flag is a one-shot coordination token
-  // between the click handler and this post-commit seed. React's rule
-  // guards against derivable state + state-update loops, neither of which
-  // apply here (the flag's semantics are genuinely imperative: "do this
-  // one thing after mode flips, then stop").
+  // Post-commit: useDisplayDraft has already seeded draft=null from the empty
+  // assigned, so overwrite with a clone of live and clear the handoff flag.
+  // Guarded on !draft so re-entry can't clobber in-progress edits.
+  // The setPendingSeedFromLive(false) calls are a deliberate one-shot handoff
+  // token (click handler → effect), not derivable state.
   useEffect(() => {
     if (!pendingSeedFromLive) return;
     if (mode !== 'edit') return;
     if (draft && draft.length > 0) {
-      // Draft already populated by a prior reset — no-op. The flag stays
-      // set until save/discard clears it; re-renders with the same deps
-      // won't re-invoke the effect, so there's no loop.
+      // Draft already populated — no-op; the flag clears on save/discard.
       return;
     }
     if (liveMonitors.length === 0) {
-      // Live topology hasn't arrived yet — retry on the next render that
-      // brings monitors in. The guard above keeps edit mode alive until
-      // the draft fills or the user cancels.
+      // Live topology not in yet — retry on the render that brings monitors in.
       return;
     }
     resetToLive(liveMonitors);
-    // Flag clear is the one-shot completion signal — lint's
-    // set-state-in-effect rule warns against derivable-state patterns, but
-    // this is a genuine imperative handoff (click handler → effect).
+    // One-shot completion signal, not derivable state.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPendingSeedFromLive(false);
   }, [pendingSeedFromLive, mode, draft, liveMonitors, resetToLive]);
 
-  // Save commits the draft as the new assigned layout. Uses the same
-  // captureLayout path as store — the only difference is which monitors we
-  // persist (draft vs current live). On success, drop the sessionStorage
-  // draft + exit edit mode so the panel returns to a clean view state.
+  // Save commits the draft through the same captureLayout path as store (draft
+  // monitors instead of live); on success drop the draft and exit edit mode.
   const handleSaveDraft = async () => {
     if (!draft) return;
     try {
@@ -1000,9 +854,8 @@ export function DisplayLayoutPanel({
   };
 
   const renderBody = () => {
-    // Events tab is sourced from a separate Firestore subscription and has its
-    // own loading / error / empty states — bypass the display-state guards
-    // below so a still-loading topology doesn't hide the events table.
+    // Events tab has its own loading/error/empty states — bypass the display-state
+    // guards so a loading topology doesn't hide it.
     if (activeTab === 'events') {
       return renderEventsTab(displayEvents, eventsLoading, eventsError);
     }
@@ -1034,9 +887,8 @@ export function DisplayLayoutPanel({
       );
     }
 
-    // Empty-state copy is tab-aware: "no live data" vs "no assigned layout"
-    // are meaningfully different (the first is an agent-side concern, the
-    // second is a deliberate admin action that hasn't happened yet).
+    // Tab-aware empty copy: "no live data" (agent-side) vs "no assigned layout"
+    // (admin hasn't acted).
     if (activeTab === 'live' && !hasLiveProfile) {
       return (
         <div className="h-[320px] flex items-center justify-center px-6 text-center">
@@ -1048,9 +900,8 @@ export function DisplayLayoutPanel({
       );
     }
 
-    // Empty-assigned surface only when there's genuinely nothing to show.
-    // Suppressed in edit mode with a populated draft so a live-seeded edit
-    // session renders the canvas against the draft instead of the empty state.
+    // Suppressed in edit mode with a populated draft so a live-seeded session
+    // renders the canvas instead of the empty state.
     const emptyAssignedVisible =
       activeTab === 'assigned' &&
       !hasAssignedLayout &&
@@ -1169,9 +1020,7 @@ export function DisplayLayoutPanel({
     );
   };
 
-  // Pill-style tab button — factored out so the live/assigned pair share
-  // exactly the same shape. Each tab gets its semantic color (resolved via
-  // tabAccentColor above) so user always knows which mode they're in.
+  // Pill tab button — shared shape for live/assigned, each with its semantic accent.
   const renderTab = (tab: DisplayTab, label: string, badge?: string) => {
     const isActive = activeTab === tab;
     const ringColor =
@@ -1697,8 +1546,8 @@ export function DisplayLayoutPanel({
         open={hardwareChangedDuringEdit}
         onOpenChange={(next) => {
           if (!next) {
-            // Close of any kind — advance the baseline to suppress
-            // re-fire until the next genuine hardware change.
+            // Advance the baseline on any close so it doesn't re-fire until the
+            // next real hardware change.
             setEditEntryHash(profile?.signatureHash ?? null);
           }
         }}

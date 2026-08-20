@@ -1,16 +1,10 @@
 /**
- * GET  /api/sites/{siteId}/presets/deployment-template
- * POST /api/sites/{siteId}/presets/deployment-template
+ * GET / POST /api/sites/{siteId}/presets/deployment-template
  *
- * Capability: PRESET_MANAGE.
- * Firestore path: `sites/{siteId}/installer_templates/{templateId}`.
- *
- * Note: deployment templates use a different firestore path from
- * schedule + reboot presets — they live under `sites/{siteId}` rather
- * than `config/{siteId}` to match the existing client hook
- * (`useDeployments.ts:89`). They also have no built-in/custom split.
- *
- * security-boundary-migration wave 3.6.
+ * Capability PRESET_MANAGE. Firestore: `sites/{siteId}/installer_templates/{id}`
+ * — deliberately NOT `config/{siteId}` like the schedule and reboot presets, to
+ * match the existing client hook (`useDeployments.ts:89`). No built-in/custom
+ * split for these.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';

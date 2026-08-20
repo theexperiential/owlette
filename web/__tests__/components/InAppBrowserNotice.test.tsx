@@ -2,18 +2,16 @@
 /**
  * @jest-environment jsdom
  *
- * The notice renders on two different triggers and must not give the same
- * advice to both.
+ * The notice renders on two triggers and must not give both the same advice.
  *
- * Inside a host app (detected up front) the user genuinely can escape, so the
- * "open in safari" shortcut and the manual ••• instructions are the point.
+ * Inside a host app (detected up front) the user can genuinely escape, so the "open in
+ * safari" shortcut and the manual ••• instructions are the point.
  *
- * On the reactive path — auth/popup-blocked in an ordinary browser with a popup
- * blocker — there is nowhere to escape TO. The escape would resolve to a
- * same-URL reload, and since `popupBlocked` is plain component state that
- * reload would drop the notice and hand the user back to the button that just
- * failed. So the escape affordances are suppressed there and the remediation is
- * the email form, copy-link, and try-anyway.
+ * On the reactive path (auth/popup-blocked in an ordinary browser) there is nowhere to
+ * escape TO: the escape resolves to a same-URL reload, and since `popupBlocked` is plain
+ * component state that reload drops the notice and returns the user to the button that
+ * just failed. So escape affordances are suppressed and the remediation is the email
+ * form, copy-link, and try-anyway.
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';

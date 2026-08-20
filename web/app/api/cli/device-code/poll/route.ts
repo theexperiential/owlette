@@ -1,24 +1,18 @@
 /**
- * POST /api/cli/device-code/poll
+ * POST /api/cli/device-code/poll — step 3 of the CLI device-code handshake.
  *
- * CLI device-code handshake — step 3 of 3.
+ * Body `{ deviceCode }`. Pending → 202; authorised → 200 with the credentials
+ * (the firestore doc is deleted in the same transaction); expired → 410.
  *
- * Client sends `{ deviceCode }` from the /device-code response. While the
- * phrase is pending, returns 202. Once the user authorises via the
- * browser, returns 200 with the credentials (the firestore doc is deleted
- * atomically in the same transaction). Expired codes return 410.
- *
- * Response shapes:
  *   202 { status: 'pending' }
- *   200 v1   { wrapVersion: 'v1', encryptedCredentials, phrase }
+ *   200 v1     { wrapVersion: 'v1', encryptedCredentials, phrase }
  *   200 legacy { apiKey, keyId, name, scopes, environment, expiresAt, siteId }
- *   410 { error: 'expired' }
- *   404 { error: 'invalid device code' }
+ *   410 { error: 'expired' } · 404 { error: 'invalid device code' }
  *
- * v1 callers decrypt `encryptedCredentials` locally with
- * `HKDF-SHA256(deviceCode, salt=phrase, info='owlette-device-code-v1')`
- * → AES-256-GCM. See lib/deviceCodeCrypto.ts for the canonical
- * implementation and the matching python in agent/src/auth_manager.py.
+ * v1 callers decrypt locally with
+ * `HKDF-SHA256(deviceCode, salt=phrase, info='owlette-device-code-v1')` →
+ * AES-256-GCM; canonical impls in lib/deviceCodeCrypto.ts and
+ * agent/src/auth_manager.py.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
@@ -88,8 +82,8 @@ export const POST = withRateLimit(
           }
 
           if (typeof data.rawKey === 'string') {
-            // Legacy plaintext fallback for docs created before this
-            // deploy. New cli builds prefer the encrypted path.
+            // Legacy plaintext fallback for pre-deploy docs; new cli builds use
+            // the encrypted path.
             tx.delete(docRef);
             return {
               body: {

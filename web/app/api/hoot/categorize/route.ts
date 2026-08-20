@@ -1,11 +1,7 @@
 /**
- * Categorize and auto-title chat conversations using a cheap/fast LLM call.
- *
- * Single mode: POST { chatId, message, siteId }
- *   — Generates a short title + category for a new conversation.
- *
- * Batch mode: POST { chatIds, siteId }
- *   — Categorizes multiple existing conversations by reading their titles from Firestore.
+ * Categorize and auto-title chat conversations with a cheap/fast LLM call.
+ * Single: POST { chatId, message, siteId } → title + category for a new chat.
+ * Batch:  POST { chatIds, siteId } → categorizes existing chats from their titles.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -39,11 +35,10 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const llmConfig = await resolveLlmConfig(db, userId);
     const model = createCheapModel(llmConfig);
 
-    // Batch mode — categorize multiple existing conversations
     if (body.chatIds && Array.isArray(body.chatIds)) {
       const results: Record<string, string> = {};
 
-      // Process in chunks of 5 to avoid rate limits
+      // Chunked to stay under provider rate limits.
       const chunks: string[][] = [];
       for (let i = 0; i < body.chatIds.length; i += 5) {
         chunks.push(body.chatIds.slice(i, i + 5));
@@ -59,11 +54,10 @@ export const POST = withRateLimit(async (request: NextRequest) => {
               return;
             }
 
-            // Skip conversations with no meaningful title — need at least
-            // a real title (not "new conversation") or a first message to categorize
+            // Needs a real title or a first message; "new conversation" is not
+            // enough to categorize on.
             const title = data?.title;
             if (isUntitledChat(title)) {
-              // Try to read the first user message as fallback context
               const messagesSnap = await db.collection('chats').doc(chatId)
                 .collection('messages')
                 .where('role', '==', 'user')
@@ -76,7 +70,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
                 return;
               }
 
-              // Categorize + title from first message
               const { text } = await generateText({
                 model,
                 prompt: buildTitleCategoryPrompt(
@@ -114,7 +107,6 @@ Reply with only the category name, nothing else.`,
       return NextResponse.json({ results });
     }
 
-    // Single mode — generate title + category for a new conversation
     const { chatId, message } = body;
     if (!chatId || !message) {
       return NextResponse.json({ error: 'Missing chatId or message' }, { status: 400 });
@@ -125,7 +117,6 @@ Reply with only the category name, nothing else.`,
       return NextResponse.json({ error: 'Chat not found' }, { status: 404 });
     }
 
-    // Generate title + category and write both to the chat document
     const { title, category } = await categorizeNewChat(db, model, chatId, message);
 
     return NextResponse.json({ title, category });

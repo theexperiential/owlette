@@ -21,10 +21,8 @@ jest.mock('@/lib/auditLogClient', () => ({
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Shared tx state — emulates a single roost across the runTransaction       */
-/*  callback so we can assert what the route writes.                          */
-/* -------------------------------------------------------------------------- */
+// Shared tx state — one roost across the runTransaction callback, so we can
+// assert what the route writes.
 
 const txState = {
   exists: true as boolean,
@@ -89,9 +87,7 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminAuth: () => ({ verifyIdToken: jest.fn().mockRejectedValue(new Error('n/a')) }),
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Resolver mock — controllable per test                                     */
-/* -------------------------------------------------------------------------- */
+// Resolver mock — controllable per test.
 
 const mockResolveVersion = jest.fn();
 jest.mock('@/lib/resolveVersion', () => {
@@ -102,9 +98,7 @@ jest.mock('@/lib/resolveVersion', () => {
   };
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Auth mock — control whether scope check passes                            */
-/* -------------------------------------------------------------------------- */
+// Auth mock — controls whether the scope check passes.
 
 const mockResolveAuth = jest.fn();
 const mockAssertSite = jest.fn();
@@ -126,10 +120,6 @@ import { POST as rollbackPOST } from '@/app/api/roosts/[roostId]/rollback/route'
 
 const SITE = 'site-alpha';
 const ROOST = 'rst_test_0000000001';
-
-/* -------------------------------------------------------------------------- */
-/*  Helpers                                                                   */
-/* -------------------------------------------------------------------------- */
 
 function fakeVersionDoc(
   id: string,
@@ -215,9 +205,7 @@ beforeEach(() => {
   mocks.collectionGet.mockResolvedValue(querySnapshot([]));
 });
 
-/* ========================================================================== */
-/*  Happy paths                                                               */
-/* ========================================================================== */
+// Happy paths
 
 describe('POST /rollback — happy paths', () => {
   it('default target = "previous": flips currentVersionId to v4, previousVersionId to v5', async () => {
@@ -254,9 +242,8 @@ describe('POST /rollback — happy paths', () => {
       ref: 'previous',
     });
 
-    // Roost doc payload denormalises summary fields from the resolved
-    // version (versionUrl, description, totalFiles, totalSize) so the
-    // dispatcher + list view don't need a sub-collection read.
+    // Roost doc denormalises summary fields (versionUrl, description, totalFiles,
+    // totalSize) so the dispatcher + list view skip a sub-collection read.
     expect(txState.roostUpdates).toHaveLength(1);
     const update = txState.roostUpdates[0]!;
     expect(update).toMatchObject({
@@ -432,9 +419,7 @@ describe('POST /rollback — happy paths', () => {
   });
 });
 
-/* ========================================================================== */
-/*  Error cases                                                               */
-/* ========================================================================== */
+// Error cases
 
 describe('POST /rollback — error cases', () => {
   it('targetVersion="current" against the actual current version → 400 rollback_no_op', async () => {
@@ -537,9 +522,7 @@ describe('POST /rollback — error cases', () => {
   });
 });
 
-/* ========================================================================== */
-/*  Sanity: ResolveVersionError subclasses round-trip via instanceof          */
-/* ========================================================================== */
+// Sanity: ResolveVersionError subclasses round-trip via instanceof
 
 describe('POST /rollback — error narrowing', () => {
   it('treats every ResolveVersionError as a 4xx with its own code (not a 500)', async () => {
@@ -558,9 +541,7 @@ describe('POST /rollback — error narrowing', () => {
   });
 });
 
-/* ========================================================================== */
-/*  version.rolled_back webhook emission                                      */
-/* ========================================================================== */
+// version.rolled_back webhook emission
 
 describe('POST /rollback — version.rolled_back webhook', () => {
   const SIGNING_SECRET = 'whsec_' + 'a'.repeat(48);
@@ -757,6 +738,4 @@ describe('POST /rollback — version.rolled_back webhook', () => {
   });
 });
 
-/* ========================================================================== */
-/*  billing gate — rollback is pro-only (wave 0.6)                            */
-/* ========================================================================== */
+// billing gate — rollback is pro-only (wave 0.6)

@@ -15,21 +15,17 @@ import { logEvent, serviceStart, serviceStatus, serviceStop } from '@/lib/ipc'
 interface LeaveSiteDialogProps {
   open: boolean
   /**
-   * The site this machine currently belongs to, for the confirmation copy —
-   * its display name when the service has published one, its id otherwise
-   * ({@link import('@/lib/serviceHealth').siteNameOf}). Naming the place the
-   * operator recognises is the whole point of the sentence: "remove this
-   * machine from TEC?" is a decision, "remove this machine from default_site?"
-   * is a riddle.
+   * Site for the confirmation copy — display name when published, id otherwise
+   * ({@link import('@/lib/serviceHealth').siteNameOf}). The operator has to
+   * recognise the name for the sentence to be a decision rather than a riddle.
    */
   site: string
   onClose: () => void
   onLeft: () => void
   /**
-   * Claim the service's state for the duration of the teardown
-   * ({@link import('@/hooks/useServiceHealth').ServiceHealthStore.hold}), so
-   * nothing else in the window starts it back up mid-leave. Returns the
-   * release, which is called however the sequence ends.
+   * Claim the service's state for the teardown ({@link
+   * import('@/hooks/useServiceHealth').ServiceHealthStore.hold}) so nothing
+   * else restarts it mid-leave. Returns the release, always called.
    */
   onHold: () => () => void
 }
@@ -37,9 +33,8 @@ interface LeaveSiteDialogProps {
 type Phase = 'confirm' | 'working' | 'left' | 'failed'
 
 /**
- * Which step gave up. The two are worlds apart for the operator: a stop that
- * did not happen means nothing was touched, while a helper that failed leaves a
- * machine whose membership has to be looked at.
+ * Which step gave up. A failed stop means nothing was touched; a failed helper
+ * leaves the machine's membership in doubt.
  */
 type Failure = 'stop' | 'leave'
 
@@ -60,19 +55,15 @@ const STOP_TIMEOUT_MS = 45_000
 const START_TIMEOUT_MS = 45_000
 
 /**
- * After the helper's last line, how long to wait for the process to actually
- * exit. It exits immediately after speaking; the bound is only there so a
- * wedged interpreter cannot trap a dialog that refuses to close while it works.
+ * Grace for the helper to exit after its last line. It exits immediately; the
+ * bound only stops a wedged interpreter trapping the dialog open.
  */
 const HELPER_EXIT_GRACE_MS = 5_000
 
 /**
- * Status lines the helper emits about the service.
- *
- * `configure_site.py --leave` still asks NSSM to stop and start the service
- * itself. It runs unelevated, so both calls fail and it carries on — which is
- * the whole reason this dialog stops the service first. Echoing those two lines
- * would narrate a step that is not happening here.
+ * Helper lines about the service, suppressed. `configure_site.py --leave` still
+ * asks NSSM to stop/start but runs unelevated, so both calls fail — which is
+ * why this dialog stops the service itself. Echoing them would narrate nothing.
  */
 const HELPER_SERVICE_STATUSES = new Set(['stopping the service', 'restarting the service'])
 
@@ -81,14 +72,9 @@ function message(error: unknown): string {
 }
 
 /**
- * Record one step of the teardown in the app's log file.
- *
- * This sequence stops the service the app is watching, and on 2026-08-13 that
- * turned out to kill the app itself part-way through: the service was stopped,
- * nothing else ran, and the only record of how far it had got was a log that
- * stopped mid-flow with no explanation. Every step therefore announces itself
- * before it runs and reports how it ended, so the next time a leave stops
- * half-way the log says exactly which half.
+ * Log one teardown step. 2026-08-13: stopping the watched service killed the
+ * app mid-sequence and the log just stopped, with no record of how far it got.
+ * Every step now announces itself before running and reports how it ended.
  */
 function leaveLog(step: string, level: 'info' | 'warn' | 'error' = 'info'): void {
   void logEvent(level, `leave-site: ${step}`)
@@ -102,12 +88,9 @@ function stopReason(error: string): string {
 }
 
 /**
- * Wait for the SCM to report the state that was asked for.
- *
- * An elevated start or stop only confirms that the shell accepted the request,
- * so the result has to be observed rather than assumed. A query that throws is
- * treated as "not yet" — the SCM is briefly unhelpful while a service
- * transitions — and a service that is not installed counts as stopped.
+ * Poll the SCM for the requested state: an elevated start/stop only confirms
+ * the shell accepted the request. A throwing query means "not yet" (the SCM is
+ * briefly unhelpful mid-transition); a missing service counts as stopped.
  */
 async function waitForService(want: 'running' | 'stopped', timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
@@ -133,15 +116,13 @@ interface HelperOutcome {
 }
 
 /**
- * Run `configure_site.py --leave` to completion.
- *
- * The exit is waited for, not just the terminal line: the service must not be
- * started again while the helper is still deleting the machine document, which
- * is the one way a deleted row comes back.
+ * Run `configure_site.py --leave` to EXIT, not just to its last line —
+ * restarting the service while it is still deleting the machine document is
+ * the one way a deleted row comes back.
  */
 async function runLeaveHelper(onStatus: (status: string) => void): Promise<HelperOutcome> {
-  // Held in an object rather than a `let`: it is written from a callback and
-  // read after an await, and a property survives that without narrowing games.
+  // Object, not `let`: written from a callback and read after an await, which
+  // a property survives without narrowing games.
   const state: { terminal: HelperOutcome | null; spoke: (() => void) | null } = {
     terminal: null,
     spoke: null,
@@ -204,9 +185,7 @@ function leftCopy(site: string, result: Result): string {
 /** What to tell the operator when a step gave up. */
 function failedCopy(failure: Failure, site: string, result: Result): string {
   if (failure === 'stop') {
-    // Nothing has been written at this point, and saying so plainly is the
-    // whole value of stopping the service before the teardown rather than
-    // during it.
+    // Nothing was written yet — the payoff of stopping before the teardown.
     return `leaving stops the owlette service first, and it is still running. nothing on this machine changed — it is still paired to ${site}.`
   }
   const lines = [`leaving ${site} did not finish. the footer shows whether this machine is still in the site.`]
@@ -217,24 +196,16 @@ function failedCopy(failure: Failure, site: string, result: Result): string {
 }
 
 /**
- * Leaving a site: confirm, then watch it happen.
+ * Leave a site: confirm, then watch it happen. Order is the legacy GUI's
+ * (`owlette_gui.on_leave_site_click`, :1994-2074) — sync off in `config.json`
+ * and the machine document deleted while the service is STOPPED, so nothing
+ * recreates the row between delete and restart.
  *
- * The order is the legacy GUI's, with the one step it could never actually
- * perform moved to where it can be. Cloud sync is switched off in `config.json`
- * and the machine document is deleted with the service *stopped*, so nothing
- * recreates the row between the delete and the restart
- * (`owlette_gui.on_leave_site_click`, :1994-2074).
- *
- * The stop is done here rather than in the helper because the helper cannot do
- * it: `configure_site.py` runs as the logged-in user and NSSM needs
- * SERVICE_STOP, which a standard user does not have — so it asked, was refused,
- * and carried on regardless. The host elevates (`service_ctl.rs`), which turns
- * a silent best-effort teardown into one that either happens properly or does
- * not start. Declining the prompt therefore costs nothing: it aborts before the
- * first byte of `config.json` is rewritten.
- *
- * The steps are shown as they happen because this stops and starts a service:
- * a window that just froze for fifteen seconds looks broken.
+ * The stop happens here, not in the helper: `configure_site.py` runs as the
+ * logged-in user and lacks SERVICE_STOP, so it asked, was refused, and carried
+ * on. The host elevates (`service_ctl.rs`); declining the prompt aborts before
+ * `config.json` is touched. Steps are shown live — a fifteen-second freeze
+ * looks broken.
  */
 export function LeaveSiteDialog({
   open,
@@ -269,8 +240,8 @@ export function LeaveSiteDialog({
     const release = onHold()
     leaveLog('started')
     try {
-      // 1. Stop the service, elevating if this session cannot. Everything
-      //    after this point changes the machine; nothing before it does.
+      // 1. Stop the service, elevating if needed. Nothing before this point
+      //    changes the machine; everything after does.
       let stopped = false
       try {
         const before = await serviceStatus()
@@ -295,11 +266,9 @@ export function LeaveSiteDialog({
         return
       }
 
-      // 2. Tear down. The helper owns this half: it holds the cloud client and
-      //    the encrypted token store, which this app deliberately does not.
-      //    A helper that could not even be spawned is reported like one that
-      //    failed, rather than thrown — the service is stopped at this point
-      //    and step 3 has to run whatever happened here.
+      // 2. Tear down via the helper — it owns the cloud client and encrypted
+      //    token store, which this app deliberately does not. A spawn failure
+      //    is reported, never thrown: step 3 must run regardless.
       setStatus('leaving the site')
       leaveLog('spawning the leave helper')
       let outcome: HelperOutcome
@@ -318,9 +287,8 @@ export function LeaveSiteDialog({
         outcome.ok ? 'info' : 'error',
       )
 
-      // 3. Put the service back exactly as it was found, whichever way the
-      //    teardown went — a machine with no supervisor is worse than one that
-      //    is still on a dashboard.
+      // 3. Restart the service however the teardown went — an unsupervised
+      //    machine is worse than one still on a dashboard.
       let serviceDown = false
       if (stopped) {
         setStatus('starting the owlette service')
@@ -354,8 +322,7 @@ export function LeaveSiteDialog({
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        // The teardown stops and starts a service; closing the window would not
-        // stop it, so the dialog stays put until it is done.
+        // Closing would not stop the teardown, so the dialog stays put.
         if (!next && phase !== 'working') onClose()
       }}
     >
@@ -400,11 +367,7 @@ export function LeaveSiteDialog({
               <Button variant="outline" onClick={onClose} disabled={phase === 'working'}>
                 close
               </Button>
-              {/*
-                Only offered for a stop that did not happen: that is the one
-                failure where nothing was written, so running it again starts
-                from exactly where it started the first time.
-              */}
+              {/* Retry only after a failed stop — the one failure that wrote nothing. */}
               {phase === 'failed' && failure === 'stop' && (
                 <Button variant="destructive" onClick={() => void leave()}>
                   try again

@@ -1,37 +1,17 @@
 /**
- * Hoot autonomous-mode tool dispatcher
- * (security-boundary-migration wave 3.12).
+ * Hoot autonomous-mode tool dispatcher: routes every autonomously dispatched
+ * command through `invokeAsSystem` + the canonical `executeMachineCommand` core
+ * so each one gets an `allow` audit row (actor `system`/`cortex_autonomous`),
+ * consumes the SYSTEM rate-limit bucket (a burst can't throttle human operators
+ * on the same site), and is gated solely by the capability matrix — new
+ * autonomous capabilities are added to `SystemCapabilityMatrix`, not here.
  *
- * The autonomous investigation flow in `/api/hoot/autonomous/route.ts`
- * dispatches tool calls to agents via firestore commands. Until this wave
- * those writes happened directly from the route (no system actor, no audit
- * row, no rate-limit bucket isolation). This module routes every
- * autonomous-dispatched command through `invokeAsSystem` and the
- * canonical `executeMachineCommand` action core so:
+ * User-mode hoot deliberately keeps calling `executeToolOnAgent` /
+ * `executeExistingCommand` directly: those callers are session-authenticated and
+ * routing them through `invokeAsSystem` would misattribute the audit actor.
  *
- *   - every dispatch produces an `allow` audit entry with
- *     `actor.type === 'system'` and `actor.name === 'cortex_autonomous'`
- *   - hoot burst traffic consumes the system rate-limit bucket only;
- *     human operators on the same site cannot be throttled by an
- *     autonomous reaction firing N tool calls in a tight loop
- *   - the capability matrix (MACHINE_EXEC_COMMAND for cortex_autonomous)
- *     is the single gate — adding new autonomous capabilities means
- *     editing `SystemCapabilityMatrix`, not changing dispatch code
- *   - command writes have the same lifecycle/audit-correlation shape as
- *     the public machine-command route
- *
- * User-mode hoot (`/api/hoot/route.ts` and the chat endpoint) keeps
- * using `executeToolOnAgent` / `executeExistingCommand` from
- * `hoot-utils.server.ts` directly. Those callers are
- * session-authenticated and already pass through `verifyUserSiteAccess`,
- * the per-tool tier ceiling, and the user rate-limit bucket via the http
- * route wrapper. Forcing them through `invokeAsSystem` would
- * misattribute the actor in the audit log (system, not user).
- *
- * The `provision_cortex_key` flow stays on the command channel and is
- * NOT dispatched from this module — see
- * `dev/active/security-boundary-migration/reference/hoot-integration.md`
- * for the canonical-path decision.
+ * `provision_cortex_key` is NOT dispatched here — see
+ * `dev/active/security-boundary-migration/reference/hoot-integration.md`.
  */
 
 import { FieldValue } from 'firebase-admin/firestore';
@@ -46,9 +26,7 @@ import {
   COMMAND_TIMEOUT_MS,
 } from '@/lib/hoot-utils.server';
 
-/* -------------------------------------------------------------------------- */
-/*  types                                                                     */
-/* -------------------------------------------------------------------------- */
+// types
 
 export interface AutonomousDispatchContext {
   db: FirebaseFirestore.Firestore;
@@ -67,9 +45,7 @@ interface DispatchOutcome {
   error?: string;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  helpers                                                                   */
-/* -------------------------------------------------------------------------- */
+// helpers
 
 function actorFor(siteId: string): SystemActor {
   return { type: 'system', name: 'cortex_autonomous', siteId };
@@ -117,14 +93,10 @@ function completedRef(db: FirebaseFirestore.Firestore, siteId: string, machineId
 }
 
 /**
- * Poll `commands/completed` for `commandId` until a result arrives or the
- * deadline elapses. Returns `null` on timeout. Best-effort cleanup of the
- * pending entry on timeout — callers do not need to await it.
- *
- * Polling lives outside `invokeAsSystem` deliberately: the privileged
- * action is the WRITE of the pending command. Reading the response is an
- * observation step that the agent already authorized when it processed
- * the command.
+ * Poll `commands/completed` for `commandId`; `null` on timeout, with best-effort
+ * pending-entry cleanup callers need not await. Polling sits outside
+ * `invokeAsSystem` on purpose — the privileged action is the pending-command
+ * WRITE; reading the response is only an observation.
  */
 async function pollForResult(
   db: FirebaseFirestore.Firestore,
@@ -145,12 +117,9 @@ async function pollForResult(
     const data = completedDoc.data();
     const cmdResult = data?.[commandId] as Record<string, unknown> | undefined;
     if (cmdResult) {
-      // CROSS-SIDE CONTRACT: the agent writes `{status: 'running', startedAt}`
-      // to the completed doc when a command starts (restart safety + progress
-      // signal — see agent/src/firebase_client.py `_mark_command_running`).
-      // Running entries are NON-terminal: skip and keep polling, and never
-      // delete them — the agent's terminal write overwrites the marker.
-      // Mirrors hoot-utils.server.ts pollForResult (lines 483/582).
+      // Cross-side contract: the agent writes `{status:'running', startedAt}` on
+      // start (firebase_client.py `_mark_command_running`). Non-terminal — keep
+      // polling and never delete it; the agent's terminal write overwrites it.
       if (cmdResult.status === 'running') continue;
 
       // Best-effort cleanup so the doc doesn't grow unbounded.
@@ -170,17 +139,12 @@ async function pollForResult(
   return null;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  mcp tool-call dispatch                                                    */
-/* -------------------------------------------------------------------------- */
+// mcp tool-call dispatch
 
 /**
- * Dispatch an MCP tool call (tier 1/2 generic agent tool) for an
- * autonomous investigation. The pending-command write is wrapped in
- * `invokeAsSystem({ capability: MACHINE_EXEC_COMMAND })`; polling for
- * the agent's response runs outside the privileged frame.
- *
- * Mirrors `executeToolOnAgent` from `hoot-utils.server.ts` but with
+ * Dispatch an MCP tool call (tier 1/2) for an autonomous investigation. The
+ * pending write is wrapped in `invokeAsSystem({capability: MACHINE_EXEC_COMMAND})`;
+ * polling runs outside the privileged frame. Mirrors `executeToolOnAgent` with
  * audit + rate-limit + capability mediation.
  */
 export async function dispatchToolCallAsSystem(
@@ -242,9 +206,8 @@ function interpretToolCallResult(
     return { error: (cmdResult.error as string) || 'Tool execution failed' };
   }
 
-  // A `cancelled` entry (agent-side `cancel_mcp_tool` write — no `result`
-  // field) is terminal but NOT a success. Surface it as a tool failure so the
-  // LLM doesn't interpret an undefined result as a phantom success.
+  // A `cancelled` entry (no `result` field) is terminal but NOT a success —
+  // surface it as a failure so the LLM doesn't read undefined as success.
   if (cmdResult.status === 'cancelled') {
     return { error: (cmdResult.error as string) || 'cancelled by user' };
   }
@@ -260,18 +223,12 @@ function interpretToolCallResult(
   return result;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  legacy-typed command dispatch                                             */
-/* -------------------------------------------------------------------------- */
+// legacy-typed command dispatch
 
 /**
- * Dispatch a legacy-typed command (`restart_process`, `kill_process`,
- * `reboot_machine`, etc.) for an autonomous investigation. Same audit +
- * rate-limit semantics as `dispatchToolCallAsSystem`; the only
- * difference is the firestore command shape — these commands carry a
- * `process_name` instead of `tool_name` / `tool_params`.
- *
- * Mirrors `executeExistingCommand` from `hoot-utils.server.ts`.
+ * Dispatch a legacy-typed command (`restart_process`, `reboot_machine`, …).
+ * Same audit/rate-limit semantics as `dispatchToolCallAsSystem`; only the
+ * firestore shape differs (`process_name` instead of `tool_name`/`tool_params`).
  */
 export async function dispatchExistingCommandAsSystem(
   ctx: AutonomousDispatchContext,
@@ -309,10 +266,9 @@ export async function dispatchExistingCommandAsSystem(
     return { error: `Command '${commandType}' timed out` };
   }
 
-  // `running` markers are skipped inside pollForResult (non-terminal), so
-  // cmdResult is always terminal here. A `cancelled` entry has no `result`
-  // field and carries `error: 'cancelled by user'`, which surfaces through
-  // the `|| cmdResult.error` fallback below (mirrors executeExistingCommand).
+  // pollForResult skips `running` markers, so cmdResult is terminal here. A
+  // `cancelled` entry has no `result` and carries `error: 'cancelled by user'`,
+  // surfaced by the `|| cmdResult.error` fallback below.
   return {
     status: cmdResult.status,
     result: cmdResult.result || cmdResult.error || 'Command completed',

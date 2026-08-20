@@ -2,14 +2,10 @@
 /**
  * @jest-environment jsdom
  *
- * Integration tests for the roosts page detail-panel wiring. The
- * critical behaviors verified here live in the page component itself
- * (not in the panel or hook in isolation):
- *   - panel remounts (not re-renders) on roost swap so child state
- *     in VersionHistory/RoostContentsRow doesn't flash stale data
- *   - disappearance-gating effect waits for roosts to finish loading
- *     before clearing a selection that isn't in the list
- *   - bogus deep links self-clean once loading settles
+ * Roosts page detail-panel wiring — behaviours that live in the page component
+ * itself, not the panel or hook: the panel REMOUNTS on roost swap (so child
+ * state cannot flash stale data), the disappearance gate waits for loading to
+ * finish before clearing a selection, and bogus deep links self-clean.
  */
 import React from 'react';
 import { render } from '@testing-library/react';
@@ -245,10 +241,8 @@ jest.mock('sonner', () => ({
   toast: { success: jest.fn(), error: jest.fn() },
 }));
 
-// Import the client subtree directly. The route's `page.tsx` default
-// export is now a server component that calls `connection()` to opt
-// into dynamic rendering — that's incompatible with jsdom and irrelevant
-// to the wiring under test.
+// The client subtree directly: `page.tsx`'s default export is a server
+// component calling `connection()`, which jsdom cannot run.
 import RoostsPage from '@/app/roosts/RoostsPageClient';
 
 function makeRoost(id: string, name: string, targets: string[] = []): RoostFixture {

@@ -2,14 +2,10 @@
 /**
  * @jest-environment jsdom
  *
- * TalonCard — the "why is this talon off?" surface.
- *
- * Narrowly scoped to the disabled-reason line. The rest of the row (summaries,
- * action buttons, run history) is either pure formatting with its own units or
- * live-data wiring; what is worth pinning here is that an operator who opens
- * `/talons` and finds a talon switched off is TOLD why, on the row, without
- * expanding a run — because the alternative is the silent rot this feature
- * exists to end.
+ * TalonCard — the "why is this talon off?" surface. Scoped to the
+ * disabled-reason line: an operator who finds a talon switched off must be told
+ * why on the row, without expanding a run. The rest of the row is formatting
+ * with its own units or live-data wiring.
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';

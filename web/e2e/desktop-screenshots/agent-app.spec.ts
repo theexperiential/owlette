@@ -1,15 +1,11 @@
 /**
- * The agent documentation's screenshots of the owlette desktop app.
+ * Screenshots of the owlette desktop app for the agent docs. Driven over CDP
+ * against the release binary at `C:\ProgramData\Owlette\app\owlette-desktop.exe`
+ * with a scratch `%PROGRAMDATA%` of fixtures (see `harness.ts` / `fixtures.ts`).
+ * Output: `web/public/docs-screens/`, referenced by `web/content/docs/agent/*.mdx`.
  *
- * These are taken from the release binary at
- * `C:\ProgramData\Owlette\app\owlette-desktop.exe`, attached to over CDP, with a
- * scratch `%PROGRAMDATA%` full of fixture data — see `harness.ts` for why that
- * is the only honest way to drive it, and `fixtures.ts` for the machine being
- * shown. Output lands in `web/public/docs-screens/`, which
- * `web/content/docs/agent/*.mdx` references directly.
- *
- * Serial by construction: there is one window, and each scenario is the previous
- * one's seam files replaced underneath it.
+ * Serial by construction — one window, and each scenario replaces the previous
+ * one's seam files underneath it.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -22,10 +18,9 @@ import { CAPTURE_HOSTNAME, SCRATCH_ROOT, readSession } from './harness'
 const DOCS_DIR = 'public/docs-screens'
 
 /**
- * Nothing may still be moving when the shutter opens. The launch-mode indicator
- * slides for 200 ms and Radix fades its overlays in; a screenshot taken mid-way
- * through either is the difference between two runs producing the same file and
- * two runs producing a diff.
+ * Nothing may still be moving when the shutter opens: the launch-mode indicator
+ * slides for 200 ms and Radix fades overlays in — mid-animation shots diff
+ * between runs.
  */
 const NO_MOTION = `
   *, *::before, *::after {
@@ -60,8 +55,8 @@ test.beforeAll(async () => {
 })
 
 test.afterAll(async () => {
-  // Disconnects from the webview; the app itself is stopped by the global
-  // teardown, which also has the layout file to put back.
+  // Only disconnects the webview — global teardown stops the app and restores
+  // the layout file.
   await browser?.close()
 })
 
@@ -82,8 +77,8 @@ async function useScenario(scenario: Scenario): Promise<void> {
   if (scenario === 'paired') await expect(page.getByTestId('process-row')).toHaveCount(3)
   else await expect(page.getByTestId('process-list-empty')).toBeVisible()
 
-  // The list can already be in the shape the next scenario wants, so the footer
-  // is what proves the new `config.json` has actually been read.
+  // The list may already look right, so the footer is the only proof the new
+  // `config.json` was read.
   await expect(page.getByTestId('footer-status')).toContainText(
     scenario === 'unpaired' ? 'disabled' : 'connected',
   )
@@ -135,8 +130,8 @@ test('the schedule editor', async () => {
 
   await page.getByTestId('edit-schedule').click()
   await expect(page.getByTestId('schedule-editor')).toBeVisible()
-  // The dialog autofocuses the block-name field, which opens with its text
-  // selected — a caret and a selection highlight are not part of the UI.
+  // The dialog autofocuses the block-name field with its text selected; a caret
+  // and selection highlight are not part of the UI.
   await clearFocus()
   await page.mouse.move(POINTER_PARK.x, POINTER_PARK.y)
 
@@ -161,8 +156,7 @@ test('the app menu', async () => {
 })
 
 test('a machine with nothing to supervise yet', async () => {
-  // Enrolled but unconfigured — the state every machine passes through, and the
-  // one the drop hint is written for.
+  // Enrolled but unconfigured — the state the drop hint is written for.
   await useScenario('paired-empty')
 
   await shoot('agent-empty.png')
@@ -188,12 +182,9 @@ test('joining a site', async () => {
 })
 
 /**
- * Last, because it is the only step that takes the pointer.
- *
- * The tray menu is a native Win32 popup — no webview, nothing CDP can reach —
- * so it is captured by UI Automation instead. Its contents come from the same
- * capture instance every other shot does, which is why the hostname and version
- * in it are the fixture's rather than this machine's.
+ * Last, because it is the only step that takes the pointer. The tray menu is a
+ * native Win32 popup that CDP can't reach, so UI Automation captures it; its
+ * hostname/version are the fixture's, from the same capture instance.
  */
 test('the tray right-click menu', async () => {
   await useScenario('paired')
@@ -212,8 +203,7 @@ test('the tray right-click menu', async () => {
       script,
       '-Out',
       target,
-      // Tells the script which of the notification area's owlette buttons is
-      // ours, when the one it replaced has not been pruned yet.
+      // Disambiguates our tray button from a not-yet-pruned predecessor.
       '-ExpectHostname',
       CAPTURE_HOSTNAME,
     ],

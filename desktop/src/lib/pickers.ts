@@ -1,23 +1,18 @@
 /**
  * Native file and folder pickers.
  *
- * `@tauri-apps/plugin-dialog` talks to the same Win32 common dialogs the legacy
- * GUI opened through tkinter, so an operator gets the shell they know — network
- * paths, recent places, typed UNC — instead of a webview file input.
- *
- * Wrapped here for the same reason `ipc.ts` wraps the commands: one place per
- * dialog, so the filters and default-path rules stay consistent and the call
- * sites stay readable.
+ * `@tauri-apps/plugin-dialog` opens the same Win32 common dialogs the legacy tkinter GUI
+ * used, so an operator gets network paths, recent places and typed UNC instead of a
+ * webview file input. Wrapped here (like ipc.ts) to keep filters and default-path rules
+ * in one place per dialog.
  */
 
 import { open } from '@tauri-apps/plugin-dialog'
 
 /**
- * Where to open the picker.
- *
- * The current value is offered as the starting point; a value that no longer
- * exists on disk is dropped rather than passed on, because Windows opens the
- * dialog on the desktop when the default path is bad and that looks like a bug.
+ * Where to open the picker. The current value is offered as the starting point, but a
+ * path that no longer exists is dropped: Windows opens on the desktop when the default
+ * path is bad, which looks like a bug.
  */
 function startingPoint(current: string | undefined): string | undefined {
   const value = current?.trim()

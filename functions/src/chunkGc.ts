@@ -1,27 +1,20 @@
 /**
  * Scheduled chunk garbage collection (roost wave 2b.4).
  *
- * Runs nightly (off-peak UTC). For each site:
- *   1. Skip sites with an in-flight rollout (pause-during-publish).
- *   2. Gather the referenced-hash set (live versions) and the stored-
- *      hash set (R2 listing under the per-tenant prefix).
- *   3. Load existing tombstones.
- *   4. Produce a plan (pure function — lib/chunkGcLogic.ts).
- *   5. Apply the plan OR log it (dry-run).
+ * Nightly, per site: skip sites with an in-flight rollout, gather the referenced-hash
+ * set (live versions) and the stored-hash set (R2 listing under the per-tenant
+ * prefix), load tombstones, produce a plan (pure — lib/chunkGcLogic.ts), then apply
+ * it or log it.
  *
- * Dry-run is the default for the first production month (env
- * `CHUNK_GC_MODE=dry-run`) so operators can audit the plan against
- * real storage without risking data loss. Set `CHUNK_GC_MODE=apply`
- * only after 30 days of clean dry-runs.
+ * Dry-run is the default for the first production month (`CHUNK_GC_MODE=dry-run`) so
+ * operators can audit plans against real storage. Set `CHUNK_GC_MODE=apply` only
+ * after 30 days of clean dry-runs.
  *
- * The R2 listing + firestore-heavy scans are stubbed behind a
- * `SiteScanner` interface. Wave 0.5 provisions R2 + wires the
- * production scanner; everything else is testable today.
+ * R2 listing + firestore-heavy scans sit behind `SiteScanner`; wave 0.5 provisions R2
+ * and wires the production scanner.
  *
- * Not in scope (follow-up):
- *   - Denormalised chunk refcount doc to avoid scanning every version.
- *     Without it, sites with thousands of versions will be slow. The
- *     current implementation assumes the scanner is smart about that.
+ * TODO: denormalised chunk refcount doc, to avoid scanning every version — without it
+ * sites with thousands of versions will be slow.
  */
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
@@ -36,10 +29,6 @@ import {
 
 const FIRESTORE_BATCH_LIMIT = 400;
 
-/* --------------------------------------------------------------------- */
-/*  Dependency interfaces (injectable for tests + deploy wiring)         */
-/* --------------------------------------------------------------------- */
-
 export interface ObjectStore {
   /** List all chunk hashes stored under the per-tenant prefix. */
   listStoredHashes(siteId: string): Promise<Set<string>>;
@@ -48,23 +37,16 @@ export interface ObjectStore {
 }
 
 export interface SiteScanner {
-  /**
-   * Return every site id known to the system. Production: firestore
-   * top-level `sites/` collection listing.
-   */
+  /** Every site id known to the system (firestore `sites/` listing in production). */
   listSiteIds(): Promise<string[]>;
   /**
-   * Return the hash set referenced by any live version for this site.
-   * "Live" = currentVersionId + previousVersionId + any still in
-   * rollout history within the retention window. Production: reads
-   * every doc under `sites/{siteId}/roosts` and each roost's
-   * `rollouts` subcollection, plus the versions.
+   * Hashes referenced by any live version: currentVersionId + previousVersionId +
+   * anything still in rollout history within the retention window.
    */
   getReferencedHashes(siteId: string): Promise<Set<string>>;
   /**
-   * True if there is a non-terminal rollout active on this site.
-   * Pause GC while publishing to avoid racing with an in-flight upload
-   * whose version has not yet been finalised.
+   * True if a non-terminal rollout is active. GC pauses during publish so it can't
+   * race an in-flight upload whose version is not yet finalised.
    */
   hasActiveRollout(siteId: string): Promise<boolean>;
 }
@@ -76,10 +58,6 @@ export interface TombstoneStore {
   /** Atomically remove tombstone metadata (no chunk delete). */
   clear(siteId: string, hashes: string[]): Promise<void>;
 }
-
-/* --------------------------------------------------------------------- */
-/*  Pure orchestrator (testable)                                         */
-/* --------------------------------------------------------------------- */
 
 export type GcMode = 'dry-run' | 'apply';
 
@@ -139,11 +117,9 @@ export async function gcOneSite(
     return { siteId, skipped: false, summary, mode: 'apply' };
   }
 
-  // Ordering matters: tombstone FIRST so if a deletion fails mid-way,
-  // the state is consistent (tombstones exist, deletions are retried
-  // on the next run). Then clear stale tombstones, then delete ripe
-  // chunks. If a delete fails, the tombstone remains ripe and next run
-  // picks it up.
+  // Ordering matters: tombstone FIRST, so a mid-way failure leaves consistent state
+  // (tombstones exist, deletions retry next run). Then clear stale tombstones, then
+  // delete ripe chunks — a failed delete leaves the tombstone ripe for the next run.
   if (plan.toTombstone.length > 0) {
     await deps.tombstones.create(siteId, plan.toTombstone, now);
   }
@@ -214,14 +190,9 @@ function logDryRun(
   }
 }
 
-/* --------------------------------------------------------------------- */
-/*  Scheduled entrypoint                                                 */
-/* --------------------------------------------------------------------- */
-
 /**
- * Scheduled 02:15 UTC daily. Timeout 540s (9 min — scheduler cap for
- * low-cost functions). Per-site work is sequential; parallelism is
- * limited by firestore quota on the scanner.
+ * Scheduled 02:15 UTC daily. 540s timeout (scheduler cap for low-cost functions);
+ * per-site work is sequential, bounded by firestore quota on the scanner.
  */
 export const chunkGcNightly = onSchedule(
   { schedule: '15 2 * * *', timeoutSeconds: 540, memory: '512MiB' },
@@ -254,16 +225,10 @@ export const chunkGcNightly = onSchedule(
   },
 );
 
-/* --------------------------------------------------------------------- */
-/*  Production wiring (injected at deploy time)                          */
-/* --------------------------------------------------------------------- */
-
 function getDefaultScanner(): SiteScanner {
-  // firestore-backed implementation will go here post wave 0.6.
-  // reading every version every night is the lazy approach and is
-  // adequate at Owlette's expected fleet size (≤ low thousands of
-  // versions per site). a denormalised refcount doc is the long-term
-  // fix; tracked as a follow-up.
+  // Firestore-backed implementation lands post wave 0.6. Reading every version nightly
+  // is adequate at expected fleet size (≤ low thousands per site); a denormalised
+  // refcount doc is the long-term fix.
   const db = admin.firestore();
   return {
     async listSiteIds() {

@@ -1,35 +1,18 @@
 #!/usr/bin/env node
 /**
- * Role Migration Script
+ * Migrates `users` from the two-tier role model to three tiers:
+ *   'user'  → 'member'      (rename only)
+ *   'admin' → 'superadmin'  (preserves current god-mode access)
  *
- * Migrates the `users` collection from the two-tier role model (user/admin) to
- * the three-tier model (member/admin/superadmin).
+ * The new site-scoped `admin` tier starts empty; superadmins promote members
+ * by hand. Idempotent — member/admin/superadmin are left untouched.
  *
- *   role: 'user'  → 'member'       (rename, semantics unchanged)
- *   role: 'admin' → 'superadmin'   (preserve current god-mode access)
+ *   node scripts/migrate-roles.mjs --env=dev|prod [--dry-run]
  *
- * The new `admin` (site-scoped middle tier) starts empty. Superadmins promote
- * members to admin manually via the user-management UI.
- *
- * Idempotent: re-running after a successful migration is a no-op because
- * member/admin/superadmin values are left untouched.
- *
- * Usage:
- *   node scripts/migrate-roles.mjs --env=dev --dry-run
- *   node scripts/migrate-roles.mjs --env=dev
- *   node scripts/migrate-roles.mjs --env=prod --dry-run
- *   node scripts/migrate-roles.mjs --env=prod
- *
- * Credentials:
- *   Reads FIREBASE_PROJECT_ID_{DEV|PROD}, FIREBASE_CLIENT_EMAIL_{DEV|PROD},
- *   FIREBASE_PRIVATE_KEY_{DEV|PROD} from the environment. Falls back to plain
- *   FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY (the
- *   web/.env.local vars) if the env-specific ones aren't set — the fallback
- *   targets whatever project web/.env.local is pointed at, so verify before
- *   running live against prod.
- *
- *   web/.env.local, .claude/.env.local, and scripts/.env.local are auto-loaded
- *   if present.
+ * Reads FIREBASE_{PROJECT_ID,CLIENT_EMAIL,PRIVATE_KEY}_{DEV|PROD}, auto-loading
+ * web/.env.local, .claude/.env.local, scripts/.env.local. CAUTION: falls back
+ * to the unsuffixed vars, which point wherever web/.env.local points — verify
+ * before running live against prod.
  */
 
 import { createRequire } from 'module';
@@ -41,13 +24,11 @@ import readline from 'readline';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-// firebase-admin lives in web/node_modules — resolve it from there so the
-// script runs without a root-level package.json.
+// firebase-admin lives in web/node_modules — no root-level package.json.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 const admin = require('firebase-admin');
 
-// ---- CLI parsing ------------------------------------------------------------
-
+// CLI parsing
 const args = process.argv.slice(2);
 
 function getFlag(name) {
@@ -65,8 +46,7 @@ if (env !== 'dev' && env !== 'prod') {
   process.exit(1);
 }
 
-// ---- .env loading -----------------------------------------------------------
-
+// .env loading
 function loadEnvFile(path) {
   if (!existsSync(path)) return;
   const content = readFileSync(path, 'utf8');
@@ -91,8 +71,7 @@ loadEnvFile(join(ROOT, 'web', '.env.local'));
 loadEnvFile(join(ROOT, '.claude', '.env.local'));
 loadEnvFile(join(ROOT, 'scripts', '.env.local'));
 
-// ---- Credentials ------------------------------------------------------------
-
+// Credentials
 const suffix = env === 'prod' ? '_PROD' : '_DEV';
 const projectId =
   process.env[`FIREBASE_PROJECT_ID${suffix}`] || process.env.FIREBASE_PROJECT_ID;
@@ -118,8 +97,7 @@ if (usingFallback) {
   console.warn(`   Verify this matches the intended ${env} project before continuing.\n`);
 }
 
-// ---- Migration --------------------------------------------------------------
-
+// Migration
 const ROLE_MIGRATION = Object.freeze({
   user: 'member',
   admin: 'superadmin',

@@ -1,22 +1,18 @@
 //! The service itself: SCM plumbing wrapped around the supervision loop.
 //!
-//! ## The stop protocol, and why it is the whole reason this binary exists
+//! ## The stop protocol — the reason this binary exists
 //!
-//! NSSM stopped the agent by attaching to its console and generating a
-//! Control-C, then terminating the process **tree** ~4.5 s later whether or not
-//! the event was ever delivered. Both halves of that failed in production: on
-//! 2026-08-13 the Control-C was never delivered and the machine was killed
-//! without flushing `online: false`, and the tree kill took the desktop app
-//! down with the service because it happened to still be a descendant.
+//! NSSM stopped the agent with a console Control-C, then killed the process
+//! TREE ~4.5s later whether or not it was delivered. Both halves failed in prod
+//! on 2026-08-13: the Control-C never arrived so `online: false` was never
+//! flushed, and the tree kill took the desktop app down with the service.
 //!
-//! The host does neither. On a stop it reports `STOP_PENDING` to the SCM and
-//! waits. `owlette_service.start_scm_stop_watcher()` polls exactly that state
-//! every 250 ms and runs `graceful_shutdown()` — the one signal that cannot be
-//! missed, because the host is the thing reporting it. Only after
-//! [`CHILD_STOP_GRACE`] does the host escalate, and then it terminates the one
-//! process it launched, never the tree: everything the agent manages
-//! (TouchDesigner, players, kiosk shells) and everything it launches into the
-//! user session (the desktop app) survives a service stop by construction.
+//! Instead, a stop reports `STOP_PENDING` to the SCM and waits.
+//! `owlette_service.start_scm_stop_watcher()` polls that state every 250 ms and
+//! runs `graceful_shutdown()` — unmissable, because the host is what reports
+//! it. After [`CHILD_STOP_GRACE`] the host terminates the ONE process it
+//! launched, never the tree, so everything the agent manages (TouchDesigner,
+//! players, kiosk shells) and the desktop app survive a service stop.
 
 use std::ffi::OsString;
 use std::panic::{self, AssertUnwindSafe};
@@ -44,14 +40,12 @@ use crate::supervisor::{
 /// Reported while the first child is being launched.
 const START_WAIT_HINT: Duration = Duration::from_secs(30);
 
-/// Reported for the whole stop sequence: the grace window, the terminate, and
-/// slack. The checkpoint is bumped every second inside it so the SCM never
-/// concludes the service has hung.
+/// Covers the whole stop sequence (grace, terminate, slack). The checkpoint is
+/// bumped every second so the SCM never concludes the service has hung.
 const STOP_WAIT_HINT: Duration = Duration::from_secs(30);
 
-/// Service-specific exit codes, reported to the SCM so the failure actions
-/// registered by `owlette-host install` can retry a host that never got off
-/// the ground.
+/// Reported to the SCM so the failure actions registered by
+/// `owlette-host install` can retry a host that never got off the ground.
 const EXIT_NO_INSTALL_ROOT: u32 = 1;
 const EXIT_AGENT_WOULD_NOT_START: u32 = 2;
 const EXIT_PANIC: u32 = 3;
@@ -88,11 +82,10 @@ fn run() -> windows_service::Result<()> {
   let event_handler = move |control| match control {
     ServiceControl::Stop | ServiceControl::Shutdown => {
       handler_stop.store(true, Ordering::SeqCst);
-      // Report STOP_PENDING from the handler itself so the agent's SCM stop
-      // watcher sees it at the earliest possible instant. The supervision loop
-      // reports it again a moment later; both are idempotent. If the control
-      // somehow arrives before `register` has returned, the slot is empty and
-      // the loop's report (within one poll interval) is the first one.
+      // Report STOP_PENDING from the handler so the agent's stop watcher sees
+      // it at the earliest instant; the loop reports it again, idempotently. If
+      // the control beats `register`, the slot is empty and the loop's report
+      // (within one poll interval) is the first.
       if let Some(handle) = handler_slot.get() {
         report(
           handle,
@@ -121,9 +114,8 @@ fn run() -> windows_service::Result<()> {
     ServiceExitCode::NO_ERROR,
   );
 
-  // A panic anywhere in the loop would otherwise unwind out of the SCM's
-  // service thread leaving the service wedged in StartPending until the process
-  // died. Catch it, say so, and hand the SCM a failure it can act on.
+  // An escaping panic would unwind out of the SCM's service thread and wedge
+  // the service in StartPending until the process died.
   let exit_code = panic::catch_unwind(AssertUnwindSafe(|| {
     supervise(&status_handle, &stop_requested)
   }))
@@ -194,8 +186,8 @@ fn supervise(status_handle: &ServiceStatusHandle, stop_requested: &AtomicBool) -
           spec.command_line()
         ));
         if !running_reported {
-          // The service never came up at all. Report the failure so the SCM's
-          // failure actions retry, rather than sitting "stopped" forever.
+          // Never came up: report failure so the SCM retries instead of sitting
+          // "stopped" forever.
           return ServiceExitCode::ServiceSpecific(EXIT_AGENT_WOULD_NOT_START);
         }
         let recent = crash_window.record(Instant::now());
@@ -238,8 +230,7 @@ fn supervise(status_handle: &ServiceStatusHandle, stop_requested: &AtomicBool) -
     let outcome = classify(code);
     match outcome {
       ChildOutcome::CleanExit => {
-        // NSSM's `AppExit 0 Exit`: a clean exit is the agent saying it is done,
-        // not a fault to recover from.
+        // Like NSSM's `AppExit 0 Exit` — a clean exit means done, not faulted.
         hostlog::info("the agent exited cleanly (0) - stopping the service");
         return ServiceExitCode::NO_ERROR;
       }
@@ -281,16 +272,15 @@ fn supervise(status_handle: &ServiceStatusHandle, stop_requested: &AtomicBool) -
 enum Waited {
   /// The child exited on its own, with this code.
   Exited(i32),
-  /// A stop arrived while the child was still running (or had only just
-  /// exited); the child is handed back for the stop sequence.
+  /// A stop arrived while the child was running (or had just exited); the child
+  /// is handed back for the stop sequence.
   StopRequested(Child),
 }
 
 fn wait_for_exit_or_stop(mut child: Child, stop_requested: &AtomicBool) -> Waited {
   loop {
-    // The stop is checked first on purpose: if the agent exited at the same
-    // moment the operator stopped the service, the operator wins and nothing is
-    // relaunched.
+    // Stop is checked first: on a simultaneous exit + stop, the operator wins
+    // and nothing is relaunched.
     if stop_requested.load(Ordering::SeqCst) {
       return Waited::StopRequested(child);
     }
@@ -339,8 +329,7 @@ fn stop_child(status_handle: &ServiceStatusHandle, mut child: Child) -> ServiceE
           exit_code_of(status),
           started.elapsed().as_secs_f32()
         ));
-        // Let the log pumps drain the last of the child's output before the
-        // process goes away.
+        // Let the log pumps drain the child's last output.
         thread::sleep(POLL_INTERVAL);
         return ServiceExitCode::NO_ERROR;
       }
@@ -408,7 +397,7 @@ fn sleep_unless_stop(delay: Duration, stop_requested: &AtomicBool) -> bool {
 }
 
 fn exit_code_of(status: std::process::ExitStatus) -> i32 {
-  // Always `Some` on Windows; the fallback keeps an impossible case honest.
+  // Always `Some` on Windows; the fallback keeps the impossible case honest.
   status.code().unwrap_or(i32::MIN)
 }
 

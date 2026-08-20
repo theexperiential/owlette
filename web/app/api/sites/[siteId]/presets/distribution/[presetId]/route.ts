@@ -1,19 +1,13 @@
 /**
- * GET    /api/sites/{siteId}/presets/distribution/{presetId}
- *        → fetch a single distribution preset doc.
+ * /api/sites/{siteId}/presets/distribution/{presetId}
  *
- * PATCH  /api/sites/{siteId}/presets/distribution/{presetId}
- *        → update preset (custom edit) or create the override doc for a
- *          built-in preset (when presetId starts with `builtin-`).
- *          Requires PRESET_MANAGE.
+ *   GET    — fetch one distribution preset doc.
+ *   PATCH  — update a custom preset, or create the override doc for a built-in
+ *            one (`builtin-` prefix). Requires PRESET_MANAGE.
+ *   DELETE — delete a custom preset, or drop a built-in's override so the
+ *            hardcoded default re-emerges. Requires PRESET_MANAGE.
  *
- * DELETE /api/sites/{siteId}/presets/distribution/{presetId}
- *        → delete preset (custom) or remove the override doc for a built-in
- *          preset (the hardcoded default re-emerges on next read).
- *          Requires PRESET_MANAGE.
- *
- * security-boundary-migration wave 3.7. Mirrors the schedule/reboot preset
- * routes from wave 3.6 — only the firestore path differs.
+ * Mirrors the schedule/reboot preset routes; only the firestore path differs.
  */
 
 import { NextResponse } from 'next/server';
@@ -50,9 +44,7 @@ function validatePresetId(presetId: string | undefined): NextResponse | null {
   return null;
 }
 
-/* --------------------------------------------------------------------- */
-/*  GET                                                                  */
-/* --------------------------------------------------------------------- */
+/* GET */
 
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'PRESET_MANAGE',
@@ -81,9 +73,7 @@ export const GET = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* --------------------------------------------------------------------- */
-/*  PATCH                                                                */
-/* --------------------------------------------------------------------- */
+/* PATCH */
 
 interface PatchBody {
   name?: unknown;
@@ -142,9 +132,7 @@ export const PATCH = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* --------------------------------------------------------------------- */
-/*  DELETE                                                               */
-/* --------------------------------------------------------------------- */
+/* DELETE */
 
 export const DELETE = authorizedSiteHandler<RouteParams>({
   capability: 'PRESET_MANAGE',
@@ -175,9 +163,7 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* --------------------------------------------------------------------- */
-/*  helpers                                                              */
-/* --------------------------------------------------------------------- */
+/* helpers */
 
 interface SerializedPreset {
   id: string;

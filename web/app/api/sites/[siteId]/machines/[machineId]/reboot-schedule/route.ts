@@ -1,22 +1,10 @@
 /**
- * PUT /api/sites/{siteId}/machines/{machineId}/reboot-schedule
+ * PUT /api/sites/{siteId}/machines/{machineId}/reboot-schedule — writes the
+ * schedule to the machine's config doc; the agent's config listener mirrors it
+ * into local `config.json`, where the reboot state machine reads it.
  *
- * Set the reboot schedule on a machine's config doc. The agent's existing
- * config listener picks up the new schedule and propagates it to local
- * `config.json`, where the reboot state machine reads it.
- *
- * security-boundary-migration wave 3.2: capability `MACHINE_CONFIG_WRITE`,
- * api-key scope `machine=<id>:write`.
- *
- * Request body:
- *   {
- *     "schedule": {
- *       "enabled": true,
- *       "entries": [
- *         { "id": "uuid", "days": ["mon","tue"], "time": "03:00" }
- *       ]
- *     }
- *   }
+ * Capability `MACHINE_CONFIG_WRITE`, api-key scope `machine=<id>:write`.
+ * Body: `{ schedule: { enabled, entries: [{ id, days: ["mon",…], time: "03:00" }] } }`.
  */
 import { NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';

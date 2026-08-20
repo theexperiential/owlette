@@ -22,31 +22,18 @@ import { browserSupportsWebAuthn } from '@/hooks/usePasskeys';
 import { toast } from '@/lib/toast';
 
 /**
- * The account's second factors, as one list.
+ * The account's second factors, as one list. TOTP and passkeys were separate panel blocks;
+ * universal 2FA makes them the same feature (any one factor satisfies the gate), so they are
+ * counted, shown and managed together.
  *
- * WHY THIS REPLACED TWO BLOCKS
- *
- * The security panel used to carry a "two-factor authentication" row whose only
- * control was a `manage` link to /setup-2fa, and — several sections further
- * down, with the password form between them — a standalone passkey card. From
- * the panel a user could not see whether they had TOTP at all, could not remove
- * it (nothing in the app called `/api/mfa/disable`), and had no reason to think
- * the two blocks were the same feature. Universal 2FA makes them the same
- * feature: any one factor satisfies the gate, so they have to be counted, shown
- * and managed together.
- *
- * THE RULES THIS UI ENCODES
- *
- * - Removing the LAST factor is allowed. It re-arms `requiresMfaSetup` and the
- *   user is asked to enroll again on their next protected page. Every removal
- *   control here is ENABLED and warns; none of them refuses. A user who has
- *   lost the device holding their only factor must still be able to detach it.
- * - Zero factors is a state the account can legitimately be in for a moment,
- *   and the panel says so plainly rather than pretending the account is secure.
- * - Adding a factor to an account that already has one requires clearing a
- *   challenge first (`checkMfaEnrollmentGate`). That must never dead-end: an
- *   account with a passkey gets the step-up inline, and the authenticator-app
- *   path routes through /verify-2fa and back to /setup-2fa.
+ * Rules this UI encodes:
+ * - Removing the LAST factor is ALLOWED — it re-arms `requiresMfaSetup`. Every removal control
+ *   warns and none refuses: someone who lost the device holding their only factor must still be
+ *   able to detach it.
+ * - Zero factors is a legitimate momentary state and the panel says so.
+ * - Adding a factor to an account that has one requires clearing a challenge first
+ *   (`checkMfaEnrollmentGate`), and must never dead-end: passkey accounts step up inline, the
+ *   TOTP path routes through /verify-2fa back to /setup-2fa.
  */
 
 interface MfaFactorsSectionProps {
@@ -75,22 +62,14 @@ export function MfaFactorsSection({ userId, onNavigateAway }: MfaFactorsSectionP
 
   const { totp, passkeys, totalFactors, mfaVerified } = factors;
 
-  /**
-   * The enrollment gate only bites when a factor already exists — a zero-factor
-   * account is in mandatory setup and enrollment stays open for it.
-   */
+  // The gate only bites when a factor exists; a zero-factor account is in mandatory setup.
   const needsChallenge = totalFactors > 0 && !mfaVerified;
   const isLastFactor = totalFactors === 1;
 
-  // Verifying inline needs both a passkey to assert and a browser that can
-  // assert it; a TOTP-only account (or an embedded webview) uses the code path.
+  // Inline verify needs a passkey AND a browser that can assert it; otherwise use the code path.
   const canStepUpInline = passkeys.length > 0 && browserSupportsWebAuthn();
 
-  /**
-   * Sending the user to set up an authenticator app while the gate is armed
-   * would land them on a page whose first request 403s. Route through the
-   * challenge and hand /verify-2fa the onward destination instead.
-   */
+  // /setup-2fa's first request 403s while the gate is armed, so route through the challenge.
   const totpSetupHref = needsChallenge ? '/verify-2fa?redirect=/setup-2fa' : '/setup-2fa';
 
   const closeRemoveDialog = () => {
@@ -227,7 +206,6 @@ export function MfaFactorsSection({ userId, onNavigateAway }: MfaFactorsSectionP
             </div>
           )}
 
-          {/* Authenticator app (TOTP) */}
           <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-card/50 p-4">
             <div className="flex min-w-0 items-center gap-3">
               <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -267,10 +245,8 @@ export function MfaFactorsSection({ userId, onNavigateAway }: MfaFactorsSectionP
             )}
           </div>
 
-          {/* Passkeys — nested here rather than sitting as a sibling further
-              down the panel, so both factor types are counted and managed in
-              one place. `refresh` is what keeps the counts above honest after a
-              register or delete. */}
+          {/* Nested, not a sibling further down the panel, so both factor types live in one
+              place. `refresh` keeps the counts above honest after a register or delete. */}
           <PasskeyManager
             userId={userId}
             compact
@@ -281,9 +257,8 @@ export function MfaFactorsSection({ userId, onNavigateAway }: MfaFactorsSectionP
         </>
       )}
 
-      {/* Remove-TOTP confirmation. `/api/mfa/disable` demands live proof of
-          possession, so the code field is part of the confirmation rather than
-          an extra step — a warm session is deliberately not enough. */}
+      {/* `/api/mfa/disable` demands live proof of possession — a warm session is deliberately
+          not enough — so the code field is part of the confirmation, not a second step. */}
       <Dialog open={removeOpen} onOpenChange={(open) => !open && closeRemoveDialog()}>
         <DialogContent className="border-border bg-secondary text-white sm:max-w-sm">
           <DialogHeader>

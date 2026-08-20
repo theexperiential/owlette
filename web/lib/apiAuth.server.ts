@@ -35,14 +35,14 @@ export interface ApiKeyContext {
   scopes: ApiKeyScope[] | null;
   environment: ApiKeyEnvironment | null;
   expiresAt: number | null;
-  /** Deprecated marker retained for older callers; resolved keys no longer bypass scope checks. */
+  /** Deprecated: resolved keys no longer bypass scope checks. */
   isLegacy: boolean;
   retiresAt?: number;
 }
 
 export interface ResolvedAuth {
   userId: string;
-  /** Populated when the request was authed via an `owk_*` API key. Null for session / ID-token auth. */
+  /** Set for `owk_*` API-key auth; null for session / ID-token. */
   keyContext: ApiKeyContext | null;
 }
 
@@ -127,10 +127,8 @@ export async function requireSessionOrIdToken(
     try {
       const adminAuth = getAdminAuth();
       const decoded = await adminAuth.verifyIdToken(bearer);
-      // Agents authenticate via custom tokens (role='agent') for site/machine
-      // operations and must never mint user-scoped API keys. Opt-in per call so
-      // existing callers are unaffected; session callers are always human, so
-      // this only applies to the ID-token branch.
+      // Agents (role='agent', custom token) must never mint user-scoped API
+      // keys. Opt-in per call; only the ID-token branch can be an agent.
       if (options.rejectAgentTokens && decoded.role === 'agent') {
         throw new ApiAuthError(403, 'Forbidden: agent credentials cannot create api keys');
       }
@@ -171,9 +169,8 @@ function extractApiKey(request: NextRequest): string | null {
 }
 
 /**
- * Resolve an API key (owk_...) to full context: userId + keyContext.
- * One Firestore read (top-level api_keys/{keyHash}) + one fire-and-forget
- * lastUsedAt update on the user subcollection entry.
+ * Resolve an `owk_*` key to userId + keyContext: one read of
+ * api_keys/{keyHash}, plus a fire-and-forget lastUsedAt update.
  */
 async function resolveApiKeyContext(
   rawKey: string,
@@ -200,8 +197,7 @@ async function resolveApiKeyContext(
     throw new ApiAuthError(401, 'Unauthorized: Invalid API key');
   }
 
-  // Rotation grace: the old key's lookup entry carries `retiresAt` after
-  // rotation. After retiresAt, treat as invalid.
+  // Rotation grace: the old key's lookup entry carries `retiresAt`.
   if (typeof data.retiresAt === 'number' && now >= data.retiresAt) {
     throw new ApiAuthError(401, 'Unauthorized: Invalid API key');
   }
@@ -293,10 +289,8 @@ export async function requireAdminOrIdToken(request: NextRequest): Promise<strin
   return userId;
 }
 
-/**
- * Resolve request auth into a unified context that carries API-key metadata
- * when present. Use in public v2 routes that need scope enforcement.
- */
+/** Unified auth context carrying API-key metadata when present. For public
+ * routes that need scope enforcement. */
 export async function resolveAuth(request: NextRequest): Promise<ResolvedAuth> {
   const apiKey = extractApiKey(request);
 
@@ -310,14 +304,11 @@ export async function resolveAuth(request: NextRequest): Promise<ResolvedAuth> {
 }
 
 /**
- * Enforce that the resolved auth has the required scope.
+ * Enforce the required scope. Session / ID-token auth is bypassed (per-resource
+ * access is enforced elsewhere); a scoped API key needs a matching
+ * (resource, id, permission) entry, with a stored id of '*' matching anything.
  *
- * - Session / ID-token auth (no API key): bypassed. Dashboard users operate
- *   with full own access; per-resource access is enforced elsewhere.
- * - Scoped API key: requires a matching (resource, id, permission) entry.
- *   Wildcard id '*' in the stored scope matches any requested id.
- *
- * Throws ApiAuthError(403, code='scope_insufficient') on mismatch.
+ * Throws ApiAuthError(403, 'scope_insufficient') on mismatch.
  */
 export function requireScope(
   auth: ResolvedAuth,
@@ -347,12 +338,9 @@ export function requireScope(
 }
 
 /**
- * Attach the advisory headers a scope-check result asks for: the legacy-key
- * deprecation notice and the version-missing notice.
- *
- * This is the single sink for every advisory header on the public API —
- * routes call it on the responses they return, so a new advisory is wired
- * once here rather than at each route.
+ * Attach the advisory headers a scope-check result asks for (legacy-key
+ * deprecation, version-missing). Single sink for every public-API advisory, so
+ * a new one is wired here rather than at each route.
  */
 export function applyAuthDeprecations(
   response: NextResponse,

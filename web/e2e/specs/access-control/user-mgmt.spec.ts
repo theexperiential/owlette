@@ -1,15 +1,7 @@
 /**
- * Access-control — /admin/users page
- *
- * Only reachable as superadmin (gated by RequireSuperadmin). Covers:
- *   - stats row (4 cards in ascending-privilege order)
- *   - role badges per user (red Crown / green Shield / muted Users)
- *   - sites column variants (pills for admins, "all sites" for superadmin,
- *     count for members)
- *   - "You" badge on own row
- *   - role-change dialog (Select, description live-updates, save disabled
- *     when unchanged)
- *   - self-demote guard (superadmin can't demote themselves)
+ * Access-control — /admin/users (RequireSuperadmin). Covers the stats row,
+ * per-role badges, the three sites-column variants, the "You" badge, the
+ * role-change dialog, and the self-demote guard.
  */
 
 import { test, expect } from '@playwright/test';
@@ -26,7 +18,7 @@ test.describe('/admin/users — stats row', () => {
       await expect(page.getByText(label, { exact: true })).toBeVisible();
     }
 
-    // Confirm their visual order in the DOM matches ascending-privilege.
+    // DOM order must match ascending privilege.
     const texts = await page
       .locator('p.text-xs.text-muted-foreground')
       .filter({ hasText: /total users|members|site admins|superadmins/ })
@@ -37,8 +29,7 @@ test.describe('/admin/users — stats row', () => {
   test('counts reflect seeded fleet (1 super, 1 admin, 1 member)', async ({ page }) => {
     await page.goto('/admin/users');
 
-    // Each stat chip is a `.bg-card.rounded-lg` wrapping the count (p.text-lg)
-    // and label (p.text-xs). Find the chip by its label, then read the count.
+    // Chip = `.bg-card.rounded-lg` around a p.text-lg count and p.text-xs label.
     const card = (label: string) =>
       page.locator('div.bg-card.rounded-lg').filter({ hasText: label });
 
@@ -64,7 +55,7 @@ test.describe('/admin/users — role badges', () => {
 
     const row = page.getByRole('row', { name: /admin@e2e\.test/ });
     await expect(row.getByText('admin', { exact: true })).toBeVisible();
-    // The green site-id pill — seeded admin has sites: ['site-A']
+    // Green site-id pill; the seeded admin has sites: ['site-A'].
     await expect(row.getByText('site-A')).toBeVisible();
   });
 
@@ -73,13 +64,10 @@ test.describe('/admin/users — role badges', () => {
 
     const row = page.getByRole('row', { name: /member@e2e\.test/ });
     await expect(row.getByText('member', { exact: true })).toBeVisible();
-    // Member's sites column renders as two sibling spans ("1" + "site") with
-    // a margin between them, not a single run of text. Target the label span
-    // ("sites" or "site") and the preceding count span separately.
+    // Two sibling spans ("1" + "site"), not one text run — target each.
     const sitesCell = row.locator('td').nth(2);
     await expect(sitesCell).toContainText('1');
     await expect(sitesCell).toContainText(/site/);
-    // No green site-id pill for members (admins get those).
     await expect(row.getByText('site-A', { exact: true })).toHaveCount(0);
   });
 });
@@ -88,17 +76,15 @@ test.describe('/admin/users — role-change dialog', () => {
   test('save button disabled until role changes', async ({ page }) => {
     await page.goto('/admin/users');
 
-    // Open member's action menu → click "change role..."
     const memberRow = page.getByRole('row', { name: /member@e2e\.test/ });
     await memberRow.getByRole('button').last().click(); // ⋮ menu
     await page.getByRole('menuitem', { name: /change role/i }).click();
 
-    // Dialog open. Select shows current role (member) by default.
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText(/current role:\s*member/i)).toBeVisible();
 
-    // Save button disabled because newRole === currentRole.
+    // Disabled while newRole === currentRole.
     const saveBtn = dialog.getByRole('button', { name: /save role/i });
     await expect(saveBtn).toBeDisabled();
   });
@@ -111,14 +97,11 @@ test.describe('/admin/users — role-change dialog', () => {
     await page.getByRole('menuitem', { name: /change role/i }).click();
 
     const dialog = page.getByRole('dialog');
-    // Open the Select and pick 'admin'.
     await dialog.getByRole('combobox').click();
     await page.getByRole('option', { name: /admin/i }).first().click();
 
-    // Description block now reflects admin's capabilities.
     await expect(dialog.getByText(/site-scoped elevated tier/i)).toBeVisible();
 
-    // Save button enables.
     const saveBtn = dialog.getByRole('button', { name: /save role/i });
     await expect(saveBtn).toBeEnabled();
   });
@@ -131,7 +114,6 @@ test.describe('/admin/users — self-demote guard', () => {
     const selfRow = page.getByRole('row', { name: /super@e2e\.test/ });
     await selfRow.getByRole('button').last().click();
 
-    // The change-role item is disabled for self-superadmin.
     const changeRoleItem = page.getByRole('menuitem', { name: /change role/i });
     await expect(changeRoleItem).toBeDisabled();
   });

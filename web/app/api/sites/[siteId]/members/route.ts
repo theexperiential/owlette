@@ -1,24 +1,18 @@
 /**
- * GET  /api/sites/{siteId}/members
- *      → List members of a site. Membership lives only on
- *        `users/{uid}.sites[]` per
- *        [`dev/active/api-sprint/reference/membership-decision.md`](../../../../../../dev/active/api-sprint/reference/membership-decision.md);
- *        we resolve it by querying `users where sites array-contains {siteId}`,
- *        plus surfacing the site `owner` even if they're not in that array
- *        (an owner is always an effective member).
+ * GET  /api/sites/{siteId}/members — membership lives only on `users/{uid}.sites[]`
+ *      (dev/active/api-sprint/reference/membership-decision.md), so we query
+ *      `users where sites array-contains {siteId}` and additionally surface the
+ *      site `owner`, who is always an effective member.
  *
- * POST /api/sites/{siteId}/members  body `{uid, role}`
- *      → Add a member. Validates the user exists. If `role === 'admin'`,
- *        also adds siteId to `users/{uid}.sites[]` via `arrayUnion`. The
- *        per-site role is derived from global role + ownership at read
- *        time, so add-with-role is just sugar for the membership write.
+ * POST /api/sites/{siteId}/members  `{uid, role}` — adds siteId to
+ *      `users/{uid}.sites[]` via arrayUnion after validating the user exists.
+ *      Per-site role is derived from global role + ownership at read time, so
+ *      add-with-role is just sugar for that membership write. Idempotency-Key
+ *      required.
  *
- * Auth (both verbs): `requireSiteAuthAndScope(req, siteId, 'admin')`.
- *   - api key with `site=<siteId>:admin` scope
- *   - session / id-token where the caller is a site admin (per the
- *     dashboard's `isSiteAdmin` rule: superadmin OR admin-with-access)
- *
- * Idempotency: POST requires it.
+ * Auth (both verbs): `requireSiteAuthAndScope(req, siteId, 'admin')` — an api key
+ * with `site=<siteId>:admin`, or a session/id-token whose caller is a site admin
+ * (superadmin OR admin-with-access, matching the dashboard's `isSiteAdmin`).
  *
  * api-sprint wave 3 track 3B (users-api / site-members).
  */
@@ -59,14 +53,9 @@ interface UserDoc {
 }
 
 /**
- * Per-site role derivation. The api-sprint plan defines the per-site role
- * as: 'owner' if the user owns the site, else 'superadmin' if they're a
- * platform superadmin, else 'admin' if their global role is 'admin' AND
- * the siteId is in their `sites[]`, else 'member'.
- *
- * Owner-status is orthogonal to the standard global-role hierarchy — an
- * owner is always returned with role 'owner' so callers can identify the
- * site's owner without a separate read.
+ * Per-site role: 'owner' when they own the site, else 'superadmin', else 'admin'
+ * for a global admin, else 'member'. Owner is orthogonal to the global hierarchy
+ * so callers can identify a site's owner without a second read.
  */
 function derivePerSiteRole(
   user: { uid: string; role: string },
@@ -77,10 +66,6 @@ function derivePerSiteRole(
   if (user.role === 'admin') return 'admin';
   return 'member';
 }
-
-/* --------------------------------------------------------------------- */
-/*  GET — list members                                                   */
-/* --------------------------------------------------------------------- */
 
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'SITE_MEMBER_MANAGE',
@@ -172,10 +157,6 @@ export const GET = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* --------------------------------------------------------------------- */
-/*  POST — add member                                                    */
-/* --------------------------------------------------------------------- */
-
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'SITE_MEMBER_MANAGE',
   siteIdParam: 'path',
@@ -234,15 +215,10 @@ export const POST = authorizedSiteHandler<RouteParams>({
           sites: FieldValue.arrayUnion(siteId),
         });
 
-        // The per-site role is derived from global role at read time.
-        // The dashboard model treats `role: 'admin'` as the only way to
-        // produce a per-site `'admin'` view; since site membership is the
-        // only explicit write, an `admin` add-request is satisfied as
-        // long as the target's global role is already admin or
-        // superadmin. If the target is a `member`, we keep their global
-        // role unchanged — promoting member→admin is the explicit
-        // `/promote` endpoint, not an implicit side-effect of adding to
-        // a site.
+        // Per-site role is derived from global role at read time, and membership is
+        // the only explicit write, so an `admin` request is honored only when the
+        // target is already admin/superadmin. Promoting member→admin is the explicit
+        // /promote endpoint, never a side-effect of adding someone to a site.
         const targetGlobalRole =
           typeof userData.role === 'string' ? userData.role : 'member';
         const roleHonored =

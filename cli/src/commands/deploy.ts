@@ -1,24 +1,13 @@
 /**
- * `owlette deploy create | list | get | retry | cancel | uninstall | delete` —
- * classic agent-installer deploys.
+ * `owlette deploy create|list|get|retry|cancel|uninstall|delete` — classic
+ * agent-installer deploys over /api/sites/{siteId}/deployments.
  *
- * NOT to be confused with `owlette roost deploy`, which is the
- * content-addressed atomic deploy (see roost-deploy.ts). This noun group
- * drives the legacy installer push/uninstall workflow:
+ * NOT `owlette roost deploy`, which is the content-addressed atomic deploy
+ * (roost-deploy.ts).
  *
- *   create     POST   /api/sites/{siteId}/deployments
- *   list       GET    /api/sites/{siteId}/deployments
- *   get        GET    /api/sites/{siteId}/deployments/{deploymentId}
- *   retry      POST   /api/sites/{siteId}/deployments/{deploymentId}/retry
- *   cancel     POST   /api/sites/{siteId}/deployments/{deploymentId}/cancel
- *   uninstall  POST   /api/sites/{siteId}/deployments/{deploymentId}/uninstall
- *   delete     DELETE /api/sites/{siteId}/deployments/{deploymentId}
- *
- * Mutations carry an auto-generated `Idempotency-Key` so a retry on a
- * network blip replays the cached server response instead of double-
- * issuing commands. `--idempotency-key` lets the caller pin one.
- *
- * Public API Wave 2.6 CLI route handlers.
+ * Mutations auto-generate an `Idempotency-Key` so a retry after a network blip
+ * replays the cached response instead of double-issuing commands;
+ * `--idempotency-key` pins one.
  */
 
 import { Command } from 'commander';
@@ -67,10 +56,8 @@ export function registerDeployCommands(program: Command): void {
         'classic installer deploys — see `owlette roost deploy` for content-addressed deploys',
       );
 
-  // Overwrite any earlier description so the help text stays canonical
-  // regardless of registration order. The disambiguation in the help line
-  // is load-bearing — `owlette deploy` and `owlette roost deploy` are
-  // different surfaces.
+  // Re-set regardless of registration order: the help text must disambiguate
+  // `owlette deploy` from `owlette roost deploy`.
   deploy.description(
     'classic installer deploys — see `owlette roost deploy` for content-addressed deploys',
   );
@@ -84,8 +71,6 @@ export function registerDeployCommands(program: Command): void {
       if (idx >= 0) list.splice(idx, 1);
     }
   }
-
-  /* -------------------- create -------------------- */
 
   deploy
     .command('create')
@@ -201,8 +186,6 @@ export function registerDeployCommands(program: Command): void {
       );
     });
 
-  /* -------------------- list -------------------- */
-
   deploy
     .command('list')
     .description('list classic-installer deployments on a site')
@@ -271,8 +254,6 @@ export function registerDeployCommands(program: Command): void {
       }
     });
 
-  /* -------------------- get -------------------- */
-
   deploy
     .command('get <deploymentId>')
     .description('print one classic-installer deployment incl. per-target status')
@@ -304,8 +285,6 @@ export function registerDeployCommands(program: Command): void {
 
       process.stdout.write(formatDeploymentDetail(data));
     });
-
-  /* -------------------- retry -------------------- */
 
   deploy
     .command('retry <deploymentId>')
@@ -370,8 +349,6 @@ export function registerDeployCommands(program: Command): void {
         `owlette: retried ${data.retried ?? 0} target(s) on ${deploymentId} — status ${data.status}\n`,
       );
     });
-
-  /* -------------------- cancel -------------------- */
 
   deploy
     .command('cancel <deploymentId>')
@@ -450,8 +427,6 @@ export function registerDeployCommands(program: Command): void {
         `owlette: cancelled ${data.cancelled ?? 0} target(s) on ${deploymentId} — status ${data.status}\n`,
       );
     });
-
-  /* -------------------- uninstall -------------------- */
 
   deploy
     .command('uninstall <deploymentId>')
@@ -538,8 +513,6 @@ export function registerDeployCommands(program: Command): void {
       );
     });
 
-  /* -------------------- delete -------------------- */
-
   deploy
     .command('delete <deploymentId>')
     .description('delete a terminal deployment record (does not uninstall software)')
@@ -617,10 +590,6 @@ export function registerDeployCommands(program: Command): void {
     });
 }
 
-/* --------------------------------------------------------------------- */
-/*  formatters                                                           */
-/* --------------------------------------------------------------------- */
-
 function formatDeploymentDetail(d: DeploymentDetail): string {
   const out: string[] = [];
   out.push(`id              ${d.id}`);
@@ -645,10 +614,6 @@ function formatDeploymentDetail(d: DeploymentDetail): string {
   }
   return out.join('\n') + '\n';
 }
-
-/* --------------------------------------------------------------------- */
-/*  util                                                                 */
-/* --------------------------------------------------------------------- */
 
 function parseCsv(value: unknown): string[] {
   if (value === undefined || value === null) return [];

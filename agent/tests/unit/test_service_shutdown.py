@@ -4,17 +4,15 @@ Covers the three agent-side halves of the 2026-08-13 14:17 incident:
 
 * the desktop app was a child of the service, so NSSM's process-tree kill took
   the operator's UI down with the service (`build_detached_launch_command`);
-* NSSM's console Control-C never arrived, so nothing flushed `online: false`
-  and nothing was logged (`graceful_shutdown` + the SCM stop watcher);
+* NSSM's console Control-C never arrived, so nothing flushed `online: false` and
+  nothing was logged (`graceful_shutdown` + the SCM stop watcher);
+* the tray's connection badge lagged the real connection by ~25s because only
+  the main loop rewrote the status file (`_wire_connection_status_listener`).
 
-Both NSSM behaviours are gone in 3.0.0 — owlette-host terminates only the
-process it launched, and signals a stop by reporting STOP_PENDING, which is
-exactly what the watcher polls for. These assertions still hold the agent side
-of the contract: they are what stops a future change from going back to relying
-on a signal that may never arrive.
-* the tray's connection badge lagged the real connection by ~25s because the
-  status file was only rewritten by the main loop
-  (`_wire_connection_status_listener`).
+Both NSSM behaviours are gone in 3.0.0 — owlette-host terminates only the process
+it launched and signals a stop by reporting STOP_PENDING, exactly what the watcher
+polls for. These assertions still hold the agent side of that contract: they stop
+a future change from going back to relying on a signal that may never arrive.
 """
 
 import threading
@@ -26,16 +24,15 @@ import owlette_service
 import shared_utils
 
 
-# ─── the desktop app must not be in the service's process tree ──────────────
+# the desktop app must not be in the service's process tree
 
 class TestDetachedLaunchCommand:
     def test_hands_off_through_cmd_so_the_parent_link_dies(self):
         command = shared_utils.build_detached_launch_command(
             r'C:\ProgramData\Owlette\app\owlette-desktop.exe', ('--tray',))
 
-        # `cmd /c start` is the whole point: cmd exits immediately, so by the
-        # time anything walks the tree the app has no live parent to be found
-        # from.
+        # `cmd /c start` is the whole point: cmd exits immediately, so by the time
+        # anything walks the tree the app has no live parent to be found from.
         assert command.startswith('cmd.exe /c start ""')
         assert r'"C:\ProgramData\Owlette\app\owlette-desktop.exe"' in command
         assert command.endswith('"--tray"')
@@ -67,7 +64,7 @@ def test_the_service_no_longer_kills_the_desktop_app():
     assert not hasattr(owlette_service.OwletteService, 'terminate_tray_icon')
 
 
-# ─── graceful shutdown ──────────────────────────────────────────────────────
+# graceful shutdown
 
 class FakeFirebaseClient:
     """Records what a shutdown asked of the cloud client."""
@@ -186,7 +183,7 @@ class TestGracefulShutdown:
         assert service._status_writes == [False]
 
 
-# ─── the SCM stop watcher ───────────────────────────────────────────────────
+# the SCM stop watcher
 
 class TestScmStopWatcher:
     def test_reads_the_live_service_without_elevation(self):
@@ -255,7 +252,7 @@ class TestScmStopWatcher:
         assert owlette_service.SCM_STOP_POLL_INTERVAL <= 0.5
 
 
-# ─── the tray's connection badge ────────────────────────────────────────────
+# the tray's connection badge
 
 class FakeConnectionManager:
     def __init__(self):

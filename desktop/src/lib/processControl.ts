@@ -1,36 +1,21 @@
 /**
- * Stopping a process the way the service expects.
+ * Stopping a process the way the service expects. Kill and restart differ only in the marker
+ * written to `tmp/app_states.json`:
  *
- * Kill and restart are the same act with one deliberate difference, and the
- * difference is a single line in `tmp/app_states.json`:
+ * - **kill**: terminate, THEN write `KILLED`. The service treats the exit as intentional.
+ * - **restart**: write `RESTARTING` on BOTH sides of the kill. The service skips the crash alert,
+ *   screenshot and Cortex event, writes a `process_restarted` audit event, and relaunches within
+ *   one tick (`owlette_service.py:2598-2630`).
  *
- * - **kill** terminates the process and then writes a `KILLED` marker. The
- *   service reads that marker on its next tick, treats the exit as intentional,
- *   and neither logs a crash nor records anything.
- * - **restart** writes a `RESTARTING` marker on both sides of the kill. The
- *   service likewise skips the crash alert, the screenshot and the Cortex
- *   event, writes a `process_restarted` audit event because a human asked for
- *   this, and relaunches through its normal launch-mode path within one tick
- *   (`owlette_service.py:2598-2630`).
+ * The sides are deliberate. `KILLED` asserts the process is gone, so writing it early would lie
+ * whenever the kill fails. `RESTARTING` asserts only intent and needs both writes:
+ * *before*, because an exit the poller sees before the marker lands is reported as a crash;
+ * *after*, because closing takes seconds and every tick in that window writes `RUNNING` over the
+ * marker. Each half alone lost a race reproduced on a live agent.
  *
- * **The markers are written on different sides of the kill, on purpose.**
- * `KILLED` claims the process is gone, so writing it before the kill would be a
- * lie whenever the kill fails. `RESTARTING` claims only an intent, and it needs
- * to be on disk on *both* sides:
+ * Writing early means it can outlive a kill that never happened — {@link stopProcess} undoes that.
  *
- * - *Before*, because the service polls: an exit it sees before the marker
- *   lands is an exit it reports as a crash — alert, screenshot, Cortex event —
- *   for a restart the operator asked for.
- * - *After*, because closing a process is not instant, and every tick the
- *   service takes while it is still closing writes `RUNNING` over the marker.
- *   Both halves are needed; each one alone loses a race that was reproduced on
- *   a live agent.
- *
- * Writing it first does mean it can be written for a kill that then does not
- * happen, so that case is undone explicitly — see {@link stopProcess}.
- *
- * Both flows are purely local — no command is dispatched to the cloud — which
- * is exactly how the legacy GUI does it (`owlette_gui.py:1182-1303`).
+ * Both flows are purely local, no cloud command, matching `owlette_gui.py:1182-1303`.
  */
 
 import { terminatePid, type TerminateMethod } from '@/lib/ipc'
@@ -59,7 +44,7 @@ export interface StopResult {
   marker: ProcessMarker
 }
 
-/** Raised when there is nothing running to act on — a normal outcome, not a fault. */
+/** Nothing running to act on — a normal outcome, not a fault. */
 export class NoLiveInstanceError extends Error {
   constructor(processName: string) {
     super(`no running instance of ${processName} was found`)
@@ -68,7 +53,7 @@ export class NoLiveInstanceError extends Error {
 }
 
 export interface StopDeps {
-  /** Fresh read of `app_states.json` — never a cached copy; pids go stale fast. */
+  /** Must be a fresh read of `app_states.json`; pids go stale fast. */
   readStates: () => Promise<AppStates>
   /** Read-modify-write of `app_states.json`. */
   mutateStates: (transform: (states: AppStates) => AppStates) => Promise<AppStates>
@@ -82,15 +67,10 @@ function isIdentityMismatch(error: unknown): boolean {
 }
 
 /**
- * Terminate `pid`, trying each acceptable image in turn.
- *
- * The host refuses to terminate a pid whose image does not match what the
- * caller expected, which is the whole point of the check — but "what the
- * operator configured" and "what is actually running" legitimately differ when
- * the service adopted a process it did not launch. So the full path is offered
- * first and the bare file name second, mirroring `shared_utils.pid_matches_exe`.
- * Anything that is not an identity mismatch (access denied, a pid that will not
- * die) aborts immediately.
+ * Terminate `pid`, trying each acceptable image in turn: full path first, bare file name second,
+ * mirroring `shared_utils.pid_matches_exe`. The host's identity check is the point, but configured
+ * vs actually-running legitimately differ for adopted processes. Anything other than an identity
+ * mismatch (access denied, an unkillable pid) aborts immediately.
  */
 async function terminateAs(pid: number, images: string[]) {
   let lastError: unknown = new Error('no executable to identify the process by')
@@ -107,12 +87,7 @@ async function terminateAs(pid: number, images: string[]) {
   throw lastError
 }
 
-/**
- * Stop the live instance of `entry`, marking the exit as the operator's.
- *
- * See the module note for why a restart marks both sides of the kill and a kill
- * marks only the far side.
- */
+/** Stop the live instance of `entry`, marking the exit as the operator's. See the module note. */
 export async function stopProcess(
   entry: ProcessEntry,
   mode: StopMode,
@@ -135,19 +110,14 @@ export async function stopProcess(
     try {
       const result = await terminate(pid, images, name, mode)
 
-      // And again, now that the process really is gone. Closing one takes
-      // seconds — WM_CLOSE, a grace period, then a terminate — and every tick
-      // the service takes in that window writes `RUNNING` over the marker,
-      // because from where it stands the process is alive and well. Measured on
-      // a live agent: the marker was written, overwritten, and the exit was
-      // reported as a crash, screenshot and all.
+      // Again, now the process is really gone: closing takes seconds (WM_CLOSE, grace, terminate)
+      // and every service tick in that window writes `RUNNING` over the marker. Observed on a live
+      // agent — marker written, overwritten, exit reported as a crash with screenshot.
       await deps.mutateStates((current) => markRestarting(current, pid, entry.id))
       return result
     } catch (cause) {
-      // The kill did not happen — the pid was already gone, or would not die —
-      // so the marker is a claim about an exit that is not ours. Taking it back
-      // is best effort: if this write fails too, the original failure is still
-      // what the operator is told about.
+      // No kill happened, so the marker claims an exit that isn't ours. Best-effort rollback: if
+      // this write also fails, the original failure is still what the operator sees.
       await deps
         .mutateStates((current) => restoreState(current, pid, previous))
         .catch(() => undefined)
@@ -160,7 +130,7 @@ export async function stopProcess(
   return result
 }
 
-/** Terminate, and refuse to call a pid that was already gone a stop. */
+/** Terminate; a pid that was already gone does not count as a stop. */
 async function terminate(
   pid: number,
   images: string[],

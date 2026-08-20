@@ -1,10 +1,6 @@
 /**
- * Audit-log hash verification helpers for the web side.
- *
- * Mirrors the pure logic in `functions/src/lib/auditLogLogic.ts`. Keep
- * these two files byte-compatible — they hash the same canonical JSON
- * representation and share the sha-256-hex format + GENESIS_HASH
- * sentinel.
+ * Web-side audit-log hash verification, mirroring functions/src/lib/auditLogLogic.ts. The two
+ * must stay byte-compatible: same canonical JSON, same sha-256-hex format, same GENESIS_HASH.
  */
 import { createHash } from 'crypto';
 
@@ -48,20 +44,17 @@ export function computeChainHash(
 
 export interface RecordVerifyResult {
   ok: boolean;
-  /** True if hash field matches hash(previousHash | recordedAt | canonicalJson(event)) */
+  /** hash === sha256(previousHash | recordedAt | canonicalJson(event)) */
   hashValid: boolean;
-  /** Set when a predecessor record is also provided and its hash matches this record's previousHash. */
+  /** Set only when a predecessor was supplied and its hash matches this record's previousHash. */
   linkageValid?: boolean;
-  /** Set to true when previousHash === GENESIS_HASH (this is the site's first-ever record). */
+  /** previousHash === GENESIS_HASH — the site's first-ever record. */
   isGenesis: boolean;
   reason?: string;
 }
 
-/**
- * Verify a single record's internal integrity, optionally verifying its
- * linkage to a supplied predecessor. If no predecessor is provided and
- * the record is not the genesis record, linkage is NOT checked.
- */
+/** Internal integrity, plus linkage when a predecessor is supplied. Without one, a non-genesis
+ * record's linkage is NOT checked. */
 export function verifyRecord(
   record: AuditRecord,
   predecessor?: AuditRecord | null,

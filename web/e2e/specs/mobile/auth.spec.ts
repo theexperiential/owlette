@@ -1,19 +1,14 @@
 /**
- * Mobile — auth (login + register)
+ * Mobile — auth (login + register). Viewport / isMobile / hasTouch come from the
+ * `mobile-chromium` project, which owns every spec under specs/mobile/**.
  *
- * Viewport / isMobile / hasTouch come from the `mobile-chromium` project in
- * playwright.config.ts, which owns every spec under specs/mobile/**.
+ * responsive-acceptance.spec.ts measures both forms expanded; this drives them:
+ * a real email sign-in landing on /dashboard, and register's inline validation.
+ * Both are progressive forms whose fields mount only after email takes focus.
  *
- * `mobile/responsive-acceptance.spec.ts` measures both forms in their
- * expanded state. This spec completes them: a real email sign-in that has to
- * land on /dashboard, and the register form's inline validation path — both
- * progressive forms whose fields only mount after email takes focus, and
- * neither previously driven at 390px.
- *
- * Isolation: sign-in uses a dedicated user minted per run (never
- * `TEST_USERS.member`, whose token state is shared by every role fixture —
- * see the "fixtures corrupt" note in e2e/README.md), and the register test
- * stops at client-side validation, so no account is created.
+ * Isolation: sign-in mints a dedicated user per run (never `TEST_USERS.member`,
+ * whose token state is shared by every role fixture — see e2e/README.md), and
+ * the register test stops at client-side validation, so no account is created.
  */
 
 import { test, expect } from '@playwright/test';
@@ -28,8 +23,7 @@ test('email sign-in completes from the mobile login form', async ({ page }) => {
 
   await page.goto('/login');
 
-  // Progressive form: password + submit only mount once email takes focus.
-  // `fill()` focuses first, so filling email is what expands the form.
+  // Progressive form: password + submit mount on email focus, and `fill()` focuses.
   await expect(page.getByRole('button', { name: /continue with Google/i })).toBeVisible();
   await page.getByLabel(/^email$/i).fill(user.email);
 
@@ -48,8 +42,7 @@ test('email sign-in completes from the mobile login form', async ({ page }) => {
 test('register surfaces inline validation without leaving the viewport', async ({ page }) => {
   await page.goto('/register');
 
-  // Same progressive reveal as login — the name/password block expands on
-  // email focus.
+  // Same progressive reveal as login.
   await page.getByLabel(/^email$/i).fill(`mobile-register-${Date.now()}@e2e.test`);
   await expect(page.getByLabel(/first name/i)).toBeVisible();
 
@@ -60,13 +53,11 @@ test('register surfaces inline validation without leaving the viewport', async (
   await page.getByLabel(/terms/i).first().check();
   await assertNoHorizontalOverflow(page);
 
-  // Submit stays disabled until the Turnstile widget hands back a token (the
-  // config uses Cloudflare's always-pass test keys, so it self-solves).
+  // Submit stays disabled until Turnstile returns a token (test keys self-solve).
   const submit = page.getByRole('button', { name: /create account/i });
   await expect(submit).toBeEnabled({ timeout: 20_000 });
 
-  // Mismatch is caught client-side (register/page.tsx:107) — no account is
-  // created and the Turnstile token is not spent.
+  // Mismatch is caught client-side — no account, and the Turnstile token is unspent.
   await submit.click();
   await expect(page.getByText('passwords do not match')).toBeVisible();
 

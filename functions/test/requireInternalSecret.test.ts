@@ -1,26 +1,15 @@
 /**
- * Tests for the internal-only HTTPS Cloud Function auth helper.
- *
- * The helper is the only thing standing between the public emitWebhook /
- * quotaEnforce / telemetry HTTPS endpoints and the open internet, so its
- * fail-closed semantics matter:
- *
- *   - 503 when CORTEX_INTERNAL_SECRET is unset (operator misconfiguration)
- *   - 401 when the header is missing
- *   - 401 when the header length differs from the secret (timing-safe
- *     length check before the constant-time compare)
- *   - 401 when timing-safe compare fails
- *   - returns true (passes through) when the header matches the secret
+ * Internal-only HTTPS Cloud Function auth helper — the only thing between the public emitWebhook /
+ * quotaEnforce / telemetry endpoints and the open internet, so fail-closed semantics matter:
+ * 503 when CORTEX_INTERNAL_SECRET is unset, 401 on missing header / length mismatch / failed
+ * constant-time compare, true only on an exact match.
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { requireInternalSecret } from '../src/lib/requireInternalSecret';
 
-/* -------------------------------------------------------------------- */
-/*  Fake express-style req/res shims                                    */
-/* -------------------------------------------------------------------- */
-
+/* Fake express-style req/res shims */
 interface FakeRes {
   statusCode: number | null;
   body: unknown;
@@ -52,10 +41,6 @@ function fakeReq(headers: Record<string, string>) {
   } as unknown as Parameters<typeof requireInternalSecret>[0];
 }
 
-/* -------------------------------------------------------------------- */
-/*  env helpers                                                          */
-/* -------------------------------------------------------------------- */
-
 const ORIGINAL_SECRET = process.env.CORTEX_INTERNAL_SECRET;
 
 beforeEach(() => {
@@ -69,10 +54,6 @@ afterEach(() => {
     process.env.CORTEX_INTERNAL_SECRET = ORIGINAL_SECRET;
   }
 });
-
-/* -------------------------------------------------------------------- */
-/*  cases                                                               */
-/* -------------------------------------------------------------------- */
 
 describe('requireInternalSecret', () => {
   it('503 when CORTEX_INTERNAL_SECRET env is not set (operator config error)', () => {
@@ -102,7 +83,7 @@ describe('requireInternalSecret', () => {
 
   it('401 when supplied header length differs from secret (short-circuit before compare)', () => {
     process.env.CORTEX_INTERNAL_SECRET = 'abcdefgh12345678';
-    // Different length so timing-safe length check fails before bufferCompare.
+    // Different length, so the length check fails before bufferCompare.
     const req = fakeReq({ 'x-internal-secret': 'short' });
     const res = fakeRes();
     const ok = requireInternalSecret(
@@ -134,15 +115,12 @@ describe('requireInternalSecret', () => {
       res as unknown as Parameters<typeof requireInternalSecret>[1],
     );
     assert.equal(ok, true);
-    // No status / body should have been written.
     assert.equal(res.statusCode, null);
     assert.equal(res.body, undefined);
   });
 
   it('rejects empty string header even when secret is also empty string would mean misconfiguration (not_configured wins)', () => {
-    // CORTEX_INTERNAL_SECRET being empty string is treated as unset by the
-    // `if (!expected)` check — the env-var-missing path. This pins that
-    // a deploy with an accidentally-cleared secret returns 503, not 200.
+    // Empty string is unset per `if (!expected)`: an accidentally-cleared secret must 503, not 200.
     process.env.CORTEX_INTERNAL_SECRET = '';
     const req = fakeReq({ 'x-internal-secret': '' });
     const res = fakeRes();

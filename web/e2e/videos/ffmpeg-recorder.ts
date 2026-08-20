@@ -1,32 +1,22 @@
 /**
- * FfmpegRecorder — owns the lifecycle of an ffmpeg desktop-capture subprocess that
- * runs alongside a Playwright scene. Replaces Playwright's built-in `recordVideo`
- * (which is locked to 25fps VP8 and grabs frames opportunistically — fine for test
- * debugging, wrong for production tutorial video).
+ * FfmpegRecorder — lifecycle of an ffmpeg desktop-capture subprocess running
+ * alongside a Playwright scene. Playwright's `recordVideo` is 25fps VP8 with
+ * opportunistic frame grabs: fine for debugging, wrong for tutorial video.
  *
- * Lifecycle contract:
- *   1. start()  — spawns ffmpeg, awaits a "first frame written" signal (output file
- *                 grows past a header-only threshold), 5s timeout. After this we know
- *                 capture is live and the scene can safely begin.
- *   2. scene runs                                                  (caller's `try`)
- *   3. stop()   — writes `q\n` to ffmpeg's stdin so it can flush mp4 headers/moov
- *                 cleanly, then awaits the process exit with a 10s watchdog. If the
- *                 watchdog trips we kill the PROCESS TREE via `taskkill /F /T /PID`
- *                 — PID-targeted only, NEVER `/IM` (codebase rule, see
- *                 `.claude/.../memory/feedback_targeted_process_kill.md`).
- *   4. On success the .tmp.mp4 is renamed to the final path so a half-captured file
- *      never looks valid to downstream tools.
+ * start() spawns ffmpeg and waits for first-frame; stop() sends `q\n` so ffmpeg
+ * flushes the moov atom, then waits on exit behind a watchdog. If the watchdog
+ * trips, kill the PROCESS TREE by PID (`taskkill /F /T /PID`) — never `/IM`
+ * (codebase rule: feedback_targeted_process_kill.md). Success renames .tmp.mp4
+ * to the final path, so a half-captured file never looks valid downstream.
  *
- * Process-level shutdown hooks (SIGINT, beforeExit) are registered so that pressing
- * Ctrl+C mid-scene reaps the subprocess instead of leaving an orphan running and
- * occupying the GPU/encoder.
+ * SIGINT/SIGTERM/beforeExit hooks reap the subprocess, or Ctrl+C mid-scene
+ * orphans ffmpeg holding the encoder.
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 
-/** Active recorders, drained on process exit. */
 const ACTIVE: Set<FfmpegRecorder> = new Set();
 let shutdownHooksRegistered = false;
 function registerShutdownHooks(): void {
@@ -41,19 +31,15 @@ function registerShutdownHooks(): void {
 }
 
 export interface FfmpegRecorderOptions {
-  /** Final output path, e.g. `e2e/.output/videos/01-what-is-owlette.mp4`. */
+  /** Final output path. */
   outPath: string;
-  /**
-   * ffmpeg args EXCLUDING the trailing output filename — the recorder appends the
-   * temp file path. So pass everything from `-y` through the encoder/colorspace
-   * flags, but not the final filename argument.
-   */
+  /** ffmpeg args EXCLUDING the output filename — the recorder appends the temp path. */
   args: string[];
-  /** Watchdog for `q\n` shutdown, in ms (default 10_000). */
+  /** Watchdog for `q\n` shutdown, ms (default 10_000). */
   shutdownTimeoutMs?: number;
-  /** Timeout for first-frame readiness (stderr `frame=N` regex), in ms (default 8_000). */
+  /** First-frame readiness timeout, ms (default 8_000). */
   startTimeoutMs?: number;
-  /** Optional sink for ffmpeg stderr lines (debugging). Errors written here regardless. */
+  /** Optional sink for ffmpeg stderr lines. */
   onStderr?: (line: string) => void;
 }
 
@@ -69,10 +55,8 @@ export class FfmpegRecorder {
   }
 
   /**
-   * Spawn ffmpeg and resolve once the temp output file has grown past
-   * `firstFrameMinBytes`, indicating capture has actually started writing frames.
-   * Rejects on ffmpeg early-exit (bad args, missing capture device) or first-frame
-   * timeout.
+   * Spawn ffmpeg and resolve once frames are confirmed flowing. Rejects on early
+   * exit (bad args, missing capture device) or first-frame timeout.
    */
   async start(): Promise<void> {
     registerShutdownHooks();
@@ -105,12 +89,9 @@ export class FfmpegRecorder {
     const startTimeoutMs = this.opts.startTimeoutMs ?? 8_000;
     const startedAt = Date.now();
 
-    // First-frame readiness via stderr `frame= N` parsing, NOT output file size.
-    // With `-movflags +faststart` the muxer buffers frames until close so it can
-    // put the moov atom at the start of the file — the .mp4 stays near-empty
-    // (just the ftyp header) for the entire capture. The encoder's stats line
-    // (`frame=N fps=… q=…`) is the authoritative signal that frames are actually
-    // flowing through ddagrab → NVENC, irrespective of when bytes land on disk.
+    // Readiness comes from stderr `frame=N`, NOT file size: `+faststart` makes
+    // the muxer buffer until close so the .mp4 stays ftyp-header-sized for the
+    // whole capture. The stats line is the only signal frames are really flowing.
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       const finish = (err?: Error): void => {
@@ -143,10 +124,9 @@ export class FfmpegRecorder {
   }
 
   /**
-   * Send `q` to ffmpeg's stdin so it writes the trailing mp4 atoms (essential —
-   * without `q` the moov atom can be missing on some muxers and the file is
-   * unseekable in any NLE), await the process exit with a watchdog, and rename
-   * the temp file to the final path on success.
+   * Send `q` to stdin so ffmpeg writes the trailing mp4 atoms — without it some
+   * muxers omit the moov and the file is unseekable in any NLE. Then await exit
+   * behind a watchdog and rename temp → final.
    */
   async stop(): Promise<void> {
     if (!this.proc || this.stopped) return;
@@ -164,7 +144,6 @@ export class FfmpegRecorder {
     const result = await Promise.race([this.exitPromise!, watchdog]);
 
     if (result === 'timeout') {
-      // PID-targeted kill — never name-kill (codebase rule).
       this.killTreeSync();
       // Give the OS a moment to reap.
       await Promise.race([
@@ -182,14 +161,14 @@ export class FfmpegRecorder {
       );
     }
 
-    // Rename atomically — only on a successful capture does the final filename appear.
+    // Only a successful capture gets the final filename.
     if (existsSync(this.opts.outPath)) {
       try { unlinkSync(this.opts.outPath); } catch { /* overwrite */ }
     }
     renameSync(this.tmpPath, this.opts.outPath);
   }
 
-  /** Synchronous best-effort kill used from process-shutdown hooks. */
+  /** Sync best-effort kill, for shutdown hooks. */
   killNow(): void {
     if (!this.proc) return;
     this.killTreeSync();
@@ -199,8 +178,8 @@ export class FfmpegRecorder {
 
   private killTreeSync(): void {
     if (!this.proc || this.proc.pid === undefined) return;
-    // `taskkill /F /T /PID <pid>`  — PID-targeted, /T includes the whole tree.
-    // NEVER `/IM ffmpeg.exe` (would wipe unrelated ffmpeg processes).
+    // PID-targeted, /T for the tree. NEVER `/IM ffmpeg.exe` — that would wipe
+    // the operator's unrelated ffmpeg processes.
     spawnSync('taskkill', ['/F', '/T', '/PID', String(this.proc.pid)], {
       windowsHide: true,
       timeout: 3_000,
@@ -209,33 +188,28 @@ export class FfmpegRecorder {
 }
 
 export interface CaptureRegion {
-  /** Pixels from the left edge of the primary monitor. */
+  /** px from the primary monitor's left edge. */
   offsetX: number;
-  /** Pixels from the top edge of the primary monitor (== chrome UI height). */
+  /** px from the top edge (== chrome UI height). */
   offsetY: number;
-  /** Capture width — should be 1920 for the production pipeline. */
+  /** 1920 in the production pipeline. */
   width: number;
-  /** Capture height — should be 1080 for the production pipeline. */
+  /** 1080 in the production pipeline. */
   height: number;
 }
 
 /**
- * Production-quality args for the primary capture path on Windows: DXGI Desktop
- * Duplication (`ddagrab`) → BGRA → yuv420p → NVENC H.264 with offline-quality
- * tuning, GOP 60 (frame-accurate scrub in NLE), bt709 color metadata so the
- * editor doesn't inflate blacks, and `+faststart` so the moov atom is up front.
+ * Primary Windows capture path: DXGI Desktop Duplication (`ddagrab`) → BGRA →
+ * yuv420p → NVENC H.264. GOP 60 for frame-accurate NLE scrub, bt709 metadata so
+ * the editor doesn't inflate blacks, `+faststart` for a leading moov atom.
  *
- * The capture region is dynamic because Chromium ships chrome UI (tabs + address
- * bar) above the content viewport — `recordScene` measures that height at
- * runtime and passes it in, so ffmpeg captures only the page itself.
- *
- * Verified end-to-end on this dev machine by `web/scripts/probe-capture.mjs`.
+ * The region is dynamic because Chromium's tab + address bar sit above the
+ * viewport; `recordScene` measures that height at runtime.
  */
 export function buildPrimaryFfmpegArgs(region: CaptureRegion): string[] {
   return [
-    // `-loglevel warning` (vs `error`) + `-stats` so a stalled capture leaves a
-    // diagnostic trail in stderr — empty stderr was the failure-mode that made
-    // the first ddagrab-vs-kiosk regression hard to triage.
+    // `warning` (not `error`) + `-stats`: an empty stderr made the first
+    // ddagrab-vs-kiosk regression untriageable.
     '-y', '-hide_banner', '-loglevel', 'warning', '-stats',
     '-filter_complex',
     `ddagrab=output_idx=0:framerate=60:draw_mouse=0:offset_x=${region.offsetX}:offset_y=${region.offsetY}:video_size=${region.width}x${region.height},hwdownload,format=bgra,format=yuv420p`,
@@ -253,9 +227,8 @@ export function buildPrimaryFfmpegArgs(region: CaptureRegion): string[] {
 }
 
 /**
- * Fallback args (GDI → libx264) for machines without DXGI/NVENC. Slower, higher
- * CPU, capped framerate, but produces an equivalent-format mp4 file so
- * downstream tooling doesn't special-case anything.
+ * Fallback (GDI → libx264) for machines without DXGI/NVENC. Slower and CPU-heavy,
+ * but format-identical so downstream tooling needs no special case.
  */
 export function buildFallbackFfmpegArgs(region: CaptureRegion): string[] {
   return [
@@ -278,11 +251,9 @@ export function buildFallbackFfmpegArgs(region: CaptureRegion): string[] {
 }
 
 /**
- * Run ffprobe against a finished capture and throw if the file isn't a real 1920x1080
- * h264 yuv420p mp4 of approximately the expected duration. This is the third leg of
- * the synthesis's "write to temp + assert + rename" pattern — combined with the
- * temp→final rename in `FfmpegRecorder.stop`, a broken capture is never silently
- * left looking valid.
+ * ffprobe a finished capture; throw unless it's a 1920x1080 h264 yuv420p mp4 of
+ * roughly the expected duration. Third leg of write-temp → assert → rename, so a
+ * broken capture never sits around looking valid.
  */
 export function assertCaptureValid(
   outPath: string,

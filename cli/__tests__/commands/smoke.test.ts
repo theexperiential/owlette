@@ -1,19 +1,10 @@
 /**
- * Integration smoke test — exercises the cli against a real dev api.
+ * Integration smoke test against a real dev api, gated by `OWLETTE_CLI_SMOKE=1`
+ * (otherwise `describe.skip`, so `npm test` stays offline in CI). Also needs
+ * OWLETTE_CLI_SMOKE_API_URL, _TOKEN (`owk_test_*` / `owk_live_*`), and _SITE.
  *
- * Gated by `OWLETTE_CLI_SMOKE=1`. When unset, every assertion in this
- * file is skipped (via Jest's `describe.skip`), so `npm test` runs
- * fully offline in CI.
- *
- * When OWLETTE_CLI_SMOKE=1, these env vars are also required:
- *
- *   OWLETTE_CLI_SMOKE_API_URL   e.g. https://dev.owlette.app
- *   OWLETTE_CLI_SMOKE_TOKEN     a valid `owk_test_*` or `owk_live_*` key
- *   OWLETTE_CLI_SMOKE_SITE      a site id the token has read access to
- *
- * The smoke calls are read-only: `GET /api/whoami` and `GET /api/roosts?siteId=…`.
- * They never create or delete anything — safe to run against a shared
- * dev environment.
+ * Read-only (`GET /api/whoami`, `GET /api/roosts?siteId=…`) — safe against a
+ * shared dev environment.
  */
 
 const SMOKE_ENABLED = process.env.OWLETTE_CLI_SMOKE === '1';
@@ -65,8 +56,7 @@ maybeDescribe('smoke tests against dev api (OWLETTE_CLI_SMOKE=1)', () => {
 });
 
 if (!SMOKE_ENABLED) {
-  // Keep jest happy (every test file needs at least one test). This is
-  // the "test" when smoke is off — and documents the gate.
+  // Jest needs at least one test in the file when smoke is off.
   describe('smoke tests (skipped)', () => {
     it('requires OWLETTE_CLI_SMOKE=1 to run', () => {
       expect(SMOKE_ENABLED).toBe(false);

@@ -31,10 +31,9 @@ import {
 } from '@/lib/talons/validation';
 
 /**
- * Contract tests for the shared talon validator. The client editor and the
- * server store both run this module, so every rule locked in here is a rule
- * the two surfaces agree on — divergence would let the editor accept a talon
- * the API rejects (or worse, the reverse).
+ * Contract tests for the shared talon validator. The client editor and the server store both run
+ * it, so every rule here is one both surfaces agree on — divergence lets the editor accept a talon
+ * the API rejects, or the reverse.
  */
 
 function expectOk(result: TalonValidationResult): ValidatedTalonInput {
@@ -590,8 +589,7 @@ describe('validateTalonInput — outputs', () => {
   it.each([undefined, false])(
     'normalizes an unset hoot opt-in away (%p)',
     (allowActions) => {
-      // `false` IS the default, so it must not persist as a second
-      // representation of "hoot only looks".
+      // `false` IS the default; it must not persist as a second encoding of "hoot only looks".
       expect(
         expectOk(withOutputs([{ type: 'cortex', directive: 'look', allowActions }])).outputs[0],
       ).toEqual({ type: 'cortex', directive: 'look' });
@@ -617,8 +615,8 @@ describe('validateTalonInput — outputs', () => {
   it.each(TALON_COMMAND_TYPES)(
     'rejects command type %s with no process target',
     (commandType) => {
-      // Without a target the agent resolves `<unspecified>` and every run
-      // fails, until the tenth consecutive failure auto-disables the talon.
+      // Without a target the agent resolves `<unspecified>`; every run fails until the tenth
+      // consecutive failure auto-disables the talon.
       const error = errorFor(
         withOutputs([{ type: 'command', commandType }]),
         'outputs[0].processId',
@@ -736,11 +734,7 @@ describe('validateTalonInput — error accumulation', () => {
   });
 });
 
-/**
- * Every rejection path this module has, in one list. The message guards below
- * sweep it — a new rule that ships nerd-speak fails here rather than in front
- * of a user.
- */
+/** Every rejection path, swept by the message guards below so nerd-speak fails here, not on a user. */
 const EVERY_REJECTION: unknown[] = [
   'not an object',
   {},
@@ -822,7 +816,6 @@ describe('validateTalonInput — human-readable messages', () => {
   it('never leaks a field path, backtick, or index notation into a message', () => {
     for (const input of EVERY_REJECTION) {
       for (const { field, message } of expectErrors(validateTalonInput(input))) {
-        // The offending value is reported alongside so a failure names the rule.
         expect({ field, message, readable: !/[`[\]]/.test(message) }).toEqual({
           field,
           message,
@@ -919,7 +912,6 @@ describe('validateTalonInput — human-readable messages', () => {
     const result = validateTalonInput(
       validTalon({ outputs: [{ type: 'email' }, { type: 'webhook', url: 'nope' }] }),
     );
-    // The path lives here, not in the prose the user reads.
     expect(errorFor(result, 'outputs[1].url')).toEqual({
       field: 'outputs[1].url',
       code: 'invalid_field',
@@ -947,8 +939,7 @@ describe('talon catalogs and limits', () => {
   });
 
   it('includes every display event registered in DISPLAY_EVENT_ROUTING', () => {
-    // Drift guard: a new `display_*` event that never lands here can never be
-    // subscribed to by a talon.
+    // Drift guard: a `display_*` event missing here can never be subscribed to by a talon.
     for (const key of Object.keys(DISPLAY_EVENT_ROUTING)) {
       expect({ key, listed: TALON_EVENT_TYPES.includes(key as (typeof TALON_EVENT_TYPES)[number]) }).toEqual({
         key,
@@ -962,9 +953,8 @@ describe('talon catalogs and limits', () => {
       [
         'process_crash',
         'process_start_failed',
-        // Both land through the dispatch taps wired in task 2.3 —
-        // `exe_missing` at /api/agent/alert, `process_restarted` through the
-        // `onTalonLogEventCreated` firestore trigger.
+        // `exe_missing` taps /api/agent/alert; `process_restarted` the `onTalonLogEventCreated`
+        // firestore trigger.
         'process_restarted',
         'exe_missing',
         'machine_offline',

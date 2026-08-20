@@ -1,23 +1,12 @@
 /**
- * Dispatch — reboot flow (D2.1)
+ * Dispatch — reboot flow (D2.1): click reboot -> confirm -> command doc written
+ * -> 30s countdown pill. Tick / lockout / revert are E1.x.
  *
- * Per the plan: click reboot → confirm dialog → Firestore command doc
- * written → 30s countdown pill appears. No time-travel here (E1.x
- * covers the tick / lockout / revert behavior).
+ * Contract (useFirestore.ts::restartMachine): POST the command via the API, which
+ * lands a `reboot_machine` entry in `.../commands/pending`; the countdown itself
+ * is optimistic client state until the agent writes back.
  *
- * Contract (from useFirestore.ts::restartMachine):
- *   1. `sendMachineCommand(...)` writes to
- *      `sites/{siteId}/machines/{machineId}/commands/pending` at key
- *      `reboot_machine_{Date.now()}` with
- *      `{ type: 'reboot_machine', status: 'pending', timestamp: serverTimestamp() }`.
- *   2. `updateDoc` on the machine status doc sets
- *      `{ rebootScheduledAt: now+30s (unix seconds), configChangeFlag: true }` —
- *      the configChangeFlag is REQUIRED by firestore.rules for dashboard
- *      writes to pass (silent reject otherwise).
- *
- * Admin role is used because MachineContextMenu's reboot item is
- * `isSiteAdmin`-gated (per B3.2 — a real production bug was fixed
- * there to enforce this). Admin is on site-A.
+ * Admin role because the context-menu item is `isSiteAdmin`-gated (B3.2).
  */
 
 import { test, expect } from '@playwright/test';
@@ -45,40 +34,29 @@ test.beforeEach(async () => {
 test('admin can dispatch restart — command written + rebootScheduledAt populated + countdown pill renders', async ({ page }) => {
   await page.goto('/dashboard');
 
-  // Open the machine's context menu and pick "restart machine".
   const card = page.getByTestId('machine-card').filter({ hasText: MACHINE_ID });
   await expect(card).toBeVisible();
   await card.getByTestId('machine-context-menu-trigger').click();
 
-  // shadcn DropdownMenuContent portals out — grab it via role.
+  // DropdownMenuContent portals out; reach it by role
   const menu = page.getByRole('menu');
   await menu.getByTestId('machine-context-menu-reboot').click();
 
-  // Confirm dialog — title matches `restart {machineName}?` where machineName
-  // defaults to the raw machineId when no displayName is set.
+  // machineName falls back to the raw machineId when no displayName is set
   const confirmDialog = page.getByRole('dialog', { name: new RegExp(`restart ${MACHINE_ID}\\?`, 'i') });
   await expect(confirmDialog).toBeVisible();
 
   await confirmDialog.getByRole('button', { name: /^restart$/i }).click();
 
-  // The confirm dialog stays open with "sending..." state until BOTH
-  // Firestore writes in Promise.all resolve. Waiting for it to close is
-  // the most reliable signal that the dispatch completed — without it,
-  // subsequent Admin SDK reads race ahead of the client writes.
+  // The dialog only closes once both Firestore writes resolve; without this wait
+  // the Admin SDK reads below race the client writes.
   await expect(page.getByText('Restart command sent to', { exact: false })).toBeVisible({ timeout: 10_000 });
 
-  // UI: the cancel-countdown pill replaces the healthy status pill once the
-  // snapshot listener picks up the write (rebootScheduledAt > now triggers
-  // hasUpcomingRestart). admin role renders the cancel variant (has testid);
-  // member would render a text-only badge with no testid (covered in B3.2).
+  // rebootScheduledAt > now flips the status pill to the countdown. Only admin
+  // gets the cancel variant with a testid; member's text-only badge is B3.2.
   await expect(card.getByTestId('machine-status-cancel-pill')).toBeVisible({ timeout: 5_000 });
 
-  // Admin SDK read-through — both writes happened.
   const db = getAdminDb();
-  // rebootScheduledAt = Math.floor(Date.now()/1000) + 30 — allow a few
-  // seconds of drift between the client's clock and our test-side `before`.
-
-  // The pending commands doc has exactly one reboot_machine_* entry.
   const pendingSnap = await db
     .collection('sites').doc(SITE_ID)
     .collection('machines').doc(MACHINE_ID)

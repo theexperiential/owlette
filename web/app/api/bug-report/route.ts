@@ -8,18 +8,9 @@ import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@
 import { apiError } from '@/lib/apiErrorResponse';
 
 /**
- * POST /api/bug-report
- *
- * User-authenticated endpoint for submitting bug reports and feature requests.
- * Writes to the top-level `bug_reports` Firestore collection and sends an
- * email notification to ADMIN_EMAIL.
- *
- * Request body:
- * - title: string (max 200 chars)
- * - category: 'bug' | 'feature_request' | 'other' | 'compliment' | 'rant'
- * - description: string (max 5000 chars)
- * - browserUA: string
- * - pageUrl: string
+ * POST /api/bug-report — writes the top-level `bug_reports` doc and emails
+ * ADMIN_EMAIL. Body: title (<=200), category, description (<=5000), browserUA,
+ * pageUrl.
  */
 
 const VALID_CATEGORIES = ['bug', 'feature_request', 'other', 'compliment', 'rant'] as const;
@@ -75,7 +66,7 @@ function buildBugReportEmail(
 export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
-      // Auth: try session first, then Bearer token (supports both web users and agents)
+      // session first, then Bearer — web users and agents both post here
       let userId: string;
       try {
         userId = await requireSession(request);
@@ -96,7 +87,6 @@ export const POST = withRateLimit(
       const body = await request.json();
       const { title, category, description, browserUA, pageUrl } = body;
 
-      // Validate required fields
       if (!title || typeof title !== 'string' || title.trim().length === 0) {
         return NextResponse.json({ error: 'Title is required' }, { status: 400 });
       }
@@ -117,12 +107,12 @@ export const POST = withRateLimit(
         return NextResponse.json({ error: `Description must be ${maxDescLength} characters or less` }, { status: 400 });
       }
 
-      // Detect source: agent submissions use "Owlette Agent" as browserUA
+      // agents identify themselves via browserUA
       const ua = typeof browserUA === 'string' ? browserUA.slice(0, 500) : '';
       const isAgent = ua.startsWith('Owlette Agent');
       const source = isAgent ? 'agent' : 'web';
 
-      // Look up user email (agents don't have one — use browserUA as identifier)
+      // agents have no email; browserUA identifies them instead
       let userEmail = '';
       if (!isAgent) {
         try {
@@ -130,7 +120,7 @@ export const POST = withRateLimit(
           const userRecord = await adminAuth.getUser(userId);
           userEmail = userRecord.email || '';
         } catch {
-          // Non-critical — proceed without email
+          // non-critical
         }
       }
       const fromLabel = userEmail || (isAgent ? ua : userId);
@@ -154,7 +144,7 @@ export const POST = withRateLimit(
 
       console.log(`[bug-report] Submitted by ${fromLabel}: ${title.trim()}`);
 
-      // Send email notification to admin (non-blocking)
+      // non-blocking
       const resendClient = getResend();
       if (resendClient && ADMIN_EMAIL) {
         const categoryLabel = CATEGORY_LABELS[category] || category;

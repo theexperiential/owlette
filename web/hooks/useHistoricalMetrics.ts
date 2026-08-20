@@ -1,12 +1,8 @@
 'use client';
 
 /**
- * useHistoricalMetrics Hook
+ * Historical metrics for one machine, for MetricsDetailPanel's Day/Week/Month/Year/All charts.
  *
- * Fetches historical metrics data from Firestore for a specific machine.
- * Used by MetricsDetailPanel to display charts with Day/Week/Month/Year/All ranges.
- *
- * Data structure in Firestore:
  * sites/{siteId}/machines/{machineId}/metrics_history/{YYYY-MM-DD}
  *   samples: [{ t, c, m, d, g, ct, gt }, ...]
  *   meta: { lastSample, sampleCount, resolution }
@@ -25,68 +21,51 @@ import {
 import { downsampleTimeUniform, insertGapMarkers } from '@/lib/metricsDownsample';
 import type { TimeRange } from '@/components/charts';
 
-/**
- * Per-NIC sample in history (abbreviated keys)
- */
 interface NicSample {
   i: string;   // interface name
   tx: number;  // TX bytes/sec
   rx: number;  // RX bytes/sec
-  tu: number;  // TX utilization % of link speed
-  ru: number;  // RX utilization % of link speed
+  tu: number;  // TX % of link speed
+  ru: number;  // RX % of link speed
 }
 
-/**
- * Per-disk sample in history (abbreviated keys)
- */
 interface DiskSample {
-  i: string;   // disk id (e.g. "C:", "L:")
+  i: string;   // disk id, e.g. "C:"
   p: number;   // usage percent
 }
 
-/**
- * Per-GPU sample in history (abbreviated keys)
- */
 interface GpuSample {
-  i: string;   // gpu id (e.g. "GPU 0")
+  i: string;   // gpu id, e.g. "GPU 0"
   u: number;   // usage percent
-  t?: number;  // temperature (optional)
+  t?: number;  // temperature
 }
 
-/**
- * Per-volume disk IO sample in history (abbreviated keys)
- */
 interface DiskIOSample {
-  i: string;   // volume id (e.g. "C:", "L:")
+  i: string;   // volume id, e.g. "C:"
   rb: number;  // read bytes/sec
   wb: number;  // write bytes/sec
   bu: number;  // busy %
-  mb?: number; // max bytes/sec (denominator for read/write %-of-bandwidth chart). Optional for back-compat with older samples.
+  mb?: number; // max bytes/sec — %-of-bandwidth denominator; absent on older samples
 }
 
-/**
- * Raw sample from Firestore (abbreviated keys)
- */
+/** Raw Firestore sample; abbreviated keys. */
 export interface MetricsSample {
-  t: number;   // timestamp (unix seconds)
+  t: number;   // unix SECONDS
   c: number;   // cpu percent
   m: number;   // memory percent
   d: number;   // disk percent
-  g?: number;  // gpu percent (optional)
-  ct?: number; // cpu temperature (optional)
-  gt?: number; // gpu temperature (optional)
-  n?: NicSample[]; // per-NIC network metrics (optional)
-  ds?: DiskSample[]; // per-disk metrics (optional)
-  gs?: GpuSample[]; // per-GPU metrics (optional)
-  dios?: DiskIOSample[]; // per-volume disk IO (optional)
+  g?: number;  // gpu percent
+  ct?: number; // cpu temperature
+  gt?: number; // gpu temperature
+  n?: NicSample[];
+  ds?: DiskSample[];
+  gs?: GpuSample[];
+  dios?: DiskIOSample[];
 }
 
-/**
- * Chart-ready data point (expanded keys, millisecond timestamps)
- * Network fields are dynamic: e.g., Ethernet_tx, Ethernet_rx, Ethernet_tx_util, Ethernet_rx_util
- */
+/** Chart-ready point. Network keys are dynamic, e.g. Ethernet_tx / Ethernet_rx_util. */
 export interface ChartDataPoint {
-  time: number;     // timestamp in milliseconds
+  time: number;     // unix MILLISECONDS
   cpu: number | null;
   memory: number | null;
   disk: number | null;
@@ -103,9 +82,6 @@ interface UseHistoricalMetricsResult {
   refetch: () => void;
 }
 
-/**
- * Calculate the start date for a time range
- */
 function getStartDate(range: TimeRange): Date {
   const now = new Date();
 
@@ -139,9 +115,7 @@ function chunkArray<T>(items: T[], chunkSize: number): T[][] {
   return chunks;
 }
 
-/**
- * Get list of date bucket IDs to query (YYYY-MM-DD format).
- */
+/** Bucket IDs (YYYY-MM-DD) covering [start, end]. */
 function getBucketIds(start: Date, end: Date): string[] {
   const ids: string[] = [];
   const current = new Date(start);
@@ -155,11 +129,7 @@ function getBucketIds(start: Date, end: Date): string[] {
   return ids;
 }
 
-/**
- * All-null point of the chart's shape, used by insertGapMarkers to break the
- * line across offline periods. Dynamic per-NIC/per-disk keys are simply absent,
- * which Recharts treats the same as null.
- */
+/** All-null point for insertGapMarkers to break the line across offline periods. */
 function makeGapPoint(time: number): ChartDataPoint {
   return {
     time,
@@ -172,12 +142,9 @@ function makeGapPoint(time: number): ChartDataPoint {
   };
 }
 
-/**
- * Maximum data points to display per time range
- * Balances chart performance with data density
- */
+/** Display cap per range — chart performance vs data density. */
 const MAX_POINTS: Record<TimeRange, number> = {
-  '1h': 120,  // Show all points for 1 hour (no downsampling)
+  '1h': 120,  // all points, no downsampling
   '1d': 200,
   '1w': 300,
   '1m': 400,
@@ -210,9 +177,7 @@ export function useHistoricalMetrics(
       return;
     }
     if (!siteId || !machineId) {
-      // Params not ready — stay in loading state (parent is still resolving).
-      // Flipping to loading=false here caused a "no data" flash before the
-      // real fetch kicked in.
+      // Params not ready. Flipping loading=false here caused a "no data" flash pre-fetch.
       setLoading(true);
       setData(null);
       return;
@@ -222,13 +187,11 @@ export function useHistoricalMetrics(
     setError(null);
 
     try {
-      // Calculate date range
       const now = new Date();
       const startDate = getStartDate(timeRange);
       const startTimestamp = Math.floor(startDate.getTime() / 1000);
       const endTimestamp = Math.floor(now.getTime() / 1000);
 
-      // Get bucket IDs to query.
       const bucketIds = getBucketIds(startDate, now);
 
       const historyRef = collection(
@@ -247,10 +210,9 @@ export function useHistoricalMetrics(
       const fromHourId = formatHourBucketId(startDate);
       const toHourId = formatHourBucketId(now);
 
-      // Day buckets are sparse enough to fetch by exact IDs for normal ranges,
-      // avoiding the old unbounded collection read and also avoiding reads of
-      // interleaved hour-bucket docs. Very large "all" windows use a bounded
-      // documentId range instead of issuing hundreds of `in` queries.
+      // Exact-ID fetch for normal ranges: no unbounded collection read, and no reads of
+      // interleaved hour buckets. Huge "all" windows use a documentId range instead of
+      // hundreds of `in` queries.
       if (bucketIds.length > 0 && bucketIds.length <= FIRESTORE_IN_LIMIT * MAX_DAY_BUCKET_IN_QUERIES) {
         for (const bucketChunk of chunkArray(bucketIds, FIRESTORE_IN_LIMIT)) {
           const daySnap = await getDocs(query(historyRef, where(documentId(), 'in', bucketChunk)));
@@ -274,8 +236,8 @@ export function useHistoricalMetrics(
         });
       }
 
-      // Wave 3B stores hourly buckets as YYYY-MM-DD-HH. Query that shape too so
-      // migrated machines render without falling back to a collection scan.
+      // Hourly buckets are YYYY-MM-DD-HH; query that shape too so migrated machines render
+      // without a collection scan.
       const hourSnap = await getDocs(query(
         historyRef,
         where(documentId(), '>=', fromHourId),
@@ -298,11 +260,10 @@ export function useHistoricalMetrics(
         const docData = doc.data();
         const samples = docData.samples || [];
 
-        // Filter samples within time range and convert to chart format
         for (const sample of samples as MetricsSample[]) {
           if (sample.t >= startTimestamp && sample.t <= endTimestamp) {
             const point: ChartDataPoint = {
-              time: sample.t * 1000, // Convert to milliseconds
+              time: sample.t * 1000, // seconds → ms
               cpu: sample.c,
               memory: sample.m,
               disk: sample.d,
@@ -311,7 +272,6 @@ export function useHistoricalMetrics(
               gpuTemp: sample.gt,
             };
 
-            // Expand per-NIC network data into flat chart keys
             if (sample.n) {
               for (const nic of sample.n) {
                 point[`${nic.i}_tx`] = nic.tx;
@@ -321,14 +281,12 @@ export function useHistoricalMetrics(
               }
             }
 
-            // Expand per-disk data into flat chart keys
             if (sample.ds) {
               for (const disk of sample.ds) {
                 point[`${disk.i}_pct`] = disk.p;
               }
             }
 
-            // Expand per-GPU data into flat chart keys
             if (sample.gs) {
               for (const gpu of sample.gs) {
                 point[`${gpu.i}_usage`] = gpu.u;
@@ -336,17 +294,10 @@ export function useHistoricalMetrics(
               }
             }
 
-            // Expand per-volume disk IO into flat chart keys.
-            //
-            // Chart lines use % of the volume's max bandwidth (mb / "maxBps")
-            // so they share the 0-100 axis with the other metrics — agent
-            // ships a hardware-class estimate that ratchets up on observed
-            // peaks. Raw bytes/sec (`_io_read` / `_io_write`) ride alongside
-            // on the hidden axis so the tooltip and stats cards can display
-            // human-readable MB/KB/GB values (mirrors the NIC `_tx` / `_rx`
-            // vs `_tx_util` / `_rx_util` pairing). Drive-letter filter: only
-            // `^[A-Z]:$` shapes — older samples may still contain
-            // `HarddiskVolumeN` raw partitions; skip them.
+            // Lines plot % of the volume's max bandwidth (`mb`, a hardware-class estimate that
+            // ratchets up on observed peaks) so they share the 0-100 axis. Raw bytes/sec ride
+            // alongside on the hidden axis for human-readable tooltips — same pairing as NIC
+            // `_tx` vs `_tx_util`. Drive-letter filter drops older `HarddiskVolumeN` samples.
             if (sample.dios) {
               for (const dio of sample.dios) {
                 if (!/^[A-Z]:$/.test(dio.i)) continue;
@@ -356,22 +307,18 @@ export function useHistoricalMetrics(
                   point[`${dio.i}_io_read_pct`] = Math.min(100, (dio.rb / dio.mb) * 100);
                   point[`${dio.i}_io_write_pct`] = Math.min(100, (dio.wb / dio.mb) * 100);
                 }
-                // busy% stays as-is — already a percentage from PercentDiskTime.
+                // Already a percentage (PercentDiskTime).
                 point[`${dio.i}_io_busy`] = dio.bu;
               }
             }
 
             allSamples.push(point);
 
-            // Memory guard for large ranges. MUST be time-uniform over the
-            // full window: buckets stream oldest-first, so an index-stepped
-            // trim here re-thins the oldest data on every pass while new
-            // samples arrive at full density — that recency bias is what made
-            // month/year charts render only their back half. Slot sampling is
-            // idempotent for already-trimmed regions, so old data survives any
-            // number of passes. For 'all', startDate is epoch 0 — anchor the
-            // window at the earliest sample instead (stable across passes
-            // because buckets arrive in chronological order).
+            // Memory guard. MUST be time-uniform over the full window: buckets stream
+            // oldest-first, so an index-stepped trim re-thins old data every pass while new
+            // samples arrive at full density — that recency bias made month/year charts render
+            // only their back half. Slot sampling is idempotent, so old data survives repeats.
+            // For 'all', startDate is epoch 0, so anchor on the earliest sample instead.
             if (allSamples.length > MAX_FETCHED_SAMPLES * 2) {
               allSamples.sort((a, b) => a.time - b.time);
               const domainStart =
@@ -386,11 +333,9 @@ export function useHistoricalMetrics(
         }
       }
 
-      // Sort by timestamp
       allSamples.sort((a, b) => a.time - b.time);
 
-      // Downsample for display — time-uniform over the same window the chart's
-      // X-axis renders, so every part of the range is represented equally.
+      // Time-uniform over the same window the X-axis renders, so no part of the range is favoured.
       const maxPoints = MAX_POINTS[timeRange];
       const domainStart =
         timeRange === 'all' && allSamples.length > 0
@@ -413,9 +358,8 @@ export function useHistoricalMetrics(
     fetchData();
   }, [fetchData]);
 
-  // Refetch when the tab becomes visible again, so the chart's "now" boundary
-  // doesn't stay frozen on the timestamp captured at initial mount. Gated on
-  // a 30s staleness check to avoid refetch spam on quick tab flips.
+  // Refetch on tab-visible so the chart's "now" boundary doesn't stay frozen at mount time;
+  // 30s staleness gate avoids refetch spam on quick tab flips.
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === 'visible' && Date.now() - lastFetchRef.current > 30_000) {

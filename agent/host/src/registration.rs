@@ -1,12 +1,11 @@
 //! Registering, removing and controlling the service.
 //!
-//! Everything `install.bat` used to drive through `nssm set` lives here, in one
-//! place, so the registration a machine ends up with is a property of this
-//! binary rather than of whichever batch file last ran. `install` is the
-//! migration path too: it stops and removes whatever `OwletteService` is
-//! already there — an NSSM registration or an older host — and creates the new
-//! one. Nothing under `%ProgramData%\Owlette` is touched, so config, tokens,
-//! logs and cache survive by construction.
+//! Everything `install.bat` used to drive through `nssm set` lives here, so the
+//! registration a machine ends up with is a property of this binary rather than of
+//! whichever batch file last ran. `install` is the migration path too: it stops and
+//! removes whatever `OwletteService` is already there (an NSSM registration or an older
+//! host) and creates the new one. Nothing under `%ProgramData%\Owlette` is touched, so
+//! config, tokens, logs and cache survive by construction.
 
 use std::ffi::{OsStr, OsString};
 use std::process::ExitCode;
@@ -34,9 +33,8 @@ const ERROR_SERVICE_EXISTS: i32 = 1073;
 /// a terminate with 5 s to take effect) with room to spare.
 const STOP_WAIT: Duration = Duration::from_secs(45);
 
-/// How long a deleted service is given to disappear from the SCM, and a new one
-/// to become creatable. Both are bounded by other processes' open handles —
-/// an open Services.msc is the usual culprit.
+/// How long a deleted service is given to disappear from the SCM, and a new one to become
+/// creatable. Both bounded by other processes' open handles — usually an open Services.msc.
 const DELETE_WAIT: Duration = Duration::from_secs(30);
 
 /// How long `start` waits for RUNNING before reporting failure.
@@ -65,8 +63,7 @@ pub fn install() -> Result<(), String> {
     name: OsString::from(SERVICE_NAME),
     display_name: OsString::from(DISPLAY_NAME),
     service_type: ServiceType::OWN_PROCESS,
-    // Automatic, and deliberately NOT delayed — see set_delayed_auto_start
-    // below.
+    // Automatic, and deliberately NOT delayed — see set_delayed_auto_start below.
     start_type: ServiceStartType::AutoStart,
     error_control: ServiceErrorControl::Normal,
     executable_path: exe.clone(),
@@ -96,17 +93,16 @@ pub fn install() -> Result<(), String> {
     .set_description(DESCRIPTION)
     .map_err(|error| format!("could not set the service description: {error}"))?;
 
-  // Explicitly OFF rather than merely unset. The agent gates on real network
-  // readiness in process, so the SCM's blind delayed-start timer (up to 120 s)
-  // only postpones monitoring for nothing — and machines deployed with the old
-  // value of 1 keep the flag through an upgrade unless it is written down as 0.
+  // Explicitly OFF rather than merely unset. The agent gates on real network readiness in
+  // process, so the SCM's blind delayed-start timer (up to 120 s) only postpones monitoring
+  // — and machines deployed with the old value of 1 keep it unless it is written down as 0.
   service
     .set_delayed_auto_start(false)
     .map_err(|error| format!("could not clear delayed auto-start: {error}"))?;
 
-  // Defense in depth, and a genuinely new capability: NSSM's registration had
-  // no SCM failure actions at all, so a host that died outright stayed dead.
-  // These only fire if THIS process exits without reporting a clean stop.
+  // New capability as well as defense in depth: NSSM's registration had no SCM failure
+  // actions, so a host that died outright stayed dead. These fire only if THIS process
+  // exits without reporting a clean stop.
   service
     .update_failure_actions(failure_actions())
     .map_err(|error| format!("could not set the service failure actions: {error}"))?;
@@ -162,9 +158,8 @@ pub fn start() -> Result<(), String> {
 
 /// Stop the service and wait for it to reach STOPPED.
 ///
-/// A service that is already stopped is a success, not an error: callers
-/// (`configure_site.py --leave`, `install.bat`) ask for a stop to guarantee a
-/// state, not to perform an action.
+/// Already-stopped is success: callers (`configure_site.py --leave`, `install.bat`) ask
+/// for a stop to guarantee a state, not to perform an action.
 pub fn stop() -> Result<(), String> {
   let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
     .map_err(|error| connect_error(&error))?;
@@ -181,9 +176,8 @@ pub fn stop() -> Result<(), String> {
 
 /// Print what the SCM knows about the service.
 ///
-/// Exit code: 0 running, 3 installed but not running, 4 not installed. The
-/// registered image is printed too, which is how an upgrade can be checked to
-/// have actually migrated off NSSM.
+/// Exit code: 0 running, 3 installed but not running, 4 not installed. The registered
+/// image is printed too, which is how an upgrade is checked to have migrated off NSSM.
 pub fn status() -> ExitCode {
   let manager = match ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT) {
     Ok(manager) => manager,
@@ -359,9 +353,8 @@ fn create_with_retry(
   }
 }
 
-/// Restart twice quickly, then back off to a minute, and forget the failures
-/// after a day. The same shape as the agent's own crash-loop backoff, one level
-/// up: this is the SCM catching a host that is not there to catch anything.
+/// Restart twice quickly, then back off to a minute, forgetting failures after a day —
+/// the same shape as the agent's crash-loop backoff, one level up.
 fn failure_actions() -> ServiceFailureActions {
   ServiceFailureActions {
     reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(86_400)),

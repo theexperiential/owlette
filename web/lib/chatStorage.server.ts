@@ -1,20 +1,14 @@
 /**
- * chat conversation storage helpers (api-sprint wave 3 — track 3A).
+ * Chat conversation storage under `chat_conversations/{conversationId}`.
  *
- * Persists canonical chat conversations under `chat_conversations/{conversationId}`.
- * Embeds the most recent ≤200 messages directly on the conversation doc (cheap
- * single-doc reads for the common case); when the embedded array would exceed
- * 200, the oldest messages spill into the `chat_messages/{conversationId}/{messageId}`
- * subcollection. The conversation's `messageCount` field tracks the lifetime
- * total so consumers can paginate over the spill collection if needed.
+ * The most recent ≤200 messages are embedded on the conversation doc (one cheap read for the
+ * common case); older ones spill into `chat_messages/{conversationId}/{messageId}`.
+ * `messageCount` is the lifetime total, so consumers can paginate the spill collection.
  *
- * Conventions:
- * - All timestamps are Firestore `Timestamp` (server-stamped on write).
+ * - Timestamps are Firestore `Timestamp`.
  * - Soft delete sets `deletedAt`; lists exclude soft-deleted by default.
- * - Title defaults to a deterministic placeholder when callers omit it.
- * - The list helper expects callers to supply the *already-filtered* set of
- *   site ids the caller has read access to (via api-key scope or session
- *   membership) — this module does not enforce auth, only persistence.
+ * - Callers pass the ALREADY-FILTERED set of readable site ids — this module is persistence
+ *   only and enforces no auth.
  */
 
 import crypto from 'crypto';
@@ -34,11 +28,7 @@ export type ChatRole = 'user' | 'assistant' | 'system';
 export interface ChatMessage {
   role: ChatRole;
   content: string;
-  /**
-   * Firestore Timestamp at write time. We use `Timestamp.now()` (not server
-   * timestamp) when appending into an array because `FieldValue.serverTimestamp()`
-   * is not legal inside an array element.
-   */
+  /** `Timestamp.now()`, not serverTimestamp — the latter is illegal inside an array element. */
   timestamp: Timestamp;
 }
 
@@ -83,11 +73,7 @@ export interface ListConversationsResult {
   nextPageToken: string;
 }
 
-/**
- * Generate a fresh conversationId. Format: `conv_<24 url-safe chars>`. Stable
- * across web restarts (no hostname / pid leakage), collision-resistant for
- * any realistic chat volume.
- */
+/** `conv_<24 url-safe chars>` — no hostname/pid leakage, collision-resistant at any chat volume. */
 export function generateConversationId(): string {
   return `conv_${crypto.randomBytes(18).toString('base64url')}`;
 }
@@ -104,10 +90,6 @@ export function normalizeTitle(raw: unknown, fallback = 'untitled chat'): string
   if (trimmed.length === 0) return fallback;
   return trimmed.slice(0, MAX_TITLE_LENGTH);
 }
-
-/* -------------------------------------------------------------------------- */
-/*  Create                                                                    */
-/* -------------------------------------------------------------------------- */
 
 export async function createConversation(
   input: CreateConversationInput,
@@ -150,10 +132,6 @@ export async function createConversation(
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Read                                                                      */
-/* -------------------------------------------------------------------------- */
-
 export async function getConversation(
   conversationId: string,
 ): Promise<ChatConversation | null> {
@@ -164,14 +142,9 @@ export async function getConversation(
 }
 
 /**
- * List conversations the caller has access to. We page with a stable
- * `updatedAt`-desc order and use the document id as the cursor (caller hands
- * back the last conversationId from the previous page as `pageToken`).
- *
- * Firestore's `where in` clause is capped at 30 values, so we chunk the
- * `siteIds` set and merge results client-side. For typical org sizes this is
- * a single chunk; orgs with >30 sites will still page deterministically since
- * we re-sort the merged set before returning.
+ * List conversations, ordered `updatedAt` desc with the last conversationId as the cursor.
+ * Firestore caps `where in` at 30 values, so siteIds are chunked and merged client-side; the
+ * merged set is re-sorted, so >30-site orgs still page deterministically.
  */
 export async function listConversations(
   options: ListConversationsOptions,
@@ -188,16 +161,15 @@ export async function listConversations(
   const db = getAdminDb();
   const baseCol = db.collection(CHAT_CONVERSATIONS_COLLECTION);
 
-  // Resolve the cursor doc once — we need its updatedAt to drive `startAfter`
-  // across the chunked queries (otherwise each chunk would start at the top
-  // of the global index).
+  // Resolve the cursor once: its updatedAt drives `startAfter` on every chunk, otherwise each
+  // chunk restarts at the top of the index.
   let cursorSnap: FirebaseFirestore.DocumentSnapshot | null = null;
   if (options.pageToken) {
     const snap = await baseCol.doc(options.pageToken).get();
     if (snap.exists) cursorSnap = snap;
   }
 
-  // Chunk the siteIds list (Firestore "in" clause max 30).
+  // Firestore "in" clause max is 30.
   const chunks: string[][] = [];
   for (let i = 0; i < options.siteIds.length; i += 30) {
     chunks.push(options.siteIds.slice(i, i + 30));
@@ -226,7 +198,6 @@ export async function listConversations(
     }
   }
 
-  // Re-sort merged set by updatedAt desc, slice to pageSize+1 to compute next.
   merged.sort((a, b) => b.updatedAt.toMillis() - a.updatedAt.toMillis());
   const page = merged.slice(0, pageSize);
   const nextPageToken =
@@ -235,10 +206,6 @@ export async function listConversations(
   return { conversations: page, nextPageToken };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Append message                                                            */
-/* -------------------------------------------------------------------------- */
-
 export interface AppendMessageInput {
   conversationId: string;
   role: ChatRole;
@@ -246,11 +213,9 @@ export interface AppendMessageInput {
 }
 
 /**
- * Append a single message. Returns the updated `messageCount`. When the
- * embedded array would exceed MAX_EMBEDDED_MESSAGES we spill the oldest
- * embedded message into the `chat_messages` subcollection and trim the
- * embedded array. All updates run inside a Firestore transaction so a
- * concurrent append never loses a message or mis-orders the spill.
+ * Append one message, returning the new `messageCount`. Past MAX_EMBEDDED_MESSAGES the oldest
+ * embedded message spills into `chat_messages`. Transactional, so a concurrent append can neither
+ * lose a message nor mis-order the spill.
  */
 export async function appendMessage(input: AppendMessageInput): Promise<{
   messageCount: number;
@@ -280,7 +245,6 @@ export async function appendMessage(input: AppendMessageInput): Promise<{
     let updatedMessages: ChatMessage[];
 
     if (messages.length >= MAX_EMBEDDED_MESSAGES) {
-      // Spill the oldest message into the subcollection, then append.
       const oldest = messages[0];
       const spillRef = convRef
         .collection(CHAT_MESSAGES_SUBCOLLECTION)
@@ -310,20 +274,12 @@ export async function appendMessage(input: AppendMessageInput): Promise<{
   });
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Soft delete + restore                                                     */
-/* -------------------------------------------------------------------------- */
-
 export interface SoftDeleteResult {
   alreadyDeleted: boolean;
   deletedAt: Timestamp;
 }
 
-/**
- * Soft delete. True-idempotent: a second call returns
- * `{alreadyDeleted: true}` with the original `deletedAt` timestamp. Throws
- * `ChatStorageError(404)` when the conversation doesn't exist.
- */
+/** Idempotent: a second call returns the original `deletedAt`. Throws ChatStorageError(404). */
 export async function softDeleteConversation(
   conversationId: string,
 ): Promise<SoftDeleteResult> {
@@ -345,14 +301,7 @@ export async function softDeleteConversation(
   });
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Rename                                                                    */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Rename a conversation. Returns the normalized title that was written.
- * Throws `ChatStorageError(404)` when the conversation doesn't exist.
- */
+/** Returns the normalized title written. Throws ChatStorageError(404) if absent. */
 export async function renameConversation(
   conversationId: string,
   rawTitle: unknown,
@@ -372,10 +321,6 @@ export async function renameConversation(
   return { title };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Errors                                                                    */
-/* -------------------------------------------------------------------------- */
-
 export class ChatStorageError extends Error {
   status: number;
   code: string;
@@ -385,10 +330,6 @@ export class ChatStorageError extends Error {
     this.code = code;
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/*  Internal helpers                                                          */
-/* -------------------------------------------------------------------------- */
 
 function shapeConversationDoc(data: Record<string, unknown>): ChatConversation {
   const messages = Array.isArray(data.messages)
@@ -417,11 +358,7 @@ function shapeConversationDoc(data: Record<string, unknown>): ChatConversation {
   return out;
 }
 
-/**
- * Lightweight client-facing shape: the `messages` array is dropped from the
- * list response (keeps payloads small) and Timestamp fields are converted to
- * ISO strings. Single-conversation GET / POST responses include `messages`.
- */
+/** List shape: drops `messages` and ISO-stringifies timestamps. Single-conversation GETs keep it. */
 export function serializeConversationSummary(c: ChatConversation): Record<string, unknown> {
   return {
     conversationId: c.conversationId,

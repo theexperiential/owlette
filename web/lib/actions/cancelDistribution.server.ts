@@ -1,19 +1,13 @@
 /**
- * cancelDistribution action core (security-boundary-migration wave 3.4).
+ * cancelDistribution action core; mirrors `cancelDeployment` in
+ * `api/sites/[siteId]/deployments/[deploymentId]/cancel/route.ts`.
  *
- * Mirror of `cancelDeployment` from
- * `web/app/api/sites/[siteId]/deployments/[deploymentId]/cancel/route.ts`.
+ * Pre-flight targets (`pending`/`downloading`/`extracting`) flip to `cancelled`
+ * and their queued `distribute_project` commands are purged. Terminal targets
+ * are untouched — we don't rewrite history the agent already finished.
  *
- * Targets in pre-flight statuses (`pending` / `downloading` / `extracting`)
- * are flipped to `cancelled` and their queued `distribute_project` commands
- * are purged from each machine's `commands/pending` doc. Targets that are
- * `completed` / `failed` / already `cancelled` are left untouched — once
- * the agent has finished a distribution we don't rewrite history, and once
- * a distribution has failed there's nothing to cancel.
- *
- * A `cancel_distribution` command is also fanned out to every cancellable
- * target so the agent — which may be mid-fetch — can short-circuit any
- * in-flight work. This matches the legacy hook behavior.
+ * A `cancel_distribution` command also fans out so a mid-fetch agent can
+ * short-circuit in-flight work.
  */
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
@@ -22,14 +16,14 @@ import { fanOutToMachines } from '@/lib/fanOut.server';
 import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
 
-/** Statuses we'll still try to cancel — anything before "agent confirmed done". */
+/** Cancellable: anything before "agent confirmed done". */
 export const PRE_FLIGHT_DISTRIBUTION_STATUSES = new Set<string>([
   'pending',
   'downloading',
   'extracting',
 ]);
 
-/** Statuses we treat as terminal for the parent-status recompute. */
+/** Terminal, for the parent-status recompute. */
 export const TERMINAL_DISTRIBUTION_STATUSES = new Set<string>([
   'completed',
   'failed',
@@ -72,9 +66,8 @@ export type CancelDistributionResult =
     };
 
 /**
- * Cancel pre-flight targets on a distribution. Idempotent: re-running on a
- * distribution where every target is already terminal returns 409
- * `no_cancellable_targets` rather than mutating the parent doc.
+ * Cancel pre-flight targets. Idempotent: an all-terminal distribution returns
+ * `no_cancellable_targets` instead of mutating the parent doc.
  */
 export async function cancelDistribution(
   ctx: CancelDistributionContext,
@@ -113,9 +106,8 @@ export async function cancelDistribution(
     };
   }
 
-  // Purge any queued `distribute_project` commands keyed to this distribution
-  // from each cancellable target's pending queue. Without this, the agent
-  // could pick up a stale entry between the doc-update and its next poll.
+  // Without this purge the agent can pick up a stale queued entry between the
+  // doc update and its next poll.
   const fileName = typeof data.file_name === 'string' ? data.file_name : '';
   await Promise.all(
     cancellable.map(async (target) => {
@@ -146,8 +138,7 @@ export async function cancelDistribution(
     }),
   );
 
-  // Fan out `cancel_distribution` so a mid-fetch agent can short-circuit.
-  // Mirrors the legacy hook payload (project_name + distribution_id).
+  // Payload mirrors the legacy hook (project_name + distribution_id).
   await fanOutToMachines({
     siteId: ctx.siteId,
     machineIds: cancellable.map((t) => t.machineId),
@@ -164,8 +155,8 @@ export async function cancelDistribution(
     }),
   });
 
-  // Mark targets cancelled. Use a wall-clock Timestamp (not serverTimestamp)
-  // because Firestore rejects sentinel values inside array elements.
+  // Wall-clock Timestamp, not serverTimestamp: Firestore rejects sentinels
+  // inside array elements.
   const cancelledAt = Timestamp.fromMillis(now());
   const cancelledMachineIds = new Set(cancellable.map((t) => t.machineId));
   const updatedTargets = targets.map((target) => {
@@ -177,7 +168,6 @@ export async function cancelDistribution(
     };
   });
 
-  // Recompute parent status if every target is now terminal.
   const allTerminal = updatedTargets.every((t) =>
     TERMINAL_DISTRIBUTION_STATUSES.has(t.status),
   );

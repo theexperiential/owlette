@@ -1,16 +1,11 @@
 /**
- * Minimal writer for ~/.config/owlette/config.toml.
+ * Minimal writer for ~/.config/owlette/config.toml. smol-toml parses; serialisation is hand
+ * rolled (it exports no writer) and covers only top-level string keys and
+ * [profiles.<name>] string tables.
  *
- * Parses with smol-toml, mutates the in-memory JS object, then serialises
- * by hand — smol-toml only exports a parser today, so we write a narrow
- * custom serialiser that covers the two cases we actually use:
- *   - top-level string keys (api_url, environment)
- *   - [profiles.<name>] tables with string keys (token, api_url, environment)
- *
- * If a user hand-edits the file with richer TOML (inline tables, arrays of
- * tables, etc.) our rewrite will drop those. We read the existing file so
- * unrelated profiles survive, then write the full object back. TOML
- * comments are NOT preserved — documented in the cli README.
+ * Consequence: hand-written richer TOML (inline tables, arrays of tables) and all comments
+ * are DROPPED on rewrite — documented in the cli README. Unrelated profiles survive because
+ * the existing file is read back first.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'fs';
@@ -81,7 +76,7 @@ function serialise(config: ConfigFile): string {
   }
   if (lines.length > 0) lines.push('');
 
-  // Profiles sorted alphabetically for determinism; put 'default' first.
+  // Alphabetical for determinism, 'default' first.
   const profiles = config.profiles ?? {};
   const profileNames = Object.keys(profiles).sort((a, b) => {
     if (a === 'default' && b !== 'default') return -1;
@@ -108,8 +103,7 @@ function writeConfigFile(path: string, config: ConfigFile): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, serialise(config), { encoding: 'utf-8', mode: 0o600 });
 
-  // Belt + suspenders on the file permissions — writeFileSync's mode is
-  // honored on fresh files but not on overwrites of existing ones.
+  // writeFileSync's mode applies to fresh files only, not overwrites.
   try {
     chmodSync(path, 0o600);
   } catch {
@@ -117,10 +111,7 @@ function writeConfigFile(path: string, config: ConfigFile): void {
   }
 }
 
-/**
- * Write non-secret profile metadata. New `auth login` calls use this for
- * api_url / environment while storing the raw token in the credential store.
- */
+/** Non-secret profile metadata; `auth login` keeps the raw token in the credential store. */
 export function writeProfileConfig(opts: WriteProfileConfigOpts): string {
   const config = loadOrInit(opts.configPath);
   config.profiles ??= {};
@@ -135,10 +126,8 @@ export function writeProfileConfig(opts: WriteProfileConfigOpts): string {
 }
 
 /**
- * Write the token (+ optional api_url / environment) to the named profile
- * in config.toml. Creates parent dirs as needed. Returns the written path.
- * Kept for legacy tests/migration paths; new login code stores tokens with
- * credentialStore.ts instead.
+ * Write the token (+ optional api_url / environment) into config.toml, creating parent dirs;
+ * returns the path. Legacy tests / migration only — new login code uses credentialStore.ts.
  */
 export function writeTokenToConfig(opts: WriteTokenOpts): string {
   const config = loadOrInit(opts.configPath);
@@ -157,11 +146,7 @@ export function writeTokenToConfig(opts: WriteTokenOpts): string {
   return opts.configPath;
 }
 
-/**
- * Remove the token field from the named profile. Leaves other profile
- * values (api_url, environment) in place. Returns true if a token was
- * actually cleared.
- */
+/** Drop the profile's token, leaving api_url/environment. True when one was actually cleared. */
 export function clearTokenFromConfig(opts: ClearTokenOpts): boolean {
   const config = loadOrInit(opts.configPath);
   const profile = config.profiles?.[opts.profile];

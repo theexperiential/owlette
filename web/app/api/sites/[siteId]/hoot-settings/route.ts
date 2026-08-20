@@ -1,19 +1,13 @@
 /**
- * PATCH /api/sites/{siteId}/hoot-settings
+ * PATCH /api/sites/{siteId}/hoot-settings — body `{ requireTier3Approval: boolean }`.
  *
- * Update per-site Hoot policy. Currently exposes a single field,
- * `requireTier3Approval`: when `true` (the default), privileged tier-3 tool
- * calls pause for explicit in-chat approval and single-machine admin chats are
- * routed server-side so the approval gate can fire. When `false`, local Hoot
- * is allowed and the gate does not apply.
+ * True (the default) pauses tier-3 tool calls for in-chat approval and routes
+ * single-machine admin chats server-side so the gate can fire; false allows
+ * local Hoot, where it cannot.
  *
- * Gated by `MACHINE_CONFIG_WRITE` — the same site-scoped capability that backs
- * the per-machine hoot-enabled toggle, so site admins manage their own site's
- * Hoot policy. Writes go to `sites/{siteId}/settings/cortex` (service-account
- * only at the Firestore-rules layer; clients read it directly).
- *
- * Request body:
- *   { "requireTier3Approval": boolean }
+ * Gated by `MACHINE_CONFIG_WRITE`, the same capability as the per-machine
+ * hoot-enabled toggle. Writes `sites/{siteId}/settings/cortex` — service-account
+ * only in the rules; clients read it directly.
  */
 import { NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';

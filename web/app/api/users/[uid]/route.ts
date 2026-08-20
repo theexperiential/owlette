@@ -1,18 +1,11 @@
 /**
- * GET    /api/users/{uid}     - user detail incl. site assignments
- * DELETE /api/users/{uid}     - soft-delete cascade (transfer/revoke/cancel)
+ * GET    /api/users/{uid} — user detail incl. site assignments.
+ * DELETE /api/users/{uid} — soft-delete cascade, via `deleteUser` behind
+ *                           `authorizedPlatformHandler(USER_DELETE)`.
  *
- * GET keeps the existing read-only public route. DELETE now delegates to
- * `deleteUser` behind `authorizedPlatformHandler(USER_DELETE)` while
- * preserving the response/error contract from the api-sprint users route.
- *
- * Query params on DELETE:
- *   - `successorUid`    who inherits the sites this user owns (required when
- *                       they own any).
- *   - `reassignTalons`  `true` to also hand that successor the talons this
- *                       user authored. Opt-in; `authoredTalonCount` comes back
- *                       either way. See `GET /api/users/{uid}/talons` for the
- *                       preview the dashboard shows before confirming.
+ * DELETE query params: `successorUid` (required when the user owns sites) and
+ * `reassignTalons` (opt-in; `authoredTalonCount` returns either way — see
+ * `GET /api/users/{uid}/talons` for the pre-confirm preview).
  */
 
 import type { NextRequest } from 'next/server';
@@ -74,10 +67,6 @@ function auditActor(ctx: PlatformHandlerContext): string {
     : `user:${ctx.actor.userId}`;
 }
 
-/* --------------------------------------------------------------------- */
-/*  GET - detail                                                         */
-/* --------------------------------------------------------------------- */
-
 export async function GET(request: NextRequest, { params }: { params: Promise<RouteParams> }) {
   try {
     const { uid } = await params;
@@ -122,15 +111,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<Ro
   }
 }
 
-/* --------------------------------------------------------------------- */
-/*  DELETE - soft-delete cascade                                         */
-/* --------------------------------------------------------------------- */
-
 export const DELETE = authorizedPlatformHandler<RouteParams>({
   capability: Capability.USER_DELETE,
   targetKind: 'user',
-  // Record the deleted uid as the audit target — the account-deletions feed
-  // (`GET /api/users/deletions`) reads `target.id` to name who was removed.
+  // The account-deletions feed reads `target.id` to name who was removed.
   targetIdParam: 'uid',
   apiKeyScope: { resource: 'user', permission: 'admin' },
 })(async (request: NextRequest, ctx: PlatformHandlerContext, routeContext) => {
@@ -152,10 +136,8 @@ export const DELETE = authorizedPlatformHandler<RouteParams>({
       });
     }
 
-    // Opt-in: hand the talons this user authored to the successor already
-    // being named for site ownership. Off by default so an api client that has
-    // always passed `successorUid` doesn't silently start rewriting authorship
-    // on automations it never asked about — the count comes back either way.
+    // Opt-in so an api client that already passes `successorUid` doesn't
+    // silently start rewriting authorship it never asked about.
     const reassignTalons = request.nextUrl.searchParams.get('reassignTalons') === 'true';
     if (reassignTalons && !successorUid) {
       return problemValidation('reassignTalons requires a successor', {
@@ -236,9 +218,8 @@ export const DELETE = authorizedPlatformHandler<RouteParams>({
             transferredSites: result.transferredSites,
             revokedKeyIds: result.revokedKeyIds,
             authDisabled: result.authDisabled,
-            // Always reported, reassigned or not — a client that deletes an
-            // account blind still learns how many automations just lost their
-            // author.
+            // Reported either way, so a blind delete still reports how many
+            // automations just lost their author.
             authoredTalonCount: result.authoredTalonCount,
             reassignedTalonIds: result.reassignedTalonIds,
             talonReassignFailures: result.talonReassignFailures,

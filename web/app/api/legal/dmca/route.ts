@@ -1,14 +1,10 @@
 /**
- * POST /api/legal/dmca
+ * POST /api/legal/dmca — public endpoint for DMCA § 512(c)(3) notices (wave 0.2).
+ * The form at `/legal/dmca` is the recommended path; email/postal notices are entered
+ * manually by the designated agent into the same `dmca_notices` collection.
  *
- * Public endpoint receiving DMCA § 512(c)(3) notices (wave 0.2).
- * The companion form at `/legal/dmca` is the operator-recommended path;
- * notices arriving by email / postal mail are entered manually by the
- * designated agent and land in the same `dmca_notices` collection.
- *
- * Writes via firebase-admin so firestore.rules doesn't need a new block
- * (the collection is server-only — clients can't read or write it
- * directly, only through this endpoint).
+ * Writes via firebase-admin so firestore.rules needs no new block — the collection is
+ * server-only, reachable by clients only through this endpoint.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -49,10 +45,9 @@ export async function POST(request: NextRequest) {
 
     const validation = validateNotice(body);
 
-    // Element-incompleteness isn't a REJECTION — we still record the
-    // notice for audit but flag it so the designated agent contacts
-    // the complainant for the missing fields (per SOP 24-hour rule).
-    // The shape check below guards against malformed submissions.
+    // Element-incompleteness is not a REJECTION: record the notice for audit but flag it so
+    // the designated agent chases the missing fields (SOP 24-hour rule). The shape check
+    // below is what guards against malformed submissions.
     const complainantEmail =
       typeof body.complainant?.email === 'string'
         ? body.complainant.email.trim().toLowerCase()
@@ -71,13 +66,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // rate-limit per (email, ip) to keep the review queue functional
-    // against a flood. firestore count() via admin SDK to tally recent
-    // submissions in the same hour. The IP is derived via the shared,
-    // spoof-resistant `getClientIp` (CF-Connecting-IP first, then the
-    // trusted right-most X-Forwarded-For hop) — a public endpoint with no
-    // token fallback, so a forgeable left-most XFF here would let a flooder
-    // mint unlimited per-IP buckets (issue #23).
+    // Rate-limit per (email, ip) so a flood can't swamp the review queue; admin-SDK count()
+    // tallies submissions in the same hour. IP comes from the spoof-resistant `getClientIp`
+    // (CF-Connecting-IP, then the trusted right-most XFF hop) — this endpoint has no token
+    // fallback, so a forgeable left-most XFF would let a flooder mint unlimited per-IP
+    // buckets (issue #23).
     const sourceIp = getClientIp(request);
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 

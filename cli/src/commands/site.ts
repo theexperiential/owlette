@@ -1,14 +1,7 @@
 /**
- * `owlette site list | get`.
- *
- * Drives:
- *   GET /api/sites
- *   GET /api/sites/{siteId}
- *
- * Both verbs render a plain-ascii table / key-value detail by default and
- * emit structured JSON when `--json` is passed at the program level.
- *
- * Read-only in v1: site create / update / delete stays in the dashboard.
+ * `owlette site list | get` — GET /api/sites and /api/sites/{siteId}.
+ * Plain-ascii table / key-value detail by default, structured JSON under the
+ * program-level `--json`. Read-only: create/update/delete stay in the dashboard.
  */
 
 import { Command } from 'commander';
@@ -39,8 +32,7 @@ export function registerSiteCommands(program: Command): void {
     (program.commands.find((c) => c.name() === 'site') as Command | undefined) ??
     program.command('site').description('list + inspect sites');
 
-  // Overwrite any earlier stub description so the help text stays
-  // canonical regardless of registration order.
+  // Overwrite any earlier stub so help text is registration-order independent.
   site.description('list + inspect sites');
 
   // Remove any stubs left by earlier file-load ordering.
@@ -52,8 +44,6 @@ export function registerSiteCommands(program: Command): void {
       if (idx >= 0) list.splice(idx, 1);
     }
   }
-
-  /* -------------------- list -------------------- */
 
   site
     .command('list')
@@ -96,8 +86,6 @@ export function registerSiteCommands(program: Command): void {
       process.stdout.write(renderTable(['id', 'name', 'plan', 'timezone', 'createdAt'], rows));
     });
 
-  /* -------------------- get -------------------- */
-
   site
     .command('get <siteId>')
     .description('print the detail record for one site')
@@ -123,10 +111,6 @@ export function registerSiteCommands(program: Command): void {
     });
 }
 
-/* --------------------------------------------------------------------- */
-/*  formatters                                                           */
-/* --------------------------------------------------------------------- */
-
 function formatSiteDetail(s: SiteDetail): string {
   const out: string[] = [];
   out.push(`id         ${s.id}`);
@@ -137,10 +121,6 @@ function formatSiteDetail(s: SiteDetail): string {
   out.push(`createdAt  ${s.createdAt ?? '(unknown)'}`);
   return out.join('\n') + '\n';
 }
-
-/* --------------------------------------------------------------------- */
-/*  util                                                                 */
-/* --------------------------------------------------------------------- */
 
 function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json: boolean } {
   const { apiUrl, token } = loadConfig({ profile: cmd.optsWithGlobals().profile });

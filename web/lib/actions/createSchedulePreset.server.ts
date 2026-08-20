@@ -1,11 +1,9 @@
 /**
- * createSchedulePreset action core (security-boundary-migration wave 3.6).
+ * createSchedulePreset action core. Mirrors `useSchedulePresets:createPreset`
+ * (web/hooks/useSchedulePresets.ts:134-148): generate an id, write
+ * `config/{siteId}/schedule_presets/{presetId}`, stamp `createdAt = serverTimestamp()`.
  *
- * Mirrors `useSchedulePresets:createPreset` (web/hooks/useSchedulePresets.ts:134-148):
- * generates a preset id, writes the doc to `config/{siteId}/schedule_presets/{presetId}`,
- * and stamps `createdAt = serverTimestamp()`.
- *
- * Pure action — does not touch HTTP. The route shim wraps this with
+ * No HTTP here — the route shim wraps it with
  * `authorizedSiteHandler({ capability: 'PRESET_MANAGE', siteIdParam: 'path' })`.
  */
 import { FieldValue } from 'firebase-admin/firestore';
@@ -121,10 +119,7 @@ export function validateSchedulePresetInput(
   }
 }
 
-/**
- * Generate a deterministic preset id matching the client-side convention
- * (`sched-{slug}-{epochMs}`). See useSchedulePresets.ts:139.
- */
+/** `sched-{slug}-{epochMs}`, matching the client convention in useSchedulePresets.ts:139. */
 function generatePresetId(name: string): string {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   return `sched-${slug || 'preset'}-${Date.now()}`;

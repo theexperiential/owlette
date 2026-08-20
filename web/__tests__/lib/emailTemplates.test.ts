@@ -1,12 +1,11 @@
 /** @jest-environment node */
 
 /**
- * Regression tests for alert-email HTML safety + the "manage alerts" footer.
+ * Alert-email HTML safety + the "manage alerts" footer.
  *
- * Stored-injection guard: alert emails now carry the site NAME (admin-settable
- * free text) and other operator-controlled values. They must be HTML-escaped
- * before interpolation so a malicious value can't render phishing markup in
- * emails sent to co-recipients.
+ * Stored-injection guard: alert emails interpolate operator-controlled free text
+ * (the site name), which must be HTML-escaped or a malicious value renders
+ * phishing markup in every co-recipient's inbox.
  */
 
 jest.mock('@sentry/nextjs', () => ({ captureException: jest.fn() }));
@@ -84,9 +83,8 @@ describe('multi-alert display digest escaping', () => {
 
 describe('wrapEmailLayout — manage alerts / unsubscribe footer', () => {
   it('shows "manage alerts" on EVERY alert email — including the tokenless fallback (unsubscribeUrl undefined)', () => {
-    // The fallback admin recipient has no per-user token, but must still get a
-    // way to turn alerts off. The key being PRESENT (even undefined) marks an
-    // alert email.
+    // The fallback admin has no per-user token but must still be able to turn
+    // alerts off; the key being PRESENT (even undefined) marks an alert email.
     const fallback = wrapEmailLayout('<p>x</p>', { unsubscribeUrl: undefined });
     expect(fallback).toContain('manage alerts');
     expect(fallback).toContain('/settings/alerts');

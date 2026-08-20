@@ -1,31 +1,19 @@
 /**
- * Action core: trigger a machine-direct software uninstall.
+ * Action core: machine-direct software uninstall.
  *
- * security-boundary-migration wave 3.5.
+ * Writes an `uninstall_software` command into `sites/{siteId}/machines/{machineId}/commands/pending`
+ * in the exact shape `useUninstall.ts:createUninstall` produced, so the agent handles it
+ * identically, plus lifecycle fields from `stampCommand`. Software metadata comes server-side from
+ * the machine's `installed_software` collection.
  *
- * Writes an `uninstall_software` command into
- * `sites/{siteId}/machines/{machineId}/commands/pending` for the named
- * package. Mirrors the per-command shape historically produced by
- * `useUninstall.ts:createUninstall` (so the agent processes it identically),
- * with lifecycle fields layered on by `stampCommand`.
- *
- * Software metadata (`uninstall_command`, `installer_type`, `install_location`)
- * is read server-side from the machine's `installed_software` collection —
- * exactly what the legacy hook did client-side via `fetchMachineSoftware`.
- *
- * Capability `UNINSTALL_TRIGGER`. Site-scoped (admin role gates wired through
- * `authorizedSiteHandler`).
- *
- * Distinct from `/api/sites/{siteId}/deployments/{deploymentId}/uninstall`,
- * which is the deployment-level fan-out variant — this core is single-machine,
- * not deployment-tied.
+ * Capability `UNINSTALL_TRIGGER`, site-scoped via `authorizedSiteHandler`. Single-machine —
+ * `/api/sites/{siteId}/deployments/{deploymentId}/uninstall` is the deployment fan-out variant.
  */
 
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { stampCommand } from '@/lib/commandLifecycle';
 
-/** Result of a successful trigger — surfaced to the route shim. */
 export interface TriggerUninstallResult {
   siteId: string;
   machineId: string;
@@ -60,45 +48,34 @@ export interface TriggerUninstallInput {
   /** Display name of the software (must match a doc in `installed_software`). */
   software_name: string;
   /**
-   * Optional list of process exe names to terminate before uninstalling.
-   * Forwarded into the agent payload verbatim. Reserved for forward-compat
-   * with future agent support — current uninstall handler does not consume
-   * this field, but unknown-field tolerance means it is safe to include.
+   * Exe names to terminate before uninstalling, forwarded verbatim. The current agent handler
+   * ignores it; it is safe to send because the agent tolerates unknown fields.
    */
   close_processes?: string[];
-  /** Optional override for the agent's per-command timeout. Bounded to a sane range. */
+  /** Overrides the agent's per-command timeout; clamped to [1s, 24h]. */
   timeout_seconds?: number;
 }
 
 export interface TriggerUninstallOptions {
-  /** Inject a Firestore instance — tests pass a mock. */
+  /** Tests pass a mock. */
   db?: Firestore;
-  /** Override the wall-clock now — unit tests use this for determinism. */
+  /** Tests override for determinism. */
   now?: () => number;
   /** Audit correlation id from `authorizedSiteHandler`. */
   auditCorrelationId?: string;
   /**
-   * Skip the `online === false` precheck. Mirrors the deployment-tied
-   * uninstall route, which also queues even for offline machines (the
-   * agent picks the command up on next reconnect). Set `true` to opt out
-   * if the calling surface wants the same gate as the generic commands
-   * route. Default: skip the gate.
+   * Default false: queue even for offline machines (the agent picks the command up on reconnect),
+   * matching the deployment-tied uninstall route. Set true for the generic commands route's gate.
    */
   requireOnline?: boolean;
 }
 
-/* ── input validation ─────────────────────────────────────────────────── */
-
 const TIMEOUT_MIN_S = 1;
-const TIMEOUT_MAX_S = 24 * 60 * 60; // 24h ceiling, matches the agent's longest job allowance.
+const TIMEOUT_MAX_S = 24 * 60 * 60; // matches the agent's longest job allowance
 const SOFTWARE_NAME_MAX = 256;
 const CLOSE_PROCESSES_MAX = 32;
 
-/**
- * Parse + validate a raw payload coming from the route handler. Throws
- * `TriggerUninstallError(validation_failed, ...)` on bad input so the route
- * can render an RFC 7807 problem+json envelope.
- */
+/** Throws `TriggerUninstallError(validation_failed)` so the route can render RFC 7807. */
 export function parseTriggerUninstallInput(raw: unknown): TriggerUninstallInput {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new TriggerUninstallError(
@@ -109,7 +86,6 @@ export function parseTriggerUninstallInput(raw: unknown): TriggerUninstallInput 
   }
   const body = raw as Record<string, unknown>;
 
-  // software_name — required, non-empty string, length-bounded.
   if (typeof body.software_name !== 'string') {
     throw new TriggerUninstallError(
       'validation_failed',
@@ -133,7 +109,6 @@ export function parseTriggerUninstallInput(raw: unknown): TriggerUninstallInput 
     );
   }
 
-  // close_processes — optional array of non-empty strings.
   let closeProcesses: string[] | undefined;
   if (body.close_processes !== undefined && body.close_processes !== null) {
     if (!Array.isArray(body.close_processes)) {
@@ -164,7 +139,6 @@ export function parseTriggerUninstallInput(raw: unknown): TriggerUninstallInput 
     closeProcesses = cleaned;
   }
 
-  // timeout_seconds — optional positive integer, clamped to [1, 24h].
   let timeoutSeconds: number | undefined;
   if (body.timeout_seconds !== undefined && body.timeout_seconds !== null) {
     const n = Number(body.timeout_seconds);
@@ -184,14 +158,9 @@ export function parseTriggerUninstallInput(raw: unknown): TriggerUninstallInput 
   return out;
 }
 
-/* ── action core ──────────────────────────────────────────────────────── */
-
 /**
- * Look up the machine's `installed_software` for the named package.
- * Returns the matching software record or `null` if absent.
- *
- * `installed_software` doc ids are not predictable (the agent uses a
- * fingerprint of the registry key), so we query by the `name` field.
+ * Queried by the `name` field, not doc id — the agent derives ids from a registry-key fingerprint,
+ * so they are not predictable.
  */
 async function findSoftwareRecord(
   db: Firestore,
@@ -212,11 +181,9 @@ async function findSoftwareRecord(
 }
 
 /**
- * Trigger a machine-direct uninstall. Writes one `uninstall_software`
- * command into the machine's `commands/pending` map.
- *
- * The on-wire command shape MUST match the legacy client-side write so the
- * agent's existing handler processes it identically. See `useUninstall.ts`.
+ * Writes one `uninstall_software` command into the machine's `commands/pending` map. The on-wire
+ * shape MUST match the legacy client-side write in `useUninstall.ts` — the agent's handler is the
+ * same code path.
  */
 export async function triggerUninstall(
   siteId: string,
@@ -230,7 +197,6 @@ export async function triggerUninstall(
   const db = options.db ?? getAdminDb();
   const now = options.now ? options.now() : Date.now();
 
-  // 1. Verify the machine exists; optionally gate on `online`.
   const machineRef = db
     .collection('sites')
     .doc(siteId)
@@ -254,7 +220,6 @@ export async function triggerUninstall(
     }
   }
 
-  // 2. Resolve software record from the machine's installed_software.
   const record = await findSoftwareRecord(db, siteId, machineId, input.software_name);
   if (!record) {
     throw new TriggerUninstallError(
@@ -280,7 +245,7 @@ export async function triggerUninstall(
       : '';
   const verifyPaths = installLocation ? [installLocation] : [];
 
-  // 3. Build command payload — bit-for-bit match against useUninstall.ts.
+  // Bit-for-bit match against useUninstall.ts.
   const commandBody: Record<string, unknown> = {
     type: 'uninstall_software',
     software_name: input.software_name,
@@ -301,9 +266,8 @@ export async function triggerUninstall(
     now: () => now,
   });
 
-  // 4. Map-merge write under a unique commandId. Prefix matches the legacy
-  //    `uninstall-${Date.now()}` shape so existing dashboard listeners (and
-  //    the agent's own command-id prefix tracking) continue to recognise it.
+  // The `uninstall-` prefix is load-bearing: dashboard listeners and the agent's command-id prefix
+  // tracking both match on it.
   const commandId = `uninstall-${now}`;
   const pendingRef = machineRef.collection('commands').doc('pending');
   await pendingRef.set({ [commandId]: stamped }, { merge: true });

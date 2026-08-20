@@ -1,28 +1,18 @@
 /**
- * Visual-check condition — "does the wall actually show what it should?"
- * (talons wave 2, task 2.4).
+ * Visual-check condition: capture a screenshot from the machine and have a
+ * vision model judge it against the operator's expectation. `fail` fires the
+ * talon's outputs, `pass` short-circuits the run.
  *
- * Captures a fresh screenshot from the target machine and asks a vision model
- * to judge it against the operator's plain-language expectation. The verdict
- * gates the talon's outputs: `fail` fires them, `pass` short-circuits the run.
+ * Two invariants:
+ *   - The verdict comes from `generateObject` + zod, never parsed out of prose —
+ *     a rambling model yields `verdict_error`, not a regex misreading "fail".
+ *   - Persist the storage PATH, not the signed url: urls expire in ~1h (objects
+ *     at 30d), so a stored url is dead by review time. The url is returned only
+ *     to embed the image in the alert email sent seconds later.
  *
- * Two deliberate choices worth keeping:
- *
- *   - **The verdict is structured, never parsed out of prose.** `generateObject`
- *     with a zod schema means a model that rambles produces a schema error we
- *     surface as `verdict_error`, not a regex that silently reads "fail" out of
- *     the sentence "this does not fail to look correct".
- *   - **We persist the storage PATH, not the signed url.** Capture urls expire
- *     in an hour and the bucket lifecycle deletes screenshots at 30 days, so a
- *     url stored on a run doc is a dead link by the time anyone reviews the run.
- *     The url is returned alongside for one purpose only: embedding the image in
- *     the alert email that goes out seconds later.
- *
- * Concurrency note: the agent throttles `capture_screenshot` to one per 5s per
- * machine (`agent/src/owlette_service.py` `COMMAND_RATE_LIMIT_SECONDS`), so two
- * checks must never be issued to one machine concurrently — the second comes
- * back `Error: rate limited`. The engine runs machine-scoped runs in sequence
- * for exactly this reason.
+ * The agent rate-limits `capture_screenshot` to one per 5s per machine
+ * (COMMAND_RATE_LIMIT_SECONDS), so concurrent checks against one machine return
+ * `Error: rate limited` — the engine runs machine-scoped runs in sequence.
  */
 import type { Firestore } from 'firebase-admin/firestore';
 import { generateObject } from 'ai';
@@ -40,9 +30,9 @@ import type { StoredTalon } from './store.server';
 import type { TalonDisabledReason, TalonVisualCheckCondition } from './types';
 
 /**
- * Poll budget for the capture. Wider than the shared 30s command timeout: the
- * agent has to hop into the interactive desktop session, grab the framebuffer,
- * request a signed url, and PUT the bytes to GCS before it writes a result.
+ * Poll budget for the capture — wider than the shared 30s command timeout: the
+ * agent must enter the interactive session, grab the framebuffer, get a signed
+ * url and PUT the bytes to GCS before writing a result.
  */
 export const VISUAL_CHECK_CAPTURE_TIMEOUT_MS = 45_000;
 
@@ -57,20 +47,15 @@ export type TalonVisualCheckErrorCode =
   | 'author_unavailable';
 
 /**
- * A visual check that could not produce a verdict at all — distinct from a
- * `fail` verdict, which IS an answer. The engine maps the two "the machine
- * wasn't in a state to be checked" codes (`machine_offline`,
- * `no_interactive_session`) onto a skipped run and the genuine faults
- * (`capture_failed`, `verdict_error`) onto a failed one.
- *
- * `author_unavailable` is the third kind: not a fault of the machine or the
- * model but of the person whose key backs the check. It always carries a
- * `disabledReason`, and the engine switches the talon off rather than failing
- * it ten more times to reach the same conclusion.
+ * No verdict could be produced — distinct from a `fail` verdict, which IS an
+ * answer. The engine maps `machine_offline`/`no_interactive_session` to a
+ * skipped run and `capture_failed`/`verdict_error` to a failed one.
+ * `author_unavailable` (the key behind the check is gone) always carries a
+ * `disabledReason` and switches the talon off rather than failing repeatedly.
  */
 export class TalonVisualCheckError extends Error {
   readonly code: TalonVisualCheckErrorCode;
-  /** Set only on `author_unavailable` — the reason to stamp on the talon. */
+  /** Set only on `author_unavailable` — the reason stamped on the talon. */
   readonly disabledReason?: TalonDisabledReason;
 
   constructor(
@@ -93,34 +78,26 @@ export interface VisualCheckResult {
   reason: string;
   /** GCS object path — the durable reference. */
   screenshotPath?: string;
-  /** Signed read url. Expires in ~1h: embed it now, never persist it as a link. */
+  /** Signed read url, ~1h TTL: embed now, never persist as a link. */
   screenshotUrl?: string;
 }
 
 export const visualCheckVerdictSchema = z.object({
   verdict: z.enum(['pass', 'fail']),
   /**
-   * Deliberately unbounded IN THE SCHEMA. `z.number().min(0).max(1)` renders as
-   * JSON Schema `minimum`/`maximum`, and Google's structured-output dialect
-   * rejects both on a number — "For 'number' type, properties maximum, minimum
-   * are not supported" — which failed EVERY visual check on a Gemini key with
-   * `verdict_error` before the model was even asked to look at the screenshot.
-   *
-   * The bound is not lost, just moved: {@link clampConfidence} applies it after
-   * the call, where it also covers a model that answers 0-100 or NaN. Schemas
-   * that cross a provider boundary have to hold to the smallest dialect any
-   * provider accepts; a constraint we can enforce ourselves does not belong in
-   * one. Anything added here must be checked against Google's subset.
+   * Deliberately unbounded IN THE SCHEMA: `.min(0).max(1)` renders as JSON Schema
+   * `minimum`/`maximum`, which Google's structured-output dialect rejects on a
+   * number — that failed EVERY visual check on a Gemini key with `verdict_error`.
+   * {@link clampConfidence} enforces the bound after the call instead. Any
+   * constraint added here must be checked against Google's subset.
    */
   confidence: z.number(),
   reason: z.string(),
 });
 
 /**
- * The [0,1] bound the schema can no longer carry. A model that returns 87 (a
- * percentage), a negative, or a NaN gets pulled back into range rather than
- * poisoning the run record and the alert email — and an unusable value reads as
- * no confidence rather than total confidence.
+ * The [0,1] bound the schema can't carry. 87 (a percentage), a negative or NaN is
+ * pulled back into range; an unusable value reads as no confidence, not total.
  */
 function clampConfidence(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -138,14 +115,12 @@ Decide whether the screenshot satisfies the expectation.
 - "confidence" is your confidence in the verdict you returned, not the probability that things are fine.
 - "reason" is one short sentence an on-call operator can read on a phone. Describe what you actually see.`;
 
-/* -------------------------------------------------------------------------- */
-/*  capture                                                                   */
-/* -------------------------------------------------------------------------- */
+// capture
 
 /**
  * The `capture_screenshot` success payload as `machine_commands.py` writes it
- * (`_handle_capture_screenshot`, lines 56-130). NOT the `{message, url, base64}`
- * shape the MCP tool route returns — that is a different producer.
+ * (`_handle_capture_screenshot`) — NOT the `{message, url, base64}` shape the
+ * MCP tool route returns.
  */
 interface CaptureResult {
   storage_path?: string;
@@ -155,7 +130,7 @@ interface CaptureResult {
   monitor_count?: number;
 }
 
-/** "no interactive session" is the one capture failure that is not our fault. */
+/** "no interactive session" is the one capture failure that isn't our fault. */
 function captureErrorCodeFor(message: string): TalonVisualCheckErrorCode {
   return /no interactive/i.test(message) ? 'no_interactive_session' : 'capture_failed';
 }
@@ -178,9 +153,8 @@ function readCaptureResult(entry: Record<string, unknown>): CaptureResult {
   }
 
   let result: unknown = entry.result;
-  // The agent returns a dict on success and an `Error: ...` string on failure.
-  // A JSON-encoded dict is accepted too — some agent versions stringify the
-  // result before writing it back.
+  // Agent writes a dict on success, an `Error: ...` string on failure; some
+  // versions stringify the dict, so JSON is accepted too.
   if (typeof result === 'string') {
     if (result.startsWith('Error:')) throwCaptureError(result);
     try {
@@ -197,18 +171,13 @@ function readCaptureResult(entry: Record<string, unknown>): CaptureResult {
   return result as CaptureResult;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  evaluation                                                                */
-/* -------------------------------------------------------------------------- */
+// evaluation
 
 /**
- * The vision model this check runs on: the author's own, re-resolved every run.
- *
- * There is no shared site key any more (see `resolveLlmConfig`), so a visual
- * check spends the key of whoever wrote the talon — and only while that person
- * still has access to the site. Both halves are the same fire-time question the
- * hoot output asks, answered by the same module, so the two AI paths can never
- * drift apart on who is allowed to run unattended work.
+ * The author's own vision model, re-resolved every run: there is no shared site
+ * key (see `resolveLlmConfig`), so the check spends the talon author's key and
+ * only while they still have site access — same module as the hoot output so the
+ * two AI paths can't drift on who may run unattended work.
  */
 async function resolveAuthorModel(db: Firestore, siteId: string, talon: StoredTalon) {
   try {
@@ -218,7 +187,7 @@ async function resolveAuthorModel(db: Firestore, siteId: string, talon: StoredTa
     if (error instanceof TalonAuthorError) {
       throw new TalonVisualCheckError('author_unavailable', error.message, error.reason);
     }
-    // Transient — a failed read, a missing site. Stays on the failure counter.
+    // Transient (failed read, missing site) — stays on the failure counter.
     throw new TalonVisualCheckError(
       'verdict_error',
       `could not resolve who this talon runs as: ${
@@ -230,9 +199,7 @@ async function resolveAuthorModel(db: Firestore, siteId: string, talon: StoredTa
 
 /**
  * Capture the machine's display and judge it against `condition.expectation`.
- *
- * @param talon the talon being evaluated — its `createdBy` is the person whose
- *              key pays for the verdict, re-checked on every run.
+ * `talon.createdBy` is the key that pays for the verdict, re-checked each run.
  * @throws {TalonVisualCheckError} when no verdict could be produced.
  */
 export async function evaluateVisualCheck(
@@ -243,8 +210,8 @@ export async function evaluateVisualCheck(
   condition: VisualCheckSpec,
   correlationId: string,
 ): Promise<VisualCheckResult> {
-  // Resolved BEFORE the capture: a check nobody can pay for should not cost the
-  // machine a 45-second screenshot round trip to find that out.
+  // Resolved BEFORE the capture: an unpayable check shouldn't cost the machine a
+  // 45s screenshot round trip.
   const model = await resolveAuthorModel(db, siteId, talon);
 
   const capture = await captureScreenshot(db, siteId, machineId, condition, correlationId);

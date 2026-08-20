@@ -1,18 +1,13 @@
 /**
- * Settings — webhook deliveries panel + manual retry (task 5.6)
+ * Settings — webhook deliveries panel + manual retry.
  *
- * Exercises:
- *   A. expanded webhook row renders the recent-deliveries list newest-first,
- *      with state icons (success/failure/pending), attempt number, http
- *      status code, and a relative timestamp.
- *   B. clicking the retry icon on a failed delivery fires
- *      POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry and
- *      a new pending delivery row appears in firestore with `retryOf`
- *      pointing at the original.
+ * A. the expanded row lists recent deliveries newest-first with state icon,
+ *    attempt number, http status, and relative timestamp.
+ * B. the retry icon POSTs .../deliveries/{id}/retry and a new pending row
+ *    appears with `retryOf` pointing at the original.
  *
- * data plane: none — deliveries seeded directly via Admin SDK into the
- * top-level `webhook_deliveries` collection (the dispatcher's store, see
- * web/app/api/webhooks/[webhookId]/deliveries/route.ts).
+ * Deliveries are seeded straight into the top-level `webhook_deliveries`
+ * collection (the dispatcher's store) via the Admin SDK.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -216,10 +211,8 @@ test('expanded row lists deliveries newest-first with state icons, attempts, and
   await expect(failedRow.getByText('att 3', { exact: true })).toBeVisible();
 
   const succeededRow = rows.nth(2);
-  // CheckCircle2 in lucide-react v0.548 re-exports from circle-check, which
-  // renders class "lucide-circle-check" (no "-big" suffix and not the legacy
-  // "check-circle-2" alias). Accept either modern variant so this remains
-  // robust across minor lucide bumps.
+  // lucide v0.548's CheckCircle2 re-exports circle-check, rendering class
+  // "lucide-circle-check" — accept either variant so minor bumps don't break.
   await expect(
     succeededRow.locator('svg.lucide-circle-check, svg.lucide-circle-check-big'),
   ).toHaveCount(1);

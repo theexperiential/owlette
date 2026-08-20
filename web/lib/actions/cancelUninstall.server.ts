@@ -1,15 +1,10 @@
 /**
- * Action core: cancel an in-flight machine-direct software uninstall.
+ * Cancel an in-flight machine-direct uninstall by writing a `cancel_uninstall`
+ * command into `sites/{siteId}/machines/{machineId}/commands/pending`. The agent
+ * matches on `software_name` and signals its uninstall worker (see
+ * `owlette_service.py`, `cmd_type == 'cancel_uninstall'`).
  *
- * security-boundary-migration wave 3.5.
- *
- * Writes a `cancel_uninstall` command into
- * `sites/{siteId}/machines/{machineId}/commands/pending`. The agent
- * matches by `software_name` and signals its in-flight uninstall worker
- * (see `owlette_service.py: cmd_type == 'cancel_uninstall'`).
- *
- * Capability `UNINSTALL_TRIGGER`. Site-scoped — capability check enforced
- * in the route shim via `authorizedSiteHandler`.
+ * Capability `UNINSTALL_TRIGGER`, enforced by `authorizedSiteHandler` in the route.
  */
 
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
@@ -60,11 +55,10 @@ export interface CancelUninstallOptions {
 const SOFTWARE_NAME_MAX = 256;
 
 /**
- * Parse + validate a raw payload coming from the route handler. Throws
- * `CancelUninstallError(validation_failed, ...)` on bad input so the route
- * can render an RFC 7807 problem+json envelope. Accepts the body as either
- * JSON or query params (DELETE-with-body is awkward; route may take
- * `?software_name=...` instead).
+ * Parse + validate the route's raw payload, throwing
+ * `CancelUninstallError(validation_failed)` so the route can render problem+json.
+ * Accepts JSON or query params — DELETE-with-body is awkward, so the route may
+ * pass `?software_name=...`.
  */
 export function parseCancelUninstallInput(raw: unknown): CancelUninstallInput {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -101,10 +95,9 @@ export function parseCancelUninstallInput(raw: unknown): CancelUninstallInput {
 }
 
 /**
- * Cancel a machine-direct uninstall. Writes one `cancel_uninstall` command
- * into the machine's `commands/pending` map. Shape matches the legacy
- * `useUninstall.ts:cancelUninstall` write so the agent processes it
- * identically.
+ * Write one `cancel_uninstall` into the machine's `commands/pending` map. The
+ * shape must match the legacy `useUninstall.ts:cancelUninstall` write so the
+ * agent processes it identically.
  */
 export async function cancelUninstall(
   siteId: string,
@@ -118,9 +111,8 @@ export async function cancelUninstall(
   const db = options.db ?? getAdminDb();
   const now = options.now ? options.now() : Date.now();
 
-  // Verify the machine exists. Skipped online-gating — cancel is meaningful
-  // even when the machine is briefly offline (the cancel is consumed
-  // alongside the in-flight uninstall when the agent reconnects).
+  // Existence only, no online gate: an offline machine consumes the cancel
+  // alongside the in-flight uninstall when it reconnects.
   const machineRef = db
     .collection('sites')
     .doc(siteId)

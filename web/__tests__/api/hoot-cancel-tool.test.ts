@@ -1,23 +1,16 @@
 /** @jest-environment node */
 
 /**
- * Http-shape coverage for POST /api/hoot/cancel-tool
- * (hoot-async-turns wave 2.4).
+ * Http-shape coverage for POST /api/hoot/cancel-tool (hoot-async-turns wave 2.4).
  *
- * Authz matrix:
- *   - unauthenticated → 401
- *   - api-key caller without chat=<siteId>:write → 403 scope_insufficient
- *   - no site access → 403
- *   - chat missing / wrong site → 404
- *   - non-owner chat → 403
- *   - commandId not in stream/current.toolCommands → 400
- *   - commandId recorded for a different machine → 400
+ * Authz matrix: unauthenticated → 401; api-key without chat=<siteId>:write → 403
+ * scope_insufficient; no site access → 403; chat missing or wrong site → 404; non-owner
+ * chat → 403; commandId absent from stream/current.toolCommands, or recorded for another
+ * machine → 400.
  *
- * Dispatch contract:
- *   - happy path writes the pending `cancel_mcp_tool` command with
- *     `target_command_id` on the USER-actor path and returns the agent ack
- *   - slow ack → 202 { accepted: true }
- *   - export is wrapped in withRateLimit (user strategy)
+ * Dispatch contract: happy path writes the pending `cancel_mcp_tool` command with
+ * `target_command_id` on the USER-actor path and returns the agent ack; slow ack → 202
+ * { accepted: true }; the export is wrapped in withRateLimit (user strategy).
  */
 
 import { NextRequest } from 'next/server';
@@ -65,7 +58,7 @@ jest.mock('@/lib/auditLogClient', () => ({
   emitMutation: jest.fn(),
 }));
 
-/* ── fake firestore (path-keyed docs) ─────────────────────────────────── */
+// fake firestore (path-keyed docs)
 
 interface SetCall {
   path: string;
@@ -88,9 +81,8 @@ const COMPLETED_PATH = `sites/${SITE}/machines/${MACHINE}/commands/completed`;
 const PENDING_PATH = `sites/${SITE}/machines/${MACHINE}/commands/pending`;
 
 /**
- * `docs` maps doc path → data (null/absent = missing doc). `completedAck`,
- * when set, is served from the completed doc keyed by the cancel command's
- * own (generated) id — captured from the pending write.
+ * `docs` maps doc path → data (null/absent = missing doc). `completedAck`, when set, is
+ * served from the completed doc keyed by the cancel command's own generated id.
  */
 function buildFakeDb(
   docs: Record<string, Record<string, unknown> | null>,
@@ -152,7 +144,7 @@ import { ApiAuthError, type ResolvedAuth } from '@/lib/apiAuth.server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { emitMutation } from '@/lib/auditLogClient';
 
-/* ── fixtures ─────────────────────────────────────────────────────────── */
+// fixtures
 
 function authedSession(): ResolvedAuth {
   return { userId: 'user-1', keyContext: null };
@@ -212,7 +204,7 @@ beforeEach(() => {
   });
 });
 
-/* ── authz matrix ─────────────────────────────────────────────────────── */
+// authz matrix
 
 describe('POST /api/hoot/cancel-tool — authz', () => {
   it('401 when unauthenticated', async () => {
@@ -309,9 +301,8 @@ describe('POST /api/hoot/cancel-tool — authz', () => {
   });
 
   it('validates a commandId under its (toolCallId, machineId) in a site-wide fan-out; a foreign commandId 400s', async () => {
-    // A single toolCallId fanned out to two machines — each with its own
-    // commandId under its own machine key (the reshape that fixes the flat
-    // last-write-wins bug).
+    // One toolCallId fanned out to two machines, each with its own commandId under its own
+    // machine key (the reshape that fixed the flat last-write-wins bug).
     const ack = { status: 'completed', type: 'cancel_mcp_tool' };
     const docs = baseDocs();
     docs[`chats/${CHAT}/stream/current`] = {
@@ -340,7 +331,7 @@ describe('POST /api/hoot/cancel-tool — authz', () => {
   });
 });
 
-/* ── dispatch + ack ───────────────────────────────────────────────────── */
+// dispatch + ack
 
 describe('POST /api/hoot/cancel-tool — dispatch', () => {
   it('200 happy path: writes the pending cancel command and returns the agent ack', async () => {
@@ -417,7 +408,7 @@ describe('POST /api/hoot/cancel-tool — dispatch', () => {
   });
 });
 
-/* ── rate-limit wrapper ───────────────────────────────────────────────── */
+// rate-limit wrapper
 
 describe('POST /api/hoot/cancel-tool — rate limiting', () => {
   it('exports POST wrapped in withRateLimit with the user strategy', () => {

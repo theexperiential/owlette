@@ -1,9 +1,8 @@
 /**
  * @jest-environment jsdom
  *
- * Unit tests for `useSecurityVersion` — the client-side fetch interceptor
- * that flips a global flag when the server reports an `x-security-version`
- * different from the bundle's compiled-in `CURRENT_SECURITY_VERSION`.
+ * `useSecurityVersion` — the fetch interceptor that flips a global flag when the
+ * server's `x-security-version` differs from the bundle's compiled-in value.
  *
  * !! THIS IS UX, NOT SAFETY !! — see `lib/securityVersion.ts`.
  */
@@ -30,10 +29,8 @@ describe('useSecurityVersion', () => {
     window.fetch = originalFetch;
   });
 
-  // Build a minimal Response-shaped object — jsdom does not provide a
-  // global `Response` constructor, but the hook only ever reads
-  // `response.headers.get(...)`, so a plain `{ headers: new Headers(...) }`
-  // satisfies the contract without pulling in a fetch polyfill.
+  // jsdom has no global `Response`, but the hook only reads
+  // `response.headers.get(...)`, so this stub avoids a fetch polyfill.
   function fakeResponse(headers: Record<string, string>): Response {
     return { headers: new Headers(headers) } as unknown as Response;
   }

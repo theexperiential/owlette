@@ -1,29 +1,15 @@
 /**
- * Firestore timestamp helpers for server-side routes.
+ * Server-side Firestore timestamp helpers: any shape firebase-admin can hand
+ * back → Unix ms or ISO-8601.
  *
- * Converts any shape Firestore / firebase-admin can hand back into either
- * Unix milliseconds or an ISO-8601 string. Callers read from Firestore and
- * hand the raw field value in; these helpers do the shape-sniffing.
+ * Handles admin `Timestamp`, anything with `toMillis()`/`toDate()`, plain
+ * `{seconds, nanoseconds?}` (cache rehydration), legacy `{_seconds, _nanoseconds?}`,
+ * `Date`, `number` (assumed Unix ms) and ISO-8601 strings. Anything else returns
+ * null rather than throwing — these run on untrusted Firestore payloads inside
+ * route handlers.
  *
- * Shapes handled:
- *   - null / undefined                          → null
- *   - firebase-admin `Timestamp` instance       → via toMillis / toDate
- *   - any object with a `toMillis()` method     → via toMillis (firestore-lite, client sdk)
- *   - any object with a `toDate()`   method     → via toDate
- *   - plain `{ seconds, nanoseconds? }`         → cache rehydration shape
- *   - legacy `{ _seconds, _nanoseconds? }`      → older admin SDK payloads
- *   - `Date` instance                           → defensive; some code paths return Date
- *   - `number`                                  → assumed to be Unix milliseconds
- *   - ISO-8601 `string`                         → parsed via Date.parse
- *
- * Returns null for any other input rather than throwing — route handlers
- * pass untrusted Firestore payloads through these, so silently degrading
- * to null is safer than surfacing parse errors to clients.
- *
- * Client components should import `firestoreTsToMs` from
- * `@/hooks/useFirestore` instead — it handles the same shapes but uses
- * the client-side `firebase/firestore` Timestamp rather than the admin
- * one.
+ * Client components use `firestoreTsToMs` from `@/hooks/useFirestore` instead
+ * (same shapes, client-sdk Timestamp).
  */
 
 import { Timestamp } from 'firebase-admin/firestore';
@@ -39,10 +25,7 @@ type TimestampLike =
   | null
   | undefined;
 
-/**
- * Convert any Firestore timestamp shape to Unix milliseconds.
- * Returns null for null/undefined or anything we can't parse.
- */
+/** Any Firestore timestamp shape → Unix ms; null when unparseable. */
 export function timestampToMs(value: unknown): number | null {
   if (value === null || value === undefined) return null;
 
@@ -77,7 +60,7 @@ export function timestampToMs(value: unknown): number | null {
       return Number.isFinite(ms) ? ms : null;
     }
 
-    // Plain { seconds, nanoseconds } (client-sdk rehydration shape)
+    // Plain { seconds, nanoseconds } — client-sdk rehydration shape.
     const plain = v as { seconds?: number; nanoseconds?: number };
     if (typeof plain.seconds === 'number') {
       const ns = typeof plain.nanoseconds === 'number' ? plain.nanoseconds : 0;
@@ -95,10 +78,7 @@ export function timestampToMs(value: unknown): number | null {
   return null;
 }
 
-/**
- * Convert any Firestore timestamp shape to an ISO-8601 string.
- * Returns null for null/undefined or anything we can't parse.
- */
+/** Any Firestore timestamp shape → ISO-8601; null when unparseable. */
 export function timestampToIso(value: unknown): string | null {
   const ms = timestampToMs(value);
   if (ms === null) return null;

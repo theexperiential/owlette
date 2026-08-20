@@ -4,32 +4,22 @@
  * Drift test for `infra/cron-jobs.json` — the registry of externally scheduled
  * endpoints (the cron-job.org jobs).
  *
- * The registry only helps if it cannot silently fall behind the code, and the
- * failure it guards against is the quietest one we have: a scheduled route that
- * exists but was never registered produces no error, no email, and no records —
- * the work simply never happens. Nothing in production tells you. This test is
- * the thing that tells you, at commit time.
+ * The failure it guards is the quietest one we have: a scheduled route that exists
+ * but was never registered produces no error, no email and no records — the work
+ * simply never happens, and nothing in production tells you.
  *
- * What it enforces:
- *   1. every directory under web/app/api/cron/ with a route file has exactly one
- *      registry entry, and every /api/cron/* entry has a directory;
- *   2. non-cron scheduled endpoints (e.g. /api/hoot/escalation) point at a real
- *      route file, aliases included;
- *   3. each entry's declared authHeader still appears in its route source, so an
- *      auth-scheme change cannot diverge from the registry unnoticed;
- *   4. the registry carries env var NAMES only — never a secret value;
- *   5. every job declares both dev and prod, because a job registered in one
- *      environment is a job that does not run in the other.
+ * Enforces: (1) every web/app/api/cron/ route directory has exactly one registry
+ * entry and vice versa; (2) non-cron scheduled endpoints (e.g. /api/hoot/escalation)
+ * point at a real route file, aliases included; (3) each entry's declared authHeader
+ * still appears in its route source, so an auth-scheme change can't diverge quietly;
+ * (4) the registry carries env var NAMES only, never a secret value; (5) every job
+ * declares both dev and prod, since a job registered in one doesn't run in the other.
  *
  * Node builtins + jest globals only. No import.meta — jest transpiles to CJS.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-
-/* -------------------------------------------------------------------------- */
-/*  paths                                                                     */
-/* -------------------------------------------------------------------------- */
 
 // web/__tests__/infra -> web/__tests__ -> web
 const webRoot = path.resolve(__dirname, '..', '..');
@@ -45,10 +35,6 @@ const ROUTE_FILENAMES: readonly string[] = ['route.ts', 'route.tsx', 'route.js']
 
 /** Environments every scheduled job must be registered in. */
 const REQUIRED_ENVIRONMENTS: readonly string[] = ['dev', 'prod'];
-
-/* -------------------------------------------------------------------------- */
-/*  registry shape                                                            */
-/* -------------------------------------------------------------------------- */
 
 interface FailureMode {
   silent: boolean;
@@ -106,10 +92,6 @@ if (!fs.existsSync(registryPath)) {
 const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as CronJobRegistry;
 const jobs = registry.jobs;
 
-/* -------------------------------------------------------------------------- */
-/*  helpers                                                                   */
-/* -------------------------------------------------------------------------- */
-
 /** Normalise a native path to forward slashes so assertions read the same on Windows. */
 function toPosix(p: string): string {
   return p.split(path.sep).join('/');
@@ -135,9 +117,8 @@ function apiPathForDir(absDir: string): string {
 /**
  * `/api/cron/talons` -> the absolute route file, or null if there isn't one.
  *
- * Segment-for-segment mapping. Route groups `(name)` and dynamic segments would
- * break it — no scheduled endpoint uses either, and if one ever does this fails
- * loudly rather than skipping the check.
+ * Segment-for-segment. Route groups `(name)` and dynamic segments would break it —
+ * no scheduled endpoint uses either, and this fails loudly rather than skipping.
  */
 function routeFileFor(apiPath: string): string | null {
   const segments = apiPath.replace(/^\/+/, '').split('/');
@@ -197,10 +178,6 @@ const registeredCronPaths = jobs
   .map((job) => job.path)
   .filter((p) => p.startsWith('/api/cron/'))
   .sort();
-
-/* -------------------------------------------------------------------------- */
-/*  registry shape                                                            */
-/* -------------------------------------------------------------------------- */
 
 describe('infra/cron-jobs.json — shape', () => {
   it('declares at least one job and a host per required environment', () => {
@@ -263,10 +240,6 @@ describe('infra/cron-jobs.json — shape', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  (b) cron routes <-> registry entries                                      */
-/* -------------------------------------------------------------------------- */
-
 describe('every cron route is registered, and every registered cron route exists', () => {
   it('has a registry entry for every route under web/app/api/cron/', () => {
     const unregistered = discoveredCronPaths.filter((p) => !registeredCronPaths.includes(p));
@@ -299,10 +272,6 @@ describe('every cron route is registered, and every registered cron route exists
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  (c) non-cron scheduled endpoints resolve to real routes                   */
-/* -------------------------------------------------------------------------- */
-
 describe('non-cron scheduled endpoints point at real route files', () => {
   it('resolves every registry path to a route handler', () => {
     const problems: string[] = [];
@@ -333,10 +302,6 @@ describe('non-cron scheduled endpoints point at real route files', () => {
     expect(problems).toEqual([]);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  (d) declared auth header still matches the route source                   */
-/* -------------------------------------------------------------------------- */
 
 describe('declared auth header matches the route source', () => {
   it('finds each entry’s authHeader in its route file', () => {
@@ -370,10 +335,6 @@ describe('declared auth header matches the route source', () => {
     expect(problems).toEqual([]);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  (e) no secret values                                                      */
-/* -------------------------------------------------------------------------- */
 
 describe('the registry carries no secret values', () => {
   // Applied to parsed VALUES, not the raw file text, so JSON punctuation can't
@@ -444,10 +405,6 @@ describe('the registry carries no secret values', () => {
     expect(problems).toEqual([]);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  (f) registered per environment                                            */
-/* -------------------------------------------------------------------------- */
 
 describe('every job is registered per environment', () => {
   it('declares both dev and prod, or justifies the omission explicitly', () => {

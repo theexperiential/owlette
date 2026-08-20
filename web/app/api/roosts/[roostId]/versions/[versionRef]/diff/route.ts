@@ -1,13 +1,9 @@
 /**
- * GET /api/roosts/{roostId}/versions/{versionRef}/diff?siteId=...&against=<otherVersionRef>
- *     → Diff two versions at file-level granularity.
- *       Returns {added, removed, changed, unchanged} with per-file reason.
+ * GET /api/roosts/{roostId}/versions/{versionRef}/diff?siteId=&against=
  *
- * `versionRef` is treated as the "to" (target) version; `against` is the
- * "from" (current) version. Matches the semantics of the existing
- * rollback-dialog diff: added = "will appear after applying this version."
- *
- * roost public api wave 3.2.
+ * File-level diff: `{added, removed, changed, unchanged}` with a per-file reason.
+ * `versionRef` is the "to" version and `against` the "from", matching the
+ * rollback dialog — added means "will appear after applying this version".
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -68,10 +64,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
     if (gateRes) return gateRes;
 
-    // Resolve both refs. Run in parallel — they're independent lookups
-    // against the same roost. Any failure short-circuits with the
-    // appropriate problem envelope. We preserve which side failed so
-    // the caller knows whether their `to` or `against` was the issue.
+    // Independent lookups, so parallel. Which side failed is preserved so the
+    // caller learns whether `to` or `against` was the problem.
     const instance = `/api/roosts/${roostId}/versions/${versionRef}/diff`;
     let toId: string;
     let fromId: string;
@@ -97,7 +91,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       throw err;
     }
 
-    // Fetch both bodies in parallel — the diff is pure so ordering doesn't matter.
+    // Parallel: the diff is pure, so order doesn't matter.
     const [toBody, fromBody] = await Promise.all([
       getVersionBody(site.siteId, roostId, toId),
       getVersionBody(site.siteId, roostId, fromId),

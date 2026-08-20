@@ -13,9 +13,8 @@ import {
 import { NEW_PROCESS_DEFAULTS } from './owletteConfig'
 
 /**
- * An in-memory disk. Paths are matched case-insensitively and either separator
- * is accepted, which is how Windows behaves and how the classifier is expected
- * to read the paths Tauri and the python GUI produce.
+ * An in-memory disk. Paths match case-insensitively with either separator, which is how
+ * Windows behaves and how the classifier must read Tauri / python GUI paths.
  */
 function makeFs(tree: { dirs?: string[]; files?: string[] } = {}) {
   const nodes = new Map<string, { name: string; parent: string; dir: boolean }>()

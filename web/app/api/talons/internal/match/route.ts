@@ -2,31 +2,21 @@
  * POST /api/talons/internal/match
  *
  * Internal ingress for fleet events that never reach a web route.
- * `process_restarted` and every `display_*` event are written by the agent
- * DIRECTLY into `sites/{siteId}/logs`, so the `onTalonLogEventCreated` firestore
- * trigger (`functions/src/talonLogEvents.ts`) is the only observer of them —
- * it filters the log stream down to the talon catalog and forwards the survivors
- * here. The other three dispatchers (`/api/alerts/trigger`, `/api/agent/alert`,
- * `/api/cron/health-check`) already hold a `Firestore` handle and call
- * `tapTalonMatcher` in-process; they have no reason to come through http.
+ * `process_restarted` and every `display_*` event go straight from the agent
+ * into `sites/{siteId}/logs`, so the `onTalonLogEventCreated` trigger is their
+ * only observer and forwards catalog matches here. The other three dispatchers
+ * already hold a Firestore handle and tap the matcher in-process.
  *
- * Auth: `x-internal-secret` against `CORTEX_INTERNAL_SECRET`, compared in
- * constant time — the same posture as `functions/src/lib/requireInternalSecret`,
- * and deliberately not the `!==` comparison the older `/api/alerts/trigger`
- * still uses.
+ * Auth: `x-internal-secret` vs `CORTEX_INTERNAL_SECRET`, constant-time —
+ * deliberately not the `!==` the older `/api/alerts/trigger` still uses.
  *
- * Not public, and not in `openapi.yaml`: it is registered in the
- * `INTERNAL_ROUTES` set of `scripts/validate-openapi.ts` alongside
- * `/api/hoot/autonomous` and `/api/alerts/trigger`.
+ * Not public; registered in `INTERNAL_ROUTES` in scripts/validate-openapi.ts.
  *
- * Unlike the in-process taps this one AWAITS the matcher. The host here is not
- * a user-facing request whose latency matters — it is a cloud function with
- * nothing else to do — and detaching the work would mean a long run (a visual
- * check is a 45s capture plus a model call) racing a response that has already
- * been sent. The caller's 10s client timeout firing first is a logged non-event:
- * the run continues on this side, and the function does not retry.
- *
- * talons wave 2, task 2.3.
+ * Unlike the in-process taps this one AWAITS the matcher: the caller is a cloud
+ * function with nothing else to do, and detaching would race a long run (a
+ * visual check is a 45s capture plus a model call) against a sent response. The
+ * caller's 10s timeout firing first is a non-event — the run continues here and
+ * the function does not retry.
  */
 import { timingSafeEqual } from 'node:crypto';
 import type { NextRequest } from 'next/server';
@@ -38,17 +28,13 @@ import { hootInternalSecret } from '@/lib/hootInternalSecret';
 import { matchAndRunTalons } from '@/lib/talons/matcher.server';
 import { TALON_EVENT_TYPES, type TalonEventType } from '@/lib/talons/types';
 
-// `timingSafeEqual` is a node builtin, and the run engine this route reaches
-// mints webhook signatures with `node:crypto` too.
+// `timingSafeEqual` and the run engine's webhook signing are both node:crypto.
 export const runtime = 'nodejs';
 
 /**
- * Constant-time secret check.
- *
- * The length comparison up front is not a leak worth closing: `timingSafeEqual`
- * throws outright on unequal-length buffers, so the length is already
- * observable, and `CORTEX_INTERNAL_SECRET` is a fixed-length deployment secret
- * rather than something an attacker can grow one byte at a time.
+ * Constant-time secret check. The length pre-check leaks nothing new —
+ * `timingSafeEqual` throws on unequal lengths anyway, and the secret is a
+ * fixed-length deployment value.
  */
 function secretMatches(supplied: string, expected: string): boolean {
   if (supplied.length === 0 || supplied.length !== expected.length) return false;
@@ -71,10 +57,9 @@ function readNonEmptyString(value: unknown): string | null {
 }
 
 /**
- * Parsed body, or the problem response for a malformed one. Inline rather than
- * `@/app/api/_shared`'s `parseJsonBody`: that module pulls the whole api-key /
- * scope / billing auth stack in behind it, and this route authenticates on a
- * deployment secret and nothing else.
+ * Inline rather than `_shared`'s `parseJsonBody`: that module drags the whole
+ * api-key/scope/billing auth stack in, and this route authenticates on a
+ * deployment secret alone.
  */
 async function readBody(
   request: NextRequest,
@@ -94,9 +79,8 @@ export async function POST(request: NextRequest) {
   try {
     const expected = hootInternalSecret();
     if (!expected) {
-      // Misconfiguration, not a rejection: without the secret this route cannot
-      // authenticate anyone, and a 401 would send the caller hunting for a
-      // credential problem that does not exist.
+      // 503, not 401: a missing server secret would send the caller hunting a
+      // credential problem that doesn't exist.
       return problem({
         type: ProblemType.ServiceUnavailable,
         title: 'not configured',
@@ -128,9 +112,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Closed catalog, checked here rather than inside the matcher: an event
-    // outside it could never match a talon anyway, and rejecting it at the
-    // boundary keeps a typo in the caller from reading as "no talons matched".
+    // Checked at the boundary, not in the matcher, so a caller typo doesn't
+    // read back as "no talons matched".
     const eventType = body.eventType;
     if (!isCatalogEvent(eventType)) {
       return problemValidation('`eventType` is not a known talon event.', {

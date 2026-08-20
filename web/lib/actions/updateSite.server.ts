@@ -1,14 +1,9 @@
 /**
- * updateSite action core (security-boundary-migration wave 3.9 - site CRUD).
- *
- * Replaces the client-side `updateDoc` in `web/hooks/useFirestore.ts:updateSite`.
- * Whitelisted fields only: `name`, `timezone`, `timeFormat`. Empty payloads
- * are an explicit no-op result (`kind: 'no_changes'`) so the route shim can
- * return 200 without writing.
- *
- * The legacy hook validates only non-empty names and the `timeFormat` union;
- * timezone strings are passed through as provided. This core preserves that
- * behavior.
+ * Server-side replacement for the client `updateDoc` in
+ * `useFirestore.ts:updateSite`. Whitelisted fields only (`name`, `timezone`,
+ * `timeFormat`); an empty payload yields `kind: 'no_changes'` so the route can
+ * 200 without writing. Validation matches the legacy hook: non-empty name and
+ * the `timeFormat` union, timezone passed through as given.
  *
  * Capability: site-scoped `SITE_MEMBER_MANAGE`.
  */

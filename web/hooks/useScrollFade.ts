@@ -2,12 +2,7 @@
 
 import { useCallback, useLayoutEffect, useRef, type RefCallback, type RefObject } from 'react';
 
-/**
- * How tall the fade at the top of a scrolled container is once it is fully in.
- *
- * Short enough to read as an edge rather than as a vignette: a row passes under
- * whatever sits above it over about two thirds of its own height.
- */
+/** Fade height at full extent — short enough to read as an edge, not a vignette. */
 const SCROLL_FADE_PX = 24;
 
 /** Paint the fade for wherever a scroller currently sits. */
@@ -19,51 +14,30 @@ function paint(scroller: HTMLElement | null) {
 }
 
 /**
- * Dissolves the top edge of a scroll container instead of cutting it.
+ * Dissolves the top edge of a scroll container instead of cutting it: a half-row
+ * hanging under a header reads as a clipping fault, not as scrolling.
  *
- * Content that has scrolled past the top of a pane is otherwise guillotined by
- * a boundary that draws nothing — a half-row hanging under a header reads as a
- * clipping fault rather than as scrolling. This fades it out over the last
- * {@link SCROLL_FADE_PX} instead.
+ * The mask grows from nothing over the first {@link SCROLL_FADE_PX} of travel,
+ * painted in the scrollport's own coordinates so it stays at the top edge.
+ * Written straight to the node, not state — a re-render per pixel of a flick
+ * would take every child with it. The `passive` listener is attached directly
+ * rather than through React so a caller's own `onScroll` survives.
  *
- * The mask is grown from nothing across the first {@link SCROLL_FADE_PX} of
- * travel, so there is no pop as it arrives and nothing is washed out while the
- * container sits at rest at the top. It is painted in the scrollport's own
- * coordinates, so it stays at the top edge while the content moves under it.
+ * CAVEAT: a mask fades the element's own background and border too, so use this
+ * only on scrollers that share their parent's ground — a box with `border` or
+ * `bg-background/50` notches itself. On a short fixed-height list 24px is a
+ * tenth of the box and reads as a vignette.
  *
- * Written straight to the node rather than held in state: it is a paint detail,
- * and a re-render for each of the first 24 pixels of a flick would take every
- * child with it. The listener is `passive`, and is added directly rather than
- * through React so that a caller which already owns an `onScroll` keeps it.
+ * Returns a CALLBACK ref, and that is load-bearing: a scroller inside a dialog
+ * doesn't exist until it opens, and an effect keyed on a ref object never
+ * re-runs to notice (same object identity either way), so the listener would
+ * only ever attach if the node happened to be mounted on the first commit.
  *
- * **A mask fades the element's own background and border along with its
- * content**, so this belongs on scrollers that share their parent's ground. A
- * box that draws its own fill or outline — `border`, `bg-background/50` — will
- * fade those too and notch itself. It also wants a pane worth fading: on a
- * short fixed-height list, 24px is a tenth of the box and reads as a vignette
- * rather than as an edge.
- *
- * It returns a **callback ref**, not a ref object, and that is load-bearing: a
- * scroller inside a dialog does not exist until the dialog opens, and an effect
- * keyed on a ref object never re-runs to notice — the object's identity is the
- * same whether it holds a node or null. The listener would attach only if the
- * scroller happened to be mounted on the hook owner's first commit, and the
- * body of a `<Dialog open={…}>` declared on a page never is. React calls a
- * callback ref with the node the moment it mounts, so the fade is live on the
- * first scroll rather than on the next unrelated render.
+ * Pass an existing ref to keep it pointed at the same node; still use the
+ * RETURNED callback as `ref`, not the one passed in.
  *
  * ```tsx
  * const scroller = useScrollFade<HTMLDivElement>();
- * return <div ref={scroller} className="overflow-y-auto">…</div>;
- * ```
- *
- * Pass an existing ref to keep it pointed at the same node, for a caller that
- * reads the element itself. Use the returned callback as the `ref`, not the one
- * passed in:
- *
- * ```tsx
- * const containerRef = useRef<HTMLDivElement>(null);
- * const scroller = useScrollFade(containerRef);
  * return <div ref={scroller} className="overflow-y-auto">…</div>;
  * ```
  */

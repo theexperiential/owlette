@@ -1,25 +1,14 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/hoot/turnRunner.server.ts`
- * (hoot-async-turns wave 2.2).
- *
- * Drives `startTurn` end-to-end with a MockLanguageModelV3 (real streamText /
- * createUIMessageStream / readUIMessageStream plumbing) against an in-memory
- * firestore + mocked collaborators, pinning:
- *   1. snapshots written to the turn store while the turn streams; final
- *      persist to `chats/{chatId}` with the useHoot-mirrored shape;
- *      `finishTurn('complete')`; categorization fired for new conversations
- *   2. existing conversations: no title/createdAt overwrite, no categorize
- *   3. site-wide mode persist shape + site prompt + online-machine fan-out
- *   4. transient `data-heartbeat` chunks on the HTTP branch during the turn
- *   5. toolCommand recovery-index recording + throttled poll-tick touches via
- *      the buildExecutableTools toolCallbacks contract (Task 2.1)
- *   6. history repair recovery: prior-turn commandIds spliced in from
- *      `commands/completed` (real output / still-running / nothing found)
- *   7. error paths (model failure, setup failure) end the turn with
- *      `finishTurn('error')`, surface an error chunk, and skip the persist
- *   8. superseded turns (`finishTurn` → false) skip the final chat persist
+ * Unit tests for `web/lib/hoot/turnRunner.server.ts` (hoot-async-turns wave 2.2).
+ * Drives `startTurn` end-to-end with a MockLanguageModelV3 over the real streamText /
+ * createUIMessageStream plumbing against an in-memory firestore, pinning: turn-store
+ * snapshots + final persist + categorize for new chats, no title/categorize overwrite for
+ * existing ones, site-wide persist shape + fan-out, transient data-heartbeat chunks,
+ * the toolCommand recovery index (Task 2.1 toolCallbacks), history repair from
+ * `commands/completed`, error paths (finishTurn('error'), no persist), and superseded
+ * turns skipping the final persist.
  */
 
 import {
@@ -84,10 +73,6 @@ import {
   type StartTurnParams,
 } from '@/lib/hoot/turnRunner.server';
 
-/* -------------------------------------------------------------------------- */
-/*  in-memory firestore                                                       */
-/* -------------------------------------------------------------------------- */
-
 type Store = Record<string, Record<string, unknown>>;
 const store: Store = {};
 
@@ -115,10 +100,6 @@ function collectionRef(path: string) {
 const fakeDb = {
   collection: (name: string) => collectionRef(name),
 } as unknown as FirebaseFirestore.Firestore;
-
-/* -------------------------------------------------------------------------- */
-/*  fixtures + helpers                                                        */
-/* -------------------------------------------------------------------------- */
 
 const CHAT_ID = 'chat_1';
 const TURN_ID = 'turn_1';
@@ -194,10 +175,7 @@ async function flushAsync() {
   }
 }
 
-/**
- * Simulates Task 2.1's buildExecutableTools: a real AI SDK tool whose execute
- * reports the queued command + poll ticks through the toolCallbacks contract.
- */
+/** Real AI SDK tool reporting the queued command + poll ticks via the Task 2.1 toolCallbacks. */
 function stubBuildTools(
   _db: unknown,
   _siteId: string,
@@ -219,9 +197,7 @@ function stubBuildTools(
       inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
       execute: async (_input, { toolCallId }) => {
         options?.toolCallbacks?.onCommandQueued?.(toolCallId, 'cmd_test_1', machineId);
-        // onPollTick is no longer wired by the runner (poll-tick touches were
-        // removed); these are inert no-ops kept to prove the runner doesn't
-        // pass the hook anymore.
+        // Inert no-ops: the runner no longer wires onPollTick — proves the hook isn't passed.
         options?.toolCallbacks?.onPollTick?.();
         options?.toolCallbacks?.onPollTick?.();
         return { cpu: 12 };
@@ -229,10 +205,6 @@ function stubBuildTools(
     }),
   };
 }
-
-/* -------------------------------------------------------------------------- */
-/*  setup                                                                     */
-/* -------------------------------------------------------------------------- */
 
 beforeEach(() => {
   for (const k of Object.keys(store)) delete store[k];
@@ -276,10 +248,6 @@ beforeEach(() => {
 afterEach(() => {
   _setTurnTimingForTests();
 });
-
-/* -------------------------------------------------------------------------- */
-/*  happy path                                                                */
-/* -------------------------------------------------------------------------- */
 
 describe('startTurn — happy path', () => {
   it('streams text, writes snapshots, persists the final chat, and finishes the turn', async () => {
@@ -386,10 +354,6 @@ describe('startTurn — happy path', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  heartbeat                                                                 */
-/* -------------------------------------------------------------------------- */
-
 describe('startTurn — heartbeat', () => {
   it('emits transient data-heartbeat chunks on the HTTP branch during a slow turn', async () => {
     _setTurnTimingForTests({ heartbeatMs: 15 });
@@ -414,10 +378,6 @@ describe('startTurn — heartbeat', () => {
     expect(messages[1].parts.some((p) => p.type === 'data-heartbeat')).toBe(false);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  tool callbacks                                                            */
-/* -------------------------------------------------------------------------- */
 
 describe('startTurn — tool command recording', () => {
   it('records queued commands and throttles poll-tick touches', async () => {
@@ -458,8 +418,8 @@ describe('startTurn — tool command recording', () => {
       MACHINE_ID,
     );
 
-    // Per-poll touches were removed (the ~20s heartbeat covers staleness) — the
-    // only touch is the turn-start persist's ownership gate.
+    // Per-poll touches were removed (~20s heartbeat covers staleness); the only touch is
+    // the turn-start persist's ownership gate.
     expect(turnStore.touch).toHaveBeenCalledTimes(1);
     expect(turnStore.touch).toHaveBeenCalledWith(fakeDb, CHAT_ID, TURN_ID);
 
@@ -477,10 +437,6 @@ describe('startTurn — tool command recording', () => {
     );
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  repair recovery                                                           */
-/* -------------------------------------------------------------------------- */
 
 describe('startTurn — dangling-tool recovery via priorToolCommands', () => {
   const danglingHistory = () => [
@@ -558,10 +514,6 @@ describe('startTurn — dangling-tool recovery via priorToolCommands', () => {
     );
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  site-wide recovery aggregation                                            */
-/* -------------------------------------------------------------------------- */
 
 describe('startTurn — site-wide dangling-tool recovery aggregation', () => {
   const danglingHistory = () => [
@@ -662,16 +614,11 @@ describe('startTurn — site-wide dangling-tool recovery aggregation', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  heartbeat ownership → abort                                               */
-/* -------------------------------------------------------------------------- */
-
 describe('startTurn — heartbeat abort decision', () => {
   /**
-   * A model that dispatches a blocking tool, then (on the follow-up step)
-   * emits text. The tool blocks on its abortSignal (up to a short fallback)
-   * and records whether it observed an abort — the observable for whether the
-   * heartbeat fired `abortController.abort()`.
+   * Model that dispatches a blocking tool, then emits text on the follow-up step. The tool
+   * blocks on its abortSignal and records whether it saw an abort — the observable for
+   * whether the heartbeat fired `abortController.abort()`.
    */
   function blockingToolSetup(observe: { aborted: boolean }) {
     (hootUtils.buildExecutableTools as jest.Mock).mockImplementation(() => ({
@@ -744,10 +691,6 @@ describe('startTurn — heartbeat abort decision', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  error paths                                                               */
-/* -------------------------------------------------------------------------- */
-
 describe('startTurn — error paths', () => {
   it('model failure: error chunk on the stream, finishTurn(error), no persist', async () => {
     mockModel = new MockLanguageModelV3({
@@ -767,9 +710,8 @@ describe('startTurn — error paths', () => {
       'error',
       'model exploded',
     );
-    // Errored turns now persist the base history (durability) so a provider
-    // failure can't erase a brand-new chat — but only the user message (no
-    // assistant response) lands, and categorization never fires.
+    // Errored turns persist the base history so a provider failure can't erase a brand-new
+    // chat — only the user message lands, and categorization never fires.
     expect(store[CHAT_PATH]).toBeDefined();
     const messages = store[CHAT_PATH].messages as Array<{ id: string; role: string }>;
     expect(messages).toHaveLength(1);
@@ -817,10 +759,6 @@ describe('startTurn — error paths', () => {
     );
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  supersede                                                                 */
-/* -------------------------------------------------------------------------- */
 
 describe('startTurn — superseded turn', () => {
   it('skips both the turn-start and final chat persist when the turn lost the doc', async () => {

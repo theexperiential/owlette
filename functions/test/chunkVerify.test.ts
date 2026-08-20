@@ -1,10 +1,6 @@
 /**
- * Unit tests for lib/chunkVerifyLogic.ts + the pure orchestrator in
- * chunkVerify.ts (roost wave 2b.2).
- *
- * Node's built-in test runner. No firebase emulator — the HTTPS wrapper
- * (request/response handling, caller authentication) is exercised
- * behind a small inline mock of the object store.
+ * Unit tests for lib/chunkVerifyLogic.ts + the orchestrator in chunkVerify.ts.
+ * Node's test runner, no emulator — the object store is an inline mock.
  */
 
 import { describe, it } from 'node:test';
@@ -20,10 +16,6 @@ import {
   verifyAndDelete,
   type ObjectStore,
 } from '../src/chunkVerify';
-
-/* --------------------------------------------------------------------- */
-/*  parseChunkPath                                                       */
-/* --------------------------------------------------------------------- */
 
 const HASH_A = 'a'.repeat(64);
 const PATH_A = `${CHUNK_PATH_PREFIX}/site-1/aa/${HASH_A}`;
@@ -67,8 +59,7 @@ describe('parseChunkPath', () => {
   });
 
   it('rejects hashPrefix that does not match hash[0:2]', () => {
-    // hash starts with 'aa' but prefix claims 'bb' — desync means the
-    // object is in the wrong shard; reject for investigation.
+    // Prefix/hash desync means a wrong-shard object; reject for investigation.
     assert.equal(
       parseChunkPath(`${CHUNK_PATH_PREFIX}/site-1/bb/${HASH_A}`),
       null,
@@ -104,10 +95,6 @@ describe('parseChunkPath', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  verdict                                                              */
-/* --------------------------------------------------------------------- */
-
 describe('verdict', () => {
   it('ok on hash match', () => {
     const v = verdict(PATH_A, HASH_A);
@@ -124,7 +111,6 @@ describe('verdict', () => {
 
   it('hash_mismatch when computed is uppercase (still normalized-lowercased)', () => {
     const upper = 'A'.repeat(64);
-    // matches path-hash after lowercasing — should be OK
     const v = verdict(PATH_A, upper);
     assert.equal(v.ok, true);
   });
@@ -142,10 +128,6 @@ describe('verdict', () => {
     assert.equal(v.ok ? null : v.reason, 'hash_mismatch');
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  buildAlert                                                           */
-/* --------------------------------------------------------------------- */
 
 describe('buildAlert', () => {
   const fixedNow = new Date('2026-04-20T12:00:00Z');
@@ -172,10 +154,6 @@ describe('buildAlert', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  verifyAndDelete orchestrator                                         */
-/* --------------------------------------------------------------------- */
-
 /** Make a valid path for an arbitrary payload. */
 function pathFor(siteId: string, bytes: Buffer): string {
   const h = createHash('sha256').update(bytes).digest('hex');
@@ -193,7 +171,7 @@ function makeStore(contents: Map<string, Buffer>): ObjectStore & {
       const bytes = contents.get(path);
       if (!bytes) throw new Error('not found');
       return (async function* () {
-        // chunk the buffer into 1 KiB slices to exercise streaming
+        // 1 KiB slices exercise the streaming path.
         const step = 1024;
         for (let i = 0; i < bytes.length; i += step) {
           yield Uint8Array.prototype.slice.call(bytes, i, i + step) as Uint8Array;
@@ -237,7 +215,7 @@ describe('verifyAndDelete', () => {
     const actualBytes = Buffer.from('malicious payload');
     const claimedPath = pathFor('site-1', claimedBytes);
 
-    // attacker: object at legitimate path, wrong bytes.
+    // Legitimate path, wrong bytes.
     const store = makeStore(new Map([[claimedPath, actualBytes]]));
     const alerter = makeAlerter();
 
@@ -276,8 +254,8 @@ describe('verifyAndDelete', () => {
   });
 
   it('streams large-ish objects without loading whole thing into hash.update', async () => {
-    // build a 2 MiB buffer — exercises the streaming path. the SHA must
-    // still match the one-shot digest.
+    // 2 MiB goes through the streaming path; the SHA must still match the
+    // one-shot digest.
     const bytes = Buffer.alloc(2 * 1024 * 1024);
     for (let i = 0; i < bytes.length; i++) bytes[i] = i & 0xff;
     const p = pathFor('site-1', bytes);

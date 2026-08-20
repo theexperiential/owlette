@@ -1,21 +1,16 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for the talon visual-check condition (talons wave 2, task 2.4).
+ * Talon visual-check condition.
  *
- * Three collaborators are mocked at their module boundary: the command dispatch
- * layer (the only thing that acts as the `talon_runner` system actor), the
- * author pre-flight, and the model call. Everything between them — the
- * `capture_screenshot` result contract, the failure taxonomy, and the shape of
- * the prompt the model is handed — is exercised for real, because that is where
- * the bugs live.
+ * Three collaborators are mocked at their module boundary: command dispatch
+ * (the only `talon_runner` system actor), the author pre-flight, and the model
+ * call. Everything between — the `capture_screenshot` result contract, the
+ * failure taxonomy, the prompt shape — runs for real.
  *
- * `author.server` keeps its REAL `TalonAuthorError` (`requireActual` spread) so
- * the `instanceof` narrowing that decides fatal-vs-transient is the real one.
- *
- * `@/lib/actions/executeMachineCommand.server` stays UNMOCKED so the 409
- * `ExecuteMachineCommandError` the offline test throws is the same class the
- * evaluator's `instanceof` check sees.
+ * `author.server` keeps its REAL `TalonAuthorError` (`requireActual` spread) and
+ * `executeMachineCommand.server` stays UNMOCKED, so both `instanceof` narrowings
+ * (fatal-vs-transient, and the offline 409) see the real classes.
  */
 
 const mockDispatchAndAwait = jest.fn();
@@ -154,10 +149,6 @@ beforeEach(() => {
   mockResolveTalonAuthorLlmConfig.mockResolvedValue({ provider: 'anthropic', apiKey: 'sk-test' });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  happy paths                                                               */
-/* ------------------------------------------------------------------------- */
-
 describe('evaluateVisualCheck', () => {
   it('returns a pass verdict with the capture references', async () => {
     mockDispatchAndAwait.mockResolvedValue(captureEntry());
@@ -176,17 +167,13 @@ describe('evaluateVisualCheck', () => {
     });
   });
 
-  /* --- confidence is bounded by us, not by the schema ----------------------
-   *
-   * `z.number().min(0).max(1)` renders as JSON Schema minimum/maximum, which
-   * Google's structured-output dialect rejects outright — every visual check on
-   * a Gemini key died with `verdict_error` before the model saw the screenshot.
-   * The bound moved into code, so these pin what the schema no longer says.
-   */
+  /* Confidence is bounded in code, not the schema: `z.number().min(0).max(1)`
+   * renders as JSON Schema minimum/maximum, which Google's structured-output
+   * dialect rejects outright — every Gemini-key visual check died with
+   * `verdict_error` before the model saw the screenshot. */
 
   it('declares no numeric bounds on confidence — they break google structured output', () => {
-    // Asserted through behaviour rather than by rendering JSON Schema, so this
-    // holds across zod versions: a schema that ACCEPTS 87 is a schema that
+    // Behavioural, so it holds across zod versions: a schema that ACCEPTS 87
     // emitted no `minimum`/`maximum` for the provider to reject.
     expect(
       visualCheckVerdictSchema.safeParse({ verdict: 'pass', confidence: 87, reason: 'ok' }).success,
@@ -194,10 +181,8 @@ describe('evaluateVisualCheck', () => {
   });
 
   it.each([
-    // 87 is read as a percentage, not clamped to 1: a model that answers on a
-    // 0-100 scale is claiming high-but-not-total confidence, and rounding that
-    // UP to certainty is the one direction that misleads an operator. Anything
-    // past 100 is nonsense rather than a scale, so it just clamps.
+    // 87 reads as a percentage, not clamped to 1 — rounding up to certainty is
+    // the one direction that misleads an operator. Past 100 is nonsense: clamp.
     ['a percentage', 87, 0.87],
     ['nonsense above every scale', 250, 1],
     ['below the range', -0.5, 0],
@@ -284,10 +269,6 @@ describe('evaluateVisualCheck', () => {
     ).resolves.toMatchObject({ screenshotPath: STORAGE_PATH });
   });
 });
-
-/* ------------------------------------------------------------------------- */
-/*  capture failures                                                          */
-/* ------------------------------------------------------------------------- */
 
 describe('capture failures', () => {
   it('reports a poll timeout as capture_failed', async () => {
@@ -387,10 +368,6 @@ describe('capture failures', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  verdict failures                                                          */
-/* ------------------------------------------------------------------------- */
-
 describe('the author pre-flight', () => {
   it("runs on the AUTHOR's key, resolved before the machine is asked for a shot", async () => {
     mockDispatchAndAwait.mockResolvedValue(captureEntry());
@@ -416,8 +393,7 @@ describe('the author pre-flight', () => {
       'author_unavailable',
     );
     expect(error.disabledReason).toBe(reason);
-    // Never even asks the machine: a check nobody can pay for should not cost a
-    // 45-second screenshot round trip to discover that.
+    // Never asks the machine — an unpayable check must not cost a 45s capture.
     expect(mockDispatchAndAwait).not.toHaveBeenCalled();
     expect(mockGenerateObject).not.toHaveBeenCalled();
   });
@@ -441,15 +417,10 @@ describe('the author pre-flight', () => {
       evaluateVisualCheck(db, SITE, MACHINE, TALON, condition(), CORRELATION),
       'verdict_error',
     );
-    // No reason — a database that was briefly unreachable must not switch a
-    // talon off.
+    // No reason: a briefly unreachable database must not switch a talon off.
     expect(error.disabledReason).toBeUndefined();
   });
 });
-
-/* ------------------------------------------------------------------------- */
-/*  verdict failures                                                          */
-/* ------------------------------------------------------------------------- */
 
 describe('verdict failures', () => {
   it('reports a model that did not produce a schema-valid object as verdict_error', async () => {

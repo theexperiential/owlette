@@ -1,17 +1,11 @@
 /**
- * PATCH /api/sites/{siteId}/machines/{machineId}/processes/{processId}/launch-mode
+ * PATCH .../processes/{processId}/launch-mode — canonical route for a process's
+ * launch mode + optional schedule; writes the config doc and the machine status
+ * doc atomically. Capability `MACHINE_CONFIG_WRITE`, api-key scope
+ * `machine=<id>:write` (security-boundary-migration wave 3.2).
  *
- * Canonical site-scoped route for setting a process's launch mode and
- * optional schedule. Atomic: writes both the config doc and the machine
- * status doc.
- *
- * security-boundary-migration wave 3.2: capability `MACHINE_CONFIG_WRITE`,
- * api-key scope `machine=<id>:write`.
- *
- * Request body:
- *   mode: 'off' | 'always' | 'scheduled'
- *   schedules?: ScheduleBlock[]      // required when mode='scheduled'
- *   schedulePresetId?: string | null
+ * Body: mode 'off' | 'always' | 'scheduled', plus `schedules` (required for
+ * 'scheduled') and optional `schedulePresetId`.
  */
 import { NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';

@@ -1,16 +1,10 @@
 /**
- * Version builder web worker (roost wave 3.2).
+ * Off-main-thread chunk + SHA-256 pipeline. Strictly the message loop — logic
+ * lives in `../chunking.ts` so Jest can exercise it without a DOM Worker.
  *
- * Off-main-thread execution of the chunk + SHA-256 pipeline. This file
- * is strictly the message loop; all logic lives in `../chunking.ts` so
- * Jest can exercise it without a DOM Worker.
- *
- * Wire protocol (see ../versionBuilder.ts):
- *   in:  { type: 'start', files }
- *        { type: 'abort' }
- *   out: { type: 'progress', progress }
- *        { type: 'done', entries }
- *        { type: 'error', message, name? }
+ * Protocol (see ../versionBuilder.ts): in `{type:'start', files}` /
+ * `{type:'abort'}`; out `{type:'progress', progress}` / `{type:'done', entries}` /
+ * `{type:'error', message, name?}`.
  */
 
 import { buildVersionEntries } from '../chunking';

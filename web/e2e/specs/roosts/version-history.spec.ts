@@ -1,11 +1,7 @@
 /**
- * Roosts — version history rendering (task 2.1)
- *
- * Asserts a roost with N versions renders newest-first, with #N numbers,
- * relative timestamps, descriptions (or the "(no description)" placeholder),
- * and the current-version dot only on the head row.
- *
- * Data plane: none — no push, no chunks, no /api/chunks calls.
+ * Roosts — version history renders newest-first with #N numbers, relative
+ * timestamps, descriptions (or the "(no description)" placeholder), and the
+ * current-version dot only on the head row. No data plane: no push, no chunks.
  */
 
 import { test, expect } from '@playwright/test';
@@ -76,8 +72,7 @@ test('expanded roost renders version rows newest-first with current marker on he
     await expect(versionNumbers.nth(i)).toHaveText(expectedOrder[i]);
   }
 
-  // Current-version dot — emerald-500 span with aria-label="current version",
-  // rendered only when isCurrent is true. Exactly one across the panel.
+  // Exactly one aria-label="current version" dot across the whole panel.
   const currentMarkers = versionRows.getByLabel('current version');
   await expect(currentMarkers).toHaveCount(1);
 

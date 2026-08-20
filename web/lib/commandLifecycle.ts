@@ -1,29 +1,22 @@
 /**
- * Command lifecycle helpers (security-boundary-migration wave 1.6).
+ * Command lifecycle helpers.
  *
- * The agent listens to a SINGLE document at
- * `sites/{siteId}/machines/{machineId}/commands/pending` whose fields are a
- * map of `{ [commandId]: { type, status, ... } }`. Every server-issued
- * command is stamped with `createdAt` + `expiresAt` and merged into that
- * doc by command id.
+ * The agent listens to ONE document,
+ * `sites/{siteId}/machines/{machineId}/commands/pending`, whose fields are a
+ * map of `{ [commandId]: { type, status, ... } }`; server-issued commands are
+ * stamped and merged into it by command id.
  *
- * `stampCommand` adds the lifecycle fields to a command entry. `createdAt`
- * uses `FieldValue.serverTimestamp()` (legal inside nested map fields under
- * a top-level `set`/`update`; only forbidden inside array elements). The
- * 24h `expiresAt` is a wall-clock `Timestamp` so it survives field-level
- * reads without needing a sentinel resolver.
+ * `createdAt` uses `FieldValue.serverTimestamp()` — legal in nested map fields
+ * under a top-level set/update, forbidden only inside array elements. The 24h
+ * `expiresAt` is a wall-clock `Timestamp` so field-level reads need no sentinel
+ * resolver.
  *
- * `writeCommandFanOut` performs the canonical map-merge write across n
- * machines using the admin SDK. Each machine's `pending` doc receives one
- * field at the top level: `{ [commandId]: stampedCommandData }`. Concurrent
- * fan-out writes to DIFFERENT machines are independent; concurrent writes
- * to the SAME machine merge by Firestore field semantics (last-write-wins
- * per command id, but unique command ids never collide in practice because
- * the prefix carries `Date.now()` and the machine id).
+ * `writeCommandFanOut` map-merges one command across n machines. Writes to
+ * different machines are independent; same-machine writes merge per Firestore
+ * field semantics, and ids can't collide (prefix carries `Date.now()` + id).
  *
- * **Cleanup is not implemented in milestone a** — see
- * `dev/active/security-boundary-migration/reference/command-lifecycle.md`
- * for why and how it ships in milestone b.
+ * Expiry cleanup is NOT implemented — see
+ * `dev/active/security-boundary-migration/reference/command-lifecycle.md`.
  */
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
@@ -33,21 +26,13 @@ import { getAdminDb } from '@/lib/firebase-admin';
 export const COMMAND_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Shape of a single command entry as written into the `pending` map. The
- * caller controls all command-specific fields (`type`, `installer_url`,
- * `deployment_id`, etc.); `stampCommand` only adds the lifecycle metadata.
- *
- * `Record<string, unknown>` is intentional — every command type has its own
- * payload shape and the helpers here are payload-agnostic. Stricter typing
- * lives at each action core (e.g. `executeMachineCommand` in wave 3.1).
+ * One entry in the `pending` map. Untyped on purpose: every command type has
+ * its own payload and these helpers are payload-agnostic — strict typing lives
+ * in each action core (e.g. `executeMachineCommand`).
  */
 export type CommandData = Record<string, unknown>;
 
-/**
- * A `CommandData` after `stampCommand` has run. The two lifecycle fields
- * are guaranteed present; `auditCorrelationId` is present when callers
- * passed one through (wave 2.2 fan-out always does).
- */
+/** Post-`stampCommand`: lifecycle fields guaranteed, correlation id if passed. */
 export interface StampedCommandData extends CommandData {
   createdAt: FieldValue;
   expiresAt: Timestamp;
@@ -55,10 +40,9 @@ export interface StampedCommandData extends CommandData {
 }
 
 /**
- * Per-machine result from a fan-out write. `commandId` is the synthesized
- * id this machine's entry was written under (`${commandIdPrefix}_${machineId}_${ts}`).
- * `error` is the human-readable message from the rejected write — stack
- * traces are not propagated to keep the audit log compact.
+ * Per-machine fan-out result. `commandId` is
+ * `${commandIdPrefix}_${machineId}_${ts}`; `error` carries the message only,
+ * no stack, to keep the audit log compact.
  */
 export interface FanOutResult {
   machineId: string;
@@ -75,11 +59,8 @@ export interface StampCommandOptions {
 }
 
 /**
- * Add lifecycle fields to a command entry. Returns a fresh object — does
- * not mutate the caller's input. If `commandData` already carries a
- * `createdAt` or `expiresAt` (e.g. a caller pre-stamped, or we're replaying
- * an idempotent retry), the lifecycle fields here OVERWRITE — the helper
- * is the authoritative source.
+ * Add lifecycle fields, returning a fresh object. Any pre-existing
+ * `createdAt`/`expiresAt` is OVERWRITTEN — this helper is authoritative.
  */
 export function stampCommand(
   commandData: CommandData,
@@ -98,22 +79,15 @@ export function stampCommand(
 }
 
 export interface WriteCommandFanOutOptions extends StampCommandOptions {
-  /**
-   * Inject a Firestore instance — tests pass a mock; production callers
-   * omit this and the helper uses `getAdminDb()`.
-   */
+  /** Injected Firestore for tests; production omits it. */
   db?: ReturnType<typeof getAdminDb>;
 }
 
 /**
- * Map-merge write of a single command across n machines. Each target
- * receives the SAME stamped command body under a unique per-machine
- * `commandId` of the form `${commandIdPrefix}_${sanitizedMachineId}_${ts}`
- * (matching the legacy hook-side fan-out scheme so the agent's listener
- * sees identical keys to today's writes).
- *
- * Returns one `FanOutResult` per input machine. Failures are caught
- * per-machine — one rejected write does not abort the others.
+ * Map-merge one command across n machines under
+ * `${commandIdPrefix}_${sanitizedMachineId}_${ts}` — the legacy hook-side
+ * scheme, so the agent's listener sees the same key shape as before.
+ * One result per machine; a rejected write does not abort the others.
  */
 export async function writeCommandFanOut(
   siteId: string,
@@ -130,9 +104,8 @@ export async function writeCommandFanOut(
     auditCorrelationId: options.auditCorrelationId,
     now: options.now,
   });
-  // Single timestamp shared across the fan-out keeps all per-machine
-  // command ids monotonically related to one logical batch — useful when
-  // the reconciler (wave 2.4) replays.
+  // One shared timestamp ties every per-machine id to the same logical batch,
+  // which the reconciler relies on when replaying.
   const batchTs = options.now ? options.now() : Date.now();
 
   return Promise.all(

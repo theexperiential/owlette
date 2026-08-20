@@ -1,37 +1,10 @@
-"""
-Connection Manager for Owlette Agent
+"""Connection Manager for Owlette Agent.
 
-Centralized connection state management implementing industry-standard patterns:
-- State Machine: DISCONNECTED -> CONNECTING -> CONNECTED (with RECONNECTING, BACKOFF states)
-- Circuit Breaker: Prevents hammering server during outages
-- Thread Supervision: Watchdog monitors and restarts dead worker threads
-- Exponential Backoff with Jitter: Prevents thundering herd problem
-- Single Reconnection Queue: No duplicate reconnection attempts
-
-This module is the SINGLE SOURCE OF TRUTH for connection state.
-All components report errors through this manager, and it coordinates recovery.
-
-Usage:
-    from connection_manager import ConnectionManager, ConnectionState
-
-    # Create manager
-    conn_mgr = ConnectionManager(logger)
-
-    # Set callbacks
-    conn_mgr.set_callbacks(connect=do_connect, disconnect=do_disconnect)
-
-    # Register supervised threads
-    conn_mgr.register_thread("command_listener", lambda: Thread(target=cmd_loop))
-
-    # Start
-    conn_mgr.connect()
-    conn_mgr.start_watchdog()
-
-    # Report errors from any component
-    conn_mgr.report_error(exception, "Metrics upload failed")
-
-    # Report success to reset failure counters
-    conn_mgr.report_success()
+SINGLE SOURCE OF TRUTH for connection state. State machine (DISCONNECTED ->
+CONNECTING -> CONNECTED, plus RECONNECTING / BACKOFF / FATAL_ERROR), circuit
+breaker, thread-supervision watchdog, exponential backoff with jitter, and a
+single reconnection queue. Components report failures via report_error() and
+clear the counters via report_success().
 """
 
 import datetime
@@ -50,9 +23,7 @@ import shared_utils
 import watchdog_state
 
 
-# =============================================================================
 # Self-restart watchdog config + enums
-# =============================================================================
 
 # v1 reason code enum — closed set. Extend via new constants, don't reuse values.
 REASON_CONNECTION_STUCK = "connection_stuck"
@@ -69,23 +40,17 @@ WATCHDOG_DEFAULTS = {
 # without hammering the cross-process config lock every 10s.
 _WATCHDOG_CONFIG_TTL_SECONDS = 60.0
 
-# Cold-boot grace extension. On a slow cold boot (DHCP lease, domain logon,
-# VPN dial-up, NIC driver init) the network is often still settling when the
-# 180s process-uptime grace expires — restarting there accomplishes nothing and
-# burns restart budget. While the SYSTEM has been up for less than
-# _COLD_BOOT_WINDOW_SECONDS, the effective boot grace widens to
-# _COLD_BOOT_GRACE_SECONDS.
+# Cold-boot grace extension: on a slow cold boot (DHCP lease, domain logon, VPN,
+# NIC init) the 180s process grace expires while the network is still settling.
 _COLD_BOOT_WINDOW_SECONDS = 600.0
 _COLD_BOOT_GRACE_SECONDS = 300.0
 
-# Sentinel file: touch this to disable the watchdog without restarting the
-# service. Checked every watchdog cycle; belt-and-braces for when config sync
-# itself is broken.
+# Sentinel file: touch to disable the watchdog without restarting the service.
+# Checked every cycle — belt-and-braces for when config sync itself is broken.
 _EMERGENCY_SENTINEL_PATH = shared_utils.get_data_path('tmp/watchdog_disabled')
 _EMERGENCY_ENV_VAR = "OWLETTE_DISABLE_WATCHDOG_RESTART"
 
-# Budget-exhaustion log throttling — avoid spamming the log file every 10s
-# forever once the budget is used up.
+# Throttle the budget-exhausted log; otherwise it repeats every 10s forever.
 _BUDGET_EXHAUSTED_LOG_THROTTLE_SECONDS = 3600.0
 
 
@@ -105,21 +70,12 @@ def _should_restart(
     config: dict,
     system_uptime_seconds: Optional[float] = None,
 ) -> RestartDecision:
-    """Pure decision function — no I/O, no clock reads.
+    """Pure decision function — no I/O, no clock reads; the caller supplies all
+    timing so this is deterministically testable. Does NOT check internet, budget
+    or reboot state (side effects) — see _check_self_restart.
 
-    Caller supplies all timing inputs so this is deterministically testable.
-    Does NOT check internet, budget, or reboot state — those have side effects
-    and are evaluated separately in _check_self_restart.
-
-    Args:
-        system_uptime_seconds: Seconds since the OS booted, or None when it
-            can't be determined. Supplied by the caller (see
-            _system_uptime_seconds) purely to widen the boot grace on a cold
-            boot; it is never used as a "time since last success" reference.
-
-    Returns a RestartDecision with should_fire=True only when the time-since-
-    last-success threshold has been exceeded AND the boot grace has elapsed
-    AND no recent fatal error has been suppressing retries.
+    system_uptime_seconds: seconds since OS boot, or None. Used only to widen the
+    boot grace on a cold boot; never as a "time since last success" reference.
     """
     if not config.get('enabled', True):
         return RestartDecision(False, detail="disabled by config")
@@ -130,15 +86,9 @@ def _should_restart(
     boot_grace_seconds = float(thresholds.get('boot_grace_seconds', 180))
     fatal_suppress_seconds = float(preconditions.get('fatal_error_suppression_seconds', 3600))
 
-    # Boot grace — based on process uptime (monotonic), not system uptime.
-    # psutil.boot_time() is wall-clock and vulnerable to NTP corrections, so it
-    # only ever widens the grace (fail-safe direction) and never shortens it.
-    #
-    # Cold-boot extension: a delayed cold boot expires the process grace at
-    # exactly the moment the network stabilises. While the system itself booted
-    # recently, hold off longer. A configured grace of 0 is an explicit opt-out
-    # and is never widened; an implausible uptime (negative, e.g. after an NTP
-    # correction) is ignored.
+    # Boot grace uses process uptime (monotonic). psutil.boot_time() is wall-clock
+    # and NTP-vulnerable, so system uptime only ever widens the grace, never shortens
+    # it. A configured grace of 0 is an explicit opt-out; implausible uptimes ignored.
     cold_boot_extended = (
         boot_grace_seconds > 0
         and system_uptime_seconds is not None
@@ -163,10 +113,8 @@ def _should_restart(
         if fatal_age < fatal_suppress_seconds:
             return RestartDecision(False, detail=f"fatal-error suppression ({fatal_age:.0f}s < {fatal_suppress_seconds:.0f}s)")
 
-    # "Time since last success" check.
-    # Never-connected case: last_success_mono is None. Use process start as the
-    # reference so a process that can't connect at all still fires (once the
-    # boot grace passes), recovering from cold-boot stuck states.
+    # Never-connected case (last_success_mono is None): anchor on process start so a
+    # process that can't connect at all still fires once the boot grace passes.
     reference_mono = last_success_mono if last_success_mono is not None else process_start_mono
     seconds_since_success = now_mono - reference_mono
     if seconds_since_success < failure_seconds:
@@ -179,11 +127,8 @@ def _should_restart(
 def _system_uptime_seconds() -> Optional[float]:
     """Seconds since the OS booted, or None if it can't be determined.
 
-    Wall-clock derived, so it is only ever used to widen the boot grace (see
-    _should_restart) — never as the authoritative time reference. psutil is
-    imported lazily and all failures degrade to None so a missing or broken
-    dependency falls back to the plain process-uptime grace instead of taking
-    down the watchdog thread.
+    Wall-clock derived, so only ever used to widen the boot grace — never as the
+    authoritative reference. Failures degrade to None rather than kill the watchdog.
     """
     try:
         import psutil
@@ -223,16 +168,10 @@ def _merge_watchdog_config(user_cfg: Optional[dict]) -> dict:
 
 
 class ConnectionState(Enum):
-    """
-    Connection state machine states.
+    """Connection state machine states.
 
-    State transitions:
-        DISCONNECTED -> CONNECTING (initial connect)
-        CONNECTING -> CONNECTED (success) or DISCONNECTED (failure)
-        CONNECTED -> RECONNECTING (error detected)
-        RECONNECTING -> BACKOFF (need to wait) or CONNECTED (success)
-        BACKOFF -> RECONNECTING (backoff complete)
-        Any -> FATAL_ERROR (unrecoverable error)
+    DISCONNECTED -> CONNECTING -> CONNECTED; CONNECTED -> RECONNECTING -> BACKOFF
+    -> RECONNECTING; any state -> FATAL_ERROR.
     """
     DISCONNECTED = auto()      # Not connected, not actively trying
     CONNECTING = auto()        # Initial connection attempt in progress
@@ -252,26 +191,15 @@ class ConnectionEvent:
 
 
 class ConnectionManager:
+    """Centralized connection state management for the Owlette agent.
+
+    Single source of truth for connection state; coordinates all reconnection
+    attempts, supervises worker threads, dispatches state events, and implements
+    the circuit breaker plus jittered exponential backoff.
+
+    Thread safety: state changes under _state_lock (RLock), reconnection under
+    _reconnect_lock; events dispatch outside the locks to avoid deadlocks.
     """
-    Centralized connection state management for Owlette agent.
-
-    Responsibilities:
-    - Single source of truth for connection state
-    - Coordinates all reconnection attempts (prevents duplicates)
-    - Supervises worker threads (restarts dead threads)
-    - Dispatches state change events to listeners
-    - Implements circuit breaker pattern
-    - Manages exponential backoff with jitter
-
-    Thread Safety:
-    - All state changes are protected by _state_lock (RLock for reentrant access)
-    - Reconnection coordination uses _reconnect_lock
-    - Event dispatch happens outside locks to prevent deadlocks
-    """
-
-    # =========================================================================
-    # Configuration Constants
-    # =========================================================================
 
     # Backoff configuration
     BACKOFF_BASE = 30.0           # Initial backoff: 30 seconds
@@ -296,68 +224,46 @@ class ConnectionManager:
     ]
 
     def __init__(self, logger: Optional[logging.Logger] = None):
-        """
-        Initialize the connection manager.
-
-        Args:
-            logger: Logger instance. If None, creates a new logger.
-        """
+        """Initialize the connection manager; creates a logger if none is given."""
         self.logger = logger or logging.getLogger(__name__)
 
-        # =====================================================================
-        # State Management
-        # =====================================================================
+        # State
         self._state = ConnectionState.DISCONNECTED
         self._state_lock = threading.RLock()  # RLock for reentrant access
         self._state_reason = "Not started"
 
-        # =====================================================================
-        # Backoff Tracking
-        # =====================================================================
+        # Backoff tracking
         self._consecutive_failures = 0
         self._last_attempt_time = 0.0
         self._current_backoff = self.BACKOFF_BASE
 
-        # =====================================================================
-        # Circuit Breaker
-        # =====================================================================
+        # Circuit breaker
         self._circuit_open = False
         self._circuit_opened_at = 0.0
 
-        # =====================================================================
-        # Thread Supervision
-        # =====================================================================
+        # Thread supervision
         self._supervised_threads: Dict[str, threading.Thread] = {}
         self._thread_factories: Dict[str, Callable[[], threading.Thread]] = {}
         self._watchdog_thread: Optional[threading.Thread] = None
         self._shutdown_event = threading.Event()
         self._thread_supervision_enabled = False  # Set True by enable_thread_supervision()
 
-        # =====================================================================
-        # Event Listeners
-        # =====================================================================
+        # Event listeners
         self._state_listeners: List[Callable[[ConnectionEvent], None]] = []
         self._listeners_lock = threading.Lock()
 
-        # =====================================================================
-        # Reconnection Coordination
-        # =====================================================================
+        # Reconnection coordination
         self._reconnect_lock = threading.Lock()
         self._reconnect_in_progress = False
         self._reconnect_thread: Optional[threading.Thread] = None
 
-        # =====================================================================
-        # Callbacks (injected by FirebaseClient)
-        # =====================================================================
+        # Callbacks injected by FirebaseClient
         self._connect_callback: Optional[Callable[[], bool]] = None
         self._disconnect_callback: Optional[Callable[[], None]] = None
         self._on_connected_callback: Optional[Callable[[], None]] = None
 
-        # =====================================================================
         # Self-restart watchdog state
-        # =====================================================================
-        # None until first reported success — distinguishes "never connected"
-        # from "connected once, now stuck"
+        # None until the first reported success — "never connected" vs "connected once, now stuck"
         self._last_success_time_mono: Optional[float] = None
         self._last_success_time_wall: Optional[float] = None
         # Process start anchors the boot-grace and the never-connected fallback
@@ -365,8 +271,7 @@ class ConnectionManager:
         self._process_start_time_wall: float = time.time()
         # Captured by report_error for inclusion in the diagnostic snapshot
         self._last_error_message: Optional[str] = None
-        # Timestamp of last fatal-error fingerprint match — suppresses self-
-        # restart when the failure is one that a restart can't fix
+        # Last fatal-error fingerprint match — suppresses a self-restart that can't help
         self._last_fatal_error_time_mono: Optional[float] = None
         # Invoked by _check_self_restart when a restart is authorized
         self._restart_callback: Optional[Callable[[int, dict], None]] = None
@@ -379,9 +284,7 @@ class ConnectionManager:
 
         self.logger.debug("ConnectionManager initialized")
 
-    # =========================================================================
     # Properties
-    # =========================================================================
 
     @property
     def state(self) -> ConnectionState:
@@ -402,12 +305,7 @@ class ConnectionManager:
 
     @property
     def is_operational(self) -> bool:
-        """
-        Check if operations can be attempted.
-
-        Returns True for CONNECTED and RECONNECTING states,
-        as we may still succeed during reconnection.
-        """
+        """True for CONNECTED and RECONNECTING — a reconnect may still succeed."""
         return self.state in (ConnectionState.CONNECTED, ConnectionState.RECONNECTING)
 
     @property
@@ -420,9 +318,7 @@ class ConnectionManager:
         """Check if circuit breaker is open."""
         return self._circuit_open
 
-    # =========================================================================
-    # Callback Registration
-    # =========================================================================
+    # Callback registration
 
     def set_callbacks(
         self,
@@ -430,29 +326,16 @@ class ConnectionManager:
         disconnect: Optional[Callable[[], None]] = None,
         on_connected: Optional[Callable[[], None]] = None
     ):
-        """
-        Register connection callbacks.
-
-        Args:
-            connect: Called to establish connection. Returns True on success.
-            disconnect: Called during shutdown to cleanup resources.
-            on_connected: Called after successful connection/reconnection.
-        """
+        """Register connection callbacks. `connect` returns True on success,
+        `disconnect` cleans up at shutdown, `on_connected` fires after each connect."""
         self._connect_callback = connect
         self._disconnect_callback = disconnect
         self._on_connected_callback = on_connected
         self.logger.debug("Connection callbacks registered")
 
     def add_state_listener(self, listener: Callable[[ConnectionEvent], None]):
-        """
-        Register a callback for state changes.
-
-        Listeners are called synchronously after state change,
-        but outside of the state lock to prevent deadlocks.
-
-        Args:
-            listener: Function that receives ConnectionEvent
-        """
+        """Register a ConnectionEvent callback. Called synchronously after each state
+        change but outside the state lock, to prevent deadlocks."""
         with self._listeners_lock:
             self._state_listeners.append(listener)
         self.logger.debug(f"State listener registered (total: {len(self._state_listeners)})")
@@ -464,16 +347,8 @@ class ConnectionManager:
                 self._state_listeners.remove(listener)
 
     def set_health_callback(self, callback: Callable[[str, str], None]):
-        """
-        Register a callback invoked when the connection enters a persistent
-        failure state (BACKOFF or FATAL_ERROR).
-
-        The callback receives (error_code: str, reason: str) and should update
-        the service health state for IPC, Firestore, and remote alerting.
-
-        Args:
-            callback: Called with (error_code, reason) on BACKOFF/FATAL_ERROR transitions.
-        """
+        """Register an (error_code, reason) callback fired on BACKOFF / FATAL_ERROR —
+        updates service health for IPC, Firestore and remote alerting."""
         def _health_listener(event: ConnectionEvent):
             if event.new_state in (ConnectionState.BACKOFF, ConnectionState.FATAL_ERROR):
                 error_code = (
@@ -489,34 +364,19 @@ class ConnectionManager:
         self.logger.debug("Health callback registered")
 
     def set_restart_callback(self, callback: Callable[[int, dict], None]):
-        """Register callback for self-restart watchdog.
+        """Register the self-restart watchdog callback, (exit_code, snapshot).
 
-        Invoked when _check_self_restart decides the process should exit for
-        self-recovery. The callback receives (exit_code: int, snapshot: dict)
-        and is responsible for signalling a clean process exit that the
-        service host will relaunch from (exit 43 — see
-        agent/host/src/supervisor.rs).
-
-        Args:
-            callback: Called with (exit_code, diagnostic_snapshot)
+        Called when _check_self_restart decides the process should exit for
+        self-recovery; must signal a clean exit 43, which the service host
+        relaunches from (agent/host/src/supervisor.rs).
         """
         self._restart_callback = callback
         self.logger.debug("Watchdog restart callback registered")
 
-    # =========================================================================
-    # State Management (Internal)
-    # =========================================================================
+    # State management (internal)
 
     def _set_state(self, new_state: ConnectionState, reason: str):
-        """
-        Internal state transition with event dispatch.
-
-        Thread-safe. Events are dispatched outside the lock.
-
-        Args:
-            new_state: New state to transition to
-            reason: Human-readable reason for the transition
-        """
+        """Thread-safe state transition; events dispatch outside the lock."""
         event = None
 
         with self._state_lock:
@@ -529,7 +389,6 @@ class ConnectionManager:
             self._state = new_state
             self._state_reason = reason
 
-            # Log the transition
             log_msg = f"[CONNECTION] {old_state.name} -> {new_state.name}: {reason}"
             if new_state == ConnectionState.CONNECTED:
                 self.logger.info(log_msg)
@@ -538,7 +397,6 @@ class ConnectionManager:
             else:
                 self.logger.warning(log_msg)
 
-            # Prepare event for dispatch
             event = ConnectionEvent(
                 old_state=old_state,
                 new_state=new_state,
@@ -560,20 +418,10 @@ class ConnectionManager:
             except Exception as e:
                 self.logger.error(f"State listener error: {e}")
 
-    # =========================================================================
-    # Connection Operations
-    # =========================================================================
+    # Connection operations
 
     def connect(self) -> bool:
-        """
-        Initial connection attempt.
-
-        This is the entry point for establishing the first connection.
-        Use report_error() for handling errors during operation.
-
-        Returns:
-            True if connected successfully, False otherwise.
-        """
+        """Establish the first connection. Errors during operation go via report_error()."""
         if self.state == ConnectionState.CONNECTED:
             self.logger.debug("Already connected")
             return True
@@ -592,40 +440,27 @@ class ConnectionManager:
             return False
 
     def report_error(self, error: Exception, context: str = ""):
-        """
-        Report an error from any component.
+        """SINGLE ENTRY POINT for connection-error handling from any component.
 
-        This is the SINGLE ENTRY POINT for error handling.
-        All components should call this when they encounter connection errors.
-
-        The manager will:
-        1. Check if error is fatal (machine removed, auth revoked)
-        2. Check circuit breaker state
-        3. Trigger reconnection if appropriate
-
-        Args:
-            error: The exception that occurred
-            context: Additional context about where the error occurred
+        Checks the fatal-error fingerprints and the circuit breaker, then triggers
+        reconnection when appropriate.
         """
         error_str = str(error)
         full_context = f"{context}: {error_str}" if context else error_str
 
         self.logger.warning(f"[ERROR REPORTED] {full_context}")
 
-        # Capture for watchdog diagnostic snapshot (truncated to avoid leaking
-        # long tokens/project IDs into logs or Firestore)
+        # Truncated for the watchdog snapshot — avoid leaking long tokens/project IDs.
         self._last_error_message = error_str[:500] if error_str else None
 
         # Check for "fatal" errors - these get longer backoff but we STILL retry
         if self._is_fatal_error(error):
             self.logger.warning(f"[FATAL-ISH ERROR] {full_context} - will retry in {self.FATAL_ERROR_BACKOFF}s")
             self._current_backoff = self.FATAL_ERROR_BACKOFF
-            # Stamp for watchdog: suppress self-restart while a restart-can't-
-            # fix-this error is live (revoked token, deleted project, etc.)
+            # Suppress self-restart while a restart-can't-fix-this error is live
             self._last_fatal_error_time_mono = time.monotonic()
             # DON'T return - still trigger reconnection below!
 
-        # Check circuit breaker
         if self._circuit_open:
             time_since_open = time.time() - self._circuit_opened_at
             if time_since_open > self.RECOVERY_TIMEOUT:
@@ -636,20 +471,13 @@ class ConnectionManager:
                 self.logger.debug(f"[CIRCUIT BREAKER] Open, skipping reconnect ({remaining:.0f}s remaining)")
                 return
 
-        # Mark as disconnected if currently connected
         if self.state == ConnectionState.CONNECTED:
             self._set_state(ConnectionState.DISCONNECTED, full_context)
 
-        # Trigger reconnection
         self._trigger_reconnect(full_context)
 
     def report_success(self):
-        """
-        Report successful operation.
-
-        Call this after successful Firestore operations to reset
-        failure counters and circuit breaker.
-        """
+        """Reset failure counters and the circuit breaker after a successful op."""
         if self._consecutive_failures > 0:
             self.logger.debug(f"[SUCCESS] Resetting failure counter (was {self._consecutive_failures})")
 
@@ -657,9 +485,8 @@ class ConnectionManager:
         self._current_backoff = self.BACKOFF_BASE
         self._circuit_open = False
 
-        # Stamp success timestamps for the self-restart watchdog.
-        # Monotonic is authoritative for the "time since last success" check
-        # (NTP-skew safe). Wall-clock is only used for diagnostic snapshots.
+        # Monotonic is authoritative for "time since last success" (NTP-skew safe);
+        # wall-clock is diagnostics only.
         self._last_success_time_mono = time.monotonic()
         self._last_success_time_wall = time.time()
         # A healthy connection is evidence the prior fatal error no longer applies
@@ -667,19 +494,11 @@ class ConnectionManager:
         # Reset the budget-exhausted one-shot so a later re-exhaustion re-fires
         self._budget_exhausted_event_emitted = False
 
-        # Ensure state is CONNECTED if we're getting successes
         if self.state not in (ConnectionState.CONNECTED, ConnectionState.FATAL_ERROR):
             self._set_state(ConnectionState.CONNECTED, "Operation succeeded")
 
     def force_reconnect(self, reason: str = "Manual reconnect requested"):
-        """
-        Force an immediate reconnection attempt.
-
-        Use sparingly - this bypasses normal backoff logic.
-
-        Args:
-            reason: Reason for the forced reconnect
-        """
+        """Force an immediate reconnect, bypassing backoff. Use sparingly."""
         self.logger.info(f"[FORCE RECONNECT] {reason}")
 
         # Reset backoff to allow immediate retry
@@ -696,15 +515,8 @@ class ConnectionManager:
     # =========================================================================
 
     def _trigger_reconnect(self, reason: str):
-        """
-        Coordinate reconnection attempt.
-
-        Uses a lock to prevent multiple simultaneous reconnection attempts.
-        Runs the actual reconnection in a background thread.
-
-        Args:
-            reason: Reason for reconnection
-        """
+        """Coordinate a reconnect: locked so only one runs at a time, executed on a
+        background thread."""
         with self._reconnect_lock:
             if self._reconnect_in_progress:
                 self.logger.debug("[RECONNECT] Already in progress, skipping")
@@ -714,7 +526,6 @@ class ConnectionManager:
                 return
             self._reconnect_in_progress = True
 
-        # Run reconnection in background thread
         thread = threading.Thread(
             target=self._reconnect_sequence,
             args=(reason,),
@@ -725,22 +536,11 @@ class ConnectionManager:
         self._reconnect_thread = thread
 
     def _reconnect_sequence(self, reason: str):
-        """
-        Execute reconnection with backoff.
-
-        This runs in a background thread and handles:
-        1. Calculating and waiting for backoff
-        2. Checking internet connectivity
-        3. Attempting reconnection
-        4. Updating state based on result
-
-        Args:
-            reason: Initial reason for reconnection
-        """
+        """Execute reconnection with backoff: wait, check connectivity, connect, update
+        state. Runs on a background thread."""
         try:
             self._set_state(ConnectionState.RECONNECTING, reason)
 
-            # Calculate backoff wait time
             wait_time = self._calculate_backoff_wait()
             if wait_time > 0:
                 self._set_state(ConnectionState.BACKOFF, f"Waiting {wait_time:.0f}s before retry")
@@ -754,12 +554,10 @@ class ConnectionManager:
             self._set_state(ConnectionState.RECONNECTING, "Attempting reconnection")
             self._last_attempt_time = time.time()
 
-            # Check internet connectivity first
             if not self._check_internet():
                 self._on_connect_failure("No internet connectivity")
                 return
 
-            # Attempt connection
             if self._try_connect():
                 self._on_connect_success()
             else:
@@ -773,12 +571,7 @@ class ConnectionManager:
                 self._reconnect_in_progress = False
 
     def _try_connect(self) -> bool:
-        """
-        Execute actual connection via callback.
-
-        Returns:
-            True if connection succeeded, False otherwise.
-        """
+        """Execute the connect callback; True on success."""
         if not self._connect_callback:
             self.logger.error("[CONNECT] No connect callback registered")
             return False
@@ -808,14 +601,12 @@ class ConnectionManager:
 
         self._set_state(ConnectionState.CONNECTED, "Connection established")
 
-        # Only restart supervised threads if supervision is enabled
-        # This prevents threads from starting before the service is ready
+        # Don't start supervised threads before the service is ready
         if self._thread_supervision_enabled:
             self._restart_all_threads()
         else:
             self.logger.debug("[CONNECT] Thread supervision not yet enabled, skipping thread restart")
 
-        # Call on_connected callback
         if self._on_connected_callback:
             try:
                 self._on_connected_callback()
@@ -823,23 +614,14 @@ class ConnectionManager:
                 self.logger.error(f"[CONNECT] on_connected callback error: {e}")
 
     def _on_connect_failure(self, reason: str):
-        """
-        Handle failed connection attempt.
-
-        Increments failure counter, updates backoff, checks circuit breaker,
-        and transitions to DISCONNECTED. Does NOT schedule the next attempt —
-        see the note at the end of this method.
-
-        Args:
-            reason: Reason for the failure
-        """
+        """Increment the failure counter, grow backoff, check the circuit breaker and
+        transition to DISCONNECTED. Does NOT schedule the next attempt — see below."""
         self._consecutive_failures += 1
         self._current_backoff = min(
             self._current_backoff * 2,
             self.BACKOFF_MAX
         )
 
-        # Check circuit breaker threshold
         if self._consecutive_failures >= self.FAILURE_THRESHOLD:
             if not self._circuit_open:
                 self._circuit_open = True
@@ -854,50 +636,27 @@ class ConnectionManager:
             f"{reason} (attempt #{self._consecutive_failures})"
         )
 
-        # No retry is scheduled from here — by design.
-        #
-        # The metrics loop is the SOLE reconnect driver: while the state is
-        # DISCONNECTED it calls force_reconnect() on every poll (30s when
-        # disconnected — see firebase_client._metrics_loop). That thread is
-        # unsupervised and starts unconditionally, so it covers the failed-
-        # initial-connect case too.
-        #
-        # A _trigger_reconnect() call here would also be dead code on the
-        # reconnect path: that path reaches this method from inside
-        # _reconnect_sequence, which clears _reconnect_in_progress only in its
-        # finally block, so the call would always hit the "already in progress"
-        # guard and return. Do NOT reinstate the self-perpetuating retry ladder
-        # — the fixed 30s poll cadence is the intended behaviour.
+        # No retry is scheduled here, by design. The metrics loop is the SOLE reconnect
+        # driver: while DISCONNECTED it calls force_reconnect() on every 30s poll
+        # (firebase_client._metrics_loop), which covers failed-initial-connect too.
+        # A _trigger_reconnect() here would be dead code anyway — this method is reached
+        # from inside _reconnect_sequence, which still holds _reconnect_in_progress.
+        # Do NOT reinstate the self-perpetuating retry ladder.
 
     def _calculate_backoff_wait(self) -> float:
-        """
-        Calculate wait time with jitter.
-
-        Uses exponential backoff with 50-100% jitter to prevent
-        thundering herd when multiple agents reconnect simultaneously.
-
-        Returns:
-            Wait time in seconds (0 if no wait needed).
-        """
+        """Exponential backoff with 50-100% jitter to avoid a thundering herd when many
+        agents reconnect at once. Returns seconds to wait (0 = none)."""
         elapsed = time.time() - self._last_attempt_time
         base_wait = self._current_backoff - elapsed
 
         if base_wait <= 0:
             return 0
 
-        # Add jitter: 50% to 100% of base wait
         jitter_factor = self.BACKOFF_JITTER + random.random() * self.BACKOFF_JITTER
         return base_wait * jitter_factor
 
     def _check_internet(self) -> bool:
-        """
-        Quick internet connectivity check.
-
-        Tries multiple DNS servers to verify internet access.
-
-        Returns:
-            True if internet is available, False otherwise.
-        """
+        """Quick TCP connectivity probe against CONNECTIVITY_HOSTS; True if any answers."""
         for host, port in self.CONNECTIVITY_HOSTS:
             try:
                 with socket.create_connection(
@@ -913,26 +672,11 @@ class ConnectionManager:
         self.logger.warning("[INTERNET] No connectivity detected")
         return False
 
-    # =========================================================================
-    # Fatal Error Handling
-    # =========================================================================
+    # Fatal error handling
 
     def _is_fatal_error(self, error: Exception) -> bool:
-        """
-        Check if error is unrecoverable.
-
-        Fatal errors include:
-        - Machine removed from site
-        - Site not found
-        - Permanent permission denied
-        - Account disabled
-
-        Args:
-            error: The exception to check
-
-        Returns:
-            True if error is fatal, False otherwise.
-        """
+        """True for unrecoverable errors: machine removed, site not found, permission
+        denied, account disabled, revoked credential."""
         error_str = str(error).lower()
 
         fatal_indicators = [
@@ -949,39 +693,21 @@ class ConnectionManager:
         return any(indicator in error_str for indicator in fatal_indicators)
 
     def _handle_fatal_error(self, error: Exception):
-        """
-        Handle serious errors that may indicate configuration problems.
-
-        Previously this would permanently disable reconnection, but now
-        we ALWAYS keep trying (with longer backoff). The user/admin may
-        need to re-register, but we won't give up automatically.
-
-        Args:
-            error: The serious exception
-        """
+        """Log a serious error that may indicate a config problem. Reconnection is never
+        disabled — we keep retrying on the longer backoff; the admin may need to re-register."""
         self.logger.warning(f"[SERIOUS ERROR] {error}")
         self.logger.warning("[SERIOUS ERROR] Will keep retrying every hour - may need re-registration")
-        # NOTE: We do NOT set shutdown_event - always keep trying!
+        # Deliberately does NOT set shutdown_event — always keep trying
 
-    # =========================================================================
-    # Thread Supervision
-    # =========================================================================
+    # Thread supervision
 
     def register_thread(
         self,
         name: str,
         factory: Callable[[], threading.Thread]
     ):
-        """
-        Register a thread to be supervised.
-
-        The factory is called to create/restart the thread when needed.
-        Threads are automatically restarted if they die while connected.
-
-        Args:
-            name: Unique name for the thread
-            factory: Callable that creates and returns the thread (NOT started)
-        """
+        """Register a supervised thread. `factory` returns an unstarted Thread and is
+        called again to restart it if it dies while connected."""
         self._thread_factories[name] = factory
         self.logger.debug(f"[SUPERVISOR] Registered thread: {name}")
 
@@ -991,14 +717,7 @@ class ConnectionManager:
             self._restart_thread(name, factory)
 
     def _restart_thread(self, name: str, factory: Callable[[], threading.Thread]):
-        """
-        Restart a single supervised thread.
-
-        Args:
-            name: Thread name
-            factory: Callable that creates the thread
-        """
-        # Check if thread is already running
+        """Restart one supervised thread from its factory."""
         existing = self._supervised_threads.get(name)
         if existing and existing.is_alive():
             self.logger.debug(f"[SUPERVISOR] Thread {name} already running")
@@ -1011,7 +730,6 @@ class ConnectionManager:
             except Exception:
                 pass
 
-        # Create and start new thread
         try:
             thread = factory()
             thread.name = f"Supervised-{name}"
@@ -1023,13 +741,8 @@ class ConnectionManager:
             self.logger.error(f"[SUPERVISOR] Failed to start thread {name}: {e}")
 
     def enable_thread_supervision(self):
-        """
-        Enable thread supervision.
-
-        Call this after the service is ready to run threads.
-        This must be called before start_watchdog() to ensure
-        threads are started at the right time.
-        """
+        """Enable thread supervision. Must be called before start_watchdog() so threads
+        start at the right time."""
         self._thread_supervision_enabled = True
         self.logger.debug("[SUPERVISOR] Thread supervision enabled")
 
@@ -1038,15 +751,8 @@ class ConnectionManager:
             self._restart_all_threads()
 
     def start_watchdog(self):
-        """
-        Start the thread supervision watchdog.
-
-        The watchdog monitors supervised threads and triggers
-        reconnection if any thread dies unexpectedly.
-
-        Note: This automatically enables thread supervision.
-        """
-        # Enable thread supervision when watchdog starts
+        """Start the supervision watchdog (also enables thread supervision). Monitors
+        supervised threads and triggers reconnection when one dies."""
         if not self._thread_supervision_enabled:
             self.enable_thread_supervision()
 
@@ -1063,12 +769,7 @@ class ConnectionManager:
         self.logger.debug("[WATCHDOG] Started")
 
     def _watchdog_loop(self):
-        """
-        Monitor supervised threads and restart if dead.
-
-        Runs in a background thread, checking thread health
-        at regular intervals.
-        """
+        """Monitor supervised threads at WATCHDOG_INTERVAL and restart dead ones."""
         self.logger.debug("[WATCHDOG] Loop started")
 
         while not self._shutdown_event.is_set():
@@ -1090,21 +791,17 @@ class ConnectionManager:
                             context="Watchdog"
                         )
 
-                # Self-restart check runs regardless of state — the whole point
-                # is to catch cases where we're NOT reaching CONNECTED.
+                # Runs regardless of state — the point is to catch never-reaching-CONNECTED
                 self._check_self_restart()
 
             except Exception as e:
                 self.logger.error(f"[WATCHDOG] Error: {e}")
 
-            # Wait for next check (interruptible)
             self._shutdown_event.wait(self.WATCHDOG_INTERVAL)
 
         self.logger.debug("[WATCHDOG] Loop exited")
 
-    # =========================================================================
-    # Self-Restart Watchdog
-    # =========================================================================
+    # Self-restart watchdog
 
     def _read_watchdog_config(self) -> dict:
         """Read the watchdog config section, cached for 60s to cut lock churn."""
@@ -1123,9 +820,7 @@ class ConnectionManager:
         return merged
 
     def _build_snapshot(self, reason_code: str) -> dict:
-        """Assemble the diagnostic snapshot used for restart logging and
-        deferred Firestore submission.
-        """
+        """Diagnostic snapshot for restart logging and deferred Firestore submission."""
         snap = self.get_status(diagnostic=True)
         snap["reason_code"] = reason_code
         snap["restart_id"] = str(uuid.uuid4())
@@ -1139,10 +834,9 @@ class ConnectionManager:
     def _check_self_restart(self):
         """Evaluate whether to fire a self-restart this cycle.
 
-        Ordering is deliberate: cheap checks first (config, emergency kill
-        switch, pure decision), then expensive checks (internet, reboot state,
-        budget consume). All I/O is wrapped so a failure here never takes down
-        the watchdog thread.
+        Ordering is deliberate: cheap checks first (config, kill switch, pure
+        decision), then expensive ones (internet, reboot state, budget consume).
+        All I/O is wrapped so a failure here never kills the watchdog thread.
         """
         try:
             config = self._read_watchdog_config()
@@ -1168,8 +862,7 @@ class ConnectionManager:
                     self.logger.info("[WATCHDOG] Fire condition met but internet unreachable; skipping")
                     return
 
-            # Scheduled OS reboot overlap — don't inject a service restart
-            # while the reboot scheduler is driving a shutdown.
+            # Don't inject a service restart while the reboot scheduler drives a shutdown
             try:
                 import reboot_state  # lazy import to avoid cycles
                 if reboot_state.read_state().get('attempt'):
@@ -1204,11 +897,9 @@ class ConnectionManager:
             self.logger.error(f"[WATCHDOG] _check_self_restart error (non-fatal): {e}")
 
     def _handle_budget_exhausted(self, decision: RestartDecision):
-        """Log once per window instead of every 10s; emit a one-shot Firestore
-        event so the dashboard can see the agent is in 'wedged but alive' state.
-        """
+        """Log once per window instead of every 10s, and emit a one-shot Firestore event
+        so the dashboard can see the agent is 'wedged but alive'."""
         now_mono = time.monotonic()
-        # Throttled log
         last_log = self._budget_exhausted_last_log_mono
         if last_log is None or (now_mono - last_log) > _BUDGET_EXHAUSTED_LOG_THROTTLE_SECONDS:
             self.logger.error(
@@ -1229,41 +920,26 @@ class ConnectionManager:
                 self.logger.debug(f"[WATCHDOG] budget_exhausted event persist failed: {e}")
 
     def get_thread_status(self) -> Dict[str, bool]:
-        """
-        Get status of all supervised threads.
-
-        Returns:
-            Dict mapping thread name to alive status.
-        """
+        """Map supervised thread name -> alive."""
         return {
             name: thread.is_alive()
             for name, thread in self._supervised_threads.items()
         }
 
-    # =========================================================================
     # Lifecycle
-    # =========================================================================
 
     def shutdown(self):
-        """
-        Graceful shutdown.
-
-        Signals all threads to stop, calls disconnect callback,
-        and transitions to DISCONNECTED state.
-        """
+        """Graceful shutdown: stop threads, run the disconnect callback, go DISCONNECTED."""
         self.logger.info("[SHUTDOWN] ConnectionManager shutting down")
 
-        # Signal all threads to stop
         self._shutdown_event.set()
 
-        # Call disconnect callback
         if self._disconnect_callback:
             try:
                 self._disconnect_callback()
             except Exception as e:
                 self.logger.error(f"[SHUTDOWN] Disconnect callback error: {e}")
 
-        # Wait for watchdog to stop
         if self._watchdog_thread and self._watchdog_thread.is_alive():
             self._watchdog_thread.join(timeout=5.0)
 
@@ -1275,11 +951,7 @@ class ConnectionManager:
         self.logger.info("[SHUTDOWN] Complete")
 
     def reset(self):
-        """
-        Reset manager to initial state.
-
-        Use this for testing or when re-registering the agent.
-        """
+        """Reset to initial state — for tests or agent re-registration."""
         self.logger.info("[RESET] Resetting ConnectionManager")
 
         self._shutdown_event.clear()
@@ -1294,22 +966,14 @@ class ConnectionManager:
 
         self._set_state(ConnectionState.DISCONNECTED, "Reset")
 
-    # =========================================================================
-    # Status / Debugging
-    # =========================================================================
+    # Status / debugging
 
     def get_status(self, diagnostic: bool = False) -> Dict[str, Any]:
-        """
-        Get comprehensive status for debugging/monitoring.
+        """Status for debugging/monitoring.
 
-        Args:
-            diagnostic: When True, includes self-restart watchdog fields
-                (seconds_since_last_success, internet_check_tcp, last_error,
-                process_uptime_s, restart_count_in_window, timestamp_utc).
-                Used when building the snapshot before a watchdog restart.
-
-        Returns:
-            Dict with current state, backoff info, thread status, etc.
+        diagnostic=True adds the self-restart watchdog fields
+        (seconds_since_last_success, internet_check_tcp, last_error,
+        process_uptime_s, restart_count_in_window, timestamp_utc).
         """
         status = {
             "state": self.state.name,

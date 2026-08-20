@@ -12,22 +12,15 @@ import {
 } from '@/lib/inAppBrowser';
 
 /**
- * Explains why federated sign-in is unavailable, and offers the only two
- * remediations that exist: leave the webview, or use a credential that doesn't
- * involve a third-party identity provider (the email form below it).
+ * Explains why federated sign-in is unavailable and offers the only two fixes:
+ * leave the webview, or sign in with the email form below.
  *
- * Inline rather than a toast, on the same reasoning as `ui/form-error`: this
- * is a blocking condition the user must act on, not the outcome of an action,
- * so it has to persist until resolved rather than expire in a corner. The
- * previous behaviour — two stacked generic toasts reading "An error occurred.
- * Please try again" — told the user nothing and left them with no next step.
+ * Inline rather than a toast (same reasoning as `ui/form-error`): a blocking
+ * condition must persist until resolved, not expire in a corner.
  *
- * Rendered on two triggers, and the copy adapts to both:
- *  - pre-emptively, when the host app is identified before the user taps
- *    anything (the common case, and the only one that saves a wasted tap);
- *  - reactively, when `auth/popup-blocked` fires anyway. That covers webviews
- *    the UA doesn't identify, and ordinary browsers where a popup blocker or a
- *    broken gesture chain got in the way.
+ * Two triggers, with adapted copy: pre-emptive when the host app is identified
+ * before any tap, and reactive on `auth/popup-blocked` — which covers webviews
+ * the UA doesn't identify plus ordinary popup-blocker / gesture-chain failures.
  */
 export function InAppBrowserNotice({
   isInApp,
@@ -43,7 +36,7 @@ export function InAppBrowserNotice({
   appName?: string;
   /** The one-tap escape has already been tried and evidently did nothing. */
   escapeAttempted?: boolean;
-  /** Fail open: let the user attempt Google regardless of what we detected. */
+  /** Fail open: allow the Google attempt regardless of detection. */
   onTryAnyway?: () => void;
   tryAnywayDisabled?: boolean;
   className?: string;
@@ -59,9 +52,8 @@ export function InAppBrowserNotice({
     ? `${appName ?? 'this app'} opens links in its own browser, which can't open the google sign-in window. use your email below, or open owlette.app in ${browser}.`
     : `use your email below, or open owlette.app in ${browser}.`;
 
-  // The one-tap escape relies on a private, undocumented URL scheme that many
-  // host apps ignore, so the manual route is always shown — never as a
-  // consolation after a failure we cannot even detect.
+  // The one-tap escape uses a private URL scheme many host apps ignore, and the
+  // failure isn't detectable — so the manual route is always shown.
   const manualHint = escapeAttempted
     ? `still here? the shortcut didn't work in this app — tap the ••• menu at the top of this window and choose "open in ${browser}".`
     : 'if nothing happens, tap the ••• menu at the top of this window and choose "open in browser".';
@@ -71,9 +63,8 @@ export function InAppBrowserNotice({
   };
 
   const handleCopy = () => {
-    // Not an async handler on purpose: WebKit rejects the clipboard promise
-    // unless writeText is reached synchronously from the user gesture, so
-    // nothing may be awaited before the call.
+    // Not async on purpose: WebKit rejects the clipboard promise unless writeText
+    // is reached synchronously from the user gesture.
     void copyToClipboard(window.location.href).then((ok) => {
       if (ok) {
         toast.success('link copied — paste it into your browser');

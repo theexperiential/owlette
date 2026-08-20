@@ -1,23 +1,12 @@
 /**
- * HTTP-shape tests for the wave-2A machine mutation verbs:
- *   `owlette machine reboot | shutdown | screenshot`
+ * HTTP-shape tests for `owlette machine reboot | shutdown | screenshot`, driving
+ * POST/GET on `/api/sites/:siteId/machines/:machineId/commands[/:commandId]`.
  *
- * Drives:
- *   POST /api/sites/:siteId/machines/:machineId/commands
- *   GET  /api/sites/:siteId/machines/:machineId/commands/:commandId  (screenshot polling)
- *
- * Properties asserted:
- *   - reboot/shutdown send {type, params:{delay_seconds?}} with an
- *     auto-generated Idempotency-Key
- *   - 409 machine_offline surfaces the canonical hint
- *   - screenshot is a queue → poll → download flow:
- *       * POST returns commandId + status=pending
- *       * GET commands/:id polled until status=completed
- *       * the signed `screenshot_url` from `result` is fetched and the
- *         bytes written to `--output <path>` (or default filename)
- *   - the screenshot polling loop bails on status=failed
- *   - the screenshot polling loop times out after MAX_ATTEMPTS attempts
- *     (we exercise the timeout by stubbing every poll to return pending)
+ * Asserts: reboot/shutdown send `{type, params:{delay_seconds?}}` with an
+ * auto-generated Idempotency-Key; 409 machine_offline surfaces the canonical
+ * hint; screenshot is queue → poll → download (the signed `screenshot_url` is
+ * fetched and written to `--output` or a default name); and the poll loop bails
+ * on `failed` and times out after MAX_ATTEMPTS.
  */
 
 import { Command } from 'commander';
@@ -91,9 +80,7 @@ beforeEach(() => {
   process.exitCode = 0;
   jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
   jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
-  // The screenshot polling loop sleeps between attempts. Replace
-  // setTimeout with an immediate scheduler so tests don't actually
-  // wait 60s on a timeout case.
+  // Immediate scheduler, or the timeout case really waits 60s.
   (global as unknown as { setTimeout: typeof setTimeout }).setTimeout = ((
     fn: (...args: unknown[]) => void,
     _ms?: number,
@@ -113,10 +100,6 @@ afterEach(() => {
 });
 
 const COMMANDS_URL = 'https://dev.test/api/sites/site-1/machines/m-1/commands';
-
-/* -------------------------------------------------------------------- */
-/*  reboot / shutdown                                                    */
-/* -------------------------------------------------------------------- */
 
 describe.each([
   ['reboot', 'reboot_machine'],
@@ -198,10 +181,6 @@ describe.each([
   });
 });
 
-/* -------------------------------------------------------------------- */
-/*  screenshot                                                           */
-/* -------------------------------------------------------------------- */
-
 describe('owlette machine screenshot', () => {
   it('queues the command, polls, downloads to --output, prints saved path', async () => {
     const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'owlette-screenshot-'));
@@ -255,7 +234,7 @@ describe('owlette machine screenshot', () => {
       { from: 'user' },
     );
 
-    // 3 fetches: POST queue, GET poll, GET signed
+    // POST queue, GET poll, GET signed.
     expect(calls).toHaveLength(3);
     expect(calls[0]!.url).toBe(COMMANDS_URL);
     expect(calls[0]!.init.method).toBe('POST');
@@ -372,7 +351,7 @@ describe('owlette machine screenshot', () => {
         { from: 'user' },
       );
 
-      // The default filename is `screenshot-<machineId>-<ts>.png`.
+      // Default filename: `screenshot-<machineId>-<ts>.png`.
       const written = fs
         .readdirSync(tmpDir)
         .filter((f) => f.startsWith('screenshot-m-1-') && f.endsWith('.png'));
@@ -457,7 +436,7 @@ describe('owlette machine screenshot', () => {
           payload: { ok: true, data: { commandId: 'cmd_slow', status: 'pending' } },
         };
       }
-      // every poll returns pending forever
+      // Every poll returns pending forever.
       return {
         status: 200,
         payload: { ok: true, data: { commandId: 'cmd_slow', status: 'pending' } },
@@ -475,7 +454,7 @@ describe('owlette machine screenshot', () => {
       { from: 'user' },
     );
 
-    // 1 POST + MAX_ATTEMPTS polls
+    // 1 POST + MAX_ATTEMPTS polls.
     expect(calls.length).toBe(1 + machineInternals.SCREENSHOT_POLL_MAX_ATTEMPTS);
     const errOut = stderr.join('');
     expect(errOut).toContain('screenshot timed out');
@@ -531,10 +510,6 @@ describe('owlette machine screenshot', () => {
     expect(process.exitCode).toBe(2);
   });
 });
-
-/* -------------------------------------------------------------------- */
-/*  helper-shape unit tests                                              */
-/* -------------------------------------------------------------------- */
 
 describe('machine helpers', () => {
   it('parseMonitorOpt accepts non-negative integers and rejects named values', () => {

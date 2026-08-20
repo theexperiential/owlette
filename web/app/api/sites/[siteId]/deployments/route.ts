@@ -5,9 +5,8 @@
  * POST /api/sites/{siteId}/deployments
  *      -> create a deployment and fan out install_software commands.
  *
- * security-boundary-migration wave 3.3: mutation logic lives in
- * `web/lib/actions/createDeployment.server.ts`; this file is a thin HTTP
- * shim that preserves the api-sprint public contract.
+ * Thin HTTP shim: the mutation lives in
+ * `web/lib/actions/createDeployment.server.ts`.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -41,9 +40,7 @@ type RouteParams = { siteId: string };
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
 
-/* --------------------------------------------------------------------- */
-/*  GET - list deployments                                                */
-/* --------------------------------------------------------------------- */
+// GET - list deployments
 
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
@@ -90,9 +87,7 @@ export const GET = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* --------------------------------------------------------------------- */
-/*  POST - create deployment                                              */
-/* --------------------------------------------------------------------- */
+// POST - create deployment
 
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
@@ -148,9 +143,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* --------------------------------------------------------------------- */
-/*  helpers                                                               */
-/* --------------------------------------------------------------------- */
+// helpers
 
 function actorIdentifier(auth: Extract<Awaited<ReturnType<typeof requireSiteAuthAndScope>>, { ok: true }>): string {
   return auth.auth.keyContext

@@ -106,7 +106,7 @@ afterEach(() => {
   delete process.env.LEGACY_API_KEY_ALLOW_HASH_LIST;
 });
 
-// ─── requireSession ────────────────────────────────────────────────────────
+// requireSession
 
 describe('requireSession', () => {
   it('returns userId when session is valid', async () => {
@@ -139,7 +139,7 @@ describe('requireSession', () => {
   });
 });
 
-// ─── requireSessionOrIdToken ───────────────────────────────────────────────
+// requireSessionOrIdToken
 
 describe('requireSessionOrIdToken', () => {
   it('returns userId from valid session', async () => {
@@ -240,7 +240,7 @@ describe('requireSessionOrIdToken', () => {
   });
 });
 
-// ─── requireAdminOrIdToken ─────────────────────────────────────────────────
+// requireAdminOrIdToken
 
 describe('requireAdminOrIdToken', () => {
   const apiKeyHash = createHash('sha256').update('owk_test123').digest('hex');
@@ -394,7 +394,7 @@ describe('requireAdminOrIdToken', () => {
   });
 });
 
-// ─── requireAdmin ──────────────────────────────────────────────────────────
+// requireAdmin
 
 describe('requireAdmin', () => {
   it('delegates to requireAdminOrIdToken', async () => {
@@ -410,7 +410,7 @@ describe('requireAdmin', () => {
   });
 });
 
-// ─── requireSessionUser ────────────────────────────────────────────────────
+// requireSessionUser
 
 describe('requireSessionUser', () => {
   it('returns userId when session matches', async () => {
@@ -434,7 +434,7 @@ describe('requireSessionUser', () => {
   });
 });
 
-// ─── assertUserHasSiteAccess ───────────────────────────────────────────────
+// assertUserHasSiteAccess
 
 describe('assertActiveUser', () => {
   it('returns user data when the user doc exists and is not deleted', async () => {
@@ -601,7 +601,7 @@ describe('assertUserHasSiteAccess', () => {
   });
 });
 
-// ─── resolveAuth ───────────────────────────────────────────────────────────
+// resolveAuth
 
 describe('resolveAuth', () => {
   function apiKeyReq(rawKey: string, via: 'header' | 'query' | 'bearer' = 'header') {
@@ -682,12 +682,11 @@ describe('resolveAuth', () => {
   it('falls through to session auth when Bearer token is not an owk_ key', async () => {
     mockGetSession.mockResolvedValue(validSession({ userId: 'u-tok' }));
     mockVerifyIdToken.mockResolvedValue({ uid: 'u-id-token' });
-    // Bearer doesn't start with owk_, so extractApiKey returns null — session wins.
+    // Bearer without the owk_ prefix: extractApiKey returns null, so the session wins.
     const req = makeRequest('http://localhost/test', {
       headers: { authorization: 'Bearer eyJ.id-token.xyz' },
     });
     const auth = await resolveAuth(req);
-    // Session was valid, so we never hit verifyIdToken on this path.
     expect(auth.userId).toBe('u-tok');
     expect(auth.keyContext).toBeNull();
   });
@@ -862,7 +861,7 @@ describe('resolveAuth', () => {
       }),
     );
 
-    // Make the update reject — resolveAuth must still succeed.
+    // A rejected update must not fail resolveAuth.
     mockDocUpdate.mockRejectedValueOnce(new Error('firestore unavailable'));
 
     const auth = await resolveAuth(apiKeyReq('owk_live_ff'));
@@ -906,7 +905,7 @@ describe('resolveAuth', () => {
   });
 });
 
-// ─── requireScope ──────────────────────────────────────────────────────────
+// requireScope
 
 describe('requireScope', () => {
   it('bypasses when session auth (no keyContext)', () => {
@@ -1085,7 +1084,7 @@ describe('requireScope', () => {
   });
 });
 
-// ─── applyAuthDeprecations ─────────────────────────────────────────────────
+// applyAuthDeprecations
 
 describe('applyAuthDeprecations', () => {
   it('no-ops for a clean scopeCheck (non-legacy, no missingVersion)', () => {
@@ -1140,14 +1139,13 @@ describe('applyAuthDeprecations', () => {
       headers: { 'X-Roost-Deprecation': 'other-signal' },
     });
     applyAuthDeprecations(res, { isLegacy: true });
-    // Headers.append → both values present; .get returns them comma-joined.
     const value = res.headers.get('X-Roost-Deprecation');
     expect(value).toContain('other-signal');
     expect(value).toContain('legacy-key-scope-missing');
   });
 });
 
-// ─── auditApiKeyUse ────────────────────────────────────────────────────────
+// auditApiKeyUse
 
 describe('auditApiKeyUse', () => {
   it('no-ops when keyContext is null (session auth)', () => {

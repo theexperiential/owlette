@@ -1,25 +1,12 @@
 /**
- * POST /api/cli/device-code/authorize
+ * POST /api/cli/device-code/authorize — CLI device-code handshake, step 2 of 3
+ * (browser side). A signed-in user at /cli/authorize?code=<phrase> picks scopes
+ * + ttl; this mints an owk_* key and stashes it on `cli_device_codes/{phrase}`
+ * for the CLI's /poll.
  *
- * CLI device-code handshake — step 2 of 3 (browser side).
- *
- * The user, already signed in to the dashboard, visits
- * /cli/authorize?code=<phrase> and picks a scope preset + ttl.
- * That page POSTs here to mint an owk_* api key scoped to their choices,
- * then stores the raw key in the `cli_device_codes/{phrase}` doc so the
- * CLI's /poll call picks it up.
- *
- * Body:
- *   {
- *     code: string (pairing phrase),
- *     name: string,
- *     scopes: ApiKeyScope[],
- *     ttlDays?: number (default 90, max 365),
- *     environment?: ignored — every key is minted 'live'
- *   }
- *
- * Returns:
- *   { success: true, keyId, keyPrefix }  — session cookie required
+ * Body: `{ code, name, scopes, ttlDays? (default 90, max 365), environment? }`
+ * (`environment` is ignored — every key is minted 'live').
+ * Returns `{ success: true, keyId, keyPrefix }`; session cookie required.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
@@ -186,9 +173,8 @@ export const POST = withRateLimit(
       }
       const ttlDays = rawTtl;
 
-      // Minted live like every other key. `body.environment` is accepted and
-      // ignored rather than rejected — the shipped @owlette/cli still sends it
-      // (cli/src/config.ts) and nothing on either side branches on the value.
+      // `body.environment` is accepted and ignored, not rejected: shipped
+      // @owlette/cli still sends it and nothing branches on the value.
       const environment = MINTED_API_KEY_ENVIRONMENT;
 
       // Defense-in-depth: validate site-scoped ids against the caller's access.
@@ -271,18 +257,14 @@ export const POST = withRateLimit(
           };
           transaction.set(db.collection('api_keys').doc(keyHash), lookup);
 
-          // Encrypt the raw key (and the bundle of metadata the cli
-          // expects on its /poll response) under a key derived from the
-          // cli's polling deviceCode. The cleartext deviceCode is wiped
-          // from the doc in the same write so the only path from the
-          // doc-at-rest back to the api key requires the cli's process
-          // memory.
+          // Encrypt the raw key + /poll metadata under a key derived from the
+          // cli's polling deviceCode, and wipe the cleartext deviceCode in the
+          // same write — so recovering the api key from the doc at rest requires
+          // the cli's process memory.
           //
-          // Legacy fallback: if the doc lacks wrapVersion v1 (e.g. it was
-          // created against an older deploy whose start endpoint hadn't
-          // shipped this change yet), we cannot encrypt — there is no
-          // deviceCode on the doc. In that case we store the rawKey in
-          // cleartext as before and let the legacy poll path return it.
+          // Docs without wrapVersion v1 (created before this shipped) carry no
+          // deviceCode and cannot be encrypted: store rawKey cleartext and let
+          // the legacy poll path return it.
           const supportsEncryption =
             codeData.wrapVersion === DEVICE_CODE_WRAP_VERSION &&
             typeof codeData.deviceCode === 'string' &&

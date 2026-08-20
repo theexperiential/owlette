@@ -4,15 +4,13 @@
  *
  * /register when the person already has an account.
  *
- * Google OAuth signs up and signs in through the same popup, so a returning
- * user who lands on /register by mistake is simply logged in. The page used to
- * congratulate them on an "account created with Google!" that never happened,
- * and then push to /dashboard before the session cookie existed — so the proxy
- * bounced them to /login?redirect=%2Fdashboard and the whole thing read as a
- * silent failure.
+ * Google OAuth signs up and signs in through one popup, so a returning user is
+ * simply logged in. The page used to claim "account created with Google!" and
+ * push /dashboard before the session cookie existed, so the proxy bounced them
+ * to /login and it read as a silent failure.
  *
- * The email path cannot log anyone in (we have no password for them), so there
- * the requirement is different: say so inline, and give them somewhere to go.
+ * The email path can't log anyone in (no password), so it must say so inline
+ * and offer somewhere to go.
  */
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
@@ -26,8 +24,7 @@ global.ResizeObserver = class {
   disconnect() {}
 };
 
-// Not in an in-app browser — this file is about the account state, not the
-// browser. Keeps the Google button rendered so it can be clicked.
+// Not in an in-app browser, so the Google button stays rendered.
 const inAppState: InAppBrowserState = { isInApp: false, escapeAttempted: false };
 jest.mock('@/hooks/useInAppBrowser', () => ({
   useInAppBrowser: () => inAppState,
@@ -97,8 +94,8 @@ describe('/register google path', () => {
     );
   });
 
-  // The regression that made this look broken: pushing /dashboard immediately
-  // raced the session cookie and the proxy bounced the user back to /login.
+  // The regression: pushing /dashboard immediately raced the session cookie and
+  // the proxy bounced the user to /login.
   it('resolves the landing instead of pushing /dashboard blind', async () => {
     signInWithGoogle.mockResolvedValue({ isNewUser: false });
     resolvePostSignInPath.mockResolvedValue('/verify-2fa?redirect=%2Fdashboard');

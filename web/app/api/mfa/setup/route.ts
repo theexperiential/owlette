@@ -1,21 +1,12 @@
 /**
- * MFA Setup API
+ * POST /api/mfa/setup — `{userId, email}` → `{secret, qrCodeUrl}`.
  *
- * Generates TOTP secret and QR code for 2FA setup
- * The secret is temporarily stored server-side until verification
+ * The secret lands in `mfa_pending` only; /api/mfa/verify-setup does the real
+ * enrollment write.
  *
- * POST /api/mfa/setup
- * Request: { userId: string, email: string }
- * Response: { secret: string, qrCodeUrl: string }
- *
- * SECURITY: The secret returned here is for display only.
- * The actual storage happens in /api/mfa/verify-setup after verification.
- *
- * SECURITY: adding a factor to an account that already holds one requires an
- * MFA-verified session — see `lib/mfaEnrollmentGate.server.ts` for the bypass this closes.
- * Minting a pending secret is not yet a state change the attacker can use, but
- * gating here means the flow fails at step one with an actionable code instead
- * of walking the user through a QR scan that verify-setup will reject.
+ * Gated: adding a second factor needs an MFA-verified session, so a stolen
+ * session can't enroll its own (see lib/mfaEnrollmentGate.server.ts). Gating at
+ * step one fails with an actionable code instead of after a QR scan.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -32,7 +23,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const body = await request.json();
     const { userId, email } = body;
 
-    // Validate inputs
     if (!userId || typeof userId !== 'string') {
       return NextResponse.json(
         { error: 'Invalid user ID' },
@@ -50,8 +40,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     await requireSessionUser(request, userId);
     await assertActiveUser(userId);
 
-    // Enrollment gate: open while the account has no factor at all (the
-    // mandatory-setup path), MFA-verified session required once it does.
+    // Open while the account has no factor (mandatory-setup path).
     const gate = await checkMfaEnrollmentGate(userId);
     if (gate.denied) {
       return gate.denied;
@@ -59,21 +48,10 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     const db = getAdminDb();
 
-    // IDEMPOTENT: reuse an existing, unexpired pending secret rather than
-    // minting a fresh one on every call.
-    //
-    // This route is not called once. `app/setup-2fa/page.tsx` fires it from an
-    // effect, and anything that re-runs that effect — a refresh, a remount, a
-    // second render pass — issues a second POST. Minting a new secret each time
-    // means the LAST write wins in `mfa_pending` while the FIRST response may
-    // be the one whose QR the user actually scanned, so verify-setup then
-    // rejects a code the user read correctly off their authenticator. That race
-    // made the setup-2fa e2e spec fail roughly half the time.
-    //
-    // Reuse is also the better user-facing behaviour: refreshing the page
-    // mid-scan should not silently invalidate the QR you are looking at.
-    // Expiry is unchanged — a stale pending doc falls through to a fresh
-    // secret below, and verify-setup still enforces `expiresAt` itself.
+    // Idempotent by design. setup-2fa fires this from an effect, so remounts
+    // POST again; minting per call let the LAST `mfa_pending` write win while
+    // the user scanned the FIRST QR, and verify-setup then rejected a correct
+    // code (flaked the setup-2fa e2e ~50%). Expired pendings still fall through.
     const pendingRef = db.collection('mfa_pending').doc(userId);
     const pending = await pendingRef.get();
     const pendingData = pending.exists ? pending.data() : undefined;
@@ -94,7 +72,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       });
     }
 
-    // Generate TOTP secret
     let secret: string;
     try {
       secret = generateTOTPSecret();
@@ -103,7 +80,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       throw e;
     }
 
-    // Generate QR code
     let qrCodeUrl: string;
     try {
       qrCodeUrl = await generateQRCode(email, secret);
@@ -112,7 +88,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       throw e;
     }
 
-    // Store pending setup in Firestore (temporary, expires in 10 minutes)
     try {
       await pendingRef.set({
         secret,

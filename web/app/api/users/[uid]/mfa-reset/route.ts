@@ -1,61 +1,32 @@
 /**
  * POST /api/users/{uid}/mfa-reset
  *
- * Superadmin-operated account recovery: strip every second factor off ANOTHER
- * user's account and put them straight back into mandatory 2FA setup.
+ * Superadmin recovery for a user locked out of their own account: strip every
+ * second factor off ANOTHER user and re-arm mandatory 2FA setup. `/api/mfa/disable`
+ * cannot serve this — it acts on the caller's own account and demands live proof
+ * of possession, which is exactly what the locked-out user has lost.
  *
- * WHY THIS EXISTS. A user who loses their last factor and their backup codes
- * is in a closed loop: they cannot sign in, so they cannot reach /verify-2fa,
- * so they cannot reach the remove-factor UI, so they cannot recover.
- * `/api/mfa/disable` is deliberately not a way out — read its header: it acts
- * on the CALLER'S OWN account and demands live proof of possession, which is
- * precisely what this user has lost. Before this route the only fix was
- * hand-editing Firestore.
+ * Steps: (1) delete `users/{uid}/passkeys`, (2) rewrite the factor inventory via
+ * `applyMfaFactorChange` + `recountPasskeys` (clears TOTP, secret and backup codes
+ * in the same write), (3) revoke trusted devices, (4) emit a mutation audit row.
  *
- * WHAT IT DOES, IN THIS ORDER:
- *   1. delete every credential under `users/{uid}/passkeys`
- *   2. recompute the factor inventory through `applyMfaFactorChange` with
- *      `recountPasskeys`, clearing the TOTP leg and its secret / backup codes
- *      in the SAME write
- *   3. revoke every trusted-device record (a reset that leaves a 30-day trust
- *      cookie alive is not a reset)
- *   4. emit a mutation audit row naming the acting superadmin and the target
+ * ORDER IS LOAD-BEARING: credentials before inventory. A crash between them leaves
+ * the account locked out — the state it was already in, and a retry finishes the
+ * job. Reversed, the account would report zero factors and be signable-into while
+ * live WebAuthn credentials survived, so resetting a STOLEN device would look
+ * revoked when it was not. `recountPasskeys` (not an explicit zero) for the same
+ * reason: the tally is read inside the transaction that writes it, so a failed
+ * delete shows up instead of being papered over.
  *
- * ORDERING IS DELIBERATE — credentials first, inventory second. A crash
- * between the two leaves credentials deleted while the user doc still claims
- * factors, i.e. the account stays locked out: exactly the state it was already
- * in, no regression, and a retry of this same route finishes the job. The
- * reverse order would be far worse: the account would report zero factors and
- * be signable-into while live WebAuthn credentials still sat in the
- * subcollection, so an operator resetting a STOLEN device would believe they
- * had revoked it when they had not. Step 2 uses `recountPasskeys` rather than
- * an explicit zero for the same reason — the tally is read from the
- * subcollection inside the transaction that writes it, so if a credential
- * delete silently failed the inventory tells the truth instead of a convenient
- * lie.
+ * Steps 3-4 are best-effort tails — trust records are inert once no factors remain
+ * — so a failure there must not fail a reset that already landed.
  *
- * Steps 3 and 4 are best-effort tails: trusted-device records are inert once
- * the account holds no factors (trust is only consulted when MFA is required),
- * so a revocation failure must not fail a reset that has already landed. The
- * count is reported in the response and the audit row either way.
+ * The inventory (`users/{uid}.mfaFactors` + its derived flags) is written ONLY
+ * through `lib/mfaFactors.server.ts`; never write those fields here.
  *
- * The inventory (`users/{uid}.mfaFactors` and the two flags derived from it)
- * is written exclusively through `lib/mfaFactors.server.ts` — this route must
- * never write those fields itself.
- *
- * Response (200):
- *   {
- *     "uid": "...",
- *     "clearedTotp": boolean,       // target held TOTP before the reset
- *     "deletedPasskeys": number,
- *     "trustedDevicesRevoked": number,
- *     "enrolled": false,            // factor inventory after the reset
- *     "setupRequired": true
- *   }
- *
- * Failure modes: 400 malformed uid or soft-deleted target, 403 non-superadmin
- * or self-reset, 404 unknown user, plus the standard auth / scope / rate-limit
- * problems the platform wrapper emits.
+ * 200 -> { uid, clearedTotp, deletedPasskeys, trustedDevicesRevoked, enrolled,
+ * setupRequired }. 400 malformed uid or soft-deleted target, 403 non-superadmin or
+ * self-reset, 404 unknown user, plus the wrapper's auth/scope/rate-limit problems.
  */
 
 import type { NextRequest } from 'next/server';
@@ -80,11 +51,7 @@ import { emitMutation } from '@/lib/auditLogClient';
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 
-/**
- * Max delete ops per Firestore batch. Firestore caps a batch at 500 writes;
- * 100 matches the repo-wide cascade convention (`deviceTrust.server.ts`,
- * `deleteOwnAccount.server.ts`).
- */
+/** Firestore caps batches at 500; 100 matches the repo-wide cascade convention. */
 const DELETE_BATCH_SIZE = 100;
 
 type RouteParams = { uid: string };
@@ -96,11 +63,9 @@ function auditActor(ctx: PlatformHandlerContext): string {
 }
 
 /**
- * Delete every WebAuthn credential under the target's `passkeys`
- * subcollection, chunked into batches. Returns how many documents were
- * removed. Errors PROPAGATE: a half-revoked credential set must abort the
- * reset before the inventory is rewritten (see the ordering note in the
- * header) rather than be swallowed.
+ * Delete every WebAuthn credential under `passkeys`, batched; returns the count.
+ * Errors PROPAGATE — a half-revoked credential set must abort before the inventory
+ * is rewritten (see the header's ordering note).
  */
 async function deleteAllPasskeys(
   db: FirebaseFirestore.Firestore,
@@ -125,20 +90,15 @@ async function deleteAllPasskeys(
 }
 
 export const POST = authorizedPlatformHandler<RouteParams>({
-  // The same capability gate the sibling role routes use — superadmin-only —
-  // and deliberately NOT `USER_DELETE`: that capability is what
-  // `GET /api/users/deletions` queries on, so borrowing it would file every
-  // factor reset in the account-deletions feed as though the user had been
-  // removed.
+  // Superadmin-only, as the sibling role routes. NOT `USER_DELETE`:
+  // `GET /api/users/deletions` queries on it, so every reset would surface in the
+  // account-deletions feed as a removal.
   capability: Capability.USER_ROLE_MANAGE,
   targetKind: 'user',
-  // Record the reset uid as the audit target so the wrapper's row names the
-  // account whose security state changed, not the platform sentinel.
+  // Audit target = the reset uid, not the platform sentinel.
   targetIdParam: 'uid',
-  // `admin` rather than the `write` its promote / demote siblings ask for: an
-  // api key that can strip anyone's second factor is materially more dangerous
-  // than one that can change a role, and the strong scope is one that
-  // superadmin-grade keys already hold.
+  // `admin`, not the siblings' `write`: stripping anyone's second factor is
+  // materially more dangerous than changing a role.
   apiKeyScope: { resource: 'user', permission: 'admin' },
 })(async (_request: NextRequest, ctx: PlatformHandlerContext, routeContext) => {
   try {
@@ -149,16 +109,10 @@ export const POST = authorizedPlatformHandler<RouteParams>({
       });
     }
 
-    // Self-reset is refused. A superadmin who has genuinely lost their own
-    // factors cannot sign in and so cannot reach this route at all; the only
-    // caller who CAN reach it for themselves is one already holding a live
-    // session, and for them the supported path is `/api/mfa/disable`, which
-    // demands live proof of possession. Allowing self-service here would turn
-    // a hijacked-but-authenticated superadmin session into a way to shed 2FA
-    // without ever proving possession — the exact invariant the enrollment
-    // gate and the disable route exist to hold. A locked-out superadmin is
-    // recovered by another superadmin, which is why `MIN_SUPERADMINS` keeps
-    // more than one of them on the platform.
+    // No self-reset: a genuinely locked-out superadmin cannot reach this route at
+    // all, so the only self-caller holds a live session — for whom a hijacked
+    // session would become a way to shed 2FA without proving possession.
+    // Recovery is by another superadmin; `MIN_SUPERADMINS` guarantees one exists.
     if (uid === ctx.actor.userId) {
       return problemForbidden(
         'cannot reset your own second factors here; use account settings, or ask another superadmin',
@@ -173,10 +127,8 @@ export const POST = authorizedPlatformHandler<RouteParams>({
     }
     const userData = userSnap.data() ?? {};
 
-    // A soft-deleted account must not be touched: the delete cascade
-    // deliberately leaves the mandatory-setup nag off for deleted users (see
-    // the documented exception in `lib/userDeleteCascade.server.ts`), and
-    // routing one through the inventory module would re-arm it.
+    // The delete cascade deliberately leaves mandatory-setup off for deleted users
+    // (see lib/userDeleteCascade.server.ts); this would re-arm it.
     if (typeof userData.deletedAt === 'number') {
       return problemValidation(
         'cannot reset factors on a soft-deleted user; restore the account first',
@@ -184,20 +136,15 @@ export const POST = authorizedPlatformHandler<RouteParams>({
       );
     }
 
-    // Read the inventory before we change it, purely so the audit row and the
-    // response can say what was actually taken away. No-op-safe: a user who
-    // already holds nothing runs the identical path and reports zeroes.
+    // Read before mutating so the audit row and response can say what was taken.
     const before = await readMfaFactors(uid, { db });
 
-    // (1) Credentials first — see the ordering note in the header.
+    // (1) Credentials first — see the header's ordering note.
     const deletedPasskeys = await deleteAllPasskeys(db, uid);
 
-    // (2) One write for the whole inventory. `recountPasskeys` reads the
-    // subcollection inside the transaction that writes the tally, so the
-    // stored count can never disagree with the credentials that survive. The
-    // module owns the two derived flags and re-arms mandatory setup on a drop
-    // to zero factors, which is exactly the outcome this route wants: the
-    // target is put back into setup, not left open.
+    // (2) Whole inventory in one write. `recountPasskeys` reads the subcollection
+    // inside the writing transaction, so the tally can't disagree with reality; the
+    // module re-arms mandatory setup at zero factors, which is the desired outcome.
     const after = await applyMfaFactorChange(
       uid,
       { totp: false, recountPasskeys: true },
@@ -207,9 +154,8 @@ export const POST = authorizedPlatformHandler<RouteParams>({
           mfaSecret: FieldValue.delete(),
           backupCodes: [],
           mfaEnrolledAt: FieldValue.delete(),
-          // Legacy flag maintained alongside the passkeys subcollection by
-          // `deletePasskey`; left stale it would make the account still look
-          // like it held a credential.
+          // Legacy flag `deletePasskey` also maintains; stale it would still read
+          // as "holds a credential".
           passkeyEnrolled: false,
           mfaResetAt: FieldValue.serverTimestamp(),
           mfaResetBy: ctx.actor.userId,
@@ -217,9 +163,8 @@ export const POST = authorizedPlatformHandler<RouteParams>({
       },
     );
 
-    // (3) Trusted devices. Best-effort tail: the records are inert now that
-    // the account holds no factors, so a failure here must not fail a reset
-    // that has already landed — it is reported instead.
+    // (3) Best-effort tail: records are inert at zero factors, so a failure here
+    // must not fail a reset that already landed.
     let trustedDevicesRevoked = 0;
     try {
       trustedDevicesRevoked = await revokeAllTrustedDevices(uid);
@@ -227,10 +172,8 @@ export const POST = authorizedPlatformHandler<RouteParams>({
       console.error('[MFA Reset] failed to revoke trusted devices', revokeError);
     }
 
-    // (4) Audit. The wrapper already wrote a capability row; this is the loud
-    // one that names both parties and what was destroyed, so an investigator
-    // reading the mutation feed sees "superadmin X stripped 2FA off user Y"
-    // without joining two logs. Platform-tenant mutation (siteId = '').
+    // (4) The wrapper already wrote a capability row; this one names both parties
+    // so the mutation feed reads standalone. Platform tenant, so siteId = ''.
     emitMutation({
       kind: 'user_mutated',
       siteId: '',

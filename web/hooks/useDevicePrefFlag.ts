@@ -1,17 +1,12 @@
 'use client';
 
 /**
- * Per-device persistence for a single boolean UI preference (panel shown /
- * hidden, section collapsed, etc.).
+ * Per-device persistence for one boolean UI preference, stored under `field` on
+ * the shared `users/{uid}/devicePrefs/global` doc. Hydrated once on mount;
+ * afterwards local state wins and writes are debounced.
  *
- * Stored on the shared per-device prefs doc — `users/{uid}/devicePrefs/global`,
- * the same doc `useDevicePrefs` and `useHootSidebarPrefs` write to — under
- * the caller-supplied `field`. Hydrated once on mount; afterwards local state
- * is the source of truth and writes are debounced.
- *
- * `ready` stays false until hydration settles so callers can hold off on
- * rendering (or fetching) until the stored value is known, instead of flashing
- * the default and then snapping to the persisted value.
+ * `ready` stays false until hydration settles so callers can avoid flashing the
+ * default and snapping to the persisted value.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -52,8 +47,8 @@ export function useDevicePrefFlag(field: string, defaultValue: boolean): DeviceP
       .catch((err) => console.error(`Failed to persist device pref "${fieldRef.current}":`, err));
   }, []);
 
-  // Hydrate once per uid. setState lives in the async callback (not the
-  // synchronous effect body) so it doesn't trip the cascading-render lint rule.
+  // setState stays in the async callback, not the effect body, or the
+  // cascading-render lint rule fires.
   useEffect(() => {
     if (!db || !uid) return;
     let cancelled = false;
@@ -70,13 +65,13 @@ export function useDevicePrefFlag(field: string, defaultValue: boolean): DeviceP
       });
     return () => {
       cancelled = true;
-      // A different sign-in must re-hydrate before its stored value is trusted.
+      // A different sign-in must re-hydrate before its value is trusted.
       setReady(false);
       setValueState(defaultValue);
     };
   }, [uid, field, defaultValue]);
 
-  // Flush any pending write on unmount so a toggle right before navigation sticks.
+  // Flush on unmount so a toggle right before navigation sticks.
   useEffect(() => {
     return () => {
       if (timerRef.current) {
@@ -101,8 +96,7 @@ export function useDevicePrefFlag(field: string, defaultValue: boolean): DeviceP
     [flush],
   );
 
-  // Nothing to hydrate when signed out (or firestore is unavailable), so the
-  // default value is already the final answer — report ready immediately.
+  // Signed out or no firestore: the default is already the final answer.
   return { value, setValue, ready: ready || !db || !uid };
 }
 
@@ -114,10 +108,9 @@ export interface DevicePrefNumber {
 }
 
 /**
- * Numeric sibling of `useDevicePrefFlag` — same doc, same debounce, same
- * hydration contract — for size/position prefs (sidebar width, panel height).
- * Values are clamped to [min, max] on both hydrate and set, so a stale or
- * hand-edited stored value can never render an unusable layout.
+ * Numeric sibling of `useDevicePrefFlag` (same doc, debounce, hydration) for
+ * size prefs. Clamped to [min, max] on hydrate AND set, so a stale or
+ * hand-edited value can't render an unusable layout.
  */
 export function useDevicePrefNumber(
   field: string,

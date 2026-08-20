@@ -1,16 +1,10 @@
 /**
- * deleteSystemPreset action core (security-boundary-migration wave 3.11).
+ * deleteSystemPreset action core. Mirrors `useSystemPresets:deletePreset`
+ * (web/hooks/useSystemPresets.ts:167-174): a HARD delete of
+ * `system_presets/{presetId}` — system presets have no soft-delete path.
  *
- * Mirrors `useSystemPresets:deletePreset` (web/hooks/useSystemPresets.ts:167-174).
- * Hard delete — there is no soft-delete pattern for system presets in the
- * original hook.
- *
- * firestore path: `system_presets/{presetId}` (platform-level).
- *
- * Returns silently if the doc doesn't exist (firebase-admin `delete()` is
- * idempotent), matching the original hook's behaviour.
- *
- * Pure action — does not touch HTTP. Wrapped at the route layer with
+ * Silently succeeds on a missing doc (firebase-admin `delete()` is idempotent),
+ * matching the hook. Pure action, no HTTP; the route wraps it with
  * `authorizedPlatformHandler({ capability: 'SYSTEM_PRESET_MANAGE' })`.
  */
 

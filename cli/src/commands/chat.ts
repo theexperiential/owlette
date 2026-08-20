@@ -1,26 +1,16 @@
 /**
- * `owlette chat new | list | send | delete | rename`.
+ * `owlette chat new | list | send | delete | rename` over the public hoot
+ * conversation routes (POST/GET `/api/hoot/conversations`, POST/PATCH/DELETE
+ * `/api/hoot/conversations/{conversationId}`).
  *
- * Drives the canonical public hoot conversation routes:
+ * `send` consumes BOTH stream protocols the server can emit, flushing deltas as
+ * they arrive:
+ *   `0:"<json delta>"\n` text delta · `3:"<error>"\n` error · `d:{...}\n` end
+ *   `data: {"type":"text-delta","delta":"..."}` — AI SDK 6 UI-message SSE
  *
- *   POST   /api/hoot/conversations                      — start a conversation
- *   GET    /api/hoot/conversations?siteId=&page_size=... — list conversations
- *   POST   /api/hoot/conversations/{conversationId}      — append message + stream reply
- *   PATCH  /api/hoot/conversations/{conversationId}      — rename
- *   DELETE /api/hoot/conversations/{conversationId}      — soft delete
- *
- * `send` consumes both stream protocols the server can emit today:
- *   `0:"<json-encoded delta>"\n` → text delta (write to stdout immediately)
- *   `d:{...}\n`                  → end-of-stream marker
- *   `3:"<error>"\n`              → upstream error frame
- *   `data: {"type":"text-delta","delta":"..."}` → AI SDK 6 UI-message SSE
- * The CLI flushes deltas as they arrive so users see the model think rather
- * than waiting for the full reply.
- *
- * Mutations carry an auto-generated `Idempotency-Key` header so a network
- * retry doesn't double-create / double-delete. `chat send` also sends the
- * header for tracing/proxy tooling, but streamed responses are not safely
- * replayable because the server does not cache them.
+ * Mutations carry an auto-generated `Idempotency-Key` so a retry can't
+ * double-create/delete; `send` sends one only for tracing — streamed responses
+ * are not replayable because the server does not cache them.
  */
 
 import { Command } from 'commander';
@@ -70,12 +60,10 @@ export function registerChatCommands(program: Command): void {
     (program.commands.find((c) => c.name() === 'chat') as Command | undefined) ??
     program.command('chat').description('hoot ai chat');
 
-  // Overwrite any earlier stub description so the help text stays
-  // canonical regardless of registration order.
+  // Overwrite an earlier stub so help text is order-independent.
   chat.description('hoot ai chat');
 
-  // Drop any earlier sub-command registrations (e.g. stubs from a prior
-  // load) so a fresh re-register doesn't double-list verbs.
+  // Drop earlier registrations (stubs) so a re-register can't double-list verbs.
   for (const verb of ['new', 'list', 'send', 'delete', 'rename'] as const) {
     const existing = chat.commands.find((c) => c.name() === verb);
     if (existing) {
@@ -84,8 +72,6 @@ export function registerChatCommands(program: Command): void {
       if (idx >= 0) list.splice(idx, 1);
     }
   }
-
-  /* -------------------- new -------------------- */
 
   chat
     .command('new')
@@ -155,8 +141,6 @@ export function registerChatCommands(program: Command): void {
           `  title           ${data.title ?? '(none)'}\n`,
       );
     });
-
-  /* -------------------- list -------------------- */
 
   chat
     .command('list')
@@ -233,8 +217,6 @@ export function registerChatCommands(program: Command): void {
       }
     });
 
-  /* -------------------- send -------------------- */
-
   chat
     .command('send <conversationId> <message>')
     .description('send a message and stream the assistant reply to stdout')
@@ -258,8 +240,7 @@ export function registerChatCommands(program: Command): void {
             headers: {
               Authorization: `Bearer ${token}`,
               'Content-Type': 'application/json',
-              // Server skips idempotency caching on streamed responses; keep
-              // the header only for downstream tracing/proxy tooling.
+              // Tracing only — the server skips idempotency caching on streams.
               'Idempotency-Key': idempotencyKey,
             },
             body: JSON.stringify({ role: 'user', content: message }),
@@ -276,10 +257,9 @@ export function registerChatCommands(program: Command): void {
         return;
       }
 
-      // Bare `fetch` on purpose — fetchWithTimeout's 30s signal would sever the
-      // streamed reply — so the trial advisory is surfaced by hand. Outside the
-      // try: a fault here is not an unconfirmed mutation and must not be
-      // reported as one.
+      // Bare `fetch`: fetchWithTimeout's 30s signal would sever the stream, so
+      // the trial advisory is surfaced by hand. Outside the try — a fault here
+      // is not an unconfirmed mutation.
       noteBillingWarning(res);
 
       if (!res.ok) {
@@ -319,7 +299,6 @@ export function registerChatCommands(program: Command): void {
       const consume = (line: string): void => {
         if (!line) return;
         if (line.startsWith('0:')) {
-          // text delta
           try {
             const parsed = JSON.parse(line.slice(2));
             if (typeof parsed === 'string') {
@@ -329,7 +308,6 @@ export function registerChatCommands(program: Command): void {
             // Drop malformed delta — never crash the stream.
           }
         } else if (line.startsWith('3:')) {
-          // upstream error
           let detail = line.slice(2);
           try {
             const parsed = JSON.parse(detail);
@@ -361,8 +339,6 @@ export function registerChatCommands(program: Command): void {
         // `d:` and any other prefix → ignore (end markers / tool frames).
       };
 
-      // Async iteration is the streaming-friendly path; every node version
-      // we target supports `for await` on a fetch Response body.
       for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
         pending += decoder.decode(chunk, { stream: true });
         let nl = pending.indexOf('\n');
@@ -380,12 +356,10 @@ export function registerChatCommands(program: Command): void {
           JSON.stringify({ conversationId, content: collected.join('') }, null, 2) + '\n',
         );
       } else {
-        // Final newline so the next shell prompt isn't glued to the reply.
+        // So the next shell prompt isn't glued to the reply.
         process.stdout.write('\n');
       }
     });
-
-  /* -------------------- delete -------------------- */
 
   chat
     .command('delete <conversationId>')
@@ -465,8 +439,6 @@ export function registerChatCommands(program: Command): void {
       );
     });
 
-  /* -------------------- rename -------------------- */
-
   chat
     .command('rename <conversationId> <title>')
     .description('rename a hoot conversation')
@@ -528,10 +500,6 @@ export function registerChatCommands(program: Command): void {
       );
     });
 }
-
-/* --------------------------------------------------------------------- */
-/*  util                                                                 */
-/* --------------------------------------------------------------------- */
 
 function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json: boolean } {
   const { apiUrl, token } = loadConfig({ profile: cmd.optsWithGlobals().profile });

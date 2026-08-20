@@ -1,11 +1,9 @@
 'use client';
 
 /**
- * useRoosts — real-time listener for the v2 roost collection.
- * Reads `sites/{siteId}/roosts/{roostId}` docs, which each
- * represent one deploy target (current version pointer + metadata).
- * Per clean-cutover, this is the authoritative source for the /roost
- * page. v1 `project_distributions` is legacy.
+ * Real-time listener over `sites/{siteId}/roosts/{roostId}` — one doc per deploy
+ * target (current version pointer + metadata). Authoritative for /roost;
+ * v1 `project_distributions` is legacy.
  */
 
 import { useEffect, useState } from 'react';
@@ -29,9 +27,7 @@ export interface Roost {
   versionCounter: number;
   extractPath?: string;
   targets: string[];
-  /** Denormalised summary for the current version — populated by the
-   *  publish transaction on new roosts. Legacy roosts (no publish since
-   *  this field was added) will show `undefined` until next redeploy. */
+  /** Written by the publish transaction; `undefined` on roosts not redeployed since. */
   totalFiles?: number;
   totalSize?: number;
   createdAt: FirestoreTs;
@@ -43,12 +39,9 @@ export interface Roost {
 const EMPTY_ROOSTS: Roost[] = [];
 
 export function useRoosts(siteId: string) {
-  // `loading` is derived from "the listener has not delivered THIS site yet"
-  // rather than latched in state. A latched `useState(true)` never cleared
-  // when there was no siteId to subscribe to, so a caller with no sites sat
-  // on a spinner forever instead of being told it had none. Deriving it also
-  // keeps the flicker guarantee the latch was there for: an unresolved siteId
-  // still reads as loading, never as a real empty result.
+  // `loading` is DERIVED from "this site not delivered yet", not latched: a
+  // latched useState(true) never cleared with no siteId to subscribe to, so a
+  // caller with no sites spun forever. Deriving keeps the flicker guarantee too.
   const [state, setState] = useState<{
     roosts: Roost[];
     loadedSiteId: string | null;
@@ -62,20 +55,14 @@ export function useRoosts(siteId: string) {
       ref,
       (snap) => {
         const next: Roost[] = snap.docs
-          // DELETE on /api/roosts/{id} is a soft delete — it stamps the
-          // doc with `deletedAt` + `tombstoneExpiresAt` rather than
-          // removing it. Filter those out client-side so the row
-          // disappears immediately on delete; the back-end gc reaps the
-          // doc once the tombstone expires.
+          // DELETE is a soft delete (`deletedAt` + `tombstoneExpiresAt`), so
+          // filter here to make the row disappear before gc reaps the doc.
           .filter((d) => !d.data()?.deletedAt)
           .map((d) => {
           const x = d.data();
-          // Legacy roosts predate the manifest→version rename and still
-          // store `currentManifestId` / no `currentVersionNumber`. Fall
-          // back to those fields so re-sync, copy-id, and file-list
-          // expand stay enabled until a backfill ships. Treat any roost
-          // that has SOME version pointer as having an implicit v1 when
-          // no number is recorded.
+          // Legacy roosts predate the manifest→version rename: read
+          // `currentManifestId` and imply v1 so re-sync, copy-id and file-list
+          // expand keep working until a backfill ships.
           const fallbackVersionId =
             (x.currentVersionId as string | null) ??
             (x.currentManifestId as string | null) ??
@@ -109,9 +96,8 @@ export function useRoosts(siteId: string) {
         setState({ roosts: next, loadedSiteId: siteId, error: null });
       },
       (err) => {
-        // Pin loadedSiteId here too: the error callback ends the
-        // subscription, so leaving it null would hold consumers in `loading`
-        // forever instead of letting them render the error.
+        // Pin loadedSiteId: the error ends the subscription, so leaving it null
+        // would hold consumers in `loading` instead of rendering the error.
         setState({ roosts: [], loadedSiteId: siteId, error: err.message });
       },
     );
@@ -121,8 +107,7 @@ export function useRoosts(siteId: string) {
   const loaded = !!siteId && state.loadedSiteId === siteId;
   const roosts = loaded ? state.roosts : EMPTY_ROOSTS;
   const loading = !!db && !!siteId && !loaded;
-  // Only ever report an error for the site currently in view, so one site's
-  // permission failure can't leak onto the next.
+  // Scoped to the site in view so one site's permission failure can't leak.
   const error = !db ? 'Firebase not configured' : loaded ? state.error : null;
 
   return { roosts, loading, error };

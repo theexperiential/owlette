@@ -1,21 +1,16 @@
 /**
  * GET /api/webhooks/{webhookId}/deliveries/{deliveryId}?siteId=...
- *   output: {
- *     id, webhookId, siteId, event, state,
- *     request:  { method, url, headers, body },
- *     response: { status, headers, body, durationMs } | null,
- *     attempt, nextAttemptAt, createdAt, completedAt, lastError
- *   }
+ *   output: { id, webhookId, siteId, event, state,
+ *             request: { method, url, headers, body },
+ *             response: { status, headers, body, durationMs } | null,
+ *             attempt, nextAttemptAt, createdAt, completedAt, lastError }
  *
- * Scope: site:<id>:read.
+ * Scope: site:<id>:read. roost public api wave 6.6.
  *
- * `deliveryId` is the firestore record id from the list response —
- * ({publicDeliveryId}__{subscriptionId}), opaque from the caller's
- * perspective. We verify the embedded `subscriptionId` matches the
- * webhookId on the path before returning the doc so callers can't
- * cross-read another subscription's delivery by id.
- *
- * roost public api wave 6.6.
+ * `deliveryId` is the firestore record id from the list response
+ * ({publicDeliveryId}__{subscriptionId}), opaque to callers. The embedded
+ * `subscriptionId` is checked against the path's webhookId so a caller can't cross-read
+ * another subscription's delivery by id.
  */
 
 import type { NextRequest } from 'next/server';
@@ -93,9 +88,8 @@ export async function GET(
       return problemNotFound(`delivery ${deliveryId} not found`);
     }
 
-    // Cross-subscription read guard — the doc id is opaque but a user
-    // could still guess / replay one from another webhook on the same
-    // site, so verify the embedded subscriptionId matches the path.
+    // Cross-subscription read guard: the doc id is opaque but guessable/replayable from
+    // another webhook on the same site, so verify the embedded subscriptionId.
     if (typeof data.subscriptionId !== 'string' || data.subscriptionId !== webhookId) {
       return problemNotFound(`delivery ${deliveryId} not found for webhook ${webhookId}`);
     }

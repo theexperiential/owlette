@@ -2,17 +2,9 @@
 /**
  * @jest-environment jsdom
  *
- * Render tests for ProjectDistributionDialog (roost wave 3.5 revised).
- *
- * Structure:
- *   - top-level tabs: `new deploy` | `history`
- *   - inside `new deploy`: preset bar + name + source picker (url/upload)
- *     + extract path + verify files + target machines (all shared across
- *     sources; source picker only swaps the URL input / upload dropzone).
- *   - `history`: standalone stub (different mental model — past deploys)
- *
- * The distribute button is enabled only on `deploy` + `url` source for
- * now. Upload-source goes live with wave 3.1 (uppy + tus wiring).
+ * Render tests for ProjectDistributionDialog. Tabs are `new deploy` |
+ * `history`; inside `new deploy` every field except the URL input / upload
+ * dropzone is shared across sources, so the source picker only swaps those two.
  */
 
 import React from 'react';
@@ -104,15 +96,13 @@ describe('ProjectDistributionDialog — source picker (inside deploy)', () => {
   it('shared fields stay visible regardless of source choice', async () => {
     const user = userEvent.setup();
     renderDialog();
-    // shared fields visible under the default upload source.
-    // `verify_files` was dropped in the v2 clean-cutover — version is
-    // authoritative, spot-check is dead weight.
+    // `verify_files` was dropped in the v2 cutover — the version is
+    // authoritative, so a spot-check is dead weight.
     expect(screen.getByLabelText(/roost name/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/extract to/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/verify critical files/i)).not.toBeInTheDocument();
     expect(screen.getByText(/target machines/i)).toBeInTheDocument();
 
-    // flip to url; shared fields should STILL be visible.
     const urlRadio = within(
       screen.getByRole('radiogroup', { name: /source/i }),
     ).getByRole('radio', { name: /by url/i });
@@ -129,14 +119,14 @@ describe('ProjectDistributionDialog — distribute button gating', () => {
   it('disabled on fresh url dialog until name + url + target are filled', async () => {
     const user = userEvent.setup();
     renderDialog();
-    // dialog now defaults to upload mode; flip to url to exercise url gating.
+    // Defaults to upload; flip to url to exercise url gating.
     const urlRadio = within(
       screen.getByRole('radiogroup', { name: /source/i }),
     ).getByRole('radio', { name: /by url/i });
     await user.click(urlRadio);
     const btn = screen.getByRole('button', { name: /distribute to/i });
     expect(btn).toBeDisabled();
-    // title should itemise what's still missing so the user knows what to fill.
+    // The title must itemise what's still missing.
     const title = btn.getAttribute('title') ?? '';
     expect(title).toMatch(/name/);
     expect(title).toMatch(/project URL/);
@@ -144,7 +134,6 @@ describe('ProjectDistributionDialog — distribute button gating', () => {
   });
 
   it('disabled on deploy+upload with no folder, no name, no target', () => {
-    // upload is now the default — no mode-flip needed.
     renderDialog();
     const btn = screen.getByRole('button', { name: /distribute to/i });
     expect(btn).toBeDisabled();

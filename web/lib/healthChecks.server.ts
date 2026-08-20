@@ -37,15 +37,11 @@ const AGENT_HEARTBEAT_WINDOW_MS = 5 * 60 * 1000;
 const WEBHOOK_WINDOW_MS = 60 * 60 * 1000;
 const WEBHOOK_SUCCESS_FLOOR = 0.95;
 const FIRESTORE_LATENCY_LIMIT_MS = 500;
-// Process/display alert digests are drained by 3-min crons with a 2-min
-// accumulation window, so a healthy queue clears within ~5 min. Anything older
-// than this means a digest cron is down (disabled job, stale secret, route error)
-// and alerts are silently piling up undelivered — fail loud.
+// Healthy digest queues clear in ~5min (3-min cron + 2-min accumulation);
+// older than this means a digest cron is down and alerts are piling up.
 const ALERT_DELIVERY_STALE_MS = 15 * 60 * 1000;
-// `/api/cron/talons` claims every due talon each minute and advances `nextRunAt`
-// in the same transaction, so a talon still sitting due this long after its slot
-// means the sweep is not running. Wider than the sweep's own 10-minute
-// missed-fire grace, so a single skipped minute never pages.
+// `/api/cron/talons` advances `nextRunAt` in the claim txn, so a still-due
+// talon means the sweep is dead. Wider than its 10-min missed-fire grace.
 const TALON_DISPATCH_STALE_MS = 15 * 60 * 1000;
 
 function publicBaseUrl(baseUrl?: string): string {
@@ -268,11 +264,8 @@ export async function webhookDeliveryHealth(
 }
 
 /**
- * Detects a stalled alert-digest pipeline: the agent queues process/display
- * alerts into `pending_process_alerts` / `pending_display_alerts`, and dedicated
- * 3-min crons drain them into emails. If those crons stop (a disabled cron-job,
- * a rotated secret, a route error), the queues silently grow and nobody is
- * paged. This surfaces that as a degraded status component within minutes.
+ * Stalled alert-digest pipeline. If the 3-min drain crons stop, the pending_*
+ * queues grow silently and nobody is paged — this makes that visible.
  */
 export async function alertDeliveryHealth(
   options: HealthCheckOptions = {},
@@ -311,12 +304,9 @@ export async function alertDeliveryHealth(
 }
 
 /**
- * Detects a stalled talon scheduler. Schedule-triggered talons only fire when
- * `/api/cron/talons` sweeps them, and that sweep is the ONLY writer of
- * `nextRunAt` at run time — so a still-due talon is proof the sweep is not
- * running (a disabled cron-job, a rotated secret, a route error, an index that
- * never finished building). Nothing else notices: a talon that silently stops
- * firing looks exactly like a talon nobody configured.
+ * Stalled talon scheduler. `/api/cron/talons` is the only runtime writer of
+ * `nextRunAt`, so a still-due talon proves the sweep is dead — otherwise
+ * indistinguishable from a talon nobody configured.
  */
 export async function talonDispatchHealth(
   options: HealthCheckOptions = {},

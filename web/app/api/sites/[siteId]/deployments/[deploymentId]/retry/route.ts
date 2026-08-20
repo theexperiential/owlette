@@ -1,16 +1,11 @@
 /**
  * POST /api/sites/{siteId}/deployments/{deploymentId}/retry
  *
- * Re-queues `install_software` commands for every target whose status is
- * `failed`. Targets in any other state (pending, downloading, installing,
- * completed, cancelled, uninstalled) are left untouched. Deployment-level
- * status flips to `in_progress` while at least one retried target hasn't
- * settled, then resolves to `completed` / `partial_failed` / `failed` per
- * the same recompute rules used by cancel.
+ * Re-queues `install_software` for `failed` targets ONLY; every other state is
+ * left untouched. Deployment status flips to `in_progress` until the retried
+ * targets settle, then recomputes exactly as cancel does.
  *
  * Requires `site=<id>:write` and an `Idempotency-Key` header.
- *
- * api-sprint wave 1 — track 1A (installer-deploys-api).
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -35,7 +30,7 @@ import type { DeploymentTarget } from '@/hooks/useDeployments';
 type RouteParams = { siteId: string; deploymentId: string };
 
 export const runtime = 'nodejs';
-// Self-healing legacy deployments streams the installer to pin a checksum —
+// Self-healing legacy deployments streams the installer to pin a checksum;
 // large binaries need headroom on the Vercel failover origin.
 export const maxDuration = 300;
 
@@ -51,8 +46,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
     if (!parsed.ok) return parsed.response;
     const body = (parsed.body ?? {}) as { machines?: unknown };
 
-    // Optional machine filter — retry only the listed failed targets
-    // (per-row retry in the dashboard). Omitted → retry every failed target.
+    // Optional filter for the dashboard's per-row retry; omitted → all failed.
     let machineFilter: Set<string> | null = null;
     if (body.machines !== undefined) {
       if (
@@ -136,11 +130,9 @@ export const POST = authorizedSiteHandler<RouteParams>({
           });
         }
 
-        // Legacy deployments (created before checksum automation) carry no
-        // pinned checksum — agents refuse install_software without one, so a
-        // bare retry would fail on every target. Compute + pin it now from
-        // the installer URL; on failure, surface the error instead of
-        // queuing commands every agent will refuse.
+        // Pre-checksum-automation deployments have no pinned checksum, and
+        // agents refuse install_software without one — so pin it now, and
+        // surface a failure rather than queuing commands all agents refuse.
         let healedChecksum = false;
         if (!sha256) {
           try {
@@ -159,9 +151,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
 
         const retryEpoch = Date.now();
 
-        // Re-queue install_software commands for failed targets only. Other
-        // targets are intentionally untouched — see the verbal contract on
-        // top of this file.
+        // Failed targets only; see the contract at the top of the file.
         await Promise.all(
           failed.map(async (target) => {
             const sanitizedDeploymentId = deploymentId.replace(/-/g, '_');
@@ -195,12 +185,10 @@ export const POST = authorizedSiteHandler<RouteParams>({
         );
 
         const retryAt = Timestamp.now();
-        // Retried failed targets reset to `pending`. The `error` field is
-        // dropped so the UI doesn't show a stale error next to a re-running
-        // target; we tag the target with `retriedAt` for audit/debug. We
-        // type the row as a generic record because the on-disk shape carries
-        // ad-hoc fields (retriedAt, error) that aren't on the strict
-        // `DeploymentTarget` union — Firestore writes don't need it.
+        // Reset to `pending`, dropping `error` so no stale message sits beside
+        // a re-running target, and stamping `retriedAt` for audit. Typed as a
+        // generic record: the on-disk shape carries ad-hoc fields that aren't
+        // on the strict `DeploymentTarget` union.
         const updatedTargets: Array<Record<string, unknown>> = targets.map((target) => {
           if (target.status !== 'failed' || (machineFilter && !machineFilter.has(target.machineId))) {
             return target as unknown as Record<string, unknown>;
@@ -220,8 +208,8 @@ export const POST = authorizedSiteHandler<RouteParams>({
           updatedAt: FieldValue.serverTimestamp(),
           // Clear completedAt — the deployment is back in flight.
           completedAt: FieldValue.delete(),
-          // Persist a freshly-computed checksum so future retries skip the
-          // download and the doc matches what the commands were issued with.
+          // Persist the computed checksum so future retries skip the download
+          // and the doc matches what the commands were issued with.
           ...(healedChecksum && sha256 ? { sha256_checksum: sha256 } : {}),
         });
 

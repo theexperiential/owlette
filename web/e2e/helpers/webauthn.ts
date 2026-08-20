@@ -1,64 +1,39 @@
 /**
- * WebAuthn virtual-authenticator harness (Chromium/CDP).
+ * WebAuthn virtual-authenticator harness (Chromium/CDP) — drives real
+ * registration/assertion ceremonies with no hardware, OS prompt or user gesture.
  *
- * Chromium exposes a fully software authenticator through the CDP `WebAuthn`
- * domain, so a spec can drive a real registration or assertion ceremony —
- * `navigator.credentials.create()` / `.get()`, the real
- * `@simplewebauthn/browser` calls, the real server verification — with no
- * hardware, no OS prompt, and no user gesture.
+ * TWO RULES FOR EVERY CONSUMING SPEC:
+ * 1. Navigate with ABSOLUTE `WEBAUTHN_BASE_URL` URLs, never relative paths.
+ * 2. `test.use({ storageState: { cookies: [], origins: [] } })` and log in
+ *    inside the spec — do NOT use `roleState(...)`.
  *
- * ── TWO RULES FOR EVERY CONSUMING SPEC ─────────────────────────────────────
- *
- * 1. Navigate with ABSOLUTE `WEBAUTHN_BASE_URL` URLs, never with the relative
- *    paths the rest of the suite uses.
- * 2. Declare `test.use({ storageState: { cookies: [], origins: [] } })` and log
- *    in inside the spec — do NOT use `roleState(...)`.
- *
- * Both follow from one constraint: an IP literal is not a valid WebAuthn RP ID,
- * so the harness pins the RP to `localhost` (see `WEBAUTHN_RP_ID` /
- * `WEBAUTHN_ORIGINS` in `web/playwright.config.ts`, consumed by
- * `web/lib/webauthn.server.ts`). The rest of the suite runs against the
- * `127.0.0.1` `baseURL`, and the role fixtures in `web/e2e/fixtures/*.json` are
- * cookie-bound to that host. `localhost` and `127.0.0.1` are the same server but
- * different origins to the browser, so a fixture's session cookie is simply not
- * sent here — a spec that loads one and then navigates relatively lands on
- * `127.0.0.1`, where the ceremony's RP ID no longer matches and the browser
- * rejects it before any request is made.
- *
- * The e2e server serves a PRODUCTION Next build, which is why the RP override
- * exists at all; `web/lib/webauthn.server.ts` documents that in full.
+ * Both follow from one constraint: an IP literal is not a valid RP ID, so the
+ * RP is pinned to `localhost` while the rest of the suite runs on `127.0.0.1`.
+ * Same server, different browser origins — fixture cookies are not sent here,
+ * and a relative navigation lands on `127.0.0.1` where the RP ID no longer
+ * matches and the browser rejects the ceremony before any request.
  */
 
 import { expect, type CDPSession, type Page } from '@playwright/test';
 import { E2E_PORT } from './emulator';
 
-/**
- * Origin every WebAuthn spec must navigate to. Deliberately `localhost` rather
- * than the `127.0.0.1` of the suite-wide `baseURL` — see the file header.
- */
+/** Origin every WebAuthn spec must navigate to — `localhost`, not the suite's
+ *  `127.0.0.1` baseURL. See the file header. */
 export const WEBAUTHN_BASE_URL = `http://localhost:${E2E_PORT}`;
 
 /** RP ID the harness authenticates against; mirrors `WEBAUTHN_RP_ID`. */
 export const WEBAUTHN_RP_ID = 'localhost';
 
 export interface VirtualAuthenticatorOptions {
-  /**
-   * `internal` models a platform authenticator (Windows Hello, Touch ID, a
-   * password manager); `usb` models a roaming security key. Defaults to
-   * `internal`.
-   */
+  /** `internal` = platform authenticator, `usb` = roaming key. Default internal. */
   transport?: 'internal' | 'usb';
-  /**
-   * Discoverable (resident) credentials, which usernameless login and
-   * conditional-UI autofill both require. On by default.
-   */
+  /** Discoverable credentials, required by usernameless login and autofill. Default on. */
   hasResidentKey?: boolean;
   /** Authenticator is capable of user verification. On by default. */
   hasUserVerification?: boolean;
   /**
-   * UV succeeds without a prompt — this is what makes the ceremony set the `uv`
-   * flag, which the server pins via `requireUserVerification`. On by default;
-   * set false to exercise a UV failure.
+   * UV succeeds without a prompt, so the ceremony sets the `uv` flag the server
+   * pins via `requireUserVerification`. Default on; false exercises UV failure.
    */
   isUserVerified?: boolean;
   /** Touch/presence resolves immediately instead of hanging. On by default. */
@@ -91,19 +66,16 @@ export interface VirtualAuthenticator {
 }
 
 /**
- * Attach a virtual authenticator to `page`'s browser context.
- *
- * Call this BEFORE the navigation that runs the ceremony. The authenticator
- * lives on the browser context, so it survives navigations within the spec, but
- * it must be removed (or the context closed) before the next spec runs.
+ * Attach a virtual authenticator to `page`'s browser context. Call BEFORE the
+ * navigation that runs the ceremony; it survives navigations but must be
+ * removed (or the context closed) before the next spec.
  */
 export async function addVirtualAuthenticator(
   page: Page,
   opts: VirtualAuthenticatorOptions = {},
 ): Promise<VirtualAuthenticator> {
   const cdp = await page.context().newCDPSession(page);
-  // enableUI: false — the real Chromium account picker would need a click no
-  // automated spec can make.
+  // enableUI: false — the real account picker needs a click no spec can make.
   await cdp.send('WebAuthn.enable', { enableUI: false });
 
   const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
@@ -156,11 +128,9 @@ export interface ExpectCredentialOptions {
 }
 
 /**
- * Assert the ceremony actually minted a credential, and hand it back.
- *
- * Polled rather than read once: `navigator.credentials.create()` resolves in the
- * page and the app then POSTs the attestation, so a straight read right after
- * the UI settles can race the authenticator's own bookkeeping.
+ * Assert the ceremony minted a credential, and hand it back. Polled, not read
+ * once: a straight read after the UI settles races the authenticator's own
+ * bookkeeping.
  */
 export async function expectCredentialCreated(
   authenticator: VirtualAuthenticator,

@@ -1,24 +1,13 @@
 /**
- * Deployment Status Cloud Function
+ * Firestore trigger on sites/{siteId}/machines/{machineId}/commands/completed.
+ * For each command carrying a deployment_id it updates that target's status on
+ * the deployment doc and recalculates the overall status — server-side so any
+ * consumer (API, tests, scripts) sees it without the dashboard running.
  *
- * Firestore trigger that fires when the agent writes command results to
- * sites/{siteId}/machines/{machineId}/commands/completed.
- *
- * For each command that has a deployment_id, this function:
- * 1. Reads the deployment doc
- * 2. Updates the matching target's status, progress, error, and timestamps
- * 3. Recalculates the overall deployment status
- * 4. Writes back to the deployment doc
- *
- * This replaces the client-side status mutation that previously lived in
- * the useDeployments React hook, making deployment status observable by
- * any consumer (API, tests, scripts) without requiring the dashboard.
- *
- * CANONICAL: this is the authoritative deployment-status reconciler. The
- * wave-2.4 reconcileDeploymentStatus / reconcileDistributionStatus functions
- * were removed 2026-05-30 — they triggered on commands/pending but the agent
- * only writes status to commands/completed, so they were inert. Do NOT delete
- * this function as "superseded": nothing supersedes it.
+ * CANONICAL reconciler. `reconcileDeploymentStatus` /
+ * `reconcileDistributionStatus` were removed 2026-05-30 because they triggered
+ * on commands/pending, which the agent never writes status to. Do NOT delete
+ * this as "superseded" — nothing supersedes it.
  */
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
@@ -33,11 +22,8 @@ import {
 
 const db = admin.firestore();
 
-/**
- * Triggered on every write to a machine's completed commands document.
- * Diffs before/after to find commands that changed, then updates the
- * corresponding deployment doc for each.
- */
+/** Diffs before/after to find changed commands, then updates each one's
+ * deployment doc. */
 export const onCommandCompleted = onDocumentWritten(
   'sites/{siteId}/machines/{machineId}/commands/completed',
   async (event) => {
@@ -46,7 +32,6 @@ export const onCommandCompleted = onDocumentWritten(
     const beforeData = event.data?.before?.data() || {};
     const afterData = event.data?.after?.data() || {};
 
-    // Find commands that were added or changed
     const changedCommands: Array<{ cmdId: string; cmdData: Record<string, any> }> = [];
 
     for (const [cmdId, cmdData] of Object.entries(afterData)) {
@@ -54,7 +39,6 @@ export const onCommandCompleted = onDocumentWritten(
 
       const beforeCmd = beforeData[cmdId] as Record<string, any> | undefined;
 
-      // New command or status changed
       if (
         !beforeCmd ||
         beforeCmd.status !== cmdData.status ||
@@ -66,7 +50,7 @@ export const onCommandCompleted = onDocumentWritten(
 
     if (changedCommands.length === 0) return;
 
-    // Group changes by deployment_id to batch updates
+    // Batch per deployment_id.
     const deploymentUpdates = new Map<
       string,
       Array<{ cmdId: string; cmdData: Record<string, any> }>
@@ -84,7 +68,6 @@ export const onCommandCompleted = onDocumentWritten(
 
     if (deploymentUpdates.size === 0) return;
 
-    // Process each deployment
     const promises = Array.from(deploymentUpdates.entries()).map(
       ([deploymentId, commands]) =>
         updateDeployment(siteId, machineId, deploymentId, commands)
@@ -94,9 +77,7 @@ export const onCommandCompleted = onDocumentWritten(
   }
 );
 
-/**
- * Update a single deployment doc based on command changes for one machine.
- */
+/** Update one deployment doc from one machine's command changes. */
 async function updateDeployment(
   siteId: string,
   machineId: string,
@@ -122,7 +103,6 @@ async function updateDeployment(
   const deploymentData = deploymentSnap.data()!;
   const targets: DeploymentTarget[] = deploymentData.targets || [];
 
-  // Find the target for this machine
   const targetIndex = targets.findIndex((t) => t.machineId === machineId);
   if (targetIndex === -1) {
     console.warn(
@@ -134,9 +114,9 @@ async function updateDeployment(
   const target = { ...targets[targetIndex] };
   const currentStatus = target.status;
 
-  // If target is already terminal, don't overwrite with intermediate states
+  // A terminal target must not regress to an intermediate state.
   if (TARGET_TERMINAL_STATUSES.has(currentStatus)) {
-    // Allow overwrite only if new status is also terminal (e.g. uninstall after install)
+    // Terminal → terminal is allowed (e.g. uninstall after install).
     const hasTerminalUpdate = commands.some((cmd) => {
       const newStatus = mapCommandToTargetStatus(
         cmd.cmdData.status,
@@ -148,15 +128,13 @@ async function updateDeployment(
     if (!hasTerminalUpdate) return;
   }
 
-  // Apply the most recent command status (commands are in write order)
-  // Use the last command as it represents the latest state
+  // Commands arrive in write order, so the last one is the latest state.
   const latestCmd = commands[commands.length - 1].cmdData;
   const newTargetStatus = mapCommandToTargetStatus(
     latestCmd.status,
     latestCmd.type || ''
   );
 
-  // Skip write if nothing changed
   if (
     newTargetStatus === currentStatus &&
     latestCmd.progress === target.progress
@@ -164,7 +142,6 @@ async function updateDeployment(
     return;
   }
 
-  // Update target fields
   target.status = newTargetStatus;
 
   if (latestCmd.progress !== undefined) {
@@ -175,7 +152,6 @@ async function updateDeployment(
     target.error = latestCmd.error;
   }
 
-  // Set timestamps based on terminal status
   if (TARGET_TERMINAL_STATUSES.has(newTargetStatus)) {
     delete target.progress; // Clear progress on terminal
     const now = Timestamp.now();
@@ -189,11 +165,9 @@ async function updateDeployment(
     }
   }
 
-  // Write updated target back
   const updatedTargets = [...targets];
   updatedTargets[targetIndex] = target;
 
-  // Recalculate overall deployment status
   const newDeploymentStatus = calculateDeploymentStatus(updatedTargets);
 
   const updatePayload: Record<string, unknown> = {
@@ -201,12 +175,11 @@ async function updateDeployment(
     updatedAt: FieldValue.serverTimestamp(),
   };
 
-  // Set deployment-level status
   if (newDeploymentStatus !== deploymentData.status) {
     updatePayload.status = newDeploymentStatus;
   }
 
-  // Set completedAt if deployment just became terminal
+  // completedAt is stamped once, on the transition to terminal.
   const isNowTerminal = [
     'completed', 'failed', 'partial', 'cancelled', 'uninstalled',
   ].includes(newDeploymentStatus);

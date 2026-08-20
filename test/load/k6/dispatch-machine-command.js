@@ -1,32 +1,15 @@
 /**
- * k6 load test: POST /api/sites/{siteId}/machines/{machineId}/commands
- * public API launch load suite.
+ * k6: POST /api/sites/{siteId}/machines/{machineId}/commands — the mutation hot
+ * path (auth+scope, idempotency wrapper, online check, pending-doc write, audit
+ * emit). SLO p99 < 400 ms. Scenarios: `smoke` (1 VU/10s) and `sustained` (ramp);
+ * no spike profile — mutations bottleneck on audit emit + write queue.
  *
- * Mutation hot path: queues a `reboot_machine` command. Each iteration:
- *   1. requireMachineAuthAndScope (api-key resolution + scope check + audit)
- *   2. withIdempotency wrapper (24h replay window)
- *   3. machine.online check (single doc read)
- *   4. command write to `commands/pending` doc field
- *   5. emitMutation audit event
+ * `mutationHeaders(__VU, __ITER)` must stay unique per call: a shared
+ * Idempotency-Key replays the cached 202 and turns this into a cache benchmark.
  *
- * Idempotency-Key uniqueness:
- *   Each call uses `mutationHeaders(__VU, __ITER)` from lib/config.js, which
- *   embeds VU + iteration index + a Date.now() timestamp into the header.
- *   Without this, every VU+iteration would replay the same cached 202 and
- *   the load test would degenerate into a cache-hit microbenchmark.
- *
- * SLO: p99 < 400 ms.
- *
- * Scenarios (no spike — mutations stress the audit-log emit + Firestore write
- *           queue more than reads, so we cap at the sustained-ramp profile):
- *   `smoke`     — 1 VU, 10 s
- *   `sustained` — ramping 10 → 50 VUs over 5 min
- *
- * **WRITES TEST DATA.** Each iteration creates a `commands/pending` field
- * keyed by a fresh commandId. Recommend a periodic sweep: after a load run,
- * delete the pending command doc:
+ * WRITES TEST DATA — each iteration adds a `commands/pending` field. Point
+ * K6_MACHINE_ID at a load-test-only machine, or sweep afterwards with
  *   gcloud firestore delete --recursive sites/<SITE_ID>/machines/<MACHINE_ID>/commands
- * Or just point K6_MACHINE_ID at a load-test-only machine and reset its doc.
  */
 import http from 'k6/http';
 import { check, sleep } from 'k6';
@@ -84,7 +67,6 @@ export default function () {
     },
   });
 
-  // Stagger between mutations so we don't pin the same machine doc on every
-  // VU iteration (Firestore write contention on the `pending` field).
+  // stagger: every VU writes the same `pending` field, so back-to-back iterations contend
   sleep(0.25);
 }

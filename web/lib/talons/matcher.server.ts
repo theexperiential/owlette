@@ -1,49 +1,27 @@
 /**
- * Talon trigger matcher — the fan-in from live fleet signals to talon runs
- * (talons wave 2, task 2.3).
+ * Talon trigger matcher — fan-in from live fleet signals to talon runs.
  *
- * The schedule sweep asks "which talons are due?" and answers it with a query.
- * Threshold and event triggers cannot work that way: the breach or the event
- * arrives first, at whichever dispatcher owns it, and the talons that care have
- * to be found afterwards. This module is that lookup, and the ONLY one — the
- * dispatch sites call {@link tapTalonMatcher} and know nothing about talons
- * beyond the shape of the signal they hand over.
+ * Schedule triggers are found by query; threshold and event triggers arrive at a
+ * dispatcher first, so the talons that care must be looked up afterwards. This
+ * is that lookup, and the only one — dispatch sites call {@link tapTalonMatcher}
+ * and know nothing about talons beyond the signal shape they hand over.
  *
- * ## Where the signals come from (verified 2026-08-14)
+ * Signal sources (verified 2026-08-14): `/api/alerts/trigger` (threshold
+ * breaches), `/api/agent/alert` (process_crash, process_start_failed,
+ * exe_missing), `/api/cron/health-check` (machine_offline — nothing else can
+ * report it). `process_restarted` and the `display_*` events are written by the
+ * agent straight into `sites/{siteId}/logs` and reach here via the
+ * `onTalonLogEventCreated` firestore trigger calling
+ * `POST /api/talons/internal/match`.
  *
- * Three dispatchers, because there is no single chokepoint every fleet event
- * passes through:
+ * Taps never block and never throw: a run is slow (screenshot + vision model)
+ * and a misconfigured talon must not turn its host route into a 500 — hence
+ * fire-and-forget with a terminal catch, plus per-talon isolation inside
+ * {@link matchAndRunTalons}.
  *
- *   1. `/api/alerts/trigger` — threshold breaches, posted by the metrics
- *      cloud function once an alert rule has fired and cleared its cooldown.
- *   2. `/api/agent/alert` — `process_crash`, `process_start_failed`, and
- *      `exe_missing`, posted by the agent under its own bearer token.
- *   3. `/api/cron/health-check` — `machine_offline`, which exists nowhere else:
- *      a machine that has gone offline cannot report that it has.
- *
- * A fourth path is not http at all. `process_restarted` and the `display_*`
- * events are written by the agent DIRECTLY into `sites/{siteId}/logs` and never
- * touch a web route, so they reach this module through the
- * `onTalonLogEventCreated` firestore trigger (`functions/src/talonLogEvents.ts`)
- * calling `POST /api/talons/internal/match`.
- *
- * ## Taps never block and never throw
- *
- * Every one of those dispatchers has a job of its own — deliver an email, fire
- * a webhook, answer an agent. A talon run is a slow side quest (it can capture
- * a screenshot and call a vision model), and a talon that is misconfigured must
- * not turn its host route into a 500. {@link tapTalonMatcher} is therefore
- * fire-and-forget with a terminal catch, and the per-talon loop inside
- * {@link matchAndRunTalons} isolates each talon from its siblings.
- *
- * ## Delayed event triggers
- *
- * An event trigger may carry a `delayMinutes` — "a process came back up, wait
- * three minutes for it to finish booting, THEN look at the screen". Those
- * talons are NOT run here. This module writes a `pending` deferral into
- * `talon_runs` and returns; `/api/cron/talons` claims it once `runAfterAt`
- * passes and runs the talon then. The delay is therefore honoured across a
- * deploy or a process restart, which an in-memory timer would not survive.
+ * An event trigger's `delayMinutes` is NOT slept here: a `pending` deferral goes
+ * into `talon_runs` and `/api/cron/talons` claims it once `runAfterAt` passes,
+ * so the delay survives a deploy or a process restart.
  */
 import type { Firestore } from 'firebase-admin/firestore';
 import { generateCorrelationId } from '@/lib/auditLog.server';
@@ -65,10 +43,7 @@ export interface TalonThresholdMatchEvent {
   machineId: string;
 }
 
-/**
- * A catalog event landed. `machineId` is absent only for a site-level event —
- * see the scope rule in {@link matchesScope}.
- */
+/** A catalog event landed. `machineId` absent only for a site-level event — see {@link matchesScope}. */
 export interface TalonEventMatchEvent {
   kind: 'event';
   /** Raw dispatcher value — compared against `TALON_EVENT_TYPES` members by equality. */
@@ -86,20 +61,11 @@ export interface TalonMatchResult {
   runs: TalonRunSummary[];
 }
 
-/* -------------------------------------------------------------------------- */
-/*  matching                                                                  */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Does the breach value satisfy the talon's own predicate?
- *
- * A breach payload arriving means an ALERT RULE fired; it says nothing about
- * whether this talon's bound was crossed. A rule at `cpu_percent > 80` and a
- * talon at `cpu_percent > 95` are different questions, and 84% is only an
- * answer to the first.
- *
- * The `default` is not dead code: `operator` is typed off a Firestore document,
- * so a hand-edited or future-schema value can reach here at runtime.
+ * Does the breach value satisfy the talon's OWN predicate? The payload only
+ * proves an alert rule fired: rule `cpu_percent > 80` and talon `cpu_percent >
+ * 95` are different questions, and 84% answers only the first. `default` is
+ * reachable — `operator` is typed off a Firestore document.
  */
 function satisfiesThreshold(value: number, operator: TalonOperator, bound: number): boolean {
   switch (operator) {
@@ -117,16 +83,10 @@ function satisfiesThreshold(value: number, operator: TalonOperator, bound: numbe
 }
 
 /**
- * `machineIds === null` means "every machine in the site" and matches anything,
- * including a signal that names no machine.
- *
- * A machine-scoped talon needs the signal to name one of its machines, so a
- * site-level signal (no `machineId`) matches only the all-machines talons —
- * "restart TouchDesigner on LOBBY-01" cannot be a sensible response to an event
- * that never said which machine it happened on.
- *
- * A non-array value is read as `null`: an unscoped talon is the safe default and
- * matches what `validateTalonInput` normalizes a missing scope to.
+ * `machineIds === null` — or any non-array, which is what validateTalonInput
+ * normalizes a missing scope to — means every machine and matches anything. A
+ * machine-scoped talon needs the signal to name one of its machines, so a
+ * site-level signal (no `machineId`) matches only the all-machines talons.
  */
 function matchesScope(machineIds: unknown, eventMachineId: string | undefined): boolean {
   if (!Array.isArray(machineIds)) return true;
@@ -157,29 +117,22 @@ function matchesEvent(talon: StoredTalon, event: TalonMatchEvent): boolean {
 }
 
 /**
- * Lowercase one-liner recorded on the run, describing what actually happened
- * rather than what the talon subscribes to (which `describeTrigger` already
- * covers). For a breach that distinction matters: the observed value is the
- * operational fact, the bound is only context.
+ * Lowercase one-liner for the run record: what happened, not what the talon
+ * subscribes to (describeTrigger covers that). For a breach the observed value
+ * is the operational fact; the bound is only context.
  */
 function describeMatch(talon: StoredTalon, event: TalonMatchEvent): string {
   if (event.kind === 'event') return `on ${event.eventType}`;
-  // A matched threshold event always carries a threshold trigger; the guard
-  // narrows the union for the compiler, it does not describe a reachable state.
+  // Guard only narrows the union for the compiler — a matched threshold event
+  // always carries a threshold trigger.
   const bound = talon.trigger.type === 'threshold' ? ` ${talon.trigger.value}` : '';
   return `${event.metric} ${event.value} crossed ${event.operator}${bound}`;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  deferral                                                                  */
-/* -------------------------------------------------------------------------- */
-
 /**
- * The talon's configured wait, in whole minutes, or 0 for "run now".
- *
- * Only an event trigger can carry one — `validateTalonInput` rejects
- * `delayMinutes` on the other two forms — so a threshold breach never defers.
- * Read defensively because `trigger` is typed off a Firestore document.
+ * The talon's configured wait in whole minutes, 0 for "run now". Only event
+ * triggers can carry one (validateTalonInput rejects it on the others), so a
+ * threshold breach never defers. Read defensively: `trigger` comes off Firestore.
  */
 function eventDelayMinutes(talon: StoredTalon): number {
   const trigger = talon.trigger;
@@ -190,29 +143,17 @@ function eventDelayMinutes(talon: StoredTalon): number {
 }
 
 /**
- * Record the intent to run this talon `delayMinutes` from now, and let the
- * sweep do it.
+ * Record the intent to run `delayMinutes` from now and let the sweep do it.
  *
- * ## Coalescing
+ * Coalescing: a crash loop during the wait must produce ONE run, so this skips
+ * when a `pending` deferral for the same talon+machine already exists. Two
+ * equality filters (talonId, status) off Firestore's automatic single-field
+ * indexes, machine compared in memory — a site-level deferral has no `machineId`
+ * field and `where('machineId','==',null)` does not match a missing field.
  *
- * A burst of identical events during the wait — a process that crash-loops
- * eight times while the talon is holding for three minutes — must produce ONE
- * run, not eight. Before writing, this looks for a `pending` deferral for the
- * same talon on the same machine and skips if it finds one. The lookup is two
- * equality filters (`talonId`, `status`), which Firestore serves off its
- * automatic single-field indexes, with the machine compared in memory: a
- * site-level deferral has NO `machineId` field, and `where('machineId','==',
- * null)` does not match a missing field.
- *
- * The check is deliberately not transactional. Two events landing in the same
- * instant can both find nothing and both write, and that is a benign duplicate:
- * each deferral is claimed exactly once at fire time, and the second fire hits
- * the talon's cooldown. Serializing every event through a transaction to avoid
- * a rare extra crumb would be a worse trade on the hot path.
- *
- * A coalesced event is silent by design — a crash loop is exactly the case that
- * produces them, and one log line per crash is the noise the coalescing exists
- * to prevent.
+ * Deliberately non-transactional: simultaneous events can both write, which is
+ * benign (each deferral is claimed once, the second fire hits the cooldown), and
+ * serializing the hot path is the worse trade. Coalescing is silent by design.
  */
 async function deferTalonRun(
   db: Firestore,
@@ -235,9 +176,8 @@ async function deferTalonRun(
   );
   if (alreadyPending) return;
 
-  // `machineName` is left off on purpose: resolving it costs a machine read on
-  // a path that runs per event, and the run the deferral fires resolves it
-  // properly. The run list falls back to the id.
+  // `machineName` omitted on purpose — resolving it costs a machine read per
+  // event. The fired run resolves it; the run list falls back to the id.
   const deferral: TalonRunDoc = {
     talonId: talon.id,
     talonName: talon.name,
@@ -245,8 +185,8 @@ async function deferTalonRun(
     triggerSummary: `${describeMatch(talon, event)} · after ${delayMinutes} min`,
     ...(event.machineId ? { machineId: event.machineId } : {}),
     status: 'pending',
-    // Equal by construction: `createdAt` is the field the deferral lifecycle
-    // reads, `startedAt` is what the run history orders by (see TalonRunDoc).
+    // Equal by construction: the deferral lifecycle reads `createdAt`, the run
+    // history orders by `startedAt` (see TalonRunDoc).
     createdAt: now,
     startedAt: now,
     runAfterAt: new Date(now.getTime() + delayMinutes * 60_000),
@@ -258,20 +198,12 @@ async function deferTalonRun(
   await runs.add(deferral);
 }
 
-/* -------------------------------------------------------------------------- */
-/*  dispatch                                                                  */
-/* -------------------------------------------------------------------------- */
-
 /**
- * The site's enabled talons.
- *
- * Filtered on `enabled` server-side (a single-field index Firestore maintains
- * automatically) and capped at {@link MAX_TALONS_PER_SITE}, the same ceiling
- * `createTalon` enforces. The cap is belt-and-braces: the create path counts
+ * The site's enabled talons: `enabled` filtered server-side, capped at
+ * {@link MAX_TALONS_PER_SITE}. The cap is belt-and-braces — createTalon counts
  * before writing rather than transacting, so a race can leave a site marginally
- * over, and a signal that fans out unbounded runs is not the place to discover
- * that. Trigger type and scope are matched in memory — at N ≤ 20 a second query
- * per signal buys nothing.
+ * over, and a signal must not fan out unbounded runs. Trigger type and scope are
+ * matched in memory; at N ≤ 20 a second query buys nothing.
  */
 async function readEnabledTalons(db: Firestore, siteId: string): Promise<StoredTalon[]> {
   const snapshot = await db
@@ -286,25 +218,19 @@ async function readEnabledTalons(db: Firestore, siteId: string): Promise<StoredT
 }
 
 /**
- * Find every talon subscribed to `event` and run it.
- *
- * Talons run sequentially and are individually isolated: one talon throwing
- * (a dead webhook host, a Firestore write that lost a race) must not stop the
- * others, exactly as one failed output does not stop a run's remaining outputs.
- * Cooldown, the in-flight guard, and the auto-disable backoff all belong to the
- * engine and are not re-implemented here.
- *
- * A talon carrying a delay is DEFERRED instead of run — it still counts as
- * matched, and contributes no run to the result until the sweep fires it.
+ * Find every talon subscribed to `event` and run it. Sequential, individually
+ * isolated — one throwing talon (dead webhook, lost write race) must not stop
+ * the others. Cooldown, the in-flight guard and the auto-disable backoff belong
+ * to the engine. A talon carrying a delay is deferred instead of run: it counts
+ * as matched but contributes no run until the sweep fires it.
  */
 export async function matchAndRunTalons(
   db: Firestore,
   siteId: string,
   event: TalonMatchEvent,
 ): Promise<TalonMatchResult> {
-  // A breach with a non-numeric value is not a breach anybody can compare
-  // against a bound. Dropped here rather than in each dispatcher, so the
-  // dispatchers stay free to forward what they were handed.
+  // A non-numeric breach cannot be compared against a bound. Dropped here so
+  // each dispatcher stays free to forward what it was handed.
   if (event.kind === 'threshold' && !Number.isFinite(event.value)) {
     logger.warn(`Talon matcher dropped a non-numeric ${event.metric} breach`, {
       context: 'talons/matcher',
@@ -313,10 +239,8 @@ export async function matchAndRunTalons(
     return { matched: 0, runs: [] };
   }
 
-  // Catalog check BEFORE the read, so a tap on a busy dispatcher costs nothing
-  // for the events no talon can subscribe to — `/api/agent/alert` fires this
-  // tap for `connection_failure` on every agent alert, and that must not become
-  // a Firestore query per alert.
+  // Catalog check BEFORE the read: `/api/agent/alert` taps this for
+  // `connection_failure` on every alert, which must not cost a query each.
   if (event.kind === 'event' && !TALON_EVENT_TYPES.some((type) => type === event.eventType)) {
     return { matched: 0, runs: [] };
   }
@@ -357,11 +281,8 @@ export async function matchAndRunTalons(
 }
 
 /**
- * Fire-and-forget {@link matchAndRunTalons} from a dispatch site.
- *
- * Returns immediately: the caller's response must not wait on a talon run, and
- * must not fail because one did. Every rejection — including a Firestore read
- * that never reached the per-talon loop — terminates here.
+ * Fire-and-forget {@link matchAndRunTalons}. The caller's response must not wait
+ * on a talon run, nor fail because one did; every rejection terminates here.
  */
 export function tapTalonMatcher(
   db: Firestore,

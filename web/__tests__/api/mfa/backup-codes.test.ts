@@ -1,27 +1,14 @@
 /** @jest-environment node */
 
 /**
- * `POST /api/mfa/backup-codes` — on-demand recovery codes.
+ * `POST /api/mfa/backup-codes`. Pins: ten plaintext codes returned but only
+ * hashes stored; all three proofs (TOTP, backup code, UV-verified passkey)
+ * genuinely verified; a proof-less request refused BEFORE any write — a warm
+ * session alone must not mint codes that satisfy `/api/mfa/disable`;
+ * regeneration replaces the prior generation; plaintext never persisted.
  *
- * Backup codes used to exist only as a side effect of TOTP enrollment
- * (generated in the browser, persisted by verify-setup), which left every
- * passkey-only account — the whole point of universal 2FA — with no recovery
- * material at all. This route decouples the two.
- *
- * What these tests pin down:
- *   1. the happy path returns TEN plaintext codes and stores only hashes;
- *   2. each of the three proofs is genuinely verified — TOTP, backup code, and
- *      a UV-verified passkey step-up assertion;
- *   3. a request carrying NO proof is refused, and refused BEFORE any write.
- *      A warm session is not enough here: these codes satisfy
- *      `/api/mfa/disable`, which demands live proof every time, so minting them
- *      from a session cookie alone would be strictly weaker than the gate they
- *      defeat;
- *   4. regeneration REPLACES the previous generation — the old hashes are gone;
- *   5. plaintext is never persisted.
- *
- * `@/lib/backupCodes.server` and `hashBackupCode` are deliberately NOT mocked:
- * assertion 5 is meaningless against a fake hash that embeds its input.
+ * `@/lib/backupCodes.server` and `hashBackupCode` are deliberately NOT mocked —
+ * the "never persisted" assertion is meaningless against a fake hash.
  */
 
 const mockRequireSession = jest.fn();
@@ -46,8 +33,7 @@ jest.mock('@/lib/withRateLimit', () => ({
 }));
 
 jest.mock('@/lib/apiAuth.server', () => {
-  // Defined inline because the factory is hoisted ABOVE module-scope code
-  // by jest — top-level classes aren't yet initialised here.
+  // inline: jest hoists the factory above module scope, so top-level classes aren't ready
   class ApiAuthError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -62,8 +48,8 @@ jest.mock('@/lib/apiAuth.server', () => {
   };
 });
 
-// Real `hashBackupCode` — see the header. Only the verifiers are stubbed, so a
-// test can say "this code matches" without minting a real TOTP secret.
+// Real `hashBackupCode`; only the verifiers are stubbed, so a test can assert a
+// match without minting a real TOTP secret.
 jest.mock('@/lib/totp', () => {
   const actual = jest.requireActual('@/lib/totp');
   return {
@@ -214,8 +200,7 @@ describe('POST /api/mfa/backup-codes — happy path', () => {
 
     const stored = writtenCodes();
     expect(stored).toHaveLength(10);
-    // Each stored entry is the hash of the code at the same position — the
-    // sheet the user is looking at is the sheet that will verify.
+    // position-for-position: the sheet the user sees is the sheet that verifies
     expect(stored).toEqual((body.backupCodes as string[]).map(hashBackupCode));
   });
 
@@ -225,8 +210,7 @@ describe('POST /api/mfa/backup-codes — happy path', () => {
 
     const write = writes.find((w) => Array.isArray(w.backupCodes))!;
     expect(write.backupCodesGeneratedAt).toBe('__SERVER_TIMESTAMP__');
-    // `lib/mfaFactors.server.ts` is the only writer of these two — recovery
-    // codes are not a factor, so the inventory must be untouched here.
+    // only lib/mfaFactors.server.ts writes these; codes are not a factor
     expect(write).not.toHaveProperty('mfaEnrolled');
     expect(write).not.toHaveProperty('requiresMfaSetup');
     expect(write).not.toHaveProperty('mfaFactors');
@@ -268,7 +252,6 @@ describe('POST /api/mfa/backup-codes — proof of possession', () => {
   });
 
   it('accepts an existing backup code and consumes it', async () => {
-    // Only the second stored hash matches the presented code.
     mockVerifyBackupCode.mockImplementation(
       (code: string, hash: string) => code === 'A1B2C3D4' && hash === 'old-hash-2',
     );
@@ -276,8 +259,7 @@ describe('POST /api/mfa/backup-codes — proof of possession', () => {
     const res = await POST(codesReq({ code: 'A1B2C3D4', isBackupCode: true }));
     expect(res.status).toBe(200);
 
-    // Two writes: the consumption inside the verification transaction, then
-    // the replacement sheet.
+    // consumption inside the verification txn, then the replacement sheet
     expect(writes[0].backupCodes).toEqual(['old-hash-1', 'old-hash-3']);
     expect(writtenCodes()).toHaveLength(10);
     expect(mockEmitMutation.mock.calls[0][0].attributes.factorUsed).toBe('backup_code');
@@ -300,13 +282,11 @@ describe('POST /api/mfa/backup-codes — proof of possession', () => {
     expect(writtenCodes()).toHaveLength(10);
     expect(mockEmitMutation.mock.calls[0][0].attributes.factorUsed).toBe('passkey');
 
-    // The assertion must be checked with user verification REQUIRED — without
-    // the `uv` flag a passkey proves possession only, and this route's output
+    // UV required: without it a passkey proves possession only, and the output here
     // is a permanent offline factor.
     const args = mockVerifyAuthenticationResponse.mock.calls[0][0];
     expect(args.requireUserVerification).toBe(true);
     expect(args.expectedChallenge).toBe('CHALLENGE');
-    // Clone-detection counter advanced, as in the step-up route.
     expect(mockUpdatePasskeyCounter).toHaveBeenCalledWith(USER_ID, 'cred-1', 5);
   });
 
@@ -335,9 +315,8 @@ describe('POST /api/mfa/backup-codes — proof of possession', () => {
   });
 
   it('refuses a request carrying no proof at all', async () => {
-    // THE ATTACK THIS CLOSES: a stolen `__session` cookie alone must not mint
-    // recovery codes — they are a permanent offline factor that also unlocks
-    // /api/mfa/disable, which demands live proof on every call.
+    // The attack: a stolen `__session` cookie minting a permanent offline factor
+    // that also unlocks /api/mfa/disable.
     const res = await POST(codesReq({}));
     expect(res.status).toBe(400);
 
@@ -361,8 +340,7 @@ describe('POST /api/mfa/backup-codes — proof of possession', () => {
   });
 
   it('refuses a session-only caller even when the session claims MFA is verified', async () => {
-    // `mfaVerified` lives on the session cookie and is never consulted here —
-    // there is no body shape that stands in for a live factor.
+    // `mfaVerified` is never consulted; no body shape substitutes for a live factor
     const res = await POST(codesReq({ mfaVerified: true }));
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe('mfa_proof_required');
@@ -387,8 +365,7 @@ describe('POST /api/mfa/backup-codes — regeneration semantics', () => {
     expect(res.status).toBe(200);
 
     const stored = writtenCodes()!;
-    // Not a merge: every hash from the prior sheet is gone, so a code written
-    // down last month no longer opens the account.
+    // not a merge: last month's written-down code no longer opens the account
     for (const old of OLD_HASHES) {
       expect(stored).not.toContain(old);
     }

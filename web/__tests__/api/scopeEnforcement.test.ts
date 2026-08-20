@@ -24,11 +24,8 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: jest.fn(),
 }));
 
-/**
- * Mock the auth module — keep `requireScope`, `scopeMatches`, `ApiAuthError`,
- * `applyAuthDeprecations` real so the pure logic is actually exercised, but
- * control `resolveAuth` and `assertUserHasSiteAccess`.
- */
+/** Only `resolveAuth` and `assertUserHasSiteAccess` are stubbed; the pure scope
+ * logic runs for real. */
 jest.mock('@/lib/apiAuth.server', () => {
   const actual = jest.requireActual('@/lib/apiAuth.server');
   return {
@@ -257,8 +254,7 @@ describe('requireRoostAuthAndScope — roost resource matrix', () => {
     });
 
     it(`403 when site-scope is held instead of roost-scope for ${permission}`, async () => {
-      // Site-scoped write does NOT imply roost-scoped write — scope check is
-      // strict per (resource, id, permission).
+      // Site write does NOT imply roost write: strict per (resource, id, perm).
       const scopes: ApiKeyScope[] = [
         { resource: 'site', id: SITE_ID, permissions: [permission] },
       ];
@@ -308,8 +304,7 @@ describe('requireDistributionManageCapability', () => {
 
 describe('machine-scope enforcement (via scopeMatches directly)', () => {
   it.each(ALL_PERMISSIONS)('machine scope accepts %s on exact machine id', async (permission) => {
-    // Routes don't currently call requireScope with 'machine', but the
-    // helper must accept that dimension for future endpoints.
+    // No route uses the 'machine' dimension yet; the helper must still take it.
     const { requireScope } = jest.requireActual('@/lib/apiAuth.server') as typeof import('@/lib/apiAuth.server');
     const auth = authFromScopes([
       { resource: 'machine', id: 'm-1', permissions: [permission] },

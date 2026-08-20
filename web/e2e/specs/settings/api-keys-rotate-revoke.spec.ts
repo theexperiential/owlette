@@ -1,24 +1,13 @@
 /**
- * Settings — api keys rotate + revoke (task 5.2)
+ * Settings — api keys rotate + revoke.
  *
- * Two existing keys are seeded directly via the Admin SDK (both halves of
- * the storage contract: users/{userId}/api_keys/{keyId} + the lookup-table
- * doc at api_keys/{keyHash}). The spec then drives the /settings/api-keys
- * UI:
+ * Seeds two keys via the Admin SDK across both halves of the storage contract
+ * (`users/{userId}/api_keys/{keyId}` + the lookup doc `api_keys/{keyHash}`),
+ * then drives /settings/api-keys: rotate reveals the new owk_* key once and
+ * flips the original to "rotated (grace)"; revoke confirms inline and deletes
+ * BOTH docs (no audit-preserved muted state today).
  *
- *   key #1 — rotate: clicks the rotate icon, asserts the new owk_* raw
- *     key is revealed once in the dismissible card at the top of the
- *     page, and the original row's status badge flips to "rotated
- *     (grace)" once the GET refresh returns the rotatedAt + retiresAt
- *     timestamps.
- *
- *   key #2 — revoke: clicks the trash icon, confirms via the inline
- *     "revoke?" yes/no, and asserts the row disappears (the route
- *     deletes both the user subdoc and the lookup table entry; there
- *     is no audit-preserved muted state today — see report).
- *
- * data plane: none — the rotation + revocation flows are pure firestore
- * round-trips through the next.js routes; no r2, no chunks, no agents.
+ * No data plane — pure firestore round-trips through the next.js routes.
  */
 
 import { test, expect } from '@playwright/test';
@@ -129,11 +118,8 @@ function rowByName(page: import('@playwright/test').Page, name: string) {
 }
 
 /**
- * Expand a row and read the key prefix it reveals.
- *
- * KeyCard collapses the prefix and the scope summary behind a per-row toggle —
- * the row itself carries only name, status and the three dates, which is what
- * gives the name a readable column inside the account-settings dialog.
+ * Expand a row and read the revealed key prefix — KeyCard hides the prefix and
+ * scope summary behind a per-row toggle so the name gets a readable column.
  */
 async function revealedPrefix(row: ReturnType<typeof rowByName>): Promise<string> {
   await row.getByRole('button', { name: /^show details for / }).click();
@@ -141,13 +127,8 @@ async function revealedPrefix(row: ReturnType<typeof rowByName>): Promise<string
 }
 
 /**
- * Pick an item out of a row's overflow menu.
- *
- * The three per-row actions live in one dropdown now; three buttons on an
- * active row versus one on an expired row was an 80px swing that came out of
- * the only flexible column, so no two rows agreed on where their columns
- * started. Radix renders the menu in a portal, so the item is located on
- * `page`, never inside the row.
+ * Pick an item out of a row's overflow menu. Radix portals the menu, so the
+ * item is located on `page`, never inside the row.
  */
 async function chooseRowAction(
   page: import('@playwright/test').Page,
@@ -162,10 +143,8 @@ test('rotate issues a new key, reveals it once, and stamps the original as rotat
   page,
 }) => {
   await page.goto('/settings/api-keys');
-  // Heading visibility doubles as the "AuthContext finished hydrating" wait —
-  // KeyCard rows only render after `loading` flips false, so there's no need
-  // for a separate spinner-gone guard. Bumped to 10s to cover cold-start
-  // hydration when this spec runs late in a long suite.
+  // Heading visibility is the AuthContext-hydrated wait: KeyCard rows only
+  // render once `loading` is false. 10s covers cold-start hydration.
   await expect(
     page.getByRole('heading', { name: 'api keys', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
@@ -173,7 +152,6 @@ test('rotate issues a new key, reveals it once, and stamps the original as rotat
   const oldRow = rowByName(page, 'rotate target');
   await expect(oldRow).toBeVisible();
   await expect(oldRow.getByText('active', { exact: true })).toBeVisible();
-  // The prefix is still shown — one toggle away rather than in the row.
   expect(await revealedPrefix(oldRow)).toBe(`${keyOne.keyPrefix}•••`);
 
   const rotateResponsePromise = page.waitForResponse(
@@ -203,9 +181,8 @@ test('rotate issues a new key, reveals it once, and stamps the original as rotat
   ).toBeVisible();
   await expect(page.locator('code', { hasText: rotatePayload.key })).toBeVisible();
 
-  // `oldRow` was `.first()` of the rows named "rotate target" — after rotation
-  // the successor (newest, still in the usable group) takes that slot, so
-  // re-locate the predecessor by its grace badge, mirroring `newRow` below.
+  // After rotation the successor takes `.first()`, so re-locate the
+  // predecessor by its grace badge.
   const gracedRow = page
     .locator('div.rounded-md.border')
     .filter({ has: page.locator('p.font-medium', { hasText: 'rotate target' }) })
@@ -214,15 +191,13 @@ test('rotate issues a new key, reveals it once, and stamps the original as rotat
   await expect(gracedRow.getByText('rotated (grace)', { exact: true })).toBeVisible();
   await expect(gracedRow.getByText(/old key stops working/)).toBeVisible();
 
-  // Rotation carries the name across, so both rows are called "rotate target";
-  // the badge is what separates the successor from its predecessor.
+  // Rotation keeps the name, so only the badge separates the two rows.
   const newRow = page
     .locator('div.rounded-md.border')
     .filter({ has: page.locator('p.font-medium', { hasText: 'rotate target' }) })
     .filter({ hasText: 'active' })
     .first();
   await expect(newRow.getByText('active', { exact: true })).toBeVisible();
-  // ...and expanding it proves the successor really carries the new prefix.
   expect(await revealedPrefix(newRow)).toBe(`${rotatePayload.keyPrefix}•••`);
 
   const oldRecord = await getAdminDb()
@@ -256,8 +231,8 @@ test('revoke removes the targeted key from the list and deletes both firestore d
   const revokeRow = rowByName(page, 'revoke target');
   await expect(revokeRow).toBeVisible();
 
-  // An active key revokes from the overflow menu; a terminal one keeps a bare
-  // trash button, since a menu holding a single item is ceremony.
+  // Active keys revoke from the overflow menu; terminal ones keep a bare
+  // trash button.
   await chooseRowAction(page, revokeRow, /^revoke$/);
   await expect(revokeRow.getByText('revoke?', { exact: true })).toBeVisible();
 

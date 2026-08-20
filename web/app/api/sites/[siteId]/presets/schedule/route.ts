@@ -1,17 +1,9 @@
 /**
- * GET  /api/sites/{siteId}/presets/schedule
- *      → list all schedule presets stored at
- *        `config/{siteId}/schedule_presets/*`. Returns only firestore
- *        overrides — built-in defaults are merged client-side from
- *        `lib/scheduleDefaults.ts`.
+ * GET/POST /api/sites/{siteId}/presets/schedule — capability PRESET_MANAGE.
  *
- * POST /api/sites/{siteId}/presets/schedule
- *      → create a custom schedule preset. Generates an id of the shape
- *        `sched-{slug}-{epochMs}`.
- *
- * Capability: PRESET_MANAGE.
- *
- * security-boundary-migration wave 3.6.
+ * GET returns ONLY firestore overrides from `config/{siteId}/schedule_presets`;
+ * built-in defaults are merged client-side from `lib/scheduleDefaults.ts`.
+ * POST creates a custom preset with id `sched-{slug}-{epochMs}`.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';

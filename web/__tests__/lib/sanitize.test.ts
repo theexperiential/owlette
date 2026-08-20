@@ -36,22 +36,18 @@ describe('sanitizeFilename', () => {
   });
 
   describe('xss-adjacent inputs', () => {
-    // React escapes by default — but we must confirm we don't CORRUPT
-    // these names (leaving them to fool a later non-JSX render surface).
-    // The sanitiser preserves the literal characters; JSX escaping is
-    // what makes them safe at render.
+    // The sanitiser preserves the literal characters and JSX escaping makes
+    // them safe at render; these pin that it doesn't CORRUPT the names either.
     it('preserves an <img onerror=...> literal as text', () => {
       const r = sanitizeFilename('<img onerror=alert(1)>.toe');
       expect(r.ok).toBe(true);
-      // preserved verbatim — escaping is the render layer's responsibility.
+      // Verbatim — escaping is the render layer's job.
       expect(r.ok && r.value).toBe('<img onerror=alert(1)>.toe');
     });
 
     it('rejects filenames containing a path separator (even inside script-tag-ish payloads)', () => {
-      // `</script>` has a `/`, which is rejected as a path separator.
-      // XSS payloads that don't contain a slash are preserved verbatim;
-      // JSX escaping handles safe rendering. See the <img onerror=...>
-      // case above.
+      // Rejected for the `/` (path separator), not for being an XSS payload —
+      // slash-free payloads are preserved verbatim.
       const r = sanitizeFilename('</script>payload.toe');
       expect(r).toEqual({
         ok: false,
@@ -81,8 +77,8 @@ describe('sanitizeFilename', () => {
     });
 
     it('strips RTL override (classic extension spoof)', () => {
-      // `photo\u202Egpj.exe` visually renders as `photoexe.jpg`.
-      // strip the override so operators see the true name.
+      // `photo\u202Egpj.exe` renders as `photoexe.jpg` — strip the override so
+      // operators see the true name.
       const r = sanitizeFilename('photo\u202Egpj.exe');
       expect(r.ok).toBe(true);
       expect(r.ok && r.value).toBe('photogpj.exe');
@@ -224,13 +220,13 @@ describe('sanitizeFilename', () => {
     });
 
     it('truncates by codepoint count, not utf-16 code units', () => {
-      // Each 🦉 is one codepoint (two utf-16 units). 300 of them should
-      // truncate to 255 codepoints, not split a surrogate pair.
+      // Each 🦉 is one codepoint / two utf-16 units: 300 must truncate to 255
+      // codepoints without splitting a surrogate pair.
       const owls = '🦉'.repeat(300);
       const r = sanitizeFilename(owls);
       expect(r.ok).toBe(true);
       expect(r.ok && Array.from(r.value).length).toBe(255);
-      // no stray surrogate: the string should parse back cleanly.
+      // No stray surrogate — the string must parse back cleanly.
       expect(r.ok && r.value.includes('\uFFFD')).toBe(false);
     });
   });

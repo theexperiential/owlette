@@ -1,18 +1,13 @@
 /**
- * Mobile — settings: api keys + webhooks
+ * Mobile — settings: api keys + webhooks. Viewport/isMobile/hasTouch come from
+ * the `mobile-chromium` project in playwright.config.ts.
  *
- * Viewport / isMobile / hasTouch come from the `mobile-chromium` project in
- * playwright.config.ts, which owns every spec under specs/mobile/**.
+ * Where responsive-acceptance measures the routes with a seeded row, this
+ * drives the two CREATE dialogs at 390px and asserts the one-time reveal
+ * lands inside the viewport rather than off the right edge.
  *
- * `mobile/responsive-acceptance.spec.ts` measures both settings routes with a
- * seeded row already in place. This spec drives the two CREATE dialogs at
- * 390px — the surfaces a phone user actually has to operate — and asserts the
- * one-time reveal renders inside the viewport rather than off the right edge.
- *
- * Isolation: both fixtures are torn down in `afterEach`, so the admin user's
- * key list and site-A's webhook collection are empty before and after this
- * file, exactly as `settings/api-keys-list.spec.ts` and
- * `settings/webhooks-list.spec.ts` leave them.
+ * Both fixtures tear down in `afterEach`, leaving the key list and webhook
+ * collection empty as the desktop specs do.
  */
 
 import { test, expect } from '@playwright/test';
@@ -59,16 +54,15 @@ test.afterEach(async () => {
 
 test('api keys: create dialog and one-time reveal are operable at 390px', async ({ page }) => {
   await page.goto('/settings/api-keys');
-  // The heading only renders once AuthContext has hydrated; the page shows a
-  // full-screen loader until then.
+  // The heading waits on AuthContext hydration; a full-screen loader precedes it.
   await expect(page.getByRole('heading', { name: 'api keys', exact: true })).toBeVisible({
     timeout: 10_000,
   });
   await expect(page.getByText('no api keys yet')).toBeVisible();
   await assertNoHorizontalOverflow(page);
 
-  // Create is an inline disclosure now, not a modal — the same panel serves
-  // the account-settings dialog, where a nested modal would stack focus traps.
+  // Inline disclosure, not a modal: the same panel serves the account-settings
+  // dialog, where a nested modal would stack focus traps.
   await page.getByRole('button', { name: /^create key$/i }).click();
   const dialog = page.getByRole('main');
   await expect(dialog.getByRole('heading', { name: /^create api key$/i })).toBeVisible();
@@ -85,7 +79,7 @@ test('api keys: create dialog and one-time reveal are operable at 390px', async 
   await dialog.getByRole('button', { name: /^create key$/i }).click();
   expect((await responsePromise).status()).toBe(200);
 
-  // One-time reveal — the raw key renders exactly once, inside a <code>.
+  // The raw key renders exactly once, inside a <code>.
   const revealBanner = page.getByText(
     /key issued — copy it now\. it will not be shown again\./i,
   );
@@ -98,8 +92,7 @@ test('api keys: create dialog and one-time reveal are operable at 390px', async 
   await revealCard.getByRole('button', { name: 'dismiss' }).click();
   await expect(revealBanner).toBeHidden();
 
-  // The list row survives the dismiss; the prefix-only display is deferred
-  // behind the row's details disclosure, so expand it before asserting.
+  // The prefix-only display sits behind the row's details disclosure.
   await expect(page.getByText(keyName)).toBeVisible();
   await page.getByRole('button', { name: `show details for ${keyName}` }).click();
   await expect(page.locator('code', { hasText: rawKey.slice(0, 15) })).toBeVisible();
@@ -121,8 +114,7 @@ test('webhooks: create dialog and one-time reveal are operable at 390px', async 
 
   await dialog.getByLabel('endpoint url').fill(WEBHOOK_URL);
   for (const evt of SUBSCRIBED_EVENTS) {
-    // Radix Checkbox renders a <button>, not a native input, so the reliable
-    // target is the wrapping <label> (same approach as settings/webhooks-list).
+    // Radix Checkbox is a <button>, not a native input — click the wrapping label.
     await dialog.locator('label', { hasText: evt }).click();
   }
   await assertNoHorizontalOverflow(page);

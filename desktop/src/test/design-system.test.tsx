@@ -10,11 +10,10 @@ import globalsCss from '@/globals.css?raw'
 /**
  * Smoke test for the design system ported out of `web/`.
  *
- * It is deliberately about the SEAMS of the port rather than about component
- * behaviour: that the `@` alias resolves the verbatim copies, that
- * cn()/cva()/tailwind-merge are wired together, that the hand-customised bits
- * of button.tsx survived, and that the unlayered rules globals.css depends on
- * are still in the stylesheet (and the stripped blocks are still stripped).
+ * Deliberately about the SEAMS of the port, not component behaviour: the `@`
+ * alias resolves the verbatim copies, cn()/cva()/tailwind-merge are wired
+ * together, button.tsx's hand-customisations survived, and the unlayered rules
+ * globals.css depends on are still there (with the stripped blocks stripped).
  */
 
 describe('cn', () => {

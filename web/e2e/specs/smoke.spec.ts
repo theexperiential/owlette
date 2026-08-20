@@ -1,13 +1,8 @@
 /**
- * Smoke tests — the simplest possible check per role.
- *
- * If these pass, the whole scaffolding works: emulators are running, the
- * web dev server is up, global-setup seeded users + captured storageState,
- * and Playwright can boot a pre-authenticated browser context that lands
- * on /dashboard without redirecting to /login or /setup-2fa.
- *
- * Any deeper assertions belong to the per-surface specs (access-control,
- * admin, machines, etc).
+ * Smoke tests — one per role. Passing means the scaffolding works end to end:
+ * emulators up, dev server up, global-setup seeded and captured storageState,
+ * and a pre-authenticated context reaches /dashboard without bouncing to
+ * /login or /setup-2fa. Deeper assertions belong in the per-surface specs.
  */
 
 import { test, expect } from '@playwright/test';
@@ -42,10 +37,9 @@ test.describe('smoke — superadmin', () => {
   test('can reach /admin/users', async ({ page }) => {
     await page.goto('/admin/users');
     await expect(page).toHaveURL(/\/admin\/users/);
-    // Scope to the heading — "user management" also appears in the sidebar nav.
-    // Bumped to 10s because RequireSuperadmin renders a "verifying permissions..."
-    // gate while AuthContext hydrates against the auth emulator + the role
-    // lookup completes; on cold-start runs this can briefly exceed the 5s default.
+    // Heading-scoped: "user management" is also in the sidebar. 10s because
+    // RequireSuperadmin's "verifying permissions..." gate can outlast the 5s
+    // default on cold-start runs.
     await expect(
       page.getByRole('heading', { name: 'user management' }),
     ).toBeVisible({ timeout: 10_000 });
