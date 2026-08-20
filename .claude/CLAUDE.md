@@ -132,6 +132,11 @@ Agents authenticate via a device code flow — no browser login on the target ma
 
 **Failover load balancer**: `owlette.app` is fronted by a Cloudflare LB (Railway primary, Vercel standby) defined as Terraform in `infra/cloudflare/`. Health probe is `/api/health`. Apply workflow, token scope, and the origin-hostname gotchas: `.claude/skills/cf-load-balancing.md`.
 
+**Confirm live state against the API — don't infer it from the repo.** When the question is what is actually deployed or true on dev/prod (is this route shipped, what version is the latest installer, is a machine online, does this key carry that scope), query the running API. Keys are in `.claude/.env.local`: `OWLETTE_API_KEY` (dev — broad scopes) against `$OWLETTE_DEV_API_URL`, `OWLETTE_API_KEY_PROD` (**installer-scoped only** — 403 `scope_insufficient` on site/machine routes) against `$OWLETTE_PROD_API_URL`. Auth header is `x-api-key`. Use `curl`, not python `urllib` — Cloudflare bot-blocks the latter with `error code: 1010`. No-auth reads: `GET /api/health`, `GET /api/openapi` (interactive reference at `/docs/api`). Status codes alone settle "is it deployed": 401 = deployed and gated, 403 = authed but wrong scope, 404 = not deployed.
+
+- **Read-only by default.** GETs and other non-mutating calls need no approval — prefer one over asking the user to check for you.
+- **Mutating calls need an explicit ask.** Installer finalize / `setAsLatest`, remote commands to agents, config pushes, key revocation, deletes — never fire these off to confirm something. Get the user's go-ahead first, prod especially.
+
 **IMPORTANT — installer release order (do not reorder):** bump the version (`node scripts/sync-versions.js X.Y.Z`) **and** add the `## [X.Y.Z] - YYYY-MM-DD` entry to `docs/changelog.md`, then commit — *before* building. `build_installer_full.bat` bakes the version into the exe filename and binary, and an installer must never ship without a matching changelog entry.
 
 **Full release recipe** — the non-interactive build invocation (the `pause`-hang gotcha) plus the 3-step signed-URL upload → finalize API flow — lives in `.claude/skills/build-system.md` → "Agent Installer Release". That skill auto-activates on installer/release/version work.
@@ -215,4 +220,4 @@ Be real, not flattering. If something was mid, say so. If it was genuinely great
 
 ---
 
-**Last Updated**: 2026-08-17
+**Last Updated**: 2026-08-19
