@@ -21,22 +21,39 @@ description: "This guide walks you through your first experience with the owlett
 
 ### passkey (passwordless)
 
-If you've registered a passkey, click **"Sign in with passkey"** on the login page. Authenticate with your device's biometric (Touch ID, Windows Hello, or phone) - no password or 2FA code needed.
+If you've registered a passkey, click **"Sign in with passkey"** on the login page. Authenticate the way you already unlock the device - Windows Hello, Touch ID, Face ID, a hardware security key, or a password manager that holds passkeys (1Password, Bitwarden, iCloud Keychain). No password, and no 2FA code either: the passkey satisfies both in the same step.
 
 ---
 
 ## set up two-factor authentication
 
-After your first login, you'll be prompted to set up 2FA:
+After your first login you're taken to 2FA setup. It's required, but you choose how to satisfy it - a passkey or an authenticator app, and either one on its own is enough.
 
-1. Open an authenticator app (Google Authenticator, Authy, 1Password, etc.)
+### passkey (recommended)
+
+Choose **passkey** and approve the prompt with whatever already unlocks the device: Windows Hello, Touch ID, Face ID, a hardware security key, or a password manager that stores passkeys (1Password, Bitwarden, iCloud Keychain). These are all the same WebAuthn standard - there's nothing extra to install, and nothing to configure per vendor.
+
+A passkey covers both halves of sign-in at once. Signing in with it proves who you are *and* clears the second factor in a single ceremony, so you're never asked for a code on top of it.
+
+### authenticator app
+
+Choose **authenticator app** if you'd rather use 6-digit codes:
+
+1. Open an authenticator app (1Password, Bitwarden, Authy, Google Authenticator)
 2. Scan the QR code displayed on screen
 3. Enter the 6-digit code from your authenticator
-4. Save your **backup codes** somewhere safe - you'll need them if you lose your device
 
-<Callout type="idea" title={"2FA is optional but recommended"}>
+Authenticator apps are **not phone-only**. 1Password, Bitwarden, and Authy all have desktop apps, so you can enroll and sign in without a phone in the loop at all.
 
-You can skip 2FA setup, but it adds an important layer of security for admin accounts.
+### backup codes
+
+Either route finishes on your **backup codes** - save them somewhere safe. They work for any factor, including a passkey-only account, and they're what gets you back in if you lose the device.
+
+You can regenerate them later from account settings, but you'll have to prove a factor in the same step - a current 6-digit code, an unused backup code, or your passkey. A sheet of recovery codes is powerful enough to turn 2FA off outright, so a signed-in browser alone isn't enough to mint a new one.
+
+<Callout type="idea" title={"you can change your mind later"}>
+
+Add the other method (or more passkeys) any time from account settings. Removing your last factor is allowed - the account simply re-arms 2FA setup, and you'll be asked to enroll a new factor before you can use the dashboard again.
 
 </Callout>
 ---

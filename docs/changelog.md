@@ -11,6 +11,23 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ## [Unreleased]
 
+> Universal 2FA — web/dashboard only. No version bump: the version number tracks
+> the agent, and this batch contains no agent changes.
+
+### added
+
+- **A passkey now counts as your second factor.** Setting one up satisfies 2FA outright, and signing in with it clears both the password step and the second factor in a single ceremony — no code to type afterwards. "Passkey" means whatever already unlocks your device: Windows Hello, Touch ID, Face ID, a hardware security key, or a password manager that stores passkeys (1Password, Bitwarden, iCloud Keychain). They are all the same WebAuthn standard, so there is nothing per-vendor to enable.
+- **Backup codes for any account, not just authenticator ones.** A passkey-only account used to have no recovery material at all. Every enrolled account can now hold a sheet, and regenerate it from account settings — which invalidates the old one. Regeneration asks you to prove a factor in the same step (a current 6-digit code, an unused backup code, or your passkey), because a fresh sheet of recovery codes is powerful enough to switch 2FA off entirely.
+- **Account settings lists your second factors in one place.** Authenticator app and passkeys, when each was added, and add/remove controls for both, with a warning when you are down to your last one.
+- **Superadmins can reset the 2FA on a locked-out account.** **reset 2FA**, on the row menu of the admin users page, clears every factor — authenticator app, passkeys, and backup codes — re-arms mandatory setup, and revokes that user's trusted devices, so their next sign-in starts enrollment from scratch. It does not revoke Firebase refresh tokens, so a session they already hold stays signed in until it expires on its own. Superadmins cannot reset themselves. Recovering a locked-out user previously meant hand-editing Firestore.
+
+### changed
+
+- **2FA setup starts with a choice instead of a QR code.** The setup screen now offers a passkey (recommended) or an authenticator app, and says plainly that authenticator apps run on **desktop as well as mobile** — 1Password, Bitwarden, and Authy all have desktop apps, so signing up no longer depends on having a phone to hand.
+- **Removing your last second factor is allowed.** The account immediately re-arms 2FA setup: you will be asked to enroll a new factor — a passkey or an authenticator app — before you can use the dashboard again, and trusted devices are revoked at the same time.
+- **Adding a factor to an account that already has one asks you to verify first.** Enrollment on a warm session now requires a cleared 2FA challenge, so someone with a signed-in browser cannot quietly attach a factor of their own. Verify with an existing passkey, or take the code prompt.
+- **`mfaEnrolled` is derived, not declared.** The user document carries an `mfaFactors` tally (`{ totp, passkeys }`), and `mfaEnrolled` / `requiresMfaSetup` are computed from it by a single server-side writer. The old `passkeyEnrolled` flag is retired.
+
 ## [3.0.1] - 2026-08-17
 
 ### added

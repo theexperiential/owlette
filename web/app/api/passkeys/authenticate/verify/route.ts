@@ -68,8 +68,20 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // The userHandle is the userId we set during registration
-    const userId = userHandle;
+    // The userHandle carries the uid we set as `userID` at registration — but it
+    // arrives BASE64URL-ENCODED, not raw. `register/options` passes
+    // `isoUint8Array.fromUTF8String(userId)`, and @simplewebauthn/browser
+    // base64url-encodes every ArrayBuffer on the way back out
+    // (`startAuthentication.js`: `userHandle = bufferToBase64URLString(...)`;
+    // the JSON type is `userHandle?: Base64URLString`). Using it verbatim looked
+    // up `users/<base64url-of-uid>`, which never exists, so every passkey
+    // sign-in died in `assertActiveUser` with a 403 "User is deleted or
+    // inactive" — a misleading error for what was really a decode bug.
+    //
+    // This was silently broken from the start: the only passkey e2e spec
+    // deliberately stopped short of a real ceremony, so no test ever reached
+    // this line until `e2e/specs/mfa/passkey-factor.spec.ts` did.
+    const userId = isoBase64URL.toUTF8String(userHandle);
     await assertActiveUser(userId);
 
     // Find the matching credential

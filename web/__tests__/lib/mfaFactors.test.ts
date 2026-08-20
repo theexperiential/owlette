@@ -32,6 +32,11 @@ const setCalls: Array<{
 }> = [];
 let passkeyCollectionGets = 0;
 let runTransactionCalls = 0;
+// Firestore runs transactions under serializable isolation: a contended commit
+// is re-run against fresh state, never interleaved with the winner. The fake
+// models that guarantee with a queue so concurrent callers observe the same
+// ordering they would in production.
+let txQueue: Promise<unknown>;
 
 interface MockReadable {
   get: () => Promise<unknown>;
@@ -91,8 +96,16 @@ function makeDb() {
       return { doc: (uid: string) => makeUserDocRef(uid) };
     },
     runTransaction: async <T>(fn: (tx: ReturnType<typeof makeTx>) => Promise<T>) => {
-      runTransactionCalls += 1;
-      return fn(makeTx());
+      const run = txQueue.then(() => {
+        runTransactionCalls += 1;
+        return fn(makeTx());
+      });
+      // A rejected body must not poison the queue for the next transaction.
+      txQueue = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
     },
   };
 }
@@ -119,6 +132,7 @@ beforeEach(() => {
   setCalls.length = 0;
   passkeyCollectionGets = 0;
   runTransactionCalls = 0;
+  txQueue = Promise.resolve();
 });
 
 describe('EMPTY_MFA_FACTORS', () => {
@@ -260,6 +274,24 @@ describe('readMfaFactors', () => {
     expect(getSpy).toHaveBeenCalledTimes(1);
     expect(runTransactionCalls).toBe(0);
   });
+
+  it('recounts a legacy doc through the supplied transaction, not a bare read', async () => {
+    // Inside a caller's transaction the subcollection fallback must also go
+    // through `tx`. A bare `passkeysCol.get()` there is a non-transactional
+    // read of state the same transaction is about to write against, and
+    // Firestore rejects it outright once the caller has written.
+    users.set('u1', { mfaEnrolled: true });
+    passkeys.set('u1', ['a', 'b']);
+    const tx = makeTx();
+    const getSpy = jest.spyOn(tx, 'get');
+
+    const inv = await readMfaFactors('u1', { tx: asTx(tx) });
+
+    expect(inv).toEqual({ totp: true, passkeys: 2 });
+    // Both reads — the user doc AND the subcollection — went through the tx.
+    expect(getSpy).toHaveBeenCalledTimes(2);
+    expect(passkeyCollectionGets).toBe(1);
+  });
 });
 
 describe('applyMfaFactorChange — guards', () => {
@@ -353,6 +385,24 @@ describe('applyMfaFactorChange — counting', () => {
     expect(result.factors.passkeys).toBe(2);
     expect(result.mfaEnrolled).toBe(true);
     expect(result.requiresMfaSetup).toBe(false);
+  });
+
+  it('treats an explicit passkeys: 0 as a value, not as "not supplied"', async () => {
+    // The check is `change.passkeys !== undefined`, deliberately not a
+    // truthiness test: a `||` here would carry the stored 3 forward and leave
+    // removed credentials counted — the inventory reading as enrolled for an
+    // account that holds nothing.
+    users.set('u1', { mfaFactors: { totp: false, passkeys: 3 } });
+    passkeys.set('u1', ['a', 'b', 'c']);
+
+    const result = await applyMfaFactorChange('u1', { passkeys: 0 });
+
+    expect(result).toEqual({
+      factors: { totp: false, passkeys: 0 },
+      mfaEnrolled: false,
+      requiresMfaSetup: true,
+    });
+    expect(passkeyCollectionGets).toBe(0);
   });
 
   it('clamps a negative or fractional explicit count', async () => {
@@ -473,5 +523,58 @@ describe('applyMfaFactorChange — the write', () => {
     expect(result.mfaEnrolled).toBe(true);
     expect(setCalls).toHaveLength(1);
     expect(setCalls[0].payload).toMatchObject({ mfaEnrolled: true });
+  });
+
+  it('folds extraUpdate into the same single write on the ctx.tx path', async () => {
+    // The whole point of `extraUpdate` is that the caller's cleanup commits
+    // with the flags. Dropping it on the tx branch would leave a disabled
+    // account still holding its secret.
+    users.set('u1', { mfaFactors: { totp: true, passkeys: 0 }, mfaSecret: 'ENCRYPTED' });
+    const tx = makeTx();
+
+    await applyMfaFactorChange(
+      'u1',
+      { totp: false },
+      { tx: asTx(tx), extraUpdate: { mfaSecret: null } },
+    );
+
+    expect(runTransactionCalls).toBe(0);
+    expect(setCalls).toHaveLength(1);
+    expect(setCalls[0].options).toEqual({ merge: true });
+    expect(setCalls[0].payload).toEqual({
+      mfaFactors: { totp: false, passkeys: 0 },
+      mfaEnrolled: false,
+      requiresMfaSetup: true,
+      mfaSecret: null,
+    });
+  });
+});
+
+describe('applyMfaFactorChange — concurrent callers', () => {
+  it('composes two in-flight changes instead of losing a leg', async () => {
+    // Two tabs finishing enrollment at once: one completes TOTP setup while the
+    // other registers a passkey. Firestore serializes contended transactions
+    // and the fake models that, so what this pins on the MODULE is that every
+    // read happens inside the transaction body. Hoist the user-doc read above
+    // `runTransaction` and the second commit would write its pre-computed
+    // `totp: false` over the first one's enrollment — a factor silently lost.
+    users.set('u1', { mfaEnrolled: false }); // legacy doc — no mfaFactors leg
+    passkeys.set('u1', ['a', 'b']);
+
+    const [totpResult, passkeyResult] = await Promise.all([
+      applyMfaFactorChange('u1', { totp: true }),
+      applyMfaFactorChange('u1', { passkeys: 2 }),
+    ]);
+
+    expect(runTransactionCalls).toBe(2);
+    expect(setCalls).toHaveLength(2);
+    // Whichever commits second reads the winner's write and carries it forward.
+    expect(users.get('u1')).toMatchObject({
+      mfaFactors: { totp: true, passkeys: 2 },
+      mfaEnrolled: true,
+      requiresMfaSetup: false,
+    });
+    expect(totpResult.factors.totp).toBe(true);
+    expect(passkeyResult.factors).toEqual({ totp: true, passkeys: 2 });
   });
 });

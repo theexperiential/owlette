@@ -402,8 +402,14 @@ Server APIs manage roles, site assignments, and deletion.
 | `role` | string | `member`, `admin`, or `superadmin`. |
 | `sites` | string[] | Site IDs assigned to members/admins. |
 | `createdAt` | timestamp | Creation time. |
-| `mfaEnrolled`, `mfaSecret`, `backupCodes` | boolean/string/array | MFA state. |
+| `mfaSecret`, `backupCodes` | string/array | Encrypted TOTP secret and hashed backup codes. Server-written only. |
 | `mfaFactors` | map | `{ totp: boolean, passkeys: number }` — the authoritative second-factor tally. Server-maintained; `mfaEnrolled` is derived from it. |
+| `mfaEnrolled` | boolean | **Derived**, server-written only: `mfaFactors.totp || mfaFactors.passkeys > 0`. A passkey counts as a second factor. |
+| `requiresMfaSetup` | boolean | **Derived**, server-written only: `!mfaEnrolled`. Re-armed when the last factor is removed; the proxy redirects such a session to `/setup-2fa`. |
+
+`mfaFactors`, `mfaEnrolled`, and `requiresMfaSetup` have exactly one writer,
+`lib/mfaFactors.server.ts`. Clients cannot write them — the user-doc rule allows
+only a fixed set of self-editable keys.
 
 ### user subcollections
 

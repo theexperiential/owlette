@@ -1,9 +1,9 @@
 ---
 title: "platform authentication internals"
-description: "This reference covers Owlette platform authentication internals: Firebase-backed user sessions, agent device-code pairing, passkey authentication (WebAuthn), optional MFA (TOTP), and role-based access control. For HTTP API integrations, use API authentication, which documents scoped owk_* API keys, bearer headers, scopes, and public API error behavior."
+description: "This reference covers Owlette platform authentication internals: Firebase-backed user sessions, agent device-code pairing, passkey authentication (WebAuthn), mandatory two-factor authentication (a passkey or an authenticator app), and role-based access control. For HTTP API integrations, use API authentication, which documents scoped owk_* API keys, bearer headers, scopes, and public API error behavior."
 ---
 
-Owlette uses four authentication mechanisms: user auth (Firebase Auth), agent auth (device code pairing), passkey authentication (WebAuthn), and optional MFA (TOTP).
+Owlette uses four authentication mechanisms: user auth (Firebase Auth), agent auth (device code pairing), passkey authentication (WebAuthn), and two-factor authentication, which every account must enroll in and which a passkey or an authenticator app can satisfy.
 
 ---
 
@@ -139,7 +139,9 @@ Firestore security rules use these claims to scope agent access to a single site
 
 ## passkey authentication (webauthn)
 
-Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passkey replaces both the password and 2FA — it's a single biometric/PIN step.
+Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passkey replaces both the password and the 2FA code — it's a single biometric/PIN step.
+
+"Passkey" is one standard, not a list of integrations. Windows Hello, Touch ID, Face ID, a hardware security key (YubiKey and friends), and password managers that store passkeys (1Password, Bitwarden, iCloud Keychain) are all WebAuthn authenticators, and Owlette treats them identically — there is nothing per-vendor to enable.
 
 ### registration flow
 
@@ -157,6 +159,9 @@ Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passke
        ├── Verify attestation response
        ├── Store credential in users/{userId}/passkeys/{credentialId}
        ├── Recount users/{userId}.mfaFactors.passkeys (transactional)
+       ├── If this is the account's FIRST factor, re-mint the session as
+       │     MFA-verified (markSessionMfaVerified) — the ceremony just
+       │     completed IS the proof, so there is no second prompt
        └── Delete challenge
 ```
 
@@ -178,7 +183,9 @@ Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passke
    ├── Create iron-session (HTTPOnly cookie)
    ├── Create Firebase custom token
    ├── Client calls signInWithCustomToken()
-   └── MFA is bypassed (passkey IS the second factor)
+   └── Session is minted MFA-verified (createSession(..., 'passkey-uv'))
+         — a user-verified assertion is the second factor, so the user is
+         never asked for a code on top of it
 ```
 
 ### passkey management
@@ -202,39 +209,68 @@ Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passke
 
 ---
 
-## multi-factor authentication (mfa)
+## two-factor authentication (2fa)
 
-Optional TOTP-based two-factor authentication. Passkey login bypasses MFA entirely.
+Two-factor authentication is mandatory, and **either** factor type satisfies it — a user picks one at `/setup-2fa` and can add the other later.
+
+| factor | what it actually is | at sign-in |
+|--------|--------------------|------------|
+| **passkey** (recommended) | Windows Hello, Touch ID, Face ID, a hardware security key, or a password manager that stores passkeys (1Password, Bitwarden, iCloud Keychain). All WebAuthn — one standard, no per-vendor setup. | One ceremony. The device unlock is the login *and* the second factor, so no code is ever requested on top of it. |
+| **authenticator app** | A 6-digit TOTP code. Authenticator apps run on **desktop as well as mobile** — 1Password, Bitwarden, and Authy all ship desktop apps, so a phone is not required to enroll. | Password or Google sign-in first, then the code at `/verify-2fa`. |
+
+### the factor inventory
+
+`lib/mfaFactors.server.ts` is the **only** writer of the three fields that describe an account's 2FA state:
+
+```
+users/{userId}.mfaFactors       = { totp: boolean, passkeys: number }
+users/{userId}.mfaEnrolled      = mfaFactors.totp || mfaFactors.passkeys > 0
+users/{userId}.requiresMfaSetup = !mfaEnrolled
+```
+
+`mfaFactors` is a denormalized tally, so the session hot path can answer "does this account hold a second factor?" with one document read instead of counting the `passkeys` subcollection. Documents written before the field existed are recounted from the subcollection and healed on the next write.
+
+An account with zero factors carries `requiresMfaSetup: true`, and `proxy.ts` redirects that session to `/setup-2fa` from any protected path.
 
 ### setup flow
 
 ```
-1. User initiates 2FA setup
-   └── POST /api/mfa/setup
-       ├── Generate TOTP secret
-       ├── Store in mfa_pending/{userId} (10-min expiry)
-       └── Return secret + QR code URL
+1. User lands on /setup-2fa and chooses a method
 
-2. User scans QR with authenticator app
+2a. passkey branch
+   ├── POST /api/passkeys/register/options then /verify
+   ├── Credential stored, mfaFactors.passkeys recounted
+   └── First factor: the session is re-minted MFA-verified in place
 
-3. User enters 6-digit code
-   └── POST /api/mfa/verify-setup
-       ├── Verify code against secret
-       ├── Encrypt secret → store in users/{userId}
-       ├── Receive client-generated backup codes → hash and store
-       └── Delete mfa_pending document
+2b. authenticator branch
+   ├── POST /api/mfa/setup
+   │     ├── Generate TOTP secret
+   │     ├── Store in mfa_pending/{userId} (10-min expiry)
+   │     └── Return secret + QR code URL
+   └── POST /api/mfa/verify-setup with the 6-digit code
+         ├── Verify code against secret
+         ├── Encrypt secret, store on users/{userId}
+         ├── Issue and hash the first sheet of backup codes
+         └── Delete the mfa_pending document
 
-4. MFA is now active for this user
-
-5. (Optional) User registers a passkey for faster future logins
+3. Both branches end at the backup-codes screen
 ```
 
-### login with mfa
+### the enrollment gate
+
+`lib/mfaEnrollmentGate.server.ts` guards `/api/mfa/setup`, `/api/mfa/verify-setup`, and the two `/api/passkeys/register/` routes:
+
+- **zero factors** — enrollment is open. This is the mandatory-setup path; a user who has never enrolled cannot hold `mfaVerified`, so gating it would deadlock.
+- **one or more factors** — the session must already be MFA-verified, otherwise the route returns `403` with `code: "mfa_challenge_required"` and the client sends the user to `/verify-2fa`. Without this, a stolen session cookie could attach an attacker-controlled factor and clear the gate with it.
+
+Removal routes are deliberately outside the gate — see [removing a factor](#removing-a-factor).
+
+### login with 2fa
 
 ```
-1. User logs in normally (email/password or Google)
-2. Dashboard detects mfaEnrolled: true on user document
-3. Prompt for TOTP code
+1. User signs in (email/password, Google, or passkey)
+2. Passkey sign-in: the session is minted MFA-verified, so there is no prompt
+3. Otherwise the dashboard reads mfaEnrolled: true and prompts at /verify-2fa
 4. POST /api/mfa/verify-login {code}
    ├── Decrypt secret from user document
    ├── Verify TOTP code (or check backup codes)
@@ -242,12 +278,29 @@ Optional TOTP-based two-factor authentication. Passkey login bypasses MFA entire
    └── Return success
 ```
 
+A user who holds a passkey can clear that prompt with the passkey instead of typing a code, via the `/api/passkeys/step-up/` routes.
+
 ### backup codes
 
-- 10 backup codes generated during setup
-- Each is single-use
-- Stored as hashed values in Firestore
-- Used when authenticator device is unavailable
+- 10 single-use codes, stored as hashes — the plaintext is shown exactly once
+- Available to **any** enrolled account, not just TOTP ones. A passkey-only account gets its sheet from `POST /api/mfa/backup-codes`
+- Regenerating invalidates every previously issued code
+- Regeneration requires **live proof of possession** in the same request — a current TOTP code, an unused backup code, or a passkey assertion. A warm session is deliberately not enough: a sheet of recovery codes also satisfies `/api/mfa/disable`, so minting one from a cookie alone would be a way to shed 2FA entirely
+
+### removing a factor
+
+Removing your last factor is **allowed**. On a drop to zero factors the inventory module re-arms `requiresMfaSetup`, so the account goes straight back into mandatory setup and the user is asked to enroll a new factor before they can use the dashboard again. Dropping to zero also revokes every trusted-device record — 30-day device trust must not outlive the factor it was granted against.
+
+The two removal routes are gated differently, and both deliberately so:
+
+- `POST /api/mfa/disable` (authenticator app) demands live proof of possession every time — a current TOTP code or an unused backup code.
+- `DELETE /api/passkeys/{credentialId}` requires only the session that owns the credential. It is **not** behind the enrollment gate: that gate exists to stop an unchallenged session from *adding* a factor it could then step up with, and refusing a removal would hold an account hostage to a credential its owner no longer has.
+
+### superadmin factor reset
+
+`POST /api/users/{uid}/mfa-reset` — surfaced as **reset 2FA** on the row menu of `/admin/users` — is the supported recovery path for a user who has lost their last factor *and* their backup codes. It deletes every passkey credential, clears the TOTP secret and backup codes, re-arms mandatory setup, and revokes the target's trusted-device records.
+
+It does **not** revoke Firebase refresh tokens: a session the target already holds stays signed in until it expires on its own. Self-reset is refused — a superadmin uses account settings for their own factors, or asks another superadmin.
 
 ---
 
