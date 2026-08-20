@@ -28,6 +28,21 @@ All notable changes to owlette are documented here. The format is based on [Keep
 - **Adding a factor to an account that already has one asks you to verify first.** Enrollment on a warm session now requires a cleared 2FA challenge, so someone with a signed-in browser cannot quietly attach a factor of their own. Verify with an existing passkey, or take the code prompt.
 - **`mfaEnrolled` is derived, not declared.** The user document carries an `mfaFactors` tally (`{ totp, passkeys }`), and `mfaEnrolled` / `requiresMfaSetup` are computed from it by a single server-side writer. The old `passkeyEnrolled` flag is retired.
 
+## [3.0.2] - 2026-08-20
+
+### fixed
+
+- **config changes made on the machine now reach the cloud — and survive reboots.** since 3.0.0, edits made in the desktop app (launch modes, paths, schedules, everything) were applied locally but never uploaded, and the next reboot silently reverted them to the cloud's stale copy. the agent now pushes local edits within about a second of the change, and startup reconciles three ways instead of blindly preferring the cloud: a newer local change is pushed up, a newer cloud change is pulled down, and a genuine conflict prefers the cloud while logging exactly what it discarded.
+- **a clean windows shutdown is no longer reported as an "unexpected reboot".** the agent asks windows for up to 45 seconds of shutdown notice (previously ~5), receives a stop signal directly from the service host instead of polling for it, records the clean stop locally before attempting any network calls, and cross-checks the windows event log before raising the alarm.
+- **the tray icon no longer sticks on the gray "disconnected" owl after a reboot.** when the app starts before the windows taskbar exists, refused icon updates are now retried until one lands, and the icon re-asserts itself once a minute.
+- **editing a process on the dashboard no longer fails with "duplicate process name" when older duplicates already exist in the config.** only changes that introduce or worsen a name collision are rejected — cleanup renames and unrelated edits save normally.
+- **the dashboard renders display-capture timestamps synced by the agent** instead of showing "never" for string-typed values.
+
+### changed
+
+- **new processes get unique default names** ("untitled process 2", …) instead of repeating the same name, which the dashboard rejects as a duplicate.
+- **shutting the machine down can take up to ~20 seconds longer** while the agent flushes its state gracefully — this window is what makes settings and clean-shutdown records survive the power-off.
+
 ## [3.0.1] - 2026-08-17
 
 ### added
