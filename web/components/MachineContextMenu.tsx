@@ -239,14 +239,14 @@ export function MachineContextMenu({
                 </DropdownMenuItem>
               ) : (
                 <>
-                  <div className="flex items-center justify-between px-2 py-1.5 text-sm text-cyan-400 rounded-sm hover:bg-cyan-950/30 hover:text-cyan-300">
+                  <div className="flex items-center justify-between px-2 py-1.5 text-sm text-amber-400 rounded-sm hover:bg-amber-950/30 hover:text-amber-300">
                     <DropdownMenuItem
                       onClick={(e) => {
                         e.stopPropagation();
                         setShowRestartDialog(true);
                       }}
                       data-testid="machine-context-menu-reboot"
-                      className="flex-1 p-0 text-cyan-400 focus:bg-transparent focus:text-cyan-300 cursor-pointer"
+                      className="flex-1 p-0 text-amber-400 focus:bg-transparent focus:text-amber-300 cursor-pointer"
                     >
                       <RotateCcw className="mr-2 h-4 w-4" />
                       restart machine
@@ -258,9 +258,9 @@ export function MachineContextMenu({
                             e.stopPropagation();
                             setShowRestartScheduleDialog(true);
                           }}
-                          className="ml-2 p-0.5 rounded hover:bg-cyan-950/50 transition-colors cursor-pointer"
+                          className="ml-2 p-0.5 rounded hover:bg-amber-950/50 transition-colors cursor-pointer"
                         >
-                          <Settings2 className="h-3.5 w-3.5 text-muted-foreground hover:text-cyan-300 transition-colors" />
+                          <Settings2 className="h-3.5 w-3.5 text-muted-foreground hover:text-amber-300 transition-colors" />
                         </button>
                       </TooltipTrigger>
                       <TooltipContent>
@@ -274,7 +274,7 @@ export function MachineContextMenu({
                       setShowShutdownDialog(true);
                     }}
                     data-testid="machine-context-menu-shutdown"
-                    className="text-purple-400 focus:bg-purple-950/30 focus:text-purple-300 cursor-pointer"
+                    className="text-orange-400 focus:bg-orange-950/30 focus:text-orange-300 cursor-pointer"
                   >
                     <Power className="mr-2 h-4 w-4" />
                     shutdown machine
@@ -296,7 +296,7 @@ export function MachineContextMenu({
                   setShowRestartScheduleDialog(true);
                 }}
                 data-testid="machine-context-menu-schedule-restarts"
-                className="text-cyan-400 focus:bg-cyan-950/30 focus:text-cyan-300 cursor-pointer"
+                className="text-amber-400 focus:bg-amber-950/30 focus:text-amber-300 cursor-pointer"
               >
                 <Settings2 className="mr-2 h-4 w-4" />
                 schedule restarts
@@ -321,7 +321,7 @@ export function MachineContextMenu({
                   e.stopPropagation();
                   onLiveView?.();
                 }}
-                className="text-emerald-400 focus:bg-emerald-950/30 focus:text-emerald-300 cursor-pointer"
+                className="text-blue-400 focus:bg-blue-950/30 focus:text-blue-300 cursor-pointer"
               >
                 <Eye className="mr-2 h-4 w-4" />
                 live view
@@ -363,12 +363,14 @@ export function MachineContextMenu({
                   setShowRevokeDialog(true);
                 }}
                 data-testid="machine-context-menu-revoke-token"
-                className="text-amber-400 focus:bg-amber-950/30 focus:text-amber-300 cursor-pointer"
+                className="text-fuchsia-400 focus:bg-fuchsia-950/30 focus:text-fuchsia-300 cursor-pointer"
               >
                 <KeyRound className="mr-2 h-4 w-4" />
                 revoke token
               </DropdownMenuItem>
-              <DropdownMenuSeparator className="bg-accent" />
+              {/* No separator: revoking the token and removing the machine are
+                  the same kind of act — they sever this machine from the site —
+                  so they read as one destructive group. */}
               <DropdownMenuItem
                 onClick={(e) => {
                   e.stopPropagation();

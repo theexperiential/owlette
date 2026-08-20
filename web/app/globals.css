@@ -112,6 +112,10 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* Hover tints — see .btn-sweep. Light mode darkens with its own foreground. */
+  --btn-hover: color-mix(in oklch, var(--foreground) 14%, transparent);
+  --surface-hover: color-mix(in oklch, var(--foreground) 6%, transparent);
 }
 
 .dark {
@@ -173,6 +177,12 @@
   --sidebar-accent-foreground: oklch(0.985 0.01 250);
   --sidebar-border: oklch(0.35 0.08 250);
   --sidebar-ring: oklch(0.65 0.25 250);
+
+  /* Hover tints — see .btn-sweep. Blue, not the near-white --foreground: at
+     14% over a 0.23L card the old mix desaturated to grey. Hue 250 matches the
+     surface ramp, so hover reads as the surface brightening, not a film. */
+  --btn-hover: color-mix(in oklch, oklch(0.62 0.16 250) 26%, transparent);
+  --surface-hover: color-mix(in oklch, oklch(0.62 0.16 250) 14%, transparent);
 }
 
 /* Native temporal inputs (date / datetime-local / time / month / week) read
@@ -778,8 +788,13 @@ input[type="week"] {
  * the same duration reads as faster across it. Unlayered so it outranks the
  * base `transition-all`, which would otherwise time the sweep.
  */
+/* --btn-hover / --surface-hover are defined per theme in the :root and .dark
+   token blocks, NOT here: mixing --foreground into the sweep gave dark mode a
+   near-white wash that read as grey plastic on every control. Dark mode tints
+   with blue instead, so hover stays in the palette. Any hoverable surface that
+   is not a <Button> (metric strips, collapsible rows) uses --surface-hover, the
+   same tint at lower strength, so a page hovers as one system. */
 .btn-sweep {
-  --btn-hover: color-mix(in oklch, var(--foreground) 14%, transparent);
   background-image: linear-gradient(var(--btn-hover), var(--btn-hover));
   background-repeat: no-repeat;
   background-size: 0% 100%;

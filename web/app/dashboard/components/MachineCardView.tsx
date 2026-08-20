@@ -391,7 +391,7 @@ function MachineCard({
         <Collapsible open={statsExpanded} onOpenChange={onToggleStats}>
           {!statsExpanded && (
             <CollapsibleTrigger asChild>
-              <Button variant="ghost" className="w-full border-t border-border/50 rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
+              <Button variant="ghost" className="w-full border-t border-border/50 rounded-none cursor-pointer px-4 py-2.5 h-auto">
                 <div className="flex items-center gap-2 w-full select-none">
                   <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
                   <div className="flex items-center gap-2.5 text-sm text-muted-foreground overflow-hidden">
@@ -464,7 +464,7 @@ function MachineCard({
           <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
         <CollapsibleTrigger asChild>
           <div className="border-t border-border/50 relative cursor-pointer group">
-            <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="absolute inset-0 bg-gradient-to-b from-[var(--surface-hover)] to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
             <div className="relative flex items-center px-4 py-1.5 select-none">
               <ChevronUp className="h-4 w-4 text-foreground/50 group-hover:text-foreground/70 transition-colors flex-shrink-0" />
             </div>
@@ -670,7 +670,7 @@ function MachineCard({
       <Collapsible open={effectiveDisplaysExpanded} onOpenChange={onToggleDisplays}>
         {!effectiveDisplaysExpanded && (
           <CollapsibleTrigger asChild>
-            <Button variant="ghost" className="w-full border-t border-border/50 rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
+            <Button variant="ghost" className="w-full border-t border-border/50 rounded-none cursor-pointer px-4 py-2.5 h-auto">
               <div className="flex items-center gap-2 w-full select-none">
                 <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
                 {displayMonitors.length > 0 ? (
@@ -719,14 +719,14 @@ function MachineCard({
         <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
           <CollapsibleTrigger asChild>
             <div className="border-t border-border/50 relative cursor-pointer group">
-              <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="absolute inset-0 bg-gradient-to-b from-[var(--surface-hover)] to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
               <div className="relative flex items-center px-4 py-1.5 select-none">
                 <ChevronUp className="h-4 w-4 text-foreground/50 group-hover:text-foreground/70 transition-colors flex-shrink-0" />
               </div>
             </div>
           </CollapsibleTrigger>
           <div
-            className={`px-6 pb-4 pt-2 ${onMetricClick ? 'cursor-pointer hover:bg-secondary/20 transition-colors' : ''}`}
+            className={`px-6 pb-4 pt-2 ${onMetricClick ? 'cursor-pointer hover:bg-[var(--surface-hover)] transition-colors' : ''}`}
             onClick={onMetricClick ? (e) => { e.stopPropagation(); onMetricClick('display'); } : undefined}
           >
             {displayMonitors.length > 0 ? (
@@ -776,7 +776,7 @@ function MachineCard({
         <Collapsible open={processesExpanded} onOpenChange={onToggleProcesses}>
           {!processesExpanded && (
             <CollapsibleTrigger asChild>
-              <Button variant="ghost" className="w-full border-t border-border/50 rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
+              <Button variant="ghost" className="w-full border-t border-border/50 rounded-none cursor-pointer px-4 py-2.5 h-auto">
                 <div className="flex items-center gap-2.5 w-full select-none overflow-hidden">
                   <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
                   <span className="text-sm flex-shrink-0 text-muted-foreground">
@@ -805,7 +805,7 @@ function MachineCard({
           <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
             <CollapsibleTrigger asChild>
               <div className="border-t border-border/50 relative cursor-pointer group">
-                <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div className="absolute inset-0 bg-gradient-to-b from-[var(--surface-hover)] to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                 <div className="relative flex items-center px-4 py-2 select-none">
                   <ChevronUp className="h-4 w-4 text-foreground/50 group-hover:text-foreground/70 transition-colors flex-shrink-0" />
                 </div>
@@ -827,7 +827,11 @@ function MachineCard({
                             {(!machine.online ? 'unknown' : process.status === 'LAUNCH_FAILED' ? 'failed' : process.status).toLowerCase()}
                           </Badge>
                         </div>
-                        <div className="flex items-center gap-2 md:gap-3 sm:ml-2 md:ml-4 flex-shrink-0">
+                        {/* grow (not shrink-0): the cluster has to own the row's
+                            spare width so the run controls can sit hard right,
+                            including on the wrapped line where the name takes
+                            its own row */}
+                        <div className="flex grow items-center gap-2 md:gap-3 sm:ml-2 md:ml-4">
                           {(() => {
                             const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
                             const modeLabels = { off: 'off', always: 'always on', scheduled: 'scheduled' } as const;
@@ -926,6 +930,10 @@ function MachineCard({
                                   </TooltipContent>
                                 </Tooltip>
                               )}
+                              {/* run controls float right, away from the
+                                  configuration actions — a mis-click here
+                                  interrupts a live process */}
+                              <div className="ml-auto flex items-center gap-2 md:gap-3">
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
@@ -960,6 +968,7 @@ function MachineCard({
                                   <p>kill process</p>
                                 </TooltipContent>
                               </Tooltip>
+                              </div>
                             </>
                           )}
                         </div>
