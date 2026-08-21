@@ -152,6 +152,17 @@ const MAX_POINTS: Record<TimeRange, number> = {
   'all': 600,
 };
 
+/**
+ * Auto-refresh cadence while the panel stays open, per range. The hour chart moves visibly
+ * minute to minute so it polls often; a day chart barely shifts, so it polls lazily. Week and
+ * longer don't auto-refresh at all — a few missing minutes are invisible at that zoom and the
+ * query spans far more buckets.
+ */
+const REFRESH_INTERVAL_MS: Partial<Record<TimeRange, number>> = {
+  '1h': 2 * 60 * 1000,
+  '1d': 5 * 60 * 1000,
+};
+
 export function useHistoricalMetrics(
   siteId: string | null,
   machineId: string | null,
@@ -163,7 +174,12 @@ export function useHistoricalMetrics(
   const [error, setError] = useState<string | null>(null);
   const lastFetchRef = useRef<number>(0);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (options?: { background?: boolean }) => {
+    // A background refresh repaints in place: it never raises `loading` (which swaps the whole
+    // panel body for a spinner) and never surfaces a transient error over a good chart — the
+    // next tick retries.
+    const background = options?.background === true;
+
     if (demo && machineId) {
       setData(demo.getHistoricalData(machineId, timeRange));
       setLoading(false);
@@ -171,20 +187,24 @@ export function useHistoricalMetrics(
     }
 
     if (!db) {
+      if (background) return;
       setLoading(false);
       setError('Firebase not configured');
       setData(null);
       return;
     }
     if (!siteId || !machineId) {
+      if (background) return;
       // Params not ready. Flipping loading=false here caused a "no data" flash pre-fetch.
       setLoading(true);
       setData(null);
       return;
     }
 
-    setLoading(true);
-    setError(null);
+    if (!background) {
+      setLoading(true);
+      setError(null);
+    }
 
     try {
       const now = new Date();
@@ -345,12 +365,13 @@ export function useHistoricalMetrics(
       const finalData = insertGapMarkers(downsampled, makeGapPoint);
 
       setData(finalData);
+      setError(null);
       lastFetchRef.current = Date.now();
     } catch (e: unknown) {
       console.error('Failed to fetch historical metrics:', e);
-      setError(e instanceof Error ? e.message : 'Failed to load chart data');
+      if (!background) setError(e instanceof Error ? e.message : 'Failed to load chart data');
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, [siteId, machineId, timeRange, demo]);
 
@@ -363,12 +384,32 @@ export function useHistoricalMetrics(
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === 'visible' && Date.now() - lastFetchRef.current > 30_000) {
-        fetchData();
+        fetchData({ background: true });
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, [fetchData]);
 
-  return { data, loading, error, refetch: fetchData };
+  // Keep an open panel live indefinitely: poll on the range's cadence while the tab is visible.
+  // Hidden tabs are skipped entirely (no wasted reads); the visibility handler above catches up
+  // on return. `fetchData` changes identity with site/machine/range, which resets the timer.
+  useEffect(() => {
+    if (demo) return;
+    const intervalMs = REFRESH_INTERVAL_MS[timeRange];
+    if (!intervalMs) return;
+
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      fetchData({ background: true });
+    }, intervalMs);
+
+    return () => window.clearInterval(id);
+  }, [fetchData, timeRange, demo]);
+
+  const refetch = useCallback(() => {
+    fetchData();
+  }, [fetchData]);
+
+  return { data, loading, error, refetch };
 }
