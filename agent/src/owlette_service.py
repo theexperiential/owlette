@@ -3299,6 +3299,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         if self._local_config_mtime == baseline_at_dispatch:
                             self._local_config_mtime = mtime
                     self._push_backoff.reset()
+                    # The dashboard draws process ROWS from metrics.processes, so
+                    # a local add/delete/rename stays invisible until the next
+                    # heartbeat — up to 120s idle. Remote applies already push
+                    # metrics immediately (handle_config_update); mirror that
+                    # here so both edit origins reflect within seconds.
+                    try:
+                        client._upload_metrics(shared_utils.get_system_metrics())
+                        logging.info(
+                            "Metrics pushed after local config push (for web dashboard responsiveness)")
+                    except Exception as e:
+                        logging.warning(
+                            f"Post-push metrics upload failed (next heartbeat covers it): {e}")
                 else:
                     delay = self._push_backoff.record_failure(time.monotonic())
                     logging.warning(

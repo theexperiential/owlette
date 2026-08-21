@@ -277,6 +277,7 @@ class FakePushClient:
         self.cached_config = cached_config
         self.succeeds = succeeds
         self.attempts = 0
+        self.metrics_uploads = 0
 
     def is_connected(self):
         return True
@@ -284,6 +285,10 @@ class FakePushClient:
     def push_local_config(self, local_config, reason='local change'):
         self.attempts += 1
         return self.succeeds
+
+    def _upload_metrics(self, metrics):
+        self.metrics_uploads += 1
+        return True
 
 
 class TestLocalConfigPushDetector:
@@ -298,6 +303,10 @@ class TestLocalConfigPushDetector:
         monkeypatch.setattr(
             owlette_service.shared_utils, 'read_config',
             lambda *a, **k: json.loads(path.read_text()),
+        )
+        monkeypatch.setattr(
+            owlette_service.shared_utils, 'get_system_metrics',
+            lambda: {'memory': {}, 'processes': {}},
         )
 
         # cached_config differs from disk, so every tick sees work to do.
@@ -357,6 +366,27 @@ class TestLocalConfigPushDetector:
 
         assert client.attempts == 1
         assert svc._push_backoff.failures == 0
+
+    def test_a_successful_push_publishes_metrics_immediately(self, detector):
+        # The dashboard draws process rows from metrics.processes, so a local
+        # add/delete/rename is invisible until a heartbeat lands — up to 120s
+        # idle. A successful push must therefore be followed by one immediate
+        # metrics upload, mirroring what handle_config_update does for remote
+        # applies.
+        svc, _path, client = detector
+        client.succeeds = True
+
+        self._tick(svc)
+
+        assert client.metrics_uploads == 1
+
+    def test_a_failed_push_does_not_publish_metrics(self, detector):
+        svc, _path, client = detector
+        client.succeeds = False
+
+        self._tick(svc)
+
+        assert client.metrics_uploads == 0
 
     def test_nothing_is_pushed_while_a_remote_apply_is_running(self, detector):
         svc, _path, client = detector
