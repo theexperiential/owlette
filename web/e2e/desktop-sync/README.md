@@ -146,25 +146,32 @@ is a ceiling for `expect.poll` — there is no `waitForTimeout` in this suite.
 | `desktopToWireMs` | 15s | 0.5s mtime poll (`owlette_service.LOCAL_CONFIG_POLL_INTERVAL`) + one Firestore write, with headroom for `config_sync.PushBackoff`'s 5s floor after a transient failure |
 | `wireToLocalMs` | 30s | agent config listener polls adaptively 2–10s (`firebase_client._config_listener_loop`, backoff 1.3) — a change can wait out a full 10s idle interval |
 | `wireToDesktopMs` | 30s | `wireToLocalMs` + the app's 120ms file watcher + React's 80ms debounce + paint |
-| `desktopToStatusMs` | 20s | metrics cadence, **once already fast** — see below |
-| `metricsCadenceWarmupMs` | 150s | one full 120s idle metrics interval, plus slack |
+| `desktopToStatusMs` | 6s | a PRODUCT SLO, not a cadence accommodation — see below |
+| `desktopToDashboardMs` | 10s | `desktopToStatusMs` + `onSnapshot` delivery + a React render |
 
-**Measured on the green tier-0 run** (both an order of magnitude inside budget):
+**Measured on a green full run:**
 
 | Link | Measured | Budget |
 |---|---|---|
-| local `config.json` → config doc | **441 ms** | 15 000 ms |
-| config doc → local `config.json` | **798 ms** | 30 000 ms |
+| local `config.json` → config doc | **~0.4 s** | 15 000 ms |
+| config doc → local `config.json` | **~1.6 s** | 30 000 ms |
+| delete → status doc | **~1.3 s** | 6 000 ms |
+| delete → dashboard row gone | **~1.3 s** | 10 000 ms |
+| dashboard edit → desktop UI | **~0.7 s** | 30 000 ms |
 
-### The metrics-cadence trap
+### The metrics-cadence trap (and why the SLO exists)
 
-`firebase_client._metrics_loop` (`:753`) picks the next interval **after** each
-upload: 5s while the desktop window is on screen (`tmp/gui.pid` present), 30s with
-a process running, 120s idle. Opening the window does **not** interrupt an
-interval already counting down, so a status-doc assertion can wait up to 120s
-before the fast cadence even engages. Specs therefore call
-`waitForFastMetricsCadence()` first — untimed setup — and only then measure
-against `desktopToStatusMs`.
+`firebase_client._metrics_loop` picks the next interval **after** each upload:
+5s while the desktop window is on screen (`tmp/gui.pid` present), 30s with a
+process running, 120s idle — and an interval already counting down is not
+interrupted. The dashboard renders process ROW MEMBERSHIP from the status doc,
+so before 3.0.2's immediate post-push heartbeat, a local add/delete/rename
+stayed invisible on the dashboard for 20–120s. An early version of this suite
+waited for the fast cadence before measuring — which is precisely why that
+field bug went undetected. The suite now does the opposite: `desktopToStatusMs`
+asserts the product bar (push ~1s + one metrics collection + one write), and
+the negative control (disable the immediate push in
+`_check_local_config_changes`) fails the status-doc assertions deterministically.
 
 This matters because of the **oracle split**: the dashboard overlays only
 `launch_mode` / `schedules` / `schedulePresetId` live from the config doc. Names,

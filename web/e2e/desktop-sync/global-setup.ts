@@ -35,7 +35,16 @@ import {
 
 export default async function globalSetup(config: FullConfig): Promise<void> {
   console.log('[desktop-sync] running the base e2e global setup (emulators, seed, storageState)...')
-  await baseGlobalSetup(config)
+  // The storageState capture's sign-in occasionally times out on a cold
+  // `next start` under load (the staged 2FA form reveals the password field
+  // late). One retry against the now-warm server settles it; a second failure
+  // is a real problem and propagates.
+  try {
+    await baseGlobalSetup(config)
+  } catch (error) {
+    console.log(`[desktop-sync] base setup failed once (${String(error).split('\n')[0]}) — retrying against the warm server...`)
+    await baseGlobalSetup(config)
+  }
 
   // The dashboard has to open on site-A with process rows expanded, or the
   // web-side oracles assert against a collapsed card.

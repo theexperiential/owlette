@@ -32,7 +32,7 @@ import {
   readWireProcesses,
   requireDesktopExe,
   test,
-  waitForFastMetricsCadence,
+  readStatusProcessIds,
 } from './fixtures'
 import { readLocalConfig, writeLocalConfig } from './sandbox'
 
@@ -48,7 +48,7 @@ test.use({ storageState: 'e2e/fixtures/admin.json' })
 requireDesktopExe()
 
 test.beforeAll(async ({}, testInfo) => {
-  testInfo.setTimeout(BUDGET.metricsCadenceWarmupMs + 60_000)
+  testInfo.setTimeout(120_000)
 })
 
 /**
@@ -119,10 +119,6 @@ test('a coerced text field lands coerced on the wire and in the status doc', asy
   sync,
   desktopPage,
 }) => {
-  // The metrics-cadence warm-up alone can legitimately take a full 120s idle
-  // interval (BUDGET.metricsCadenceWarmupMs = 150s) — the default 120s test
-  // timeout is arithmetically unable to contain it.
-  test.setTimeout(240_000)
   await desktopPage.getByTestId('process-row').filter({ hasText: PROCESS_NAME }).click()
   await playwrightExpect(desktopPage.locator('#name')).toHaveValue(PROCESS_NAME)
 
@@ -147,10 +143,10 @@ test('a coerced text field lands coerced on the wire and in the status doc', asy
     .toBe('10')
   console.log(`[tier1] desktop time_to_init → wire: ${Date.now() - startedAt}ms`)
 
-  // The dashboard renders this field from the STATUS doc, which only the agent
-  // writes and only on its metrics cadence — a different path, a different clock.
-  await waitForFastMetricsCadence(sync.siteId, sync.machineId, sync.dataRoot)
-
+  // The dashboard renders this field from the STATUS doc. A successful local
+  // push triggers an immediate metrics upload, so this is bounded by the SLO —
+  // no cadence warm-up, deliberately: waiting for the cadence here is how the
+  // 20-120s row-latency field bug went undetected.
   const statusStartedAt = Date.now()
   await expect
     .poll(async () => (await readStatusProcess(sync.siteId, sync.machineId, PROCESS_ID))?.time_to_init, {
@@ -159,4 +155,51 @@ test('a coerced text field lands coerced on the wire and in the status doc', asy
     })
     .toBe('10')
   console.log(`[tier1] desktop time_to_init → status doc: ${Date.now() - statusStartedAt}ms`)
+})
+
+test('a process deleted on the machine leaves the dashboard within the SLO', async ({
+  sync,
+  desktopPage: _desktopPage, // keeps the app (and its gui.pid) alive for the test
+  page,
+}) => {
+  // The field bug this pins: row membership renders from metrics.processes, and
+  // before the immediate post-push heartbeat a delete stayed on the dashboard
+  // for 20-120s. The budgets here are the product bar, not the cadence.
+  await page.goto('/dashboard')
+  const card = machineCard(page, sync.machineId)
+  await playwrightExpect(processRow(card, PROCESS_NAME).first()).toBeVisible({
+    timeout: BUDGET.desktopToDashboardMs,
+  })
+
+  // The desktop app's own write mechanism (a config.json rewrite) — its UI
+  // codepath for edits is already exercised above.
+  const config = readLocalConfig(sync.dataRoot)
+  config.processes = (Array.isArray(config.processes) ? config.processes : []).filter(
+    (p) => (p as { id?: string }).id !== PROCESS_ID,
+  )
+  writeLocalConfig(sync.dataRoot, config)
+
+  const startedAt = Date.now()
+  await expect
+    .poll(async () => (await readWireProcesses(sync.siteId, sync.machineId)).map((p) => p.id), {
+      message: `delete never reached the config doc.
+${agentLogTail(sync.dataRoot)}`,
+      timeout: BUDGET.desktopToWireMs,
+    })
+    .not.toContain(PROCESS_ID)
+  console.log(`[tier1] delete → wire: ${Date.now() - startedAt}ms`)
+
+  await expect
+    .poll(async () => readStatusProcessIds(sync.siteId, sync.machineId), {
+      message: `delete never left metrics.processes — row membership is stale.
+${agentLogTail(sync.dataRoot)}`,
+      timeout: BUDGET.desktopToStatusMs,
+    })
+    .not.toContain(PROCESS_ID)
+  console.log(`[tier1] delete → status doc: ${Date.now() - startedAt}ms`)
+
+  await playwrightExpect(processRow(card, PROCESS_NAME)).toHaveCount(0, {
+    timeout: BUDGET.desktopToDashboardMs,
+  })
+  console.log(`[tier1] delete → dashboard row gone: ${Date.now() - startedAt}ms`)
 })

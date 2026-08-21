@@ -38,19 +38,21 @@ export const BUDGET = {
    */
   desktopToWireMs: 15_000,
   /**
-   * Local edit → STATUS doc. Gated by the metrics cadence, not by the config
-   * push. `firebase_client._metrics_loop` (:753) picks the interval AFTER each
-   * upload: 5s while the desktop window is on screen (`tmp/gui.pid` present),
-   * 30s with a process running, 120s idle.
-   *
-   * 20s therefore only holds once the 5s cadence is already engaged — opening
-   * the window does not interrupt an interval that is already counting down.
-   * Specs call {@link waitForFastMetricsCadence} first, untimed, and measure
-   * against this afterwards.
+   * Local edit → STATUS doc. This is a PRODUCT SLO, not an accommodation of the
+   * metrics cadence: a successful local config push triggers one immediate
+   * metrics upload (`_check_local_config_changes`'s push thread, mirroring
+   * `handle_config_update`), so the status doc must follow the config doc
+   * within push (~1s) + metrics collection (~2s) + one write. The field bug
+   * this guards: before the immediate push, row membership on the dashboard
+   * waited out the heartbeat cadence — 20-120s — because the interval is
+   * picked AFTER each upload and an idle interval already counting down is not
+   * interrupted. A spec that waits for the cadence before measuring can never
+   * catch that class; this budget deliberately does not.
    */
-  desktopToStatusMs: 20_000,
-  /** Untimed warm-up: long enough to outlast one full 120s idle interval. */
-  metricsCadenceWarmupMs: 150_000,
+  desktopToStatusMs: 6_000,
+  /** Status-doc change → dashboard paint. `desktopToStatusMs` plus the web's
+   * `onSnapshot` delivery and a React render. */
+  desktopToDashboardMs: 10_000,
   /**
    * Config doc → local file. The agent's config listener polls adaptively
    * between 2s and 10s (`firebase_client._config_listener_loop`, backoff 1.3),
@@ -231,37 +233,16 @@ export async function readMetricsTimestampMs(
   return typeof stamp?.toMillis === 'function' ? stamp.toMillis() : 0
 }
 
-/**
- * Block until the agent is uploading metrics on the fast (5s) cadence.
- *
- * Two consecutive uploads inside `withinMs` is the proof. Untimed on purpose:
- * the agent may be part-way through a 120s idle interval when the desktop window
- * opens, and waiting that out is setup, not the thing under test.
- */
-export async function waitForFastMetricsCadence(
-  siteId: string,
-  machineId: string,
-  dataRoot?: string,
-  withinMs = 15_000,
-): Promise<void> {
-  const first = await readMetricsTimestampMs(siteId, machineId)
-
-  const advanced = async (previous: number, timeout: number): Promise<number> => {
-    const deadline = Date.now() + timeout
-    while (Date.now() < deadline) {
-      const now = await readMetricsTimestampMs(siteId, machineId)
-      if (now > previous) return now
-      await new Promise((resolve) => setTimeout(resolve, 500))
-    }
-    throw new Error(
-      `metrics.timestamp did not advance within ${timeout}ms — the agent is not uploading. ` +
-        'Check that the desktop window is on screen (tmp/gui.pid) and the agent is connected.' +
-        (dataRoot ? `\n--- agent log tail ---\n${agentLogTail(dataRoot)}` : ''),
-    )
-  }
-
-  const second = await advanced(first, BUDGET.metricsCadenceWarmupMs)
-  await advanced(second, withinMs)
+/** The status doc's process-id set, for row-membership assertions. */
+export async function readStatusProcessIds(siteId: string, machineId: string): Promise<string[]> {
+  const snap = await getAdminDb()
+    .collection('sites')
+    .doc(siteId)
+    .collection('machines')
+    .doc(machineId)
+    .get()
+  const processes = (snap.data()?.metrics as Record<string, unknown> | undefined)?.processes
+  return processes && typeof processes === 'object' ? Object.keys(processes) : []
 }
 
 /** Tail of the agent's own log — the first place to look when a link breaks. */

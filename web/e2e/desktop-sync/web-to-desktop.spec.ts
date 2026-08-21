@@ -34,7 +34,7 @@ import {
   readWireProcesses,
   requireDesktopExe,
   test,
-  waitForFastMetricsCadence,
+  readStatusProcessIds,
 } from './fixtures'
 import { readLocalConfig, writeLocalConfig } from './sandbox'
 
@@ -49,7 +49,7 @@ test.use({ storageState: 'e2e/fixtures/admin.json' })
 requireDesktopExe()
 
 test.beforeAll(async ({}, testInfo) => {
-  testInfo.setTimeout(BUDGET.metricsCadenceWarmupMs + 60_000)
+  testInfo.setTimeout(120_000)
 })
 
 /** Open the dashboard's edit dialog for a row, located by its seeded name. */
@@ -71,9 +71,6 @@ async function openEditDialog(page: Page, machineId: string, name: string): Prom
  * the documents directly would skip the very machinery under test.
  */
 test('seed a process the dashboard can edit', async ({ sync, desktopPage }) => {
-  // Warm-up can take a full 120s idle interval (metricsCadenceWarmupMs = 150s);
-  // the default 120s test timeout cannot contain it.
-  test.setTimeout(240_000)
   // Touching desktopPage here starts the app for the whole (serial) file, which
   // also puts `tmp/gui.pid` in place and moves metrics to the 5s cadence.
   await playwrightExpect(desktopPage.getByTestId('process-list')).toBeVisible()
@@ -93,8 +90,15 @@ test('seed a process the dashboard can edit', async ({ sync, desktopPage }) => {
     })
     .toContain(PROCESS_ID)
 
-  // The dashboard row comes from the status doc, on the metrics cadence.
-  await waitForFastMetricsCadence(sync.siteId, sync.machineId, sync.dataRoot)
+  // The dashboard row comes from the status doc; the push's immediate metrics
+  // upload must publish it within the SLO — no cadence warm-up.
+  await expect
+    .poll(async () => readStatusProcessIds(sync.siteId, sync.machineId), {
+      message: `seed never reached metrics.processes.
+${agentLogTail(sync.dataRoot)}`,
+      timeout: BUDGET.desktopToStatusMs,
+    })
+    .toContain(PROCESS_ID)
 })
 
 test('a dashboard edit reaches the desktop app', async ({ sync, desktopPage, page }) => {
