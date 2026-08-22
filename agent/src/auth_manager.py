@@ -128,7 +128,7 @@ class AuthManager:
 
     def __init__(
         self,
-        api_base: Optional[str] = "https://owlette.app/api",
+        api_base: Optional[str] = None,
         machine_id: Optional[str] = None,
         storage: Optional[SecureStorage] = None,
     ):

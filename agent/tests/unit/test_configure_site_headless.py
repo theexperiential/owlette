@@ -19,24 +19,27 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-try:
-    import shared_utils  # noqa: F401  (import side effects: path bootstrapping)
-    import configure_site
-except ImportError as exc:  # pragma: no cover - environment guard
-    pytest.skip(f"configure_site dependencies not importable: {exc}", allow_module_level=True)
-except Exception as exc:  # pragma: no cover - environment guard
-    pytest.skip(f"configure_site import failed: {exc}", allow_module_level=True)
+# No module-level skip guard, deliberately: a broken agent dependency must fail
+# collection (pytest exit 2) rather than silently delete these tests behind a
+# green run. Unguarded imports are the house norm (test_shared_utils.py:14,
+# test_sync_state.py:10, test_command_router.py:8).
+import shared_utils  # noqa: F401  (import side effects: path bootstrapping)
+import configure_site
 
 
 # helpers
 
 
 def _args(**overrides):
-    """An argparse.Namespace shaped like the real parser's output."""
+    """An argparse.Namespace shaped like the real parser's output.
+
+    `server` carries the environment token main() normalised it to, not the
+    operator's raw 'dev'/'prod'.
+    """
     defaults = {
         'url': None,
+        'server': None,
         'add': None,
-        'open_browser': False,
         'no_browser': False,
         'json_progress': False,
         'leave': False,
@@ -73,6 +76,21 @@ class TestFlagParsing:
         assert _parser_args(['--dismiss-reboot']).dismiss_reboot is True
         assert _parser_args(['--report-issue', 'C:\\tmp\\p.json']).report_issue == 'C:\\tmp\\p.json'
 
+    def test_server_is_normalised_to_an_environment_token_exactly_once(self):
+        # main() is the only normalisation point. A second pass would map the
+        # already-normalised 'development' back to None, fall through to the
+        # config's environment, and resolve a never-paired machine to production.
+        assert _parser_args(['--server', 'dev']).server == 'development'
+        assert _parser_args(['--server', 'prod']).server == 'production'
+        assert _parser_args([]).server is None
+
+    def test_an_unknown_server_is_refused_by_the_parser(self):
+        with patch.object(sys, 'argv', ['configure_site.py', '--server', 'staging']), \
+             patch.object(configure_site, '_run_headless_mode', return_value=0):
+            with pytest.raises(SystemExit) as exit_info:
+                configure_site.main()
+        assert exit_info.value.code == 2
+
     def test_no_mode_flag_leaves_every_mode_off(self):
         args = _parser_args([])
         assert not any([
@@ -93,6 +111,35 @@ class TestFlagParsing:
         events = _events(capsys)
         assert events[-1]['event'] == 'error'
         assert '--leave' in events[-1]['value'] and '--reboot-now' in events[-1]['value']
+
+    def test_server_dev_reaches_json_progress_as_development(self):
+        with patch.object(sys, 'argv', ['configure_site.py', '--json-progress', '--server', 'dev']), \
+             patch.object(configure_site, 'run_json_progress', return_value=0) as progress:
+            assert configure_site.main() == 0
+        assert progress.call_args.kwargs == {'api_base': None, 'environment': 'development'}
+
+    def test_server_prod_with_a_url_passes_both_through(self):
+        with patch.object(configure_site, 'run_json_progress', return_value=0) as progress:
+            code = configure_site._run_headless_mode(_args(
+                json_progress=True, url='https://owlette.app/api', server='production',
+            ))
+
+        assert code == 0
+        assert progress.call_args.kwargs == {
+            'api_base': 'https://owlette.app/api', 'environment': 'production',
+        }
+
+    def test_a_url_without_a_server_is_refused_rather_than_guessed(self, capsys):
+        # --url is a pure API-base override now; guessing the environment from it
+        # is what wrote a production project_id for a dev URL.
+        code = configure_site._run_headless_mode(_args(
+            json_progress=True, url='https://dev.owlette.app/api',
+        ))
+
+        assert code == 2
+        events = _events(capsys)
+        assert events[-1]['event'] == 'error'
+        assert '--server' in events[-1]['value']
 
     def test_an_unexpected_failure_becomes_one_error_event_and_a_non_zero_exit(self, capsys):
         with patch.object(configure_site, 'run_leave_site', side_effect=RuntimeError('boom')):
@@ -170,8 +217,6 @@ class TestJsonProgress:
         # The desktop app renders the phrase and owns the clipboard; a helper
         # running in the background must not take either.
         assert kwargs['show_prompts'] is False
-        assert kwargs['open_browser'] is False
-        assert kwargs['prompt_open_browser'] is False
         assert kwargs['copy_clipboard'] is False
 
     def test_restarts_the_service_so_the_new_site_is_picked_up(self, capsys):
@@ -203,6 +248,26 @@ class TestJsonProgress:
         assert code == 1
         assert events[-1] == {'event': 'error', 'value': 'Pairing phrase expired.'}
         host.assert_not_called()
+
+    def test_the_environment_it_was_given_reaches_the_pairing_flow(self, capsys):
+        captured = {}
+
+        def fake_flow(**kwargs):
+            captured.update(kwargs)
+            kwargs['on_phrase']({'pairPhrase': 'a-b-c'})
+            return (True, 'Configuration successful', 'site-abc')
+
+        with patch.object(configure_site, 'run_pairing_flow', side_effect=fake_flow), \
+             patch.object(configure_site, '_host_service', return_value=True), \
+             patch.object(configure_site.time, 'sleep'):
+            code = configure_site.run_json_progress(
+                api_base='https://dev.owlette.app/api', environment='development'
+            )
+
+        capsys.readouterr()
+        assert code == 0
+        assert captured['api_base'] == 'https://dev.owlette.app/api'
+        assert captured['environment'] == 'development'
 
     def test_the_cancel_hook_only_heartbeats_and_never_cancels(self, capsys):
         _code, _events_, kwargs, _host = self._run(capsys)
@@ -498,7 +563,6 @@ class TestInteractivePathUnchanged:
         for args in (
             _args(url='https://dev.owlette.app/api'),
             _args(add='silver-compass-drift'),
-            _args(open_browser=True),
             _args(no_browser=True),
         ):
             assert configure_site._run_headless_mode(args) is None
@@ -511,13 +575,30 @@ class TestInteractivePathUnchanged:
         signature = inspect.signature(configure_site.run_pairing_flow)
         assert signature.parameters['copy_clipboard'].default is True
 
-    def test_run_oauth_flow_is_unchanged_for_its_existing_callers(self):
-        import inspect
-        signature = inspect.signature(configure_site.run_oauth_flow)
-        assert list(signature.parameters) == [
-            'setup_url', 'timeout_seconds', 'show_prompts', 'open_browser',
-            'prompt_open_browser', 'on_phrase', 'should_cancel',
-        ]
+    def test_a_console_url_without_a_server_never_reaches_the_pairing_flow(self, capsys):
+        with patch.object(sys, 'argv', ['configure_site.py', '--url', 'http://localhost:3000/api']), \
+             patch.object(configure_site, 'run_pairing_flow') as pairing:
+            assert configure_site.main() == 2
+
+        pairing.assert_not_called()
+        assert '--server' in capsys.readouterr().out
+
+    def test_a_failed_console_run_never_waits_on_a_keypress(self, tmp_path, capsys):
+        # The console can run with the installer wizard holding the foreground,
+        # where a keypress may never reach it; a pause there hangs Setup on the
+        # kiosk images that must never block. Both recovery routes are printed.
+        with patch.object(sys, 'argv', ['configure_site.py']), \
+             patch.object(configure_site.shared_utils, 'get_data_path',
+                          side_effect=lambda relative: str(tmp_path / relative)), \
+             patch.object(configure_site, 'run_pairing_flow',
+                          return_value=(False, 'Authorization failed', None)), \
+             patch('builtins.input', side_effect=AssertionError('the console must never block')):
+            assert configure_site.main() == 1
+
+        out = capsys.readouterr().out
+        assert 'Press Enter to continue' not in out
+        assert 'join a site' in out
+        assert '--server <dev|prod>' in out
 
 
 # service host helper

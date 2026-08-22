@@ -127,6 +127,34 @@ export const ARG_TRAY = '--tray'
 /** Argument the service passes when a process has exhausted its relaunch budget. */
 export const ARG_RESTART_PROMPT = '--restart-prompt'
 
+/** Argument the installer passes to open this window straight on the pairing dialog. */
+export const ARG_PAIR = '--pair'
+
+/**
+ * Argument that names which owlette server to pair against; only meaningful
+ * alongside {@link ARG_PAIR}.
+ */
+export const ARG_SERVER = '--server'
+
+/** 'dev' | 'prod' from `--server dev` or `--server=dev`; null when absent or unrecognised. */
+export function serverFromArgs(argv: readonly string[]): 'dev' | 'prod' | null {
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    let value: string | undefined
+    if (arg === ARG_SERVER) {
+      value = argv[i + 1]
+    } else if (arg.startsWith(`${ARG_SERVER}=`)) {
+      value = arg.slice(ARG_SERVER.length + 1)
+    } else {
+      continue
+    }
+    // The first occurrence decides, even when its value is junk — a later
+    // well-formed flag must not override what the installer put first.
+    return value === 'dev' || value === 'prod' ? value : null
+  }
+  return null
+}
+
 /**
  * argv of the FIRST launch only. A second launch is folded into this instance
  * by the single-instance plugin, which forwards its argv through

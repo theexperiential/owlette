@@ -855,16 +855,6 @@ def get_api_base_url(environment=None):
     else:
         return 'https://owlette.app/api'
 
-def get_setup_url(environment=None):
-    """Setup URL, e.g. 'https://owlette.app/setup'. environment defaults to config."""
-    if environment is None:
-        environment = get_environment()
-
-    if environment == 'development':
-        return 'https://dev.owlette.app/setup'
-    else:
-        return 'https://owlette.app/setup'
-
 def get_project_id(environment=None):
     """Firebase project ID. environment defaults to config."""
     if environment is None:
@@ -874,6 +864,23 @@ def get_project_id(environment=None):
         return 'owlette-dev-3838a'
     else:
         return 'owlette-prod-90a12'
+
+def get_web_host(environment=None):
+    """Bare web host, e.g. 'owlette.app'. environment defaults to config."""
+    if environment is None:
+        environment = get_environment()
+
+    if environment == 'development':
+        return 'dev.owlette.app'
+    else:
+        return 'owlette.app'
+
+def get_environment_label(environment=None):
+    """Operator-facing environment name, e.g. 'production (owlette.app)'."""
+    if environment is None:
+        environment = get_environment()
+
+    return f"{environment} ({get_web_host(environment)})"
 
 # TTL cache: psutil.process_iter() costs 200-500ms on Windows (cmdline parse
 # across all procs) and the metrics thread only needs it to pick a heartbeat

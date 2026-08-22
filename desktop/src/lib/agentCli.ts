@@ -11,6 +11,12 @@
  * `{"event": "phrase"|"status"|"authorized"|"done"|"error", "value": …}`.
  * The "Headless modes" section of `configure_site.py` is the other half —
  * change both sides together.
+ *
+ * `join` may additionally name the cloud it pairs against; the host turns that
+ * into `--server dev|prod`, and omitting it keeps the config's current
+ * environment. `agent_cli::MODES` in `desktop/src-tauri/src/agent_cli.rs` is
+ * the other half of that contract — the mode names and which of them carry a
+ * server live there.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -135,6 +141,8 @@ export interface AgentRunOutcome {
 export interface AgentRunOptions {
   /** `report-issue` only; every other mode takes none. */
   payload?: unknown
+  /** 'join' only: which owlette server to pair against. Omitted = the config's environment. */
+  server?: 'dev' | 'prod'
   onEvent?: (event: AgentEvent) => void
 }
 
@@ -214,6 +222,7 @@ export async function startAgentRun(
     id = await invoke<string>('agent_cli_start', {
       mode,
       payload: options.payload ?? null,
+      server: options.server ?? null,
     })
   } catch (cause) {
     await unlisten()

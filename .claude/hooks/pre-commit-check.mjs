@@ -104,20 +104,40 @@ try {
   }
 
   if (hasAgent) {
+    // Captured on both paths: a green run's stdout still carries the skip
+    // summary, and that is the only place the module-skip check below can read.
+    let output = ''
     try {
-      execSync('python -m pytest agent/tests/ -x -q --tb=line', {
+      output = execSync('python -m pytest agent/tests/ -x -q --tb=line', {
         cwd: PROJECT_ROOT,
         timeout: 60000,
         stdio: 'pipe'
-      })
+      }).toString()
     } catch (err) {
-      const output = (err.stdout?.toString() || '') + (err.stderr?.toString() || '')
+      output = (err.stdout?.toString() || '') + (err.stderr?.toString() || '')
       const lines = output.split('\n')
       const summary = lines.find(l => /\d+ (failed|passed|error)/.test(l))
       const failTests = lines.filter(l => /^FAILED\s/.test(l))
       errors.push(`Agent: ${summary?.trim() || 'pytest failed'}`)
       failTests.slice(0, 5).forEach(t => errors.push(`  ${t.trim()}`))
       if (failTests.length > 5) errors.push(`  ... and ${failTests.length - 5} more`)
+    }
+
+    // A test module whose imports blow up skips itself with
+    // pytest.skip(..., allow_module_level=True), so the suite still exits 0 and
+    // a broken source file passes the gate silently. agent/pytest.ini's `-ra`
+    // prints those SKIPPED lines on every run, so match the import-shaped
+    // reasons ("... not importable: ...", "... import failed: ...") and block.
+    // The suite's six deliberate platform skips (posix-only, win32gui) carry
+    // none of those words and keep passing silently.
+    const importSkips = output
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => /^SKIPPED \[\d+\]/.test(l) && /not importable|import failed/i.test(l))
+    if (importSkips.length > 0) {
+      errors.push(`Agent: ${importSkips.length} test module(s) skipped on a failed import`)
+      importSkips.slice(0, 5).forEach(s => errors.push(`  ${s}`))
+      if (importSkips.length > 5) errors.push(`  ... and ${importSkips.length - 5} more`)
     }
   }
 

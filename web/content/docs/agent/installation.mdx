@@ -21,14 +21,14 @@ Download the packaged installer, run it as Administrator, and authorize the mach
 3. Save `Owlette-Installer-v<version>.exe` to the target machine.
 4. Right-click the installer and select **Run as administrator**.
 5. Follow the installer wizard.
-6. When the console appears, the agent prints the pairing phrase and authorization URL, then immediately begins waiting for authorization.
-7. Press Enter only if you want to open the pairing page in the local browser, or authorize from another device by visiting the displayed URL and entering the phrase. The agent is already polling, so pairing completes within seconds of approval.
-8. The agent stores credentials and installs the Windows service.
-9. On the final wizard page, leave **open owlette** checked and click Finish to bring up the local window. Silent installs skip this and never open a window.
+6. The owlette window opens on **join a site**, showing the pairing phrase, the authorization link for the server you installed against, and the environment it belongs to. The agent starts polling immediately. There is no console.
+7. Authorize the machine: click **open owlette.app/add** in that window to pair from this machine — the button names `dev.owlette.app` on a `/SERVER=dev` install — or visit the displayed link from your phone or another computer and enter the phrase. Pairing completes within seconds of approval.
+8. Meanwhile the installer registers and starts the Windows service. This is unconditional — a machine that is never paired still ends up with a running service, it simply has no site to talk to yet.
+9. On the final wizard page, leave **open owlette** checked and click Finish to bring the window back up. That is not a second pairing step, and silent installs skip it entirely.
 
 Pairing phrases expire after 10 minutes. Credentials are stored encrypted at `C:\ProgramData\Owlette\.tokens.enc`.
 
-> **Kiosks, signage, media servers, and headless or RDP machines:** leave the prompt unanswered, or set `OWLETTE_NO_BROWSER=1` before launching the installer to hide the local-browser prompt entirely. The agent still starts polling immediately, and you authorize from your phone or another computer. When re-pairing manually, pass `--no-browser` to `configure_site.py` for the same effect.
+> **Kiosks, signage, media servers, and headless or RDP machines:** nothing opens a browser on the target machine on its own. The phrase and its link are displayed, polling starts, and you authorize from your phone or another computer. `--no-browser` and `OWLETTE_NO_BROWSER=1` are still accepted by `configure_site.py` so existing deployment scripts keep working, but they no longer change anything. For machines nobody is standing in front of, enroll with `/ADD=` instead — see method 2.
 
 ---
 
@@ -64,7 +64,6 @@ The installer passes `/ADD=` to `configure_site.py --add`. The agent polls `/api
 | `/ADD=phrase` | Preauthorized pairing phrase for silent enrollment |
 | `/SERVER=prod` | Use `https://owlette.app/api`; this is the default |
 | `/SERVER=dev` | Use `https://dev.owlette.app/api` |
-| `/OPENBROWSER=1` | Open the pairing page immediately instead of waiting for Enter |
 | `/SILENT` | Minimal UI with progress only |
 | `/VERYSILENT` | No installer UI |
 | `/SUPPRESSMSGBOXES` | Suppress message boxes |
@@ -157,15 +156,21 @@ Do not run `agent\scripts\install.bat` directly from a raw clone unless you have
 
 ## how pairing works
 
-The installer runs `configure_site.py` after copying files and before installing the service, unless an existing valid site configuration is already present.
+The installer chooses a pairing path after copying files, then installs the service. The service install is unconditional: pairing no longer gates it, so an unpaired machine still ends up supervised. Pairing itself is skipped only on an upgrade — a valid site configuration already bound to the requested server.
 
 ```mermaid
 flowchart TD
-    A["installer runs configure_site.py"] --> B["agent requests a device code from the API"]
-    B --> C["console shows the pairing phrase,<br/>authorization URL, and 10-minute expiry"]
-    C --> D["agent starts polling immediately and offers<br/>Enter-to-open as an opt-in browser path<br/>(browser affordance skipped with --no-browser)"]
-    D --> E["authorize from any device: the local browser<br/>if opened, a phone, or the authorization URL"]
-    E --> G["agent polls until authorization<br/>completes or expires"]
+    A["installer copies files"] --> B{"how was it launched?"}
+    B -->|"interactive, WebView2 present"| D["hands off to the owlette window,<br/>with --pair and the chosen --server"]
+    B -->|"/ADD= phrase, or interactive<br/>without WebView2"| C["runs configure_site.py<br/>on the console"]
+    B -->|"silent without /ADD="| Z["pairing skipped: nobody can read<br/>a phrase on this path"]
+    D --> S["service installed and started -<br/>unconditional, pairing does not gate it"]
+    C --> S
+    Z --> S
+    D --> E["phrase, authorization link, environment,<br/>and 10-minute expiry are shown;<br/>polling starts immediately"]
+    C --> E
+    E --> F["authorize from any device: the button in<br/>the owlette window, a phone, or the link"]
+    F --> G["agent polls until authorization<br/>completes or expires"]
     G --> H["server returns access token,<br/>refresh token, and site ID"]
     H --> I["tokens encrypted to .tokens.enc,<br/>config written to config.json"]
 ```
@@ -174,8 +179,8 @@ Authorization options:
 
 | method | when to use |
 |--------|-------------|
-| Local browser | Single-machine install when the target machine has a usable browser - press Enter to open the pairing page |
-| Another device (`--no-browser`) | Headless/RDP machines, or kiosks showing live content - set `OWLETTE_NO_BROWSER=1` (or pass `--no-browser`) and authorize from your phone or another computer |
+| owlette window | Single-machine install - the installer opens **join a site**, which shows the phrase and a button that opens the pairing page on this machine |
+| Another device | Headless/RDP machines, or kiosks showing live content - read the phrase from the window or console and authorize from your phone or another computer. `--no-browser` and `OWLETTE_NO_BROWSER=1` are still accepted for compatibility but no longer change anything |
 | `/ADD=` | Bulk install with a preauthorized phrase |
 
 ---

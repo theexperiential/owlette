@@ -114,16 +114,18 @@ pub fn terminate_pid(
 }
 
 /// Run one of the agent's headless modes, streaming its output. `mode` is a name
-/// from `agent_cli::MODES`, never a command line. Returns the run id to match
-/// against `owlette://agent-cli` events; `exit` means finished.
+/// from `agent_cli::MODES`, never a command line, and `server` names the cloud
+/// the `join` mode pairs against. Returns the run id to match against
+/// `owlette://agent-cli` events; `exit` means finished.
 #[tauri::command(async)]
 pub fn agent_cli_start(
   app: AppHandle,
   runs: State<'_, Runs>,
   mode: String,
   payload: Option<Value>,
+  server: Option<String>,
 ) -> Result<String, String> {
-  agent_cli::start(&app, &runs, &mode, payload)
+  agent_cli::start(&app, &runs, &mode, payload, server.as_deref())
 }
 
 /// Stop a run started by [`agent_cli_start`]. `false` if it had already exited.

@@ -36,6 +36,16 @@ const joined = { firebase: { enabled: true, site_id: 'default_site' } } as Owlet
 
 const unpaired = { firebase: { enabled: false, site_id: '' } } as OwletteConfig
 
+/** Paired to the staging deployment `dev` auto-deploys to. */
+const devConfig = {
+  firebase: { enabled: true, site_id: 'default_site', api_base: 'https://dev.owlette.app/api' },
+} as OwletteConfig
+
+/** Paired to the real fleet — the case that must stay unbadged. */
+const prodConfig = {
+  firebase: { enabled: true, site_id: 'default_site', api_base: 'https://owlette.app/api' },
+} as OwletteConfig
+
 const serviceStopped: ServiceStatus = {
   installed: true,
   running: false,
@@ -129,5 +139,37 @@ describe('StatusFooter join site', () => {
 
     expect(screen.getByRole('button', { name: 'start service' })).toBeTruthy()
     expect(joinButton()).toBeNull()
+  })
+})
+
+describe('StatusFooter environment chip', () => {
+  it('names the environment when this machine is paired to a non-production owlette', () => {
+    setup({ config: devConfig, hostname: 'TEC-A4D' })
+
+    expect(screen.getByTestId('footer-environment').textContent).toBe('dev')
+    expect(screen.getByText('v3.0.0')).toBeTruthy()
+  })
+
+  it('badges nothing on production — an unlabelled footer is the real fleet', () => {
+    setup({ config: prodConfig, hostname: 'TEC-A4D' })
+
+    expect(screen.queryByTestId('footer-environment')).toBeNull()
+    expect(screen.getByText('v3.0.0')).toBeTruthy()
+  })
+
+  it('badges nothing before config.json has been read', () => {
+    // Absence is the production signal, so an unknown environment must not
+    // guess — it stays silent until the file says otherwise.
+    setup({ config: null, hostname: 'TEC-A4D' })
+
+    expect(screen.queryByTestId('footer-environment')).toBeNull()
+    expect(screen.getByText('v3.0.0')).toBeTruthy()
+  })
+
+  it('leaves the sentence to say the site, not the environment', () => {
+    // The chip carries the deployment; `footerSentence` keeps its wording.
+    setup({ config: devConfig, hostname: 'TEC-A4D' })
+
+    expect(screen.getByTestId('footer-status').textContent).toBe('TEC-A4D is connected to TEC')
   })
 })

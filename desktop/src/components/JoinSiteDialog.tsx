@@ -17,9 +17,16 @@ import {
   type PairPhrase,
 } from '@/lib/agentCli'
 import { copyText } from '@/lib/clipboard'
+import { environmentToken, hostForServer, hostOf } from '@/lib/environment'
 
 interface JoinSiteDialogProps {
   open: boolean
+  /**
+   * Which server to pair against, when the installer asked for this dialog.
+   * Omitted (the tray/menu path) = the environment the config is already bound
+   * to.
+   */
+  server?: 'dev' | 'prod'
   /** Closes the dialog. Any run still in flight is cancelled first. */
   onClose: () => void
   /**
@@ -41,7 +48,7 @@ type Phase = 'starting' | 'waiting' | 'joined' | 'failed'
  * No token handling here — the helper writes `.tokens.enc` and restarts the
  * service; this window only watches.
  */
-export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps) {
+export function JoinSiteDialog({ open, server, onClose, onJoined }: JoinSiteDialogProps) {
   const [phase, setPhase] = useState<Phase>('starting')
   const [phrase, setPhrase] = useState<PairPhrase | null>(null)
   const [status, setStatus] = useState('requesting a pairing phrase')
@@ -70,6 +77,7 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
     setCopied(false)
 
     void startAgentRun('join', {
+      server,
       onEvent: (event) => {
         if (disposed) return
         switch (event.event) {
@@ -86,7 +94,11 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
             setStatus(
               event.value.serviceRestarted
                 ? 'paired — the service is restarting'
-                : 'paired — restart the service from the tray menu to finish',
+                : // No restart needed: the running service re-reads the firebase
+                  // config every second main-loop iteration and re-initialises
+                  // its client on the false → true transition, so the machine
+                  // shows up within ~10s on its own.
+                  'paired — this machine will appear on your dashboard shortly',
             )
             joined.current(event.value.siteId)
             return
@@ -123,7 +135,9 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
       void run.current?.cancel()
       run.current = null
     }
-  }, [open])
+    // `server` restarts the run: a different cloud is a different phrase, so
+    // reusing the one already in flight would pair against the wrong one.
+  }, [open, server])
 
   useEffect(
     () => () => {
@@ -150,13 +164,39 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
     })
   }, [phrase])
 
+  // Read the host off the URLs the server minted rather than off the `server`
+  // prop: `web/app/api/agent/auth/device-code/route.ts` builds them from the
+  // request's own Host header, so they name the deployment that actually
+  // answered — if that is not the one we asked for, the operator sees it.
+  // Before the phrase lands (`pairingUrl` defaults to '') the requested server
+  // is the best available answer, and with neither we name no host at all.
+  const host = hostOf(phrase?.pairingUrl) || hostOf(phrase?.verificationUri) || hostForServer(server)
+  const environment = environmentToken(host)
+
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent className="sm:max-w-md" data-testid="join-site-dialog">
         <DialogHeader>
-          <DialogTitle>join a site</DialogTitle>
+          <div className="flex items-center gap-2">
+            <DialogTitle>join a site</DialogTitle>
+            {environment && (
+              <span
+                data-testid="join-environment"
+                className="rounded border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 font-mono text-[10px] font-medium whitespace-nowrap text-amber-400"
+              >
+                {environment}
+              </span>
+            )}
+          </div>
           <DialogDescription>
-            approve this machine at owlette.app/add — from here or from any other device.
+            {host ? (
+              <>
+                approve this machine at <span className="font-mono">{host}/add</span> — from here or
+                from any other device.
+              </>
+            ) : (
+              'approve this machine from here or from any other device.'
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -202,7 +242,7 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
           {phase === 'waiting' && (
             <Button onClick={handleOpen} disabled={!phrase?.pairingUrl && !phrase?.verificationUri}>
               <ExternalLink className="size-4" />
-              open owlette.app/add
+              {host ? `open ${host}/add` : 'open pairing page'}
             </Button>
           )}
         </DialogFooter>

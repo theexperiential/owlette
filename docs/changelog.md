@@ -9,13 +9,11 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
-## [Unreleased]
-
-> Universal 2FA — web/dashboard only. No version bump: the version number tracks
-> the agent, and this batch contains no agent changes.
+## [3.1.0] - 2026-08-22
 
 ### added
 
+- **every pairing surface now names the owlette server it is talking to.** the pairing window shows the host it will authorize against and carries a `dev` badge on anything that is not production, the desktop app's footer badges the environment the machine is actually bound to, and the authorization page states which host you are on. a phrase minted on one server and typed into the other is the most common way pairing fails, and it now announces itself before you type anything.
 - **A passkey now counts as your second factor.** Setting one up satisfies 2FA outright, and signing in with it clears both the password step and the second factor in a single ceremony — no code to type afterwards. "Passkey" means whatever already unlocks your device: Windows Hello, Touch ID, Face ID, a hardware security key, or a password manager that stores passkeys (1Password, Bitwarden, iCloud Keychain). They are all the same WebAuthn standard, so there is nothing per-vendor to enable.
 - **Backup codes for any account, not just authenticator ones.** A passkey-only account used to have no recovery material at all. Every enrolled account can now hold a sheet, and regenerate it from account settings — which invalidates the old one. Regeneration asks you to prove a factor in the same step (a current 6-digit code, an unused backup code, or your passkey), because a fresh sheet of recovery codes is powerful enough to switch 2FA off entirely.
 - **Account settings lists your second factors in one place.** Authenticator app and passkeys, when each was added, and add/remove controls for both, with a warning when you are down to your last one.
@@ -23,10 +21,22 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ### changed
 
+- **pairing happens in the owlette window now, not a console.** the installer hands off to the app, which opens on **join a site** showing the pairing phrase, the authorization link, and a button that opens that link on this machine. the console window that used to appear part-way through the install is gone. machines with no webview2 runtime, and `/ADD=` bulk installs, still pair on the console as before.
+- **the service is installed whether or not pairing completes.** it used to be skipped the moment pairing failed, which left the machine with no supervisor at all — the worst possible outcome of a mistyped phrase. a machine that never pairs now ends up with a registered, running service that simply has no site to talk to yet, and the installer says exactly how to finish pairing later. a silent install with no `/ADD=` phrase now skips pairing outright instead of spending ten minutes waiting on a phrase nobody can read.
+- **breaking: `--url` on the pairing helper now requires `--server`.** the url no longer implies an environment, so pointing the helper at a local or custom api base without naming dev or prod stops with an error instead of quietly writing production credentials for a development server. this affects local development only; `/SERVER=dev` and `/SERVER=prod` on the installer are unchanged.
 - **2FA setup starts with a choice instead of a QR code.** The setup screen now offers a passkey (recommended) or an authenticator app, and says plainly that authenticator apps run on **desktop as well as mobile** — 1Password, Bitwarden, and Authy all have desktop apps, so signing up no longer depends on having a phone to hand.
 - **Removing your last second factor is allowed.** The account immediately re-arms 2FA setup: you will be asked to enroll a new factor — a passkey or an authenticator app — before you can use the dashboard again, and trusted devices are revoked at the same time.
 - **Adding a factor to an account that already has one asks you to verify first.** Enrollment on a warm session now requires a cleared 2FA challenge, so someone with a signed-in browser cannot quietly attach a factor of their own. Verify with an existing passkey, or take the code prompt.
 - **`mfaEnrolled` is derived, not declared.** The user document carries an `mfaFactors` tally (`{ totp, passkeys }`), and `mfaEnrolled` / `requiresMfaSetup` are computed from it by a single server-side writer. The old `passkeyEnrolled` flag is retired.
+
+### fixed
+
+- **a failed re-pair during an upgrade no longer leaves the machine with a stopped service.** upgrading a machine while moving it to another server, or re-pairing one whose credentials had gone stale, abandoned the service install as soon as pairing failed — so a working machine came out of the upgrade worse off than it went in. installing the service no longer depends on pairing succeeding.
+- **the dashboard's silent-install command now targets the server the phrase was generated on.** on dev the copied command was missing `/SERVER=dev`, so every machine it was pasted into installed against production, never found the phrase, and failed to pair. the flag is now part of both the command shown and the command copied.
+
+### removed
+
+- **the `/OPENBROWSER=` installer flag and the pairing helper's `--open-browser` option are gone.** nothing on a target machine opens a browser by itself any more — you authorize from the pairing window's own button, or from a phone or another computer. `--no-browser` and `OWLETTE_NO_BROWSER=1` are still accepted so existing deployment scripts keep running, but they no longer change anything.
 
 ## [3.0.2] - 2026-08-20
 

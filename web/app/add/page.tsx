@@ -37,10 +37,18 @@ export default function AddMachinePage() {
    * authorizing against a site nobody chose. A deliberate choice is never withdrawn.
    */
   const autoSelectedRef = useRef(false);
+  /**
+   * The owlette server this page authorizes against. Rendered under the
+   * description because it is the operator's only chance to notice they are on
+   * dev while the machine is pairing with prod (or the reverse). Read after
+   * mount so the server render and the first client render agree.
+   */
+  const [host, setHost] = useState('');
 
   // Pairing phrase arrives as ?code= when the agent auto-opens the browser.
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      setHost(window.location.host);
       const params = new URLSearchParams(window.location.search);
       const code = params.get('code');
       if (code) {
@@ -147,6 +155,17 @@ export default function AddMachinePage() {
 
       if (!response.ok) {
         const data = await response.json();
+        // The route returns 404 for two different things. "Pairing phrase not
+        // found." is the one that can mean the machine paired against a
+        // different owlette server, so only that one gets the wrong-server hint
+        // — "Pairing phrase has expired." is strictly more precise and must
+        // reach the operator verbatim, as must the 409 already-used message.
+        // `response.status` is out of scope in the catch, so choose here.
+        if (response.status === 404 && /not found/i.test(data.error ?? '')) {
+          throw new Error(
+            `phrase not found on ${host} — it may have expired, or the machine may be pairing with a different owlette server.`
+          );
+        }
         throw new Error(data.error || 'Authorization failed');
       }
 
@@ -219,6 +238,9 @@ export default function AddMachinePage() {
             <CardDescription className="text-muted-foreground">
               enter the pairing phrase shown on your machine
             </CardDescription>
+            {host && (
+              <p className="font-mono text-xs text-muted-foreground">authorizing on {host}</p>
+            )}
           </div>
         </CardHeader>
         <CardContent className="space-y-6">

@@ -1,32 +1,44 @@
 """Tests for configure_site.py pairing flow."""
 
+import re
 import sys
 from unittest.mock import MagicMock, patch
 
-import pytest
+# No module-level skip guard, deliberately: a broken agent dependency must fail
+# collection (pytest exit 2) rather than silently delete these tests behind a
+# green run. Unguarded imports are the house norm (test_shared_utils.py:14,
+# test_sync_state.py:10, test_command_router.py:8).
+import shared_utils
+import configure_site
 
-try:
-    import shared_utils
-    import configure_site
+# Patch secure_storage before importing auth_manager since it may require
+# Windows-specific setup.
+mock_storage = MagicMock()
+mock_storage.get_access_token.return_value = (None, None)
+mock_storage.get_site_id.return_value = None
+mock_storage.get_refresh_token.return_value = "mock-refresh-token"
+mock_storage.has_refresh_token.return_value = True
+mock_storage.save_access_token.return_value = True
+mock_storage.save_refresh_token.return_value = True
+mock_storage.save_site_id.return_value = True
 
-    # Patch secure_storage before importing auth_manager since it may require
-    # Windows-specific setup.
-    mock_storage = MagicMock()
-    mock_storage.get_access_token.return_value = (None, None)
-    mock_storage.get_site_id.return_value = None
-    mock_storage.get_refresh_token.return_value = "mock-refresh-token"
-    mock_storage.has_refresh_token.return_value = True
-    mock_storage.save_access_token.return_value = True
-    mock_storage.save_refresh_token.return_value = True
-    mock_storage.save_site_id.return_value = True
+with patch("secure_storage.get_storage", return_value=mock_storage), \
+     patch("secure_storage.SecureStorage", return_value=mock_storage):
+    from auth_manager import AuthManager
 
-    with patch("secure_storage.get_storage", return_value=mock_storage), \
-         patch("secure_storage.SecureStorage", return_value=mock_storage):
-        from auth_manager import AuthManager
-except ImportError as exc:
-    pytest.skip(f"configure_site dependencies not importable: {exc}", allow_module_level=True)
-except Exception as exc:
-    pytest.skip(f"configure_site import failed: {exc}", allow_module_level=True)
+
+# The console colours the environment, so every banner assertion reads the
+# stripped text.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+# The two environments the console can name, in _determine_environment's shape.
+_PROD = ("production", "https://owlette.app/api", "owlette-prod-90a12")
+_DEV = ("development", "https://dev.owlette.app/api", "owlette-dev-3838a")
+
+
+def _plain(text: str) -> str:
+    """Console output with ANSI colour codes stripped."""
+    return _ANSI.sub("", text)
 
 
 _MOCK_MODULES = {
@@ -88,35 +100,29 @@ def _interactive_auth_manager():
     return auth_manager
 
 
-def _run_interactive_flow(tmp_path, **kwargs):
+def _run_interactive_flow(tmp_path, environment=_PROD, **kwargs):
     auth_manager = _interactive_auth_manager()
     config_path = tmp_path / "config.json"
 
     with patch("auth_manager.AuthManager", return_value=auth_manager), \
-         patch.object(
-             configure_site,
-             "_determine_environment",
-             return_value=("production", "https://owlette.app/api", "owlette-prod-90a12"),
-         ), \
+         patch.object(configure_site, "_determine_environment", return_value=environment), \
          patch.object(configure_site, "CONFIG_PATH", config_path), \
          patch.object(configure_site, "_copy_to_clipboard", return_value=True), \
-         patch.object(configure_site, "_save_config") as mock_save_config, \
-         patch.object(configure_site, "_open_browser", return_value=True) as mock_open_browser, \
-         patch.object(configure_site, "_prompt_open_browser_async") as mock_prompt_open:
+         patch.object(configure_site, "_save_config") as mock_save_config:
         result = configure_site.run_pairing_flow(
-            api_base="https://owlette.app/api",
+            api_base=environment[1],
             show_prompts=True,
             **kwargs,
         )
 
-    return result, auth_manager, mock_save_config, mock_open_browser, mock_prompt_open
+    return result, auth_manager, mock_save_config
 
 
 def _run_add_flow(add_phrase="silver-compass-drift"):
     with patch.object(
         configure_site,
         "_determine_environment",
-        return_value=("production", "https://owlette.app/api", "owlette-prod-90a12"),
+        return_value=_PROD,
     ), \
          patch.object(configure_site, "_save_config"), \
          patch("requests.post", return_value=_poll_response()) as mock_post:
@@ -129,46 +135,30 @@ def _run_add_flow(add_phrase="silver-compass-drift"):
     return result, mock_post
 
 
-def test_interactive_default_prompts_without_opening_browser(tmp_path, capsys):
-    """Interactive pairing should offer Enter-to-open, not launch a browser."""
-    result, auth_manager, _save_config, mock_open_browser, mock_prompt_open = _run_interactive_flow(tmp_path)
+def test_interactive_prints_the_link_and_polls_with_no_browser_affordance(tmp_path, capsys):
+    """There is no local browser any more: phrase, link, environment, polling."""
+    result, auth_manager, _save_config = _run_interactive_flow(tmp_path)
 
     assert result == (True, "Configuration successful", "site-abc")
-    mock_open_browser.assert_not_called()
-    mock_prompt_open.assert_called_once_with("https://owlette.app/add?phrase=admit-nice-stereo")
     auth_manager.poll_device_code.assert_called_once()
-    out = capsys.readouterr().out
-    assert "press Enter to open the pairing page in your browser" in out
+    out = _plain(capsys.readouterr().out)
+    assert "press Enter" not in out
+    assert "https://owlette.app/add" in out
+    assert "environment: production (owlette.app)" in out
+    assert "this phrase exists only on owlette.app" in out
     assert "waiting for authorization" in out
 
 
-def test_interactive_open_browser_flag_opens_immediately(tmp_path, capsys):
-    """Explicit open_browser=True preserves the immediate-open opt-in path."""
-    result, _auth_manager, _save_config, mock_open_browser, mock_prompt_open = _run_interactive_flow(
-        tmp_path,
-        open_browser=True,
-    )
+def test_interactive_names_the_development_environment_it_is_pairing_with(tmp_path, capsys):
+    """A dev pairing must say so — naming the wrong server is the field bug."""
+    result, _auth_manager, _save_config = _run_interactive_flow(tmp_path, environment=_DEV)
 
     assert result == (True, "Configuration successful", "site-abc")
-    mock_open_browser.assert_called_once_with("https://owlette.app/add?phrase=admit-nice-stereo")
-    mock_prompt_open.assert_not_called()
-    out = capsys.readouterr().out
-    assert "opened the pairing page in your browser" in out
-
-
-def test_interactive_no_browser_suppresses_open_prompt(tmp_path, capsys):
-    """--no-browser should leave only the printed URL and polling."""
-    result, _auth_manager, _save_config, mock_open_browser, mock_prompt_open = _run_interactive_flow(
-        tmp_path,
-        prompt_open_browser=False,
-    )
-
-    assert result == (True, "Configuration successful", "site-abc")
-    mock_open_browser.assert_not_called()
-    mock_prompt_open.assert_not_called()
-    out = capsys.readouterr().out
-    assert "press Enter to open" not in out
-    assert "approve at the link above from any device" in out
+    out = _plain(capsys.readouterr().out)
+    assert "press Enter" not in out
+    assert "environment: development (dev.owlette.app)" in out
+    assert "this phrase exists only on dev.owlette.app" in out
+    assert "environment: development" in out.split("configuration complete!")[1]
 
 
 def test_add_poll_includes_machine_id_and_version():

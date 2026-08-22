@@ -389,7 +389,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if firebase_enabled:
                 try:
                     site_id = shared_utils.read_config(['firebase', 'site_id'])
-                    project_id = shared_utils.read_config(['firebase', 'project_id']) or "owlette-dev-3838a"
+                    project_id = shared_utils.read_config(['firebase', 'project_id']) or shared_utils.get_project_id()
                     api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
                     cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
 
@@ -456,7 +456,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.warning("No site_id configured - cannot initialize Firebase client")
                 return False
 
-            project_id = shared_utils.read_config(['firebase', 'project_id']) or "owlette-dev-3838a"
+            project_id = shared_utils.read_config(['firebase', 'project_id']) or shared_utils.get_project_id()
             api_base = shared_utils.read_config(['firebase', 'api_base']) or shared_utils.get_api_base_url()
             cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
 

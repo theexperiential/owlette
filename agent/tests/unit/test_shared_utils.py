@@ -222,6 +222,43 @@ class TestUtilityFunctions:
             assert shared_utils.format_bytes(1024 * 1024 * 1024) == "1.0 GB"
 
 
+class TestEnvironmentAccessors:
+    """the only four functions allowed to hold a dev/prod literal on the
+    python side — pin the exact strings every caller resolves through them."""
+
+    def test_web_host_development(self):
+        assert shared_utils.get_web_host('development') == 'dev.owlette.app'
+
+    def test_web_host_production(self):
+        assert shared_utils.get_web_host('production') == 'owlette.app'
+
+    def test_environment_label_development(self):
+        assert shared_utils.get_environment_label('development') == 'development (dev.owlette.app)'
+
+    def test_environment_label_production(self):
+        assert shared_utils.get_environment_label('production') == 'production (owlette.app)'
+
+    def test_api_base_url_development(self):
+        assert shared_utils.get_api_base_url('development') == 'https://dev.owlette.app/api'
+
+    def test_api_base_url_production(self):
+        assert shared_utils.get_api_base_url('production') == 'https://owlette.app/api'
+
+    def test_project_id_development(self):
+        assert shared_utils.get_project_id('development') == 'owlette-dev-3838a'
+
+    def test_project_id_production(self):
+        assert shared_utils.get_project_id('production') == 'owlette-prod-90a12'
+
+    def test_unrecognised_environment_falls_through_to_production(self):
+        # only 'development' is special-cased; anything else must resolve to
+        # prod rather than to a half-configured dev target.
+        assert shared_utils.get_web_host('staging') == 'owlette.app'
+        assert shared_utils.get_environment_label('staging') == 'staging (owlette.app)'
+        assert shared_utils.get_api_base_url('staging') == 'https://owlette.app/api'
+        assert shared_utils.get_project_id('staging') == 'owlette-prod-90a12'
+
+
 # ─── external log rotation ───────────────────────────────────────────
 
 

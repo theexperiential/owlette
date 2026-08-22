@@ -15,6 +15,7 @@ const {
   onSecondInstance,
   owletteDataRoot,
   readOwletteJson,
+  serverFromArgs,
   serviceStart,
   serviceStatus,
   serviceStop,
@@ -214,5 +215,44 @@ describe('event subscriptions', () => {
     const payload = { argv: ['owlette.exe', '--tray'], cwd: 'C:\\ProgramData\\Owlette' }
     emit(payload)
     expect(handler).toHaveBeenCalledWith(payload)
+  })
+})
+
+describe('serverFromArgs', () => {
+  it('reads the two-token dev form', () => {
+    expect(serverFromArgs(['--server', 'dev'])).toBe('dev')
+  })
+
+  it('reads the two-token prod form', () => {
+    expect(serverFromArgs(['--server', 'prod'])).toBe('prod')
+  })
+
+  it('reads the joined form', () => {
+    expect(serverFromArgs(['--server=dev'])).toBe('dev')
+  })
+
+  it('returns null when the flag is absent', () => {
+    expect(serverFromArgs(['owlette-desktop.exe', '--tray'])).toBeNull()
+  })
+
+  it('returns null when the flag is the last token', () => {
+    expect(serverFromArgs(['--pair', '--server'])).toBeNull()
+  })
+
+  it('returns null for a server it does not know', () => {
+    expect(serverFromArgs(['--server', 'staging'])).toBeNull()
+  })
+
+  it('is case-sensitive — the installer emits lowercase', () => {
+    expect(serverFromArgs(['--server', 'DEV'])).toBeNull()
+  })
+
+  it('lets the first occurrence win', () => {
+    expect(serverFromArgs(['--server', 'dev', '--server', 'prod'])).toBe('dev')
+  })
+
+  it('parses a real launch argv', () => {
+    const argv = ['C:\\ProgramData\\Owlette\\app\\owlette-desktop.exe', '--pair', '--server', 'dev']
+    expect(serverFromArgs(argv)).toBe('dev')
   })
 })

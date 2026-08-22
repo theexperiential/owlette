@@ -109,8 +109,8 @@ cd build/installer_output
 ```
 
 This will:
-1. Open browser to `https://dev.owlette.app/setup`
-2. Complete OAuth flow
+1. Hand pairing to the Owlette window with `--server dev`, showing a phrase and a `dev.owlette.app/add` link
+2. Complete device-code pairing from that window or any other device
 3. Install service connected to dev environment
 4. Machine appears in dev dashboard
 
@@ -122,8 +122,8 @@ This will:
 ```
 
 This will:
-1. Open browser to `https://owlette.app/setup`
-2. Complete OAuth flow
+1. Hand pairing to the Owlette window with `--server prod`, showing a phrase and an `owlette.app/add` link
+2. Complete device-code pairing from that window or any other device
 3. Install service connected to production environment
 4. Machine appears in production dashboard
 

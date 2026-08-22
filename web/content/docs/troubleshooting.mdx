@@ -72,7 +72,7 @@ The encrypted token file is missing or unreadable.
 
 1. Delete the token file: `del C:\ProgramData\Owlette\.tokens.enc`
 2. Run the pairing flow: `C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\configure_site.py`
-3. Authorize on the web page that opens, then restart the service
+3. The console prints a 3-word pairing phrase and the authorization link for the server this machine is bound to, then starts polling. Open that link from any device and enter the phrase — nothing opens a browser here on its own. The running service picks the new credentials up on its own; no restart is needed.
 
 ### token refresh failing
 

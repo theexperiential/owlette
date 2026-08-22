@@ -129,7 +129,47 @@ describe('startAgentRun', () => {
     invoke.mockResolvedValue('join-0')
     await startAgentRun('join')
 
-    expect(invoke).toHaveBeenCalledWith('agent_cli_start', { mode: 'join', payload: null })
+    expect(invoke).toHaveBeenCalledWith('agent_cli_start', {
+      mode: 'join',
+      payload: null,
+      server: null,
+    })
+  })
+
+  // `agent_cli_start` takes `server: Option<String>`, and the host turns a named
+  // one into `--server dev|prod`. The key is always present so the argument is
+  // an explicit "no server named" rather than a missing field.
+  it('pairs against the server the caller named', async () => {
+    invoke.mockResolvedValue('join-0')
+    await startAgentRun('join', { server: 'dev' })
+
+    expect(invoke).toHaveBeenCalledWith('agent_cli_start', {
+      mode: 'join',
+      payload: null,
+      server: 'dev',
+    })
+  })
+
+  it('names no server when the caller named none, leaving the config alone', async () => {
+    invoke.mockResolvedValue('join-0')
+    await startAgentRun('join')
+
+    expect(invoke).toHaveBeenCalledWith('agent_cli_start', {
+      mode: 'join',
+      payload: null,
+      server: null,
+    })
+  })
+
+  it('names no server for the modes that never take one', async () => {
+    invoke.mockResolvedValue('leave-0')
+    await startAgentRun('leave')
+
+    expect(invoke).toHaveBeenCalledWith('agent_cli_start', {
+      mode: 'leave',
+      payload: null,
+      server: null,
+    })
   })
 
   it('subscribes before spawning, so an early line is not lost', async () => {
@@ -244,6 +284,7 @@ describe('runAgent', () => {
     expect(invoke).toHaveBeenCalledWith('agent_cli_start', {
       mode: 'report-issue',
       payload: { category: 'bug', description: 'x' },
+      server: null,
     })
 
     host().stderr('report-issue-0', 'Traceback (most recent call last):')

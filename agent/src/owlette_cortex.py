@@ -502,7 +502,7 @@ async def main():
     os.environ['ANTHROPIC_API_KEY'] = api_key
 
     site_id = config.get('firebase', {}).get('site_id', '')
-    project_id = config.get('firebase', {}).get('project_id', 'owlette-dev-3838a')
+    project_id = config.get('firebase', {}).get('project_id') or shared_utils.get_project_id()
     machine_id = socket.gethostname()
 
     if not site_id:

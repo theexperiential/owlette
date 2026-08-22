@@ -10,6 +10,7 @@ import { Plus, Loader2, CheckCircle2, Copy, Monitor, Terminal, Download, Refresh
 import { toast } from '@/lib/toast';
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 import { useDeviceCodeAuthorize } from '@/hooks/useDeviceCodeAuthorize';
+import { serverFlagFor } from '@/lib/environment';
 
 type AddMachineTab = 'enter' | 'generate';
 
@@ -55,6 +56,16 @@ export function AddMachineButton({
     success: enterSuccess,
     reset: resetEnter,
   } = useDeviceCodeAuthorize(currentSiteId);
+
+  /**
+   * The `/SERVER=` flag for the environment this dashboard *is*. Without it a
+   * phrase minted on dev.owlette.app produces a command that installs against
+   * production (the installer defaults to prod), the phrase is never found, and
+   * the mistake travels to every machine the command is pasted into. One
+   * expression feeds both the rendered command and the clipboard copy so the
+   * two cannot diverge.
+   */
+  const serverFlag = typeof window === 'undefined' ? '' : serverFlagFor(window.location.host);
 
   // Generate Code tab state
   const [generatedPhrase, setGeneratedPhrase] = useState('');
@@ -325,13 +336,13 @@ export function AddMachineButton({
                     <Label className="text-muted-foreground text-xs">silent install command</Label>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 bg-muted/50 border border-border rounded-md px-3 py-2 font-mono text-xs text-muted-foreground break-all">
-                        Owlette-Installer-v{version ?? '...'}.exe /ADD={generatedPhrase} /SILENT
+                        Owlette-Installer-v{version ?? '...'}.exe /ADD={generatedPhrase}{serverFlag} /SILENT
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => copyToClipboard(
-                          `Owlette-Installer-v${version}.exe /ADD=${generatedPhrase} /SILENT`,
+                          `Owlette-Installer-v${version}.exe /ADD=${generatedPhrase}${serverFlag} /SILENT`,
                           'Command'
                         )}
                         aria-label="copy silent install command"

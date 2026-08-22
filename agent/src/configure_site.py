@@ -7,14 +7,16 @@ tokens (C:\\ProgramData\\owlette\\.tokens.enc) and writes site_id / project_id /
 api_base into config.json.
 
 Usage:
-    python configure_site.py [--url URL] [--add PHRASE] [--open-browser] [--no-browser]
+    python configure_site.py [--url URL] [--server {dev,prod}] [--add PHRASE] [--no-browser]
 
-    --url URL        Override the API base URL
-    --add PHRASE     Pre-authorized pairing phrase (skips browser, polls immediately)
-    --open-browser   Open the pairing page immediately instead of waiting on Enter
-    --no-browser     Never offer a local browser; print the link and poll. For
-                     kiosks/signage/media servers/headless/RDP, where you
-                     authorize from another device. Also OWLETTE_NO_BROWSER=1.
+    --url URL        Override the API base URL. Requires --server.
+    --server NAME    Which owlette server to pair with (dev or prod). Required
+                     whenever --url is given; otherwise the machine keeps the
+                     environment its config is already bound to.
+    --add PHRASE     Pre-authorized pairing phrase (polls immediately)
+    --no-browser     Retained for compatibility; no browser is opened on this
+                     machine any more. The link is printed and polling starts
+                     either way. Also OWLETTE_NO_BROWSER=1.
 
 Headless modes (the desktop app's bridge into the agent — see
 `_run_headless_mode`). Each writes one JSON object per line to stdout and nothing
@@ -65,72 +67,6 @@ def _enable_ansi_colors():
             pass
 
 
-def _open_browser(url: str) -> bool:
-    """Open URL in browser without spawning visible console windows."""
-    try:
-        if sys.platform == 'win32':
-            os.startfile(url)
-            return True
-        else:
-            import webbrowser
-            return webbrowser.open(url)
-    except Exception:
-        return False
-
-
-def _prompt_open_browser_async(url: str) -> Callable[[], None]:
-    """Open ``url`` if the operator presses Enter, without blocking polling."""
-    if not url:
-        return lambda: None
-
-    import threading
-    stop_event = threading.Event()
-
-    def _wait_for_enter_key() -> bool:
-        if sys.platform == 'win32':
-            try:
-                import msvcrt
-                while not stop_event.is_set():
-                    if msvcrt.kbhit():
-                        ch = msvcrt.getwch()
-                        if ch in ('\r', '\n'):
-                            return True
-                    time.sleep(0.05)
-            except Exception:
-                return False
-            return False
-
-        try:
-            if not sys.stdin.isatty():
-                return False
-            import select
-            while not stop_event.is_set():
-                readable, _, _ = select.select([sys.stdin], [], [], 0.05)
-                if readable:
-                    sys.stdin.readline()
-                    return True
-        except Exception:
-            return False
-        return False
-
-    def _wait_for_enter():
-        if not _wait_for_enter_key() or stop_event.is_set():
-            return
-
-        opened = _open_browser(url)
-        try:
-            print()
-            if opened:
-                print(f"  {DIM}opened the pairing page in your browser - pick a site and authorize.{RESET}")
-            else:
-                print(f"  {DIM}could not open a browser; use the link above from any device.{RESET}")
-        except Exception:
-            pass
-
-    threading.Thread(target=_wait_for_enter, daemon=True, name="OpenPairingPagePrompt").start()
-    return stop_event.set
-
-
 def _copy_to_clipboard(text: str) -> bool:
     """
     Best-effort copy of ``text`` to the Windows clipboard via win32clipboard
@@ -156,37 +92,17 @@ def _copy_to_clipboard(text: str) -> bool:
         return False
 
 
-def _determine_environment(url_hint: str = '') -> tuple:
+def _determine_environment(environment: str = None) -> tuple:
+    """(environment, api_base, project_id) for an explicit token, else the config's.
+
+    The two tables this used to inline now live in shared_utils; this is the only
+    place that assembles them into the 3-tuple the pairing flow needs.
     """
-    Determine environment (dev/prod) from URL hint or existing config.
-
-    An explicit URL hint (installer ``--url``, GUI server choice) is the operator
-    deliberately selecting a server, so it MUST win over the existing config.
-    Otherwise an agent already paired to one environment can never be switched to
-    the other: a dev-paired agent re-running with ``--url https://owlette.app/api``
-    used to be silently re-locked to dev (the dev->prod switch bug). The check
-    was asymmetric — only an existing *development* config short-circuited — so
-    prod->dev happened to work while dev->prod did not.
-
-    Returns:
-        (environment, api_base, project_id)
-    """
-    DEV = ('development', 'https://dev.owlette.app/api', 'owlette-dev-3838a')
-    PROD = ('production', 'https://owlette.app/api', 'owlette-prod-90a12')
-
-    # 1. An explicit URL hint wins — the operator is choosing the server.
-    if url_hint:
-        return DEV if 'dev.owlette.app' in url_hint else PROD
-
-    # 2. No hint: honor the environment the existing config is bound to.
-    try:
-        if shared_utils.get_environment() == 'development':
-            return DEV
-    except Exception:
-        pass
-
-    # 3. Default to production.
-    return PROD
+    if environment not in ('development', 'production'):
+        environment = shared_utils.get_environment()
+    return (environment,
+            shared_utils.get_api_base_url(environment),
+            shared_utils.get_project_id(environment))
 
 
 def _save_config(site_id: str, environment: str, api_base: str, project_id: str):
@@ -238,14 +154,21 @@ def _save_config(site_id: str, environment: str, api_base: str, project_id: str)
     # Atomic write: write to temp file, then replace
     tmp_path = CONFIG_PATH.with_suffix('.tmp')
     with open(tmp_path, 'w') as f:
+        # `agent/owlette_installer.iss:483-484` string-searches this file for
+        # '"environment": "development"' — key, colon, ONE space, value — which
+        # depends on json.dump's default ': ' item separator, so never pass a
+        # custom `separators=` here. The indent is *not* part of that contract: it
+        # controls only leading whitespace, and the service rewrites this same
+        # config.json with indent=4 (`shared_utils.write_json_to_file`, :1728)
+        # while those searches still match.
         json.dump(config, f, indent=2)
     os.replace(tmp_path, CONFIG_PATH)
 
 
-def run_pairing_flow(api_base: str = None, add_phrase: str = None,
+def run_pairing_flow(api_base: str = None, environment: str = None,
+                     add_phrase: str = None,
                      timeout_seconds: int = TIMEOUT_SECONDS,
-                     show_prompts: bool = True, open_browser: bool = False,
-                     prompt_open_browser: bool = True,
+                     show_prompts: bool = True,
                      on_phrase: Optional[Callable[[dict], None]] = None,
                      should_cancel: Optional[Callable[[], bool]] = None,
                      copy_clipboard: bool = True):
@@ -258,16 +181,14 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
     - Installer (Inno Setup)
 
     Args:
-        api_base: API base URL (auto-detected if None)
+        api_base: API base URL (defaults to the resolved environment's)
+        environment: 'development' or 'production'. Anything else (including
+            None) falls back to the environment this machine's config is bound
+            to. The caller normalises the operator's --server token exactly once,
+            in main().
         add_phrase: Pre-authorized pairing phrase (for /ADD= silent install)
         timeout_seconds: Max time to wait for authorization
         show_prompts: Show console output (False for GUI usage)
-        open_browser: Open the pairing page immediately on this machine
-            (interactive mode only). This is opt-in; polling starts immediately
-            either way.
-        prompt_open_browser: In console mode, show a non-blocking "press Enter
-            to open" prompt. Set False (--no-browser) on kiosks/headless/RDP to
-            avoid any local browser affordance.
         on_phrase: Optional callback invoked once in interactive mode with the
             device_data dict (pairPhrase, pairingUrl, verificationUri,
             expiresIn, ...) plus a 'clipboardCopied' bool, so a GUI caller can
@@ -287,14 +208,21 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
     """
     from auth_manager import AuthManager, AuthenticationError
 
-    environment, default_api_base, project_id = _determine_environment(api_base or '')
+    environment, default_api_base, project_id = _determine_environment(environment)
     api_base = api_base or default_api_base
+
+    # Named again in the authorize block below, so resolved outside the
+    # `show_prompts` guard rather than twice inside it.
+    env_label = shared_utils.get_environment_label(environment)
+    env_host = shared_utils.get_web_host(environment)
+    env_color = CYAN if environment == 'development' else GREEN
 
     if show_prompts:
         _enable_ansi_colors()
         print(f"{DIM}{'=' * 60}{RESET}")
         print(f"{BOLD}owlette site configuration{RESET}")
         print(f"{DIM}{'=' * 60}{RESET}")
+        print(f"  environment: {BOLD}{env_color}{env_label}{RESET}")
         print(f"  {DIM}api: {api_base}{RESET}")
         print()
 
@@ -405,7 +333,6 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
             pair_phrase = device_data['pairPhrase']
             device_code = device_data['deviceCode']
             verification_uri = device_data['verificationUri']
-            pairing_url = device_data.get('pairingUrl') or device_data.get('qrUrl', '')
             interval = device_data.get('interval', 5)
             expires_in = device_data.get('expiresIn', 600)
 
@@ -420,8 +347,9 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                 if phrase_copied:
                     print(f"  {DIM}{GREEN}(copied to clipboard){RESET}")
                 print()
-                print(f"  {DIM}authorize this machine at:{RESET}")
+                print(f"  {DIM}authorize this machine on{RESET} {env_color}{env_label}{RESET}{DIM}:{RESET}")
                 print(f"  {CYAN}{verification_uri}{RESET}")
+                print(f"  {DIM}this phrase exists only on {env_host} — it will not be found anywhere else.{RESET}")
                 print()
                 print(f"  {DIM}expires in {expires_in // 60} minutes{RESET}")
                 print()
@@ -436,35 +364,17 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                 except Exception as cb_err:
                     logging.warning(f"on_phrase callback failed: {cb_err}")
 
-            # Opening the local browser is opt-in; the Enter prompt runs on a daemon
-            # thread so polling starts immediately. The GUI uses on_phrase instead.
-            browser_opened = _open_browser(pairing_url) if open_browser else False
-
-            stop_open_prompt = None
             if show_prompts:
-                if browser_opened:
-                    print(f"  {DIM}opened the pairing page in your browser — pick a site and authorize.{RESET}")
-                elif prompt_open_browser and pairing_url:
-                    print(f"  {DIM}press Enter to open the pairing page in your browser.{RESET}")
-                    print(f"  {DIM}or approve at the link above from any device.{RESET}")
-                    stop_open_prompt = _prompt_open_browser_async(pairing_url)
-                else:
-                    print(f"  {DIM}approve at the link above from any device.{RESET}")
-                print()
                 print(f"  {BOLD}waiting for authorization...{RESET}")
 
             # Authorization from ANY device ends the wait; should_cancel lets a GUI
             # Cancel abort promptly.
-            try:
-                success = auth_manager.poll_device_code(
-                    device_code=device_code,
-                    interval=interval,
-                    timeout=expires_in,
-                    should_cancel=should_cancel,
-                )
-            finally:
-                if stop_open_prompt:
-                    stop_open_prompt()
+            success = auth_manager.poll_device_code(
+                device_code=device_code,
+                interval=interval,
+                timeout=expires_in,
+                should_cancel=should_cancel,
+            )
 
             if success:
                 site_id = auth_manager._site_id
@@ -477,6 +387,7 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                     print(f"  {GREEN}{BOLD}configuration complete!{RESET}")
                     print(f"{DIM}{'=' * 60}{RESET}")
                     print(f"  site: {CYAN}{site_id}{RESET}")
+                    print(f"  {DIM}environment: {environment}{RESET}")
                     print(f"  {DIM}config: {CONFIG_PATH}{RESET}")
                     print()
 
@@ -522,23 +433,6 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
             pass
 
         return (False, error_msg, None)
-
-
-# Keep backward compatibility: run_oauth_flow calls run_pairing_flow
-def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts=True,
-                   open_browser=False, prompt_open_browser=True,
-                   on_phrase=None, should_cancel=None):
-    """Backward-compatible wrapper. Calls run_pairing_flow()."""
-    api_base = None
-    if setup_url:
-        if 'dev.owlette.app' in setup_url:
-            api_base = 'https://dev.owlette.app/api'
-        else:
-            api_base = 'https://owlette.app/api'
-    return run_pairing_flow(api_base=api_base, timeout_seconds=timeout_seconds,
-                            show_prompts=show_prompts, open_browser=open_browser,
-                            prompt_open_browser=prompt_open_browser,
-                            on_phrase=on_phrase, should_cancel=should_cancel)
 
 
 # Headless modes — the desktop app's bridge into the agent.
@@ -658,7 +552,8 @@ def _machine_document(project_id: str, api_base: str, site_id: str):
     return client, document
 
 
-def run_json_progress(api_base: str = None, timeout_seconds: int = TIMEOUT_SECONDS) -> int:
+def run_json_progress(api_base: str = None, environment: str = None,
+                      timeout_seconds: int = TIMEOUT_SECONDS) -> int:
     """Pair this machine, reporting progress as JSON lines.
 
     The same `run_pairing_flow` the installer runs, with the console and
@@ -692,10 +587,9 @@ def run_json_progress(api_base: str = None, timeout_seconds: int = TIMEOUT_SECON
 
     success, message, site_id = run_pairing_flow(
         api_base=api_base,
+        environment=environment,
         timeout_seconds=timeout_seconds,
         show_prompts=False,
-        open_browser=False,
-        prompt_open_browser=False,
         copy_clipboard=False,
         on_phrase=on_phrase,
         should_cancel=heartbeat,
@@ -705,10 +599,14 @@ def run_json_progress(api_base: str = None, timeout_seconds: int = TIMEOUT_SECON
         _emit('error', message)
         return 1
 
-    # The service reads `firebase.site_id` once at startup, so it must restart
-    # before this machine appears on the dashboard. Stopping OwletteService needs
-    # SERVICE_STOP, which a standard user lacks — so the outcome is reported to
-    # the caller rather than only logged.
+    # Restarting is a latency optimisation, not a correctness requirement: the
+    # service re-reads the firebase config every 2 loop iterations
+    # (`owlette_service.SLEEP_INTERVAL` = 5) and reinitialises its client on the
+    # disabled -> enabled transition, so a machine that is never restarted still
+    # appears on the dashboard within ~10 s. The restart turns that wait into an
+    # immediate reconnect. Stopping OwletteService needs SERVICE_STOP, which a
+    # standard user lacks — so the outcome is reported to the caller rather than
+    # only logged, and failing it is not an error.
     _emit('status', 'restarting the service')
     stopped = _host_service('stop')
     time.sleep(_SERVICE_STOP_SETTLE)
@@ -1047,10 +945,13 @@ def _run_headless_mode(args) -> Optional[int]:
 
     try:
         if args.json_progress:
-            api_base = args.url
-            if not api_base and 'dev.owlette.app' in os.environ.get('OWLETTE_SETUP_URL', ''):
-                api_base = 'https://dev.owlette.app/api'
-            return run_json_progress(api_base=api_base)
+            # `args.server` is already normalised to an environment token by
+            # main(); normalising a second time would turn 'development' back
+            # into None and silently resolve to production.
+            if args.url and not args.server:
+                _emit('error', "--url needs --server: re-run with --server dev or --server prod")
+                return 2
+            return run_json_progress(api_base=args.url, environment=args.server)
         if args.leave:
             return run_leave_site()
         if args.report_issue is not None:
@@ -1069,15 +970,17 @@ def main():
     parser = argparse.ArgumentParser(description='owlette Site Configuration')
     parser.add_argument('--url', type=str, default=None,
                         help='API base URL (auto-detected if not specified)')
+    parser.add_argument('--server', choices=['dev', 'prod'], default=None,
+                        help='Which owlette server to pair with. Required whenever --url is '
+                             'given; otherwise the machine keeps the environment its config '
+                             'is already bound to.')
     parser.add_argument('--add', type=str, default=None,
                         help='Pre-authorized pairing phrase for silent install')
-    parser.add_argument('--open-browser', action='store_true',
-                        help='Open the pairing page immediately. By default the '
-                             'console asks you to press Enter before opening a browser.')
     parser.add_argument('--no-browser', action='store_true',
-                        help="Do not offer to open a browser on this machine; just print "
-                             "the pairing link and poll (kiosks/headless/RDP — "
-                             "authorize from any device). Also: OWLETTE_NO_BROWSER=1")
+                        help="Retained for compatibility with existing deployment scripts; "
+                             "no browser is opened on this machine any more. The pairing "
+                             "link is printed and polling starts either way. "
+                             "Also: OWLETTE_NO_BROWSER=1")
 
     # Headless modes for the desktop app. Mutually exclusive with each other;
     # any one of them replaces the interactive flow entirely.
@@ -1094,17 +997,27 @@ def main():
 
     args = parser.parse_args()
 
+    # The ONLY place --server is normalised. argparse's choices already reject
+    # every other token; a second pass would map the normalised 'development'
+    # back to None, fall through to the config's environment, and resolve a
+    # never-paired machine to production.
+    args.server = {'dev': 'development', 'prod': 'production'}.get(args.server)
+
     headless_exit_code = _run_headless_mode(args)
     if headless_exit_code is not None:
         return headless_exit_code
 
-    api_base = args.url
-    if not api_base:
-        env_url = os.environ.get("OWLETTE_SETUP_URL", "")
-        if 'dev.owlette.app' in env_url:
-            api_base = 'https://dev.owlette.app/api'
+    # --url is a pure API-base override: it no longer implies an environment, so
+    # without --server this would write a production project_id for a dev URL.
+    if args.url and not args.server:
+        print("--url needs --server: re-run with --server dev or --server prod.")
+        return 2
 
-    # Browser prompt suppressed by flag or env var (kiosks/headless/remote).
+    api_base = args.url
+
+    # Retained for compatibility with existing deployment scripts; no browser is
+    # opened on this machine any more. Recorded in the debug log so a support
+    # case can still tell what the operator passed.
     no_browser = args.no_browser or os.environ.get('OWLETTE_NO_BROWSER', '').strip().lower() in ('1', 'true', 'yes')
 
     debug_log = Path(shared_utils.get_data_path('logs/pairing_debug.log'))
@@ -1114,30 +1027,27 @@ def main():
         f.write(f"==================\n")
         f.write(f"--url: {args.url}\n")
         f.write(f"--add: {args.add}\n")
-        f.write(f"--open-browser: {args.open_browser}\n")
         f.write(f"--no-browser: {no_browser}\n")
         f.write(f"Resolved api_base: {api_base}\n")
-        f.write(f"OWLETTE_SETUP_URL: {os.environ.get('OWLETTE_SETUP_URL', 'NOT SET')}\n\n")
+        f.write(f"--server: {args.server or 'NOT SET'}\n\n")
 
     success, message, site_id = run_pairing_flow(
         api_base=api_base,
+        environment=args.server,
         add_phrase=args.add,
         show_prompts=True,
-        open_browser=args.open_browser and not no_browser,
-        prompt_open_browser=(not no_browser) and (not args.open_browser),
     )
 
     if success:
-        print("The owlette service will now be installed and started.")
+        print("  this machine is paired — the owlette service is installed and running.")
         return 0
     else:
-        print("Please try running the installer again.")
-        # Pause so the user can read the error before the window closes
-        if not args.add:  # Don't pause in silent /ADD= mode
-            try:
-                input("Press Enter to continue...")
-            except (EOFError, KeyboardInterrupt):
-                pass
+        # Never block: this console can run with the installer wizard holding the
+        # foreground, where a keypress may never reach it. Both recovery routes
+        # are printed instead, matching the installer's message box.
+        print("  pairing did not complete. to finish it, either:")
+        print("    - open owlette from the start menu and choose \"join a site\", or")
+        print("    - re-run this script with --server <dev|prod>.")
         return 1
 
 

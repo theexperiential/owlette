@@ -19,6 +19,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useAppStates } from '@/hooks/useAppStates'
 import { useFileDrop } from '@/hooks/useFileDrop'
+import { useLaunchFlag } from '@/hooks/useLaunchFlag'
 import { useOwletteConfig } from '@/hooks/useOwletteConfig'
 import { useRestartPrompt } from '@/hooks/useRestartPrompt'
 import { useServiceHealth } from '@/hooks/useServiceHealth'
@@ -34,7 +35,14 @@ import {
   type DropCard,
 } from '@/lib/dropQueue'
 import { classifyOptions, tauriFsProbe } from '@/lib/fsProbe'
-import { hostname, setStartupLink, startupLinkEnabled, writeOwletteJson } from '@/lib/ipc'
+import {
+  ARG_PAIR,
+  hostname,
+  serverFromArgs,
+  setStartupLink,
+  startupLinkEnabled,
+  writeOwletteJson,
+} from '@/lib/ipc'
 import {
   addProcess,
   applyForm,
@@ -83,6 +91,9 @@ function App() {
   const appStates = useAppStates()
   const health = useServiceHealth()
   const restartPrompt = useRestartPrompt()
+  // The installer hands off with `--pair --server <dev|prod>`; both routes in
+  // (our own argv, and a forwarded second instance) are watched by the hook.
+  const pairLaunch = useLaunchFlag(ARG_PAIR)
   const sidebar = useSidebarLayout()
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -95,6 +106,15 @@ function App() {
   // (`key={selected.id}`), so it would shut itself when comparing two entries.
   // Deliberately not persisted — a within-session reading position.
   const [advancedOpen, setAdvancedOpen] = useState(false)
+
+  // Guarded on purpose: closing the dialog calls `pairLaunch.dismiss()`, which
+  // flips `armed` back to false and re-runs this effect. Without the `if`, that
+  // would reopen the dialog the operator just closed and start a second pairing
+  // run — with no `server`, i.e. against the config's environment rather than
+  // the installer's.
+  useEffect(() => {
+    if (pairLaunch.armed) setMenuDialog('join')
+  }, [pairLaunch.armed])
 
   useEffect(() => {
     hostname().then(setHost, () => setHost(null))
@@ -536,7 +556,14 @@ function App() {
 
         <JoinSiteDialog
           open={menuDialog === 'join'}
-          onClose={() => setMenuDialog(null)}
+          // Only while the launch flag is armed: `launch_args()` keeps returning
+          // the installer's argv forever, so a tray re-open hours later must not
+          // inherit its server.
+          server={pairLaunch.armed ? (serverFromArgs(pairLaunch.argv) ?? undefined) : undefined}
+          onClose={() => {
+            setMenuDialog(null)
+            pairLaunch.dismiss()
+          }}
           onJoined={handleJoined}
         />
         <LeaveSiteDialog

@@ -77,12 +77,16 @@ export interface FooterInputs {
   config: OwletteConfig | null
 }
 
-interface FirebaseSection {
+/** The `firebase` block of config.json, as far as any surface here reads it. */
+export interface FirebaseSection {
   enabled?: boolean
   site_id?: string
+  /** Base URL of the owlette deployment the service talks to. */
+  api_base?: string
 }
 
-function firebaseSection(config: OwletteConfig | null): FirebaseSection {
+/** `config.firebase` narrowed to an object — `{}` when it is missing or not one. */
+export function firebaseSection(config: OwletteConfig | null): FirebaseSection {
   const section = config?.firebase
   return section && typeof section === 'object' ? (section as FirebaseSection) : {}
 }
