@@ -116,7 +116,7 @@ export default function AddMachinePage() {
         });
       } catch (error: unknown) {
         console.error('Error fetching sites:', error);
-        toast.error('Failed to load sites');
+        toast.error('failed to load sites');
       } finally {
         setLoading(false);
       }
@@ -133,11 +133,11 @@ export default function AddMachinePage() {
 
   const handleAuthorize = async () => {
     if (!pairPhrase.trim()) {
-      toast.error('Please enter a pairing phrase');
+      toast.error('please enter a pairing phrase');
       return;
     }
     if (!selectedSiteId) {
-      toast.error('Please select a site');
+      toast.error('please select a site');
       return;
     }
 
@@ -172,11 +172,11 @@ export default function AddMachinePage() {
       const data = await response.json();
       setIsAuthorized(true);
       setMachineId(data.machineId);
-      toast.success('Machine authorized!');
+      toast.success('machine authorized');
     } catch (error: unknown) {
       console.error('Error authorizing:', error);
       const message = error instanceof Error ? error.message : String(error);
-      toast.error(message || 'Failed to authorize machine');
+      toast.error(message || 'failed to authorize machine');
     } finally {
       setIsAuthorizing(false);
     }
