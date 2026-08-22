@@ -4,6 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { UserAvatar } from '@/components/UserAvatar';
+import { useAuth } from '@/contexts/AuthContext';
 import { OwletteEyeIcon } from './OwletteEye';
 
 type NavLinkDef = { label: string; href: string; external?: boolean; prefetch?: boolean };
@@ -15,12 +17,15 @@ const SECTION_LINKS: NavLinkDef[] = [
   { label: 'faq', href: '#faq' },
 ];
 
-// External / account links.
+// External / product links, shown to everyone.
 const UTIL_LINKS: NavLinkDef[] = [
   { label: 'docs', href: '/docs' },
   { label: 'download', href: '/download', prefetch: false },
-  { label: 'sign in', href: '/login' },
 ];
+
+// Appended only while signed out — offering "sign in" to a signed-in visitor is
+// the thing this header used to get wrong.
+const SIGN_IN_LINK: NavLinkDef = { label: 'sign in', href: '/login' };
 
 function linkEl(link: NavLinkDef, className?: string, onClick?: () => void) {
   if (link.external) {
@@ -47,6 +52,16 @@ function linkEl(link: NavLinkDef, className?: string, onClick?: () => void) {
 export function LandingHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
   const close = () => setMenuOpen(false);
+  const { user, loading } = useAuth();
+
+  /**
+   * Signed-out markup is what the server renders and what most visitors get, so
+   * it stands until auth resolves. A skeleton in its place would pulse the
+   * header on every cold load of a public page to spare a returning user one
+   * frame — the wrong trade on the highest-traffic page in the app.
+   */
+  const signedIn = !loading && !!user;
+  const utilLinks = signedIn ? UTIL_LINKS : [...UTIL_LINKS, SIGN_IN_LINK];
 
   const scrollToTop = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -73,20 +88,34 @@ export function LandingHeader() {
             </Button>
           ))}
           <span aria-hidden className="mx-1.5 h-4 w-px bg-border" />
-          {UTIL_LINKS.map((link) => (
+          {utilLinks.map((link) => (
             <Button key={link.label} asChild variant="ghost" size="sm" className={ghostClass}>
               {linkEl(link)}
             </Button>
           ))}
-          <Button asChild size="sm" className="ml-1.5 text-background font-medium">
-            <Link href="/register">get started</Link>
-          </Button>
+          {signedIn ? (
+            <>
+              <Button asChild size="sm" className="ml-1.5 text-background font-medium">
+                <Link href="/dashboard">go to dashboard</Link>
+              </Button>
+              <span className="ml-2 flex items-center" title={user?.email ?? undefined}>
+                <UserAvatar user={user} size="sm" />
+              </span>
+            </>
+          ) : (
+            <Button asChild size="sm" className="ml-1.5 text-background font-medium">
+              <Link href="/register">get started</Link>
+            </Button>
+          )}
         </div>
 
         {/* Mobile / tablet: get started + hamburger */}
         <div className="flex lg:hidden items-center gap-2">
+          {/* Shorter label than desktop: it shares the row with the hamburger. */}
           <Button asChild size="sm" className="text-background font-medium">
-            <Link href="/register">get started</Link>
+            <Link href={signedIn ? '/dashboard' : '/register'}>
+              {signedIn ? 'dashboard' : 'get started'}
+            </Link>
           </Button>
           <button
             type="button"
@@ -113,8 +142,14 @@ export function LandingHeader() {
               linkEl(link, 'py-3 text-base text-muted-foreground hover:text-foreground transition-colors', close),
             )}
             <span aria-hidden className="my-1 h-px w-full bg-border/50" />
-            {UTIL_LINKS.map((link) =>
+            {utilLinks.map((link) =>
               linkEl(link, 'py-3 text-base text-muted-foreground hover:text-foreground transition-colors', close),
+            )}
+            {signedIn && user && (
+              <div className="flex items-center gap-2.5 py-3 text-base text-muted-foreground">
+                <UserAvatar user={user} size="sm" />
+                <span className="truncate">{user.displayName || user.email}</span>
+              </div>
             )}
           </nav>
         </div>
