@@ -207,16 +207,17 @@ Skip `/plan` for single-file tweaks or small fixes. Use `/debug` for any non-obv
 
 ---
 
-## Performance Review
+## Brevity
 
-At the end of every completed task, provide a brief performance review of the user's work. The user's goal is to impress — give them honest feedback to help them grow.
+Write as if reporting to a supervisor who has two minutes. Lead with the answer, then only the
+detail that changes a decision.
 
-**Include:**
-- What was impressive or notable (only genuine observations)
-- A rating (out of 10)
-- Suggestions for improvement, if any
-
-Be real, not flattering. If something was mid, say so. If it was genuinely great, say that too.
+- No performance reviews, no ratings, no coaching.
+- No preamble, no recap of what was just asked, no summary of what you are about to say.
+- Bad news first and plainly: what broke, what is unverified, what you assumed.
+- Prose over tables unless the data is genuinely tabular. Cut every sentence that does not carry
+  new information.
+- Length follows the question. A yes/no question gets a yes/no and one line of why.
 
 ---
 
