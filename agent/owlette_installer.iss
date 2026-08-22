@@ -357,7 +357,10 @@ Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-
 ; it shells open — runs ELEVATED. Its argv carries no --pair, so useLaunchFlag
 ; ignores it and this stays a plain "show the window" affordance; the Description
 ; must not read as a second pairing step.
-Filename: "{#MyAppExePath}"; WorkingDir: "{app}\app"; Description: "open owlette"; Flags: postinstall skipifsilent nowait runasoriginaluser
+; Only when the GUI handoff did NOT already open the app. On the console
+; fallback and /ADD= paths this is still the operator only launcher; after a
+; handoff it offers to open a window that is already on screen.
+Filename: "{#MyAppExePath}"; WorkingDir: "{app}\app"; Description: "open owlette"; Flags: postinstall skipifsilent nowait runasoriginaluser; Check: ShouldOfferOpenApp
 
 [UninstallRun]
 ; Close the desktop app first — it lives in {app}\app and would otherwise hold
@@ -380,6 +383,9 @@ var
   ServiceWasStopped: Boolean;
   InstallSucceeded: Boolean;
   PairingSucceeded: Boolean;
+  // Set only by the GUI handoff, and read by ShouldOfferOpenApp to suppress
+  // the finished page redundant "open owlette" checkbox.
+  AppOpenedByHandoff: Boolean;
 
 // The only table in this script that produces user-facing hosts and configure_site
 // arguments. Everything that needs the server — the configure_site.py args, the GUI
@@ -632,6 +638,11 @@ end;
 
 // Returns False only when a console pairing run we waited on actually failed.
 // The GUI handoff is ewNoWait and has no outcome to report - by design.
+function ShouldOfferOpenApp(): Boolean;
+begin
+  Result := not AppOpenedByHandoff;
+end;
+
 function RunPairingHandoff(): Boolean;
 var
   ResultCode: Integer;
@@ -668,7 +679,10 @@ begin
     WizardForm.StatusLabel.Caption := 'Opening owlette to finish pairing with ' + GetWebHost() + '...';
     try
       if ExecAsOriginalUser(AppExe, '--pair --server ' + GetServerParam(), '', SW_SHOW, ewNoWait, ResultCode) then
-        Log('Handed pairing to the desktop app')
+      begin
+        AppOpenedByHandoff := True;
+        Log('Handed pairing to the desktop app');
+      end
       else
         Log('Could not hand off to the desktop app: ' + SysErrorMessage(ResultCode));
     except
