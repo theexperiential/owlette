@@ -560,6 +560,9 @@ function App() {
           // the installer's argv forever, so a tray re-open hours later must not
           // inherit its server.
           server={pairLaunch.armed ? (serverFromArgs(pairLaunch.argv) ?? undefined) : undefined}
+          // The same flag the footer's "connected" branch reads, so the dialog
+          // cannot claim a different service state than the window behind it.
+          serviceConnected={health.statusFile?.firebase?.connected === true}
           onClose={() => {
             setMenuDialog(null)
             pairLaunch.dismiss()

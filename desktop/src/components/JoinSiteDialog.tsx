@@ -35,9 +35,22 @@ interface JoinSiteDialogProps {
    * Treat it as a signal, never as copy.
    */
   onJoined: (siteId: string) => void
+  /**
+   * Whether the service is currently reaching owlette. Read only after pairing,
+   * to settle the "restarting" line onto a real outcome — an operator must never
+   * be left watching a progress sentence that can no longer change.
+   */
+  serviceConnected?: boolean
 }
 
 type Phase = 'starting' | 'waiting' | 'joined' | 'failed'
+
+/**
+ * How long to wait for the restarted service to report a connection before
+ * telling the operator to intervene. Generous: a cold Firebase init on a slow
+ * machine is seconds, and the service re-reads its config every other 5 s loop.
+ */
+const SERVICE_SETTLE_TIMEOUT_MS = 45_000
 
 /**
  * Device-code pairing, driven by `configure_site.py --json-progress`: it
@@ -48,12 +61,14 @@ type Phase = 'starting' | 'waiting' | 'joined' | 'failed'
  * No token handling here — the helper writes `.tokens.enc` and restarts the
  * service; this window only watches.
  */
-export function JoinSiteDialog({ open, server, onClose, onJoined }: JoinSiteDialogProps) {
+export function JoinSiteDialog({ open, server, serviceConnected, onClose, onJoined }: JoinSiteDialogProps) {
   const [phase, setPhase] = useState<Phase>('starting')
   const [phrase, setPhrase] = useState<PairPhrase | null>(null)
   const [status, setStatus] = useState('requesting a pairing phrase')
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  /** True between "paired" and the service coming back; drives the settle effect. */
+  const [awaitingService, setAwaitingService] = useState(false)
 
   const run = useRef<AgentRun | null>(null)
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -75,6 +90,7 @@ export function JoinSiteDialog({ open, server, onClose, onJoined }: JoinSiteDial
     setStatus('requesting a pairing phrase')
     setError(null)
     setCopied(false)
+    setAwaitingService(false)
 
     void startAgentRun('join', {
       server,
@@ -91,6 +107,7 @@ export function JoinSiteDialog({ open, server, onClose, onJoined }: JoinSiteDial
           case 'authorized':
             settled = true
             setPhase('joined')
+            setAwaitingService(!!event.value.serviceRestarted)
             setStatus(
               event.value.serviceRestarted
                 ? 'paired — the service is restarting'
@@ -145,6 +162,29 @@ export function JoinSiteDialog({ open, server, onClose, onJoined }: JoinSiteDial
     },
     [],
   )
+
+  /**
+   * Settle the post-pair line. `serviceRestarted` is true at the instant the
+   * helper stopped and started the service, and then goes stale — it left the
+   * operator watching "restarting" forever with nothing able to change it.
+   * Resolve it onto what actually happened, and give up after a bounded wait
+   * rather than never.
+   */
+  useEffect(() => {
+    if (!awaitingService) return
+
+    if (serviceConnected) {
+      setAwaitingService(false)
+      setStatus('paired — the service is running')
+      return
+    }
+
+    const timer = setTimeout(() => {
+      setAwaitingService(false)
+      setStatus('paired — the service has not come back yet. restart it from the tray menu.')
+    }, SERVICE_SETTLE_TIMEOUT_MS)
+    return () => clearTimeout(timer)
+  }, [awaitingService, serviceConnected])
 
   const handleCopy = useCallback(() => {
     if (!phrase) return
