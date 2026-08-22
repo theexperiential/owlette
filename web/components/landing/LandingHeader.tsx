@@ -55,12 +55,14 @@ export function LandingHeader() {
   const { user, loading } = useAuth();
 
   /**
-   * Signed-out markup is what the server renders and what most visitors get, so
-   * it stands until auth resolves. A skeleton in its place would pulse the
-   * header on every cold load of a public page to spare a returning user one
-   * frame — the wrong trade on the highest-traffic page in the app.
+   * Nothing auth-dependent renders until auth resolves. An earlier version let
+   * the signed-out markup stand while `loading`, which made a returning visitor
+   * watch "sign in" repaint into "go to dashboard" — the wrong state first, then
+   * the right one. The slot still occupies its signed-out width so the header
+   * does not reflow when the answer arrives; it is only invisible, not absent.
    */
-  const signedIn = !loading && !!user;
+  const authReady = !loading;
+  const signedIn = authReady && !!user;
   const utilLinks = signedIn ? UTIL_LINKS : [...UTIL_LINKS, SIGN_IN_LINK];
 
   const scrollToTop = (e: React.MouseEvent) => {
@@ -88,11 +90,18 @@ export function LandingHeader() {
             </Button>
           ))}
           <span aria-hidden className="mx-1.5 h-4 w-px bg-border" />
-          {utilLinks.map((link) => (
+          {UTIL_LINKS.map((link) => (
             <Button key={link.label} asChild variant="ghost" size="sm" className={ghostClass}>
               {linkEl(link)}
             </Button>
           ))}
+          {/* One slot: "sign in" and the CTA resolve together or not at all. */}
+          <div className={`flex items-center ${authReady ? '' : 'invisible'}`}>
+          {!signedIn && (
+            <Button asChild variant="ghost" size="sm" className={ghostClass}>
+              {linkEl(SIGN_IN_LINK)}
+            </Button>
+          )}
           {signedIn ? (
             <>
               <Button asChild size="sm" className="ml-1.5 text-background font-medium">
@@ -107,12 +116,13 @@ export function LandingHeader() {
               <Link href="/register">get started</Link>
             </Button>
           )}
+          </div>
         </div>
 
         {/* Mobile / tablet: get started + hamburger */}
         <div className="flex lg:hidden items-center gap-2">
           {/* Shorter label than desktop: it shares the row with the hamburger. */}
-          <Button asChild size="sm" className="text-background font-medium">
+          <Button asChild size="sm" className={`text-background font-medium ${authReady ? '' : 'invisible'}`}>
             <Link href={signedIn ? '/dashboard' : '/register'}>
               {signedIn ? 'dashboard' : 'get started'}
             </Link>
@@ -142,7 +152,7 @@ export function LandingHeader() {
               linkEl(link, 'py-3 text-base text-muted-foreground hover:text-foreground transition-colors', close),
             )}
             <span aria-hidden className="my-1 h-px w-full bg-border/50" />
-            {utilLinks.map((link) =>
+            {(authReady ? utilLinks : UTIL_LINKS).map((link) =>
               linkEl(link, 'py-3 text-base text-muted-foreground hover:text-foreground transition-colors', close),
             )}
             {signedIn && user && (
