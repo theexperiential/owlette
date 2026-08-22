@@ -186,7 +186,8 @@ export default function Setup2FAPage() {
         toast.error('your backup codes did not come through', {
           description: 'generate a new set from account settings.',
         });
-        router.push('/dashboard');
+        // replace, not push — the factor is enrolled, so this is an exit.
+        router.replace('/dashboard');
         return;
       }
 
@@ -314,11 +315,17 @@ export default function Setup2FAPage() {
     }
   };
 
+  /**
+   * `replace`, not `push`: enrolment is finished, so /setup-2fa must not sit one
+   * back-press behind /dashboard. Pushing left a fully-enrolled user able to
+   * walk back into the setup flow, which then had nothing to do. Same rule the
+   * signed-out guard above already follows.
+   */
   const handleFinish = () => {
     toast.success('setup complete', {
       description: 'you can now access your dashboard.',
     });
-    router.push('/dashboard');
+    router.replace('/dashboard');
   };
 
   /**
