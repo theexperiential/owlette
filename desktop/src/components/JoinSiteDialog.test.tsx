@@ -164,6 +164,20 @@ describe('JoinSiteDialog', () => {
     )
   })
 
+  it('drops the approve instruction once the machine is paired', async () => {
+    const run = fakeRun()
+    await open()
+
+    run.emit(PHRASE)
+    expect(screen.queryByText(/approve this machine at/)).not.toBeNull()
+
+    run.emit({ event: 'authorized', value: { siteId: 'default_site', serviceRestarted: false } })
+
+    // The stale next step is gone, replaced by where the machine actually went.
+    expect(screen.queryByText(/approve this machine at/)).toBeNull()
+    expect(screen.queryByText(/it will appear on your dashboard at/)).not.toBeNull()
+  })
+
   it('kills the helper when the dialog closes — the code is left to expire', async () => {
     const run = fakeRun()
     const { view } = await open()

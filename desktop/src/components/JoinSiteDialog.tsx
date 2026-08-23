@@ -229,7 +229,19 @@ export function JoinSiteDialog({ open, server, serviceConnected, onClose, onJoin
             )}
           </div>
           <DialogDescription>
-            {host ? (
+            {/* Once paired, the approve instruction is a stale next step — it
+                sends the operator back to a page they no longer need. Say where
+                the machine went instead. */}
+            {phase === 'joined' ? (
+              host ? (
+                <>
+                  it will appear on your dashboard at <span className="font-mono">{host}</span>{' '}
+                  shortly.
+                </>
+              ) : (
+                'it will appear on your dashboard shortly.'
+              )
+            ) : host ? (
               <>
                 approve this machine at <span className="font-mono">{host}/add</span> — from here or
                 from any other device.
