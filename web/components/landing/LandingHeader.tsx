@@ -95,38 +95,73 @@ export function LandingHeader() {
               {linkEl(link)}
             </Button>
           ))}
-          {/* One slot: "sign in" and the CTA resolve together or not at all. */}
-          <div className={`flex items-center ${authReady ? '' : 'invisible'}`}>
-          {!signedIn && (
-            <Button asChild variant="ghost" size="sm" className={ghostClass}>
-              {linkEl(SIGN_IN_LINK)}
-            </Button>
-          )}
-          {signedIn ? (
-            <>
+          {/* Both states occupy the SAME grid cell, so the column is always as
+              wide as the wider of the two and nothing to the left of it can move
+              when auth resolves. Only opacity changes — a width swap here would
+              shift the whole nav, since the row is right-aligned. */}
+          <div className="grid items-center">
+            <div
+              aria-hidden={!signedIn}
+              className={`col-start-1 row-start-1 flex items-center transition-opacity duration-300 motion-reduce:transition-none ${
+                signedIn ? 'opacity-100' : 'pointer-events-none opacity-0'
+              }`}
+            >
               <Button asChild size="sm" className="ml-1.5 text-background font-medium">
-                <Link href="/dashboard">go to dashboard</Link>
+                <Link href="/dashboard" tabIndex={signedIn ? undefined : -1}>go to dashboard</Link>
               </Button>
               <span className="ml-2 flex items-center" title={user?.email ?? undefined}>
                 <UserAvatar user={user} size="sm" />
               </span>
-            </>
-          ) : (
-            <Button asChild size="sm" className="ml-1.5 text-background font-medium">
-              <Link href="/register">get started</Link>
-            </Button>
-          )}
+            </div>
+            <div
+              aria-hidden={signedIn || !authReady}
+              className={`col-start-1 row-start-1 flex items-center transition-opacity duration-300 motion-reduce:transition-none ${
+                authReady && !signedIn ? 'opacity-100' : 'pointer-events-none opacity-0'
+              }`}
+            >
+              <Button asChild variant="ghost" size="sm" className={ghostClass}>
+                {linkEl(SIGN_IN_LINK)}
+              </Button>
+              <Button asChild size="sm" className="ml-1.5 text-background font-medium">
+                <Link href="/register" tabIndex={authReady && !signedIn ? undefined : -1}>get started</Link>
+              </Button>
+            </div>
           </div>
         </div>
 
         {/* Mobile / tablet: get started + hamburger */}
         <div className="flex lg:hidden items-center gap-2">
-          {/* Shorter label than desktop: it shares the row with the hamburger. */}
-          <Button asChild size="sm" className={`text-background font-medium ${authReady ? '' : 'invisible'}`}>
-            <Link href={signedIn ? '/dashboard' : '/register'}>
-              {signedIn ? 'dashboard' : 'get started'}
-            </Link>
-          </Button>
+          {/* Stacked for the same reason as the desktop slot: "dashboard" and
+              "get started" are different widths, and a swap would shove the
+              hamburger sideways. Shorter labels here — the row is narrow. */}
+          <div className="grid items-center">
+            <Button
+              asChild
+              size="sm"
+              className={`col-start-1 row-start-1 text-background font-medium transition-opacity duration-300 motion-reduce:transition-none ${
+                signedIn ? 'opacity-100' : 'pointer-events-none opacity-0'
+              }`}
+            >
+              <Link href="/dashboard" aria-hidden={!signedIn} tabIndex={signedIn ? undefined : -1}>
+                dashboard
+              </Link>
+            </Button>
+            <Button
+              asChild
+              size="sm"
+              className={`col-start-1 row-start-1 text-background font-medium transition-opacity duration-300 motion-reduce:transition-none ${
+                authReady && !signedIn ? 'opacity-100' : 'pointer-events-none opacity-0'
+              }`}
+            >
+              <Link
+                href="/register"
+                aria-hidden={signedIn || !authReady}
+                tabIndex={authReady && !signedIn ? undefined : -1}
+              >
+                get started
+              </Link>
+            </Button>
+          </div>
           <button
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
