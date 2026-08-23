@@ -120,11 +120,20 @@ export default function RoostsPageClient() {
   // Clear the URL when the selection vanishes (deleted elsewhere, site change,
   // bogus id). The `!roostsLoading` gate is non-negotiable: clearing mid-load
   // races hydration on direct nav and drops a valid selection.
+  //
+  // `!sitesLoading && currentSiteId` is the other half of that gate, and it is
+  // just as non-negotiable. `useRoosts` derives `loading` as
+  // `!!db && !!siteId && !loaded`, so before `useCurrentSite` resolves — when
+  // `siteId` is still '' — it reports NOT loading against an empty list. That
+  // opened this effect on the one render where a deep link is most fragile and
+  // stripped `?roost=<id>` from the URL before the list ever arrived, so
+  // /roosts?roost=… never opened its panel.
   useEffect(() => {
+    if (sitesLoading || !currentSiteId) return;
     if (!roostsLoading && selectedRoostId && !roosts.some((r) => r.id === selectedRoostId)) {
       setSelectedRoostId(null);
     }
-  }, [roostsLoading, roosts, selectedRoostId, setSelectedRoostId]);
+  }, [sitesLoading, currentSiteId, roostsLoading, roosts, selectedRoostId, setSelectedRoostId]);
 
   // On deselect, return focus to the row button — required on mobile, where
   // Radix Portal pulled focus when the sheet opened.
