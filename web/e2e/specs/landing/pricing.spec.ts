@@ -32,14 +32,16 @@ test.describe('landing — pricing', () => {
     await expect(coreCard).toBeVisible();
     await expect(proCard).toBeVisible();
 
-    // Core card — $10 per machine per month, free during beta.
-    await expect(coreCard).toContainText('$10');
+    // Core card — $20 per machine per month, free during beta, $10 founders rate.
+    await expect(coreCard).toContainText('$20');
+    await expect(coreCard).toContainText('$10 founders rate');
     await expect(coreCard).toContainText('/machine/month');
     await expect(coreCard).toContainText('free during beta');
 
-    // Pro card — $50 per machine per month with a 3-machine minimum, free
+    // Pro card — $60 per machine per month with a 3-machine minimum, free
     // during beta, roost storage copy.
-    await expect(proCard).toContainText('$50');
+    await expect(proCard).toContainText('$60');
+    await expect(proCard).toContainText('$30 founders rate');
     await expect(proCard).toContainText('/machine/month');
     await expect(proCard).toContainText('3-machine minimum');
     await expect(proCard).toContainText('free during beta');
@@ -48,13 +50,21 @@ test.describe('landing — pricing', () => {
     await expect(proCard).toContainText('$0.05/GB overage');
 
     // Pro-only integration surface (gated out of core).
-    await expect(proCard).toContainText('public REST API with scoped keys');
+    await expect(proCard).toContainText('REST API');
     await expect(proCard).toContainText('CLI + TypeScript SDK');
-    await expect(proCard).toContainText('webhooks with HMAC signing');
-    await expect(proCard).toContainText('unlimited sites with multi-site rbac');
+    await expect(proCard).toContainText('webhooks');
+    await expect(proCard).toContainText('unlimited sites');
     await expect(coreCard).not.toContainText('REST API');
     await expect(coreCard).not.toContainText('CLI');
     await expect(coreCard).not.toContainText('webhooks');
+
+    // Pro-only product surface — deployment, hoot and talons moved out of core.
+    await expect(proCard).toContainText('software & file deployment');
+    await expect(proCard).toContainText('hoot');
+    await expect(proCard).toContainText('talons');
+    await expect(coreCard).not.toContainText('deployment');
+    await expect(coreCard).not.toContainText('hoot');
+    await expect(coreCard).not.toContainText('talons');
 
     // Core scope constraint — single-site only.
     await expect(coreCard).toContainText('1 site with role-based access');

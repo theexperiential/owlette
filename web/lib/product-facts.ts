@@ -29,7 +29,7 @@ export const FEATURES = [
   "public REST API with scoped keys",
   "CLI and TypeScript SDK",
   "display topology management with auto-revert",
-  "scheduled machine restarts and dependency-aware process restarts",
+  "talons — automations: trigger, condition, outputs, with AI visual checks",
 ];
 
 export interface Tier {
@@ -39,11 +39,16 @@ export interface Tier {
 }
 
 export const PRICING: Tier[] = [
-  { name: "core", price: "free during beta", detail: "$10/machine/month after beta" },
+  {
+    name: "core",
+    price: "free during beta",
+    detail: "$20/machine/month after beta; $10 founders rate for the first 200",
+  },
   {
     name: "pro",
     price: "free during beta",
-    detail: "$50/machine/month after beta (3-machine minimum), includes 1 TB project storage per site",
+    detail:
+      "$60/machine/month after beta (3-machine minimum); $30 founders rate for the first 200. includes 1 TB project storage per site",
   },
 ];
 
