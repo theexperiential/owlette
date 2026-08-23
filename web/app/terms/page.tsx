@@ -27,9 +27,10 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-foreground mb-4">1. acceptance of terms</h2>
               <p>
-                by accessing or using owlette (&quot;the service&quot;), operated by Tridant Inc.
-                (&quot;Tridant,&quot; &quot;we,&quot; &quot;our,&quot; or &quot;us&quot;), you agree to be bound by these terms of service
-                (&quot;terms&quot;). if you do not agree to these terms, you may not use the service.
+                by accessing or using owlette (&quot;the service&quot;), operated by Tridant Inc., a
+                Delaware corporation (&quot;Tridant,&quot; &quot;we,&quot; &quot;our,&quot; or
+                &quot;us&quot;), you agree to be bound by these terms of service (&quot;terms&quot;).
+                if you do not agree to these terms, you may not use the service.
               </p>
               <p className="mt-4">
                 we reserve the right to modify these terms at any time. we will notify you of
@@ -238,10 +239,10 @@ export default function TermsPage() {
                 </a>
               </p>
               <p className="mt-2">
-                <strong>company:</strong> Tridant Inc.
+                <strong>company:</strong> Tridant Inc., a Delaware corporation
               </p>
               <p className="mt-2">
-                <strong>location:</strong> California, USA
+                <strong>principal place of business:</strong> California, USA
               </p>
             </section>
           </div>
