@@ -63,6 +63,13 @@ test('display capability card preview', async ({ page }) => {
     // fixed anchor on their next tick.
     await page.clock.setFixedTime(FIXED_NOW_MS);
 
+    // Playwright auto-scrolls `open-display-panel` into view to click it, and the
+    // page stays where that left it — which framed the shot mid-panel, clipping
+    // the layout card's header and the first monitor row off the top. The panel
+    // renders at the top of the dashboard, so scroll back before capturing.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(300);
+
     await page.screenshot({
       path: 'public/landing-screens/preview-displays.png',
       fullPage: false,

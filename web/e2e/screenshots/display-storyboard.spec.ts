@@ -88,6 +88,13 @@ test('display section storyboard — three frames', async ({ page }) => {
       // the fixed anchor (e.g. the ack-banner countdown vs scheduledAt).
       await page.clock.setFixedTime(FIXED_NOW_MS);
 
+      // Playwright auto-scrolled `open-display-panel` into view to click it and
+      // the page stayed there, framing every frame mid-panel with the layout
+      // card's header clipped off the top. The panel renders at the top of the
+      // dashboard, so scroll back before each capture.
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.waitForTimeout(300);
+
       await page.screenshot({ path: output, fullPage: false });
     }
   } finally {
