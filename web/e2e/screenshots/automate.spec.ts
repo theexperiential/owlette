@@ -2,10 +2,10 @@
  * Screenshot — the landing page's automate capability card.
  * Output: `web/public/landing-screens/preview-automate.png`.
  *
- * Drives `/admin/schedules` into the `automate-schedule-editor` scenario (a
- * custom "museum hours" preset over the built-ins, a lobby reboot schedule, a
- * media-server-stage CPU alert) and captures the preset list, which is where
- * the WeekSummaryBar renders.
+ * Drives `/talons` into the `automate-talons-list` scenario (seven talons
+ * spanning schedule / threshold / event triggers, a visual-check condition, and
+ * every output family) and captures the list, which is where the card's copy —
+ * trigger, condition, outputs — is actually visible.
  */
 import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
@@ -13,25 +13,27 @@ import { getAdminDb } from '../helpers/emulator';
 import { TEST_USERS } from '../helpers/seed';
 import { FIXED_NOW_MS, seedScreenshotFixtures } from './fixtures';
 
-// /admin/schedules is RequireSuperadmin — a plain admin gets redirected.
-test.use(roleState('superadmin'));
+// /talons is open to any site member; admin owns the seeded site, matching the
+// other capability-card specs.
+test.use(roleState('admin'));
 
 test('automate capability card preview', async ({ page }) => {
-  const ctx = await seedScreenshotFixtures('automate-schedule-editor');
+  const ctx = await seedScreenshotFixtures('automate-talons-list');
 
   try {
     await getAdminDb()
       .collection('users')
-      .doc(TEST_USERS.superadmin.uid)
+      .doc(TEST_USERS.admin.uid)
       .set({ lastSiteId: ctx.siteId }, { merge: true });
 
-    // Pin the clock BEFORE goto so "updated Xd ago" resolves against FIXED_NOW.
+    // Pin the clock BEFORE goto so "last run Xh ago" resolves against FIXED_NOW.
     await page.clock.install({ time: FIXED_NOW_MS });
 
-    await page.goto('/admin/schedules');
+    await page.goto('/talons');
 
-    // Proves useSchedulePresets resolved against the screenshot site.
-    await expect(page.getByText('museum hours', { exact: false })).toBeVisible();
+    // Proves the useTalons listener resolved against the screenshot site.
+    await expect(page.getByTestId('talon-row')).toHaveCount(7);
+    await expect(page.getByText('doors open — lobby wall is live')).toBeVisible();
 
     // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
     await page.waitForTimeout(1500);
@@ -49,7 +51,7 @@ test('automate capability card preview', async ({ page }) => {
 
     await page.clock.setFixedTime(FIXED_NOW_MS);
 
-    // WeekSummaryBar paints its SVG after the preset doc resolves.
+    // The scope column resolves only once the machines listener lands.
     await page.waitForTimeout(500);
 
     await page.screenshot({

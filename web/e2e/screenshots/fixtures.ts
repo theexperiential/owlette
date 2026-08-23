@@ -19,6 +19,7 @@ import {
   TEST_USERS,
   type SeedMachineOptions,
 } from '../helpers/seed';
+import type { TalonDoc } from '@/lib/talons/types';
 
 export type ScreenshotScenario =
   | 'dashboard-mixed-states'
@@ -28,6 +29,7 @@ export type ScreenshotScenario =
   | 'diagnose-cortex-chat'
   | 'display-layout-editor'
   | 'automate-schedule-editor'
+  | 'automate-talons-list'
   | 'display-storyboard-frame-1'
   | 'display-storyboard-frame-2'
   | 'display-storyboard-frame-3';
@@ -63,6 +65,8 @@ export async function seedScreenshotFixtures(
       return seedDisplayLayoutEditor();
     case 'automate-schedule-editor':
       return seedAutomateScheduleEditor();
+    case 'automate-talons-list':
+      return seedAutomateTalonsList();
     case 'display-storyboard-frame-1':
       return seedDisplayStoryboardFrame(1);
     case 'display-storyboard-frame-2':
@@ -116,6 +120,10 @@ async function deleteSiteSubtree(siteId: string): Promise<void> {
     'deployments',
     'installer_templates',
     'logs',
+    // Talon definitions and their run history — both live directly under the
+    // site, so a scenario that seeds either would otherwise leak into the next.
+    'talons',
+    'talon_runs',
   ];
 
   for (const sub of subcollectionNames) {
@@ -1277,6 +1285,247 @@ async function seedAutomateScheduleEditor(): Promise<ScreenshotFixture> {
       createdAt: tsAgo(60 * 60 * 24 * 2),
       updatedAt: tsAgo(60 * 60 * 6),
     });
+
+  return {
+    siteId,
+    machineId,
+    cleanup: () => deleteSiteSubtree(siteId),
+  };
+}
+
+/**
+ * Talons list state: seven automations under `sites/{siteId}/talons`, chosen to
+ * span every trigger kind (schedule entries, threshold, event — one of them
+ * delayed), both condition kinds, and all four output families (email, webhook,
+ * hoot, command). One talon is scoped to every machine, the rest to a subset,
+ * so the scope column reads as a real fleet rather than a demo.
+ *
+ * Ordering is not incidental: `useTalons` sorts by name client-side, so the
+ * seeded names below are already in rendered order. Client writes are denied by
+ * firestore.rules (talons are server-mediated); the Admin SDK bypasses that,
+ * which is why these are written here rather than through the api.
+ *
+ * `lastRunAt` values hang off FIXED_NOW so the "last run" column is stable under
+ * the spec's pinned clock. The wall check's last run is `skipped` on purpose —
+ * a visual-check `pass` short-circuits before the outputs run, so that IS what a
+ * healthy wall looks like in the history.
+ */
+async function seedAutomateTalonsList(): Promise<ScreenshotFixture> {
+  const siteId = 'site-A';
+  const machineId = 'lobby-wall';
+  const machineIds = [machineId, 'gallery-projector', 'media-server-stage', 'render-node-01'];
+  await seedScreenshotSite(siteId, 'flagship');
+
+  // The talons page reads `machines.length` only (to render "1 of 4 machines"),
+  // so these need no metrics and no display profile.
+  for (const id of machineIds) {
+    await seedMachine(siteId, id, { heartbeatOffsetSec: 5, monitorCount: 0 });
+  }
+
+  // Shared authorship/bookkeeping half of every talon below.
+  const authored: Pick<
+    TalonDoc,
+    'schemaVersion' | 'createdBy' | 'createdVia' | 'consecutiveFailures' | 'createdAt' | 'updatedAt'
+  > = {
+    schemaVersion: 1,
+    createdBy: TEST_USERS.admin.uid,
+    createdVia: 'ui',
+    consecutiveFailures: 0,
+    createdAt: tsAgo(60 * 60 * 24 * 45),
+    updatedAt: tsAgo(60 * 60 * 24 * 6),
+  };
+
+  const talons: Array<{ id: string; doc: TalonDoc }> = [
+    {
+      id: 'talon-doors-open',
+      doc: {
+        ...authored,
+        name: 'doors open — lobby wall is live',
+        description: 'before opening, look at the wall and make sure the show is on screen',
+        enabled: true,
+        trigger: {
+          type: 'schedule',
+          entries: [
+            { id: 'entry-doors-open', days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'], time: '09:45' },
+          ],
+        },
+        condition: {
+          type: 'visual_check',
+          expectation:
+            'the wall should be showing the content loop. it should not show the windows ' +
+            'desktop, an error dialog, or a black screen.',
+          monitor: 1,
+        },
+        outputs: [
+          {
+            type: 'cortex',
+            directive:
+              'the lobby wall is not showing the show. restart touchdesigner on it and tell ' +
+              'me what you found.',
+            allowActions: true,
+          },
+          { type: 'email' },
+        ],
+        scope: { machineIds: [machineId] },
+        cooldownMinutes: 60,
+        // 09:45 America/Los_Angeles = 16:45 UTC, the next occurrence after FIXED_NOW.
+        nextRunAt: Timestamp.fromMillis(FIXED_NOW_MS + (2 * 60 + 15) * 60 * 1000),
+        lastRunAt: tsAgo(60 * 60 * 4 + 60 * 45),
+        lastRunStatus: 'skipped',
+        lastRunId: 'run-doors-open',
+      },
+    },
+    {
+      id: 'talon-gpu-pinned',
+      doc: {
+        ...authored,
+        name: 'gpu pinned on the render node',
+        description: 'page show ops when the render machines stop keeping up',
+        enabled: true,
+        trigger: { type: 'threshold', metric: 'gpu_percent', operator: '>=', value: 95 },
+        condition: { type: 'none' },
+        outputs: [
+          { type: 'webhook', url: 'https://hooks.showops.example.com/owlette/gpu' },
+          { type: 'email' },
+        ],
+        scope: { machineIds: ['render-node-01', 'media-server-stage'] },
+        cooldownMinutes: 30,
+        lastRunAt: tsAgo(60 * 60 * 2 + 60 * 20),
+        lastRunStatus: 'succeeded',
+        lastRunId: 'run-gpu-pinned',
+      },
+    },
+    {
+      id: 'talon-nightly-restart',
+      doc: {
+        ...authored,
+        name: 'nightly restart — media servers',
+        description: 'restart the show stack at 4am so every day starts from a known state',
+        enabled: true,
+        trigger: {
+          type: 'schedule',
+          entries: [
+            { id: 'entry-nightly-restart', days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'], time: '04:00' },
+          ],
+        },
+        condition: { type: 'none' },
+        outputs: [{ type: 'command', commandType: 'restart_process', processName: 'TouchDesigner' }],
+        scope: { machineIds: ['media-server-stage', 'render-node-01'] },
+        cooldownMinutes: 720,
+        // 04:00 America/Los_Angeles = 11:00 UTC, so the next one is tomorrow.
+        nextRunAt: Timestamp.fromMillis(FIXED_NOW_MS + (20 * 60 + 30) * 60 * 1000),
+        lastRunAt: tsAgo(60 * 60 * 10 + 60 * 30),
+        lastRunStatus: 'succeeded',
+        lastRunId: 'run-nightly-restart',
+      },
+    },
+    {
+      id: 'talon-projector-offline',
+      doc: {
+        ...authored,
+        name: 'projector dropped offline',
+        description: 'give it five minutes to come back on its own, then tell the on-call tech',
+        enabled: true,
+        trigger: { type: 'event', eventTypes: ['machine_offline'], delayMinutes: 5 },
+        condition: { type: 'none' },
+        outputs: [
+          { type: 'email' },
+          { type: 'webhook', url: 'https://hooks.showops.example.com/owlette/on-call' },
+        ],
+        scope: { machineIds: ['gallery-projector'] },
+        cooldownMinutes: 15,
+        lastRunAt: tsAgo(60 * 60 * 24 * 3),
+        lastRunStatus: 'succeeded',
+        lastRunId: 'run-projector-offline',
+      },
+    },
+    {
+      id: 'talon-crash-recovery',
+      doc: {
+        ...authored,
+        name: 'touchdesigner crash recovery',
+        description: 'when the show process dies, put it back before anyone notices',
+        enabled: true,
+        trigger: { type: 'event', eventTypes: ['process_crash', 'process_start_failed'] },
+        condition: { type: 'none' },
+        outputs: [
+          { type: 'command', commandType: 'restart_process', processName: 'TouchDesigner' },
+          { type: 'email' },
+        ],
+        scope: { machineIds: null },
+        cooldownMinutes: 10,
+        lastRunAt: tsAgo(60 * 60 * 31),
+        lastRunStatus: 'succeeded',
+        lastRunId: 'run-crash-recovery',
+      },
+    },
+    {
+      id: 'talon-update-guard',
+      doc: {
+        ...authored,
+        name: 'update guard — sundays',
+        description: 're-assert the update window and the setup-screen suppression every week',
+        enabled: true,
+        trigger: {
+          type: 'schedule',
+          entries: [{ id: 'entry-update-guard', days: ['sun'], time: '07:00' }],
+        },
+        condition: { type: 'none' },
+        outputs: [
+          {
+            type: 'cortex',
+            directive:
+              're-assert the update window and suppress the windows setup screens on every ' +
+              'machine in this site.',
+            allowActions: true,
+          },
+        ],
+        scope: { machineIds: null },
+        cooldownMinutes: 1440,
+        // 07:00 America/Los_Angeles = 14:00 UTC; FIXED_NOW is a Wednesday, so
+        // the next sunday is four days out.
+        nextRunAt: Timestamp.fromMillis(FIXED_NOW_MS + (4 * 24 * 60 - 30) * 60 * 1000),
+        lastRunAt: tsAgo(60 * 60 * 24 * 3 + 60 * 30),
+        lastRunStatus: 'succeeded',
+        lastRunId: 'run-update-guard',
+      },
+    },
+    {
+      id: 'talon-weekly-health-report',
+      doc: {
+        ...authored,
+        name: 'weekly health report',
+        description: 'every monday at 9 am, hoot writes a plain-language health report',
+        enabled: true,
+        trigger: {
+          type: 'schedule',
+          entries: [{ id: 'entry-weekly-health-report', days: ['mon'], time: '09:00' }],
+        },
+        condition: { type: 'none' },
+        outputs: [
+          {
+            type: 'cortex',
+            directive:
+              'summarize how the fleet ran this week — crashes, restarts, and anything ' +
+              'trending the wrong way.',
+          },
+          { type: 'email' },
+        ],
+        scope: { machineIds: null },
+        cooldownMinutes: 1440,
+        // 09:00 America/Los_Angeles = 16:00 UTC on the coming monday (5 days out).
+        nextRunAt: Timestamp.fromMillis(FIXED_NOW_MS + (5 * 24 * 60 + 90) * 60 * 1000),
+        lastRunAt: tsAgo(60 * 60 * 24 * 2 + 60 * 60 * 5 + 60 * 30),
+        lastRunStatus: 'succeeded',
+        lastRunId: 'run-weekly-health-report',
+      },
+    },
+  ];
+
+  const talonsRef = getAdminDb().collection('sites').doc(siteId).collection('talons');
+  for (const { id, doc } of talons) {
+    await talonsRef.doc(id).set(doc);
+  }
 
   return {
     siteId,
