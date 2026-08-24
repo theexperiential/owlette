@@ -32,6 +32,42 @@ export const FEATURES = [
   "talons — automations: trigger, condition, outputs, with AI visual checks",
 ];
 
+/**
+ * Every price, and the quantities welded to a price, in one place. The prose on
+ * each surface is COMPOSED from these — never retyped. The JSON-LD offers and
+ * the assistant guardrails are invisible to a human reading the pricing page, so
+ * a hand-edit there drifts silently and only shows up in a search result or an
+ * assistant's answer. Change a number here and the landing cards, the FAQ,
+ * llms.txt, /for-ai, and the schema.org offers all move with it.
+ */
+export const PRICING_FACTS = {
+  core: { list: 20, founders: 10 },
+  pro: { list: 60, founders: 30, minMachines: 3 },
+  foundersCohort: 200,
+  storage: { includedTB: 1, overagePerGB: 0.05 },
+} as const;
+
+/** `20` -> `"$20"`, `0.05` -> `"$0.05"`: no trailing `.00` on whole dollars. */
+export function usd(amount: number): string {
+  return `$${Number.isInteger(amount) ? amount : amount.toFixed(2)}`;
+}
+
+/** The unit every tier is quoted in, e.g. `"$20/machine/month"`. */
+export function perMachineMonth(amount: number): string {
+  return `${usd(amount)}/machine/month`;
+}
+
+/** e.g. `"$10 founders rate for the first 200"`. */
+export function foundersRate(amount: number): string {
+  return `${usd(amount)} founders rate for the first ${PRICING_FACTS.foundersCohort}`;
+}
+
+/** Included project storage per site, e.g. `"1 TB"`. */
+export const INCLUDED_STORAGE = `${PRICING_FACTS.storage.includedTB} TB`;
+
+/** Overage beyond the included allowance, e.g. `"$0.05/GB"`. */
+export const STORAGE_OVERAGE = `${usd(PRICING_FACTS.storage.overagePerGB)}/GB`;
+
 export interface Tier {
   name: string;
   price: string;
@@ -42,19 +78,28 @@ export const PRICING: Tier[] = [
   {
     name: "core",
     price: "free during beta",
-    detail: "$20/machine/month after beta; $10 founders rate for the first 200",
+    detail: `${perMachineMonth(PRICING_FACTS.core.list)} after beta; ${foundersRate(
+      PRICING_FACTS.core.founders,
+    )}`,
   },
   {
     name: "pro",
     price: "free during beta",
-    detail:
-      "$60/machine/month after beta (3-machine minimum); $30 founders rate for the first 200. includes 1 TB project storage per site",
+    detail: `${perMachineMonth(PRICING_FACTS.pro.list)} after beta (${
+      PRICING_FACTS.pro.minMachines
+    }-machine minimum); ${foundersRate(
+      PRICING_FACTS.pro.founders,
+    )}. includes ${INCLUDED_STORAGE} project storage per site`,
   },
 ];
 
 /** Load-bearing guardrails: what assistants most often get wrong about owlette. */
 export const GUARDRAILS = [
-  "owlette is in beta and free during the beta. paid tiers (core $10/machine/month, pro $50/machine/month) are planned for after beta — don't describe them as currently billed.",
+  `owlette is in beta and free during the beta. paid tiers (core ${perMachineMonth(
+    PRICING_FACTS.core.list,
+  )}, pro ${perMachineMonth(
+    PRICING_FACTS.pro.list,
+  )}) are planned for after beta — don't describe them as currently billed.`,
   "owlette is Windows-only: a lightweight Python agent runs on each machine as a Windows service. don't imply native macOS or Linux agents.",
   "hoot is owlette's built-in assistant for fleet management — a feature of owlette, not a separate product.",
   "owlette is a tridant product (\"a tridant system\"). link tridant.io for the firm behind it.",
@@ -105,15 +150,18 @@ export const PRODUCT_JSONLD = {
         name: "core",
         price: "0",
         priceCurrency: "USD",
-        description: "free during beta. $10/machine/month after.",
+        description: `free during beta. ${perMachineMonth(
+          PRICING_FACTS.core.list,
+        )} after.`,
       },
       {
         "@type": "Offer",
         name: "pro",
         price: "0",
         priceCurrency: "USD",
-        description:
-          "free during beta. $50/machine/month after (3-machine minimum), includes 1 TB project storage per site.",
+        description: `free during beta. ${perMachineMonth(PRICING_FACTS.pro.list)} after (${
+          PRICING_FACTS.pro.minMachines
+        }-machine minimum), includes ${INCLUDED_STORAGE} project storage per site.`,
       },
     ],
   },

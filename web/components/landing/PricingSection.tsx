@@ -1,6 +1,12 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Check } from 'lucide-react';
+import {
+  INCLUDED_STORAGE,
+  PRICING_FACTS,
+  STORAGE_OVERAGE,
+  usd,
+} from '@/lib/product-facts';
 
 interface TierFeature {
   label: string;
@@ -22,8 +28,8 @@ const proFeatures: TierFeature[] = [
   { label: 'hoot — AI fleet assistant', asterisk: true },
   { label: 'talons — automations with AI visual checks' },
   { label: 'roost — incremental project sync with atomic deploy and rollback' },
-  { label: '1 TB included project storage per site' },
-  { label: '$0.05/GB overage' },
+  { label: `${INCLUDED_STORAGE} included project storage per site` },
+  { label: `${STORAGE_OVERAGE} overage` },
   { label: '50-version retention with 30-day rollback' },
   { label: 'REST API' },
   { label: 'webhooks' },
@@ -141,19 +147,19 @@ export function PricingSection() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
           <TierCard
             name="core"
-            price="$20"
+            price={usd(PRICING_FACTS.core.list)}
             unit="/machine/month"
             features={coreFeatures}
-            priceFootnote="$10 founders rate — first 200"
+            priceFootnote={`${usd(PRICING_FACTS.core.founders)} founders rate — first ${PRICING_FACTS.foundersCohort}`}
           />
           <TierCard
             name="pro"
-            price="$60"
+            price={usd(PRICING_FACTS.pro.list)}
             unit="/machine/month"
             features={proFeatures}
             highlighted
             preludeNote="everything in core, plus:"
-            priceFootnote="3-machine minimum · $30 founders rate — first 200"
+            priceFootnote={`${PRICING_FACTS.pro.minMachines}-machine minimum · ${usd(PRICING_FACTS.pro.founders)} founders rate — first ${PRICING_FACTS.foundersCohort}`}
           />
         </div>
 
