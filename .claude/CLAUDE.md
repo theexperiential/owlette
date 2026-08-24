@@ -62,7 +62,7 @@ A multi-quarter rewrite of project distribution into a content-addressed sync pl
 cd web && npm install && npm run dev     # Dev server (localhost:3000)
 cd web && npm run build                  # Production build
 cd web && npm test                       # Jest unit tests
-cd web && npm run e2e                    # Playwright E2E suite (requires JDK 21 + firebase-tools@13 globally)
+cd web && npm run e2e                    # Playwright E2E suite (requires JDK 21 + firebase-tools@15 globally)
 cd web && npm run lint                   # Lint
 
 # Agent
@@ -77,7 +77,7 @@ node scripts/sync-versions.js X.Y.Z
 
 Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules` (independent). See `docs/version-management.md`.
 
-**E2E prereqs**: JDK 21 on PATH (Temurin), `npm i -g firebase-tools@13`, `npx playwright install chromium --with-deps` (once). Emulator ports: Auth :9099, Firestore :8080, Storage :9199. App runs on :3100 during E2E (not :3000). Report output: `web/e2e/.output/report/`. Full guide: `web/e2e/README.md`.
+**E2E prereqs**: JDK 21 on PATH (Temurin), `npm i -g firebase-tools@15`, `npx playwright install chromium --with-deps` (once). Emulator ports: Auth :9099, Firestore :8080, Storage :9199. App runs on :3100 during E2E (not :3000). Report output: `web/e2e/.output/report/`. Full guide: `web/e2e/README.md`.
 
 ---
 

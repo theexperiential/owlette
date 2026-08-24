@@ -101,7 +101,7 @@ jobs:
       - name: install firebase-tools
         # zizmor: ignore[adhoc-packages] — emulator runner CLI, major-pinned;
         # not a dependency of the code under test.
-        run: npm i -g firebase-tools@13 # zizmor: ignore[adhoc-packages]
+        run: npm i -g firebase-tools@15 # zizmor: ignore[adhoc-packages]
 
       - name: run e2e suite
         working-directory: web

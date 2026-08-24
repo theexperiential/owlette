@@ -36,7 +36,7 @@ This does the production build, spins up the emulators, and runs Playwright (~45
 ```bash
 cd web && npm run e2e
 ```
-Prereqs (already set up on this machine): JDK 21 on PATH, `firebase-tools@13` global, `npx playwright install chromium` done once. If the emulator ports (Auth :9099, Firestore :8080, Storage :9199) are busy, a stale emulator is the usual culprit — kill it by PID (never by name) and retry.
+Prereqs (already set up on this machine): JDK 21 on PATH, `firebase-tools@15` global, `npx playwright install chromium` done once. If the emulator ports (Auth :9099, Firestore :8080, Storage :9199) are busy, a stale emulator is the usual culprit — kill it by PID (never by name) and retry.
 
 ### Step 5: Report + gate
 ```

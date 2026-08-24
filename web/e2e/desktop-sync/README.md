@@ -50,7 +50,7 @@ a side effect of someone running the suite.
 
 ### Prerequisites (same as the main e2e suite)
 
-- JDK 21 on `PATH` (Temurin), `npm i -g firebase-tools@13`,
+- JDK 21 on `PATH` (Temurin), `npm i -g firebase-tools@15`,
   `npx playwright install chromium` once.
 - A python with the agent's dependencies — the one that runs
   `cd agent && python -m pytest`. Override with `OWLETTE_PYTHON` if it is not

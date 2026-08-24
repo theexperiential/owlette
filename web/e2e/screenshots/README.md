@@ -11,7 +11,7 @@ Same baseline as the main E2E suite:
 | Dependency | Version | Why |
 |---|---|---|
 | JDK 21 | exact pin | Firestore emulator requires JVM |
-| firebase-tools | 13.x | `npm i -g firebase-tools@13` |
+| firebase-tools | 15.x | `npm i -g firebase-tools@15` |
 | Playwright | managed by `npm ci` | `npx playwright install chromium --with-deps` once |
 
 ## Running locally
