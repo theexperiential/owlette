@@ -4,6 +4,7 @@
  */
 
 import * as Sentry from '@sentry/nextjs';
+import { sanitizeForLog } from '@/lib/logSanitize';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -53,10 +54,13 @@ class Logger {
 
   private log(level: LogLevel, message: string, options?: LogOptions): void {
     const timestamp = new Date().toISOString();
-    const context = options?.context ? `[${options.context}]` : '';
+    // Both `message` and `context` are caller-supplied and routinely carry
+    // machine/process names that came from a request body. Flatten them here,
+    // at the single sink, so no call site has to remember to.
+    const context = options?.context ? `[${sanitizeForLog(options.context)}]` : '';
     const prefix = `[${timestamp}] [${level.toUpperCase()}]${context}`;
 
-    const logMessage = `${prefix} ${message}`;
+    const logMessage = `${prefix} ${sanitizeForLog(message)}`;
 
     switch (level) {
       case 'debug':

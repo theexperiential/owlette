@@ -17,7 +17,7 @@ owlette uses **independent component versioning** for flexibility while maintain
 
 ### product version (`/VERSION`)
 
-**Current:** 3.1.0
+**Current:** 3.2.0
 
 **Tracks:** User-visible releases that bundle all components together.
 
@@ -30,7 +30,7 @@ owlette uses **independent component versioning** for flexibility while maintain
 
 #### agent version (`agent/VERSION`)
 
-**Current:** 3.1.0
+**Current:** 3.2.0
 
 **Tracks:** Windows service agent code.
 
@@ -44,7 +44,7 @@ owlette uses **independent component versioning** for flexibility while maintain
 
 #### web version (`web/package.json`)
 
-**Current:** 3.1.0
+**Current:** 3.2.0
 
 **Tracks:** Next.js web dashboard code.
 
@@ -95,12 +95,14 @@ node scripts/sync-versions.js
 
 # Bump all to 2.1.0
 node scripts/sync-versions.js 2.1.0
-
-# Or use Python
-python scripts/sync_versions.py 2.1.0
 ```
 
-### option 2: manual update
+> **Use the .js script only.** `scripts/sync_versions.py` predates the desktop
+> app and writes just 3 of the 9 version surfaces — it misses
+> `desktop/package.json`, `tauri.conf.json`, `Cargo.toml`, `README.md`, and
+> the docs, so the shipped desktop binary would report the old version.
+
+### option 2: manual update (discouraged — see the file list sync-versions.js maintains)
 
 Update each file individually:
 
@@ -314,4 +316,4 @@ git tag v2.0.5-agent
 
 ---
 
-**Last Updated:** 2026-08-22
+**Last Updated:** 2026-08-24

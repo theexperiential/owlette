@@ -19,6 +19,7 @@ import {
 } from '@/lib/hoot/categorizeChat.server';
 import { getUserIdFromSession, withRateLimit } from '@/lib/withRateLimit';
 import { isUntitledChat } from '@/lib/hoot/untitledChat';
+import { sanitizeForLog } from '@/lib/logSanitize';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -50,7 +51,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
             const chatDoc = await db.collection('chats').doc(chatId).get();
             const data = chatDoc.data();
             if (!chatDoc.exists || data?.siteId !== siteId) {
-              console.warn(`[Categorize] Skipping chat ${chatId}: not found on site ${siteId}`);
+              console.warn(`[Categorize] Skipping chat ${sanitizeForLog(chatId)}: not found on site ${sanitizeForLog(siteId)}`);
               return;
             }
 
@@ -66,7 +67,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
                 .get();
               const firstMsg = messagesSnap.docs[0]?.data()?.content;
               if (!firstMsg) {
-                console.log(`[Categorize] Skipping chat ${chatId}: no title or messages`);
+                console.log(`[Categorize] Skipping chat ${sanitizeForLog(chatId)}: no title or messages`);
                 return;
               }
 
@@ -98,7 +99,7 @@ Reply with only the category name, nothing else.`,
             await db.collection('chats').doc(chatId).update({ category });
             results[chatId] = category;
           } catch (err) {
-            console.error(`[Categorize] Failed for chat ${chatId}:`, err);
+            console.error(`[Categorize] Failed for chat ${sanitizeForLog(chatId)}:`, err);
           }
         });
         await Promise.all(promises);

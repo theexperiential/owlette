@@ -50,7 +50,7 @@ When no config exists, the agent generates this default structure:
 
 ```json
 {
-    "version": "1.6.0",
+    "version": "1.7.0",
     "environment": "production",
     "processes": [],
     "logging": {
@@ -70,6 +70,9 @@ When no config exists, the agent generates this default structure:
         "assigned": null,
         "auto_enforce": false,
         "remoteApplyEnabled": false
+    },
+    "temperature": {
+        "enabled": true
     },
     "watchdog": {
         "enabled": true,
@@ -101,6 +104,7 @@ If the agent regenerates a config and an existing `firebase` section is present,
 | `logging` | object | yes | Local log level, retention, and optional Firebase log shipping. |
 | `sentry` | object | yes | Optional Sentry reporting settings. |
 | `displays` | object | yes | Display-topology monitoring and remote apply settings. |
+| `temperature` | object | yes | CPU/GPU temperature sensor reads (3.2.0+). `enabled: false` stops all sensor reads; a missing section means enabled. Takes effect within one metrics tick — no restart needed. |
 | `watchdog` | object | yes | Service watchdog thresholds, restart budget, and restart preconditions. |
 | `firebase` | object | no | Pairing and cloud-sync state. The agent may preserve or write this section, but users should not edit it manually. |
 
@@ -120,6 +124,7 @@ If the agent regenerates a config and an existing `firebase` section is present,
 | `environment` | `"production"` or `"development"` |
 | `sentry` | `enabled`, `dsn` |
 | `displays` | `enabled`, `assigned`, `auto_enforce`, `remoteApplyEnabled` |
+| `temperature` | `enabled` |
 | `watchdog.thresholds` | `failure_seconds`, `boot_grace_seconds` |
 | `watchdog.budget` | `max_per_window`, `window_seconds` |
 | `watchdog.preconditions` | `require_internet`, `fatal_error_suppression_seconds` |

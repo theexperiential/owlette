@@ -419,3 +419,33 @@ describe('exportAllSites', () => {
     assert.equal(res[0].siteId, 'ok');
   });
 });
+
+describe('PLATFORM_AUDIT_SITE_ID is a usable Firestore document id', () => {
+  // Firestore rejects any resource id matching __*__. The sentinel becomes a
+  // document id (`sites/{siteId}/audit_log`), so a reserved value means every
+  // platform-scoped audit write throws INVALID_ARGUMENT and the event is lost —
+  // silently, because recordAuditEvent is fire-and-forget. That is exactly what
+  // shipped as `__platform__`.
+  const FIRESTORE_RESERVED_ID = /^__.*__$/;
+
+  it('is not a reserved Firestore id', () => {
+    assert.equal(FIRESTORE_RESERVED_ID.test(PLATFORM_AUDIT_SITE_ID), false);
+  });
+
+  it('rejects the value that caused the outage (negative control)', () => {
+    // Proves the assertion above can actually fail: without this, a regression
+    // back to `__platform__` would have to be caught by the check itself.
+    assert.equal(FIRESTORE_RESERVED_ID.test('__platform__'), true);
+  });
+
+  it('cannot collide with a real site id', () => {
+    // web/lib/validators.ts validateSiteId — a real site must start with a
+    // lowercase letter, so a leading underscore is unreachable by any user.
+    const SITE_ID_FORMAT = /^[a-z][a-z0-9_-]*$/;
+    assert.equal(SITE_ID_FORMAT.test(PLATFORM_AUDIT_SITE_ID), false);
+  });
+
+  it('contains no path separator', () => {
+    assert.equal(PLATFORM_AUDIT_SITE_ID.includes('/'), false);
+  });
+});

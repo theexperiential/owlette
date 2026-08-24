@@ -40,7 +40,27 @@ export const AUDIT_EVENT_KINDS = [
 
 export type AuditEventKind = (typeof AUDIT_EVENT_KINDS)[number];
 
-export const PLATFORM_AUDIT_SITE_ID = '__platform__';
+/**
+ * Pseudo-site holding audit events that are not scoped to a real site.
+ *
+ * This value becomes a Firestore DOCUMENT ID (`sites/{siteId}/audit_log`), so
+ * it must be a legal one. It used to be `__platform__`, and Firestore reserves
+ * every id matching `__*__` — so every platform-scoped audit write failed with
+ *
+ *   INVALID_ARGUMENT: Resource id "__platform__" is invalid because it is reserved
+ *
+ * and the event was lost. The handler is fire-and-forget, so nothing surfaced;
+ * platform-level admin actions simply had no audit trail.
+ *
+ * A single leading underscore is legal for Firestore AND rejected by the site-id
+ * validator (`/^[a-z][a-z0-9_-]*$/` requires a leading letter), so no real site
+ * can ever collide with it.
+ *
+ * NOT the same as web's `PLATFORM_TARGET_ID`, which is still `__platform__`:
+ * that one is a stored FIELD value (`target.id`), and fields carry no id
+ * restrictions. Do not "align" them.
+ */
+export const PLATFORM_AUDIT_SITE_ID = '_platform';
 
 export interface AuditEvent {
   kind: AuditEventKind;

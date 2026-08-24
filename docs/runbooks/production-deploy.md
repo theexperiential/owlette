@@ -48,7 +48,7 @@ the docs site.
 | --- | --- | --- | --- |
 | web dev | push to `dev` | Railway auto-deploys dev service to `https://dev.owlette.app` | push release candidate to `dev`, then verify |
 | web prod | push or merge to `main` | Railway auto-deploys prod service to `https://owlette.app` | merge `dev` to `main`, then verify |
-| Cloud Functions | none | no CI workflow | run `firebase use prod && firebase deploy --only functions` if functions changed |
+| Cloud Functions | none | no CI workflow | run `FUNCTIONS_DISCOVERY_TIMEOUT=120 firebase deploy --only functions --project prod` if functions changed (firebase-tools 15.x) |
 | Firestore rules and indexes | none | no CI workflow | run `firebase deploy --only firestore` if rules or indexes changed |
 | storage rules | none | no CI workflow | run `firebase deploy --only storage` if storage rules changed |
 | docs site | push to `main` touching `docs/**` or `mkdocs.yml` | `.github/workflows/deploy-docs.yml` publishes to `gh-pages` | merge docs changes to `main`; watch workflow |
@@ -178,8 +178,36 @@ the docs site.
    Cloud Functions have no CI deployment workflow. Deploy them manually:
 
     ```sh
-    firebase use prod && firebase deploy --only functions
+    FUNCTIONS_DISCOVERY_TIMEOUT=120 firebase use prod &&       FUNCTIONS_DISCOVERY_TIMEOUT=120 firebase deploy --only functions
     ```
+
+    **`FUNCTIONS_DISCOVERY_TIMEOUT` is not optional.** Before deploying anything,
+    the CLI loads the built code to discover the function definitions, and that
+    discovery has a hard 10-second default. On a developer machine it routinely
+    exceeds it — process spawn plus a credential-resolution attempt against a GCP
+    metadata server that is not there — and the deploy dies with:
+
+    ```
+    Error: User code failed to load. Cannot determine backend specification.
+    Timeout after 10000.
+    ```
+
+    That failure is safe: it happens during analysis, so nothing is deployed and
+    the live functions keep running their existing build. But it looks alarming
+    and it stops the release. Raising the timeout is the fix; 120 is generous.
+
+    It is a budget problem, not slow code. Measured on this codebase:
+    `initializeApp()` 104ms, `getFirestore()` 478ms, full `lib/index.js` load
+    530ms — about a second all in. The 10s default is blown by process spawn
+    and scheduling on a loaded machine, which is why it is intermittent: the
+    same code passes and fails run to run. Four files do initialise Firestore at
+    module scope (`deploymentStatus`, `deploymentSweeper`, `distributionFanout`,
+    `metricsHistory`), and making that lazy is still tidier, but the numbers say
+    it would not fix this — do not reach for that refactor expecting it to.
+
+    **firebase-tools must be 15.x.** 13.x cannot deploy or emulate a
+    `firebase-functions` 7 codebase: its runtime shim calls the removed
+    `functions.config()` and the worker is killed on every invocation.
 
     The Firebase predeploy hook runs the functions build:
 
@@ -262,8 +290,10 @@ the docs site.
 ## post-deploy smoke checklist
 
 - [ ] Railway production deploy completed for `https://owlette.app`.
-- [ ] If functions changed, `firebase use prod && firebase deploy --only functions`
-  completed successfully.
+- [ ] If functions changed, `FUNCTIONS_DISCOVERY_TIMEOUT=120 firebase deploy --only functions --project prod`
+  completed successfully (firebase-tools 15.x; the timeout override is required — see above).
+- [ ] `firebase functions:list --project prod` shows the expected runtime for every function.
+- [ ] `firebase functions:log --project prod` is clean — no load errors on the new build.
 - [ ] If Firestore rules or indexes changed, `firebase deploy --only firestore`
   completed successfully after any required migration — and, where the web code
   depends on them, before the production web deploy rather than after it.

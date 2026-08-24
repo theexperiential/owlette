@@ -91,17 +91,14 @@ import site          # Enables site.main() for pip
 
 ### Installation Steps (in order)
 
-**Step 0 — Windows Defender Exclusion**:
+**Step 0 — Defender exclusion RETRACTION + PawnIO driver**:
 ```powershell
-# wrapper DLL + python hosts
-Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp'
-Add-MpPreference -ExclusionProcess '{app}\python\python.exe'
-Add-MpPreference -ExclusionProcess '{app}\python\pythonw.exe'
-# the runtime-extracted WinRing0 kernel driver itself (this is what Defender quarantines)
-Add-MpPreference -ExclusionPath '{app}\python\python.sys'
-Add-MpPreference -ExclusionPath '{app}\python\pythonw.sys'
+# [Run] retracts the five exclusions pre-PawnIO versions added (WinTmp path,
+# python/pythonw process, python.sys/pythonw.sys paths) — active removal,
+# because upgrades never run the old uninstaller
+Remove-MpPreference -ExclusionPath '{app}\python\python.sys'   # ...and the other four
 ```
-**Why**: LibreHardwareMonitor (WinTmp) extracts the WinRing0 driver AT RUNTIME to `{app}\python\python.sys` / `pythonw.sys` and loads it as kernel service `R0python` / `R0pythonw`. Windows Defender flags it as `VulnerableDriver:WinNT/Winring0`. A process exclusion does NOT cover a kernel-driver file load and the WinTmp path is the wrong folder, so the `.sys` paths MUST be excluded by path — do not drop them. If `WinTmp`/`LibreHardwareMonitorLib.dll` is ever upgraded, re-verify the extracted `.sys` name/path.
+**Why**: the temperature stack is LibreHardwareMonitor 0.9.6 (`HardwareMonitor` pip package) + the signed PawnIO driver. Nothing extracts a flagged `.sys` any more, so no exclusions are needed — but machines upgrading from <= 3.1.0 carry them and must have them retracted. `EnsurePawnIO()` in `[Code]` installs `vendor\PawnIO_setup.exe` (`-install -silent`) when the registry `Uninstall\PawnIO\DisplayVersion` is absent or < 2.2.0 — the gate matters because 2.1.0 boot-loops Win10 1809/LTSC machines. Exit 0/183/3010 all mean success; never fatal. `InitializeSetup` also stops+deletes the legacy `R0python`/`R0pythonw` kernel services, and `[InstallDelete]` prunes `python.sys`/`pythonw.sys` and the `WinTmp` package (pythonnet/clr_loader/wmi stay — the new stack needs them).
 
 **Step 1 — OAuth Configuration** (conditional):
 ```
@@ -131,7 +128,9 @@ During upgrades, config.json must survive reinstallation:
 ### Uninstallation Steps
 1. `owlette-host uninstall` (stops the service, waits for STOPPED so the agent
    can flush `online: false`, then deregisters it)
-2. Remove Windows Defender exclusion
+2. Delete any legacy `R0python`/`R0pythonw` services and remove the legacy
+   Windows Defender exclusions (machines that never took a PawnIO-era upgrade).
+   PawnIO itself stays installed — shared component, like the WebView2 runtime.
 3. Delete installation directory
 4. Prompt user about `C:\ProgramData\Owlette\` config/logs/tokens
    - Silent uninstall: always preserve (for upgrades)
