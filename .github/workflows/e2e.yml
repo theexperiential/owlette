@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'web/**'
+      - 'functions/**'
       - 'firestore.rules'
       - 'firebase.json'
       - '.github/workflows/e2e.yml'
@@ -11,6 +12,7 @@ on:
     branches: [main, dev]
     paths:
       - 'web/**'
+      - 'functions/**'
       - 'firestore.rules'
       - 'firebase.json'
       - '.github/workflows/e2e.yml'
@@ -74,6 +76,14 @@ jobs:
         working-directory: web
         run: npm ci --legacy-peer-deps
 
+      # The emulator set now includes `functions`, which loads
+      # functions/lib/index.js. `npm run e2e` builds it (emulators:exec does
+      # not run firebase.json's predeploy hook), but the build needs
+      # functions/node_modules present first.
+      - name: install functions deps
+        working-directory: functions
+        run: npm ci
+
       - name: install playwright chromium
         if: steps.pw-cache.outputs.cache-hit != 'true'
         working-directory: web
@@ -104,6 +114,19 @@ jobs:
           # against anything external.
           SESSION_SECRET: 'ci-e2e-emulator-session-secret-do-not-reuse-in-prod'
         run: npm run e2e
+
+      # Cloud Functions trigger integration, in its own emulator invocation.
+      # The `functions` emulator is deliberately NOT part of the main suite:
+      # onMetricsWrite fires on every machine-doc write, so metrics_history
+      # accretes across all ~346 specs and slows the emulator as the run goes
+      # on — enough to push a 7-8s spec past its 10s action timeout. `:nobuild`
+      # reuses the .next-e2e the step above produced.
+      - name: run cloud functions trigger suite
+        working-directory: web
+        env:
+          CI: 'true'
+          SESSION_SECRET: 'ci-e2e-emulator-session-secret-do-not-reuse-in-prod'
+        run: npm run e2e:functions:nobuild
 
       # Upload the Playwright HTML report + traces / screenshots / videos on
       # failure. `outputDir` in playwright.config.ts places everything under

@@ -20,7 +20,9 @@ const REPORT_DIR = process.env.E2E_REPORT_DIR || './e2e/.output/report';
 export default defineConfig({
   testDir: './e2e/specs',
   // security-boundary probes need real dev credentials; keep this suite emulator-only
-  testIgnore: ['**/security-boundary/**'],
+  // `functions/**` needs the functions emulator, which only `npm run
+  // e2e:functions` starts — the main suite deliberately runs without it.
+  testIgnore: ['**/security-boundary/**', '**/functions/**'],
   // keeps Playwright's two default output dirs out of the top of web/
   outputDir: OUTPUT_DIR,
   fullyParallel: false, // shared emulator state; serial keeps seeding deterministic
@@ -54,7 +56,7 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       // A project-level testIgnore REPLACES the config-level one rather than
       // merging, so security-boundary must be repeated here.
-      testIgnore: ['**/security-boundary/**', '**/mobile/**'],
+      testIgnore: ['**/security-boundary/**', '**/mobile/**', '**/functions/**'],
     },
     {
       // Chromium, not an iPhone device entry: those pin webkit and CI installs
@@ -70,6 +72,24 @@ export default defineConfig({
       // Scoped so workers:1 doesn't pay for a second full pass. Playwright
       // normalizes to forward slashes, so this matches on Windows too.
       testMatch: /mobile\/.*\.spec\.ts/,
+    },
+    {
+      // Cloud Functions trigger integration. Separate project because these
+      // are the only specs that need the `functions` emulator, and enabling it
+      // for the whole suite is not free: onMetricsWrite fires on EVERY machine
+      // doc write, so metrics_history accretes across all ~346 specs and the
+      // emulator slows as the run proceeds. That pushed
+      // time-travel/apply-ack-before-deadline past its 10s action timeout —
+      // a spec that passes in 7-8s alone. Isolating them keeps the main gate
+      // unperturbed and this run down to ~40s.
+      name: 'functions-triggers',
+      use: { ...devices['Desktop Chrome'] },
+      // A project-level testIgnore REPLACES the config-level one (same gotcha
+      // the chromium project documents). Without this override the project
+      // inherits the config's '**/functions/**' ignore and matches nothing,
+      // which playwright reports as a bare "No tests found".
+      testIgnore: ['**/security-boundary/**'],
+      testMatch: /functions\/.*\.spec\.ts/,
     },
   ],
 
