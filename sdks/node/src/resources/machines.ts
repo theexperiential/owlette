@@ -30,10 +30,6 @@ export interface MachineDeployment {
   reportedAt: string | null;
 }
 
-/* --------------------------------------------------------------------- */
-/*  command dispatch / poll types                                        */
-/* --------------------------------------------------------------------- */
-
 export type MachineCommandType =
   | 'reboot_machine'
   | 'shutdown_machine'
@@ -92,10 +88,6 @@ export interface CaptureScreenshotResult {
 const DEFAULT_POLL_INTERVAL_MS = 1500;
 const DEFAULT_MAX_POLLS = 40;
 
-/* --------------------------------------------------------------------- */
-/*  resource                                                             */
-/* --------------------------------------------------------------------- */
-
 export class Machines {
   constructor(private readonly client: OwletteClient) {}
 
@@ -149,9 +141,8 @@ export class Machines {
   }
 
   /**
-   * Poll a queued command's status. For completed `capture_screenshot`
-   * commands the server mints a fresh signed URL on every read — never
-   * cache it, always pull a new one when you need to download.
+   * Poll a queued command's status. For a completed `capture_screenshot` the
+   * server mints a fresh signed URL per read — never cache it.
    */
   async getCommand(
     siteId: string,
@@ -196,8 +187,7 @@ export class Machines {
 
     let status: CommandStatus | null = null;
     for (let i = 0; i < maxPolls; i++) {
-      // First poll fires immediately so a fast-completing capture can
-      // return without paying a full sleep cycle.
+      // Poll immediately so a fast capture skips a whole sleep cycle.
       if (i > 0) await delay(pollIntervalMs, opts.signal);
       const current = await this.getCommand(siteId, machineId, dispatch.commandId);
       if (current.status === 'completed' || current.status === 'failed') {
@@ -260,10 +250,6 @@ export class Machines {
     };
   }
 }
-
-/* --------------------------------------------------------------------- */
-/*  helpers                                                              */
-/* --------------------------------------------------------------------- */
 
 async function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
   return new Promise((resolve, reject) => {

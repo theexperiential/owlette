@@ -1,20 +1,13 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for the talon run engine (talons wave 2, task 2.1).
+ * Talon run engine unit tests.
  *
- * Firestore is a small in-memory fake rather than a chain of `jest.fn()`s: the
- * engine queries `talon_runs` for in-flight work, writes a run doc, updates it
- * in place, appends companion logs, and finally patches the talon — assertions
- * like "the stale run was closed out AND a fresh run then executed" need a
- * store that actually holds state.
- *
- * The three collaborators with real side effects are mocked at their module
- * boundary: the command dispatch layer (`@/lib/jobs/talonRunner.server`, the
- * only thing that acts as the `talon_runner` system actor), the vision check,
- * and the mail transport. Output *recording* is exercised for real through
- * `outputs.server` so the run's `outputs[]` entries are the ones production
- * would write.
+ * Firestore is an in-memory fake, not `jest.fn()` chains: assertions like "the
+ * stale run was closed out AND a fresh run then executed" need real state.
+ * Only the side-effecting collaborators are mocked at their module boundary
+ * (`@/lib/jobs/talonRunner.server`, the vision check, the mail transport);
+ * output recording runs for real through `outputs.server`.
  */
 
 const mockDeleteSentinel = { __fieldValue: 'delete' } as const;
@@ -103,9 +96,8 @@ jest.mock('@/lib/hoot-utils.server', () => ({
   COMMAND_POLL_INTERVAL_MS: 0,
   COMMAND_TIMEOUT_MS: 30000,
 }));
-// The hoot output owns a detached turn runner of its own (access re-resolution,
-// chat creation, turn lock, tee cancel) — all pinned in `hootOutput.test.ts`.
-// Here it is mocked at the module boundary so these tests stay about the engine.
+// Hoot's detached turn runner is pinned in `hootOutput.test.ts`; mocked here so
+// these tests stay about the engine.
 jest.mock('@/lib/talons/hootOutput.server', () => ({
   __esModule: true,
   runHootOutput: (...args: unknown[]) => mockRunHootOutput(...args),
@@ -121,10 +113,6 @@ import { runTalon, describeTrigger, STALE_RUN_MS } from '@/lib/talons/engine.ser
 import type { StoredTalon } from '@/lib/talons/store.server';
 import type { TalonDoc, TalonRunDoc, TalonRunOutput } from '@/lib/talons/types';
 import { TalonVisualCheckError } from '@/lib/talons/visualCheck.server';
-
-/* ------------------------------------------------------------------------- */
-/*  In-memory Firestore                                                       */
-/* ------------------------------------------------------------------------- */
 
 type DocData = Record<string, unknown>;
 type Filter = { field: string; value: unknown };
@@ -244,10 +232,6 @@ class FakeDocRef {
   }
 }
 
-/* ------------------------------------------------------------------------- */
-/*  Fixtures                                                                  */
-/* ------------------------------------------------------------------------- */
-
 const SITE = 'site-a';
 const TALONS_PATH = `sites/${SITE}/talons`;
 const RUNS_PATH = `sites/${SITE}/talon_runs`;
@@ -332,8 +316,8 @@ beforeEach(() => {
   db = fake as unknown as Firestore;
   fake.docs.set(`sites/${SITE}`, { name: 'lobby', owner: 'owner-uid' });
 
-  // `clearMocks` only clears call records — implementations and any queued
-  // `*Once` values survive into the next test unless they are reset.
+  // `clearMocks` clears call records only; implementations and queued `*Once`
+  // values survive into the next test.
   mockDispatchAndAwait.mockReset();
   mockEvaluateVisualCheck.mockReset();
   mockRunHootOutput.mockResolvedValue({ status: 'sent', chatId: 'talon_1755172800000_r1' });
@@ -347,10 +331,6 @@ beforeEach(() => {
   mockFetch.mockResolvedValue({ ok: true, status: 202 });
   global.fetch = mockFetch as unknown as typeof fetch;
 });
-
-/* ------------------------------------------------------------------------- */
-/*  guards                                                                    */
-/* ------------------------------------------------------------------------- */
 
 describe('guards', () => {
   it('does not run a disabled talon', async () => {
@@ -435,10 +415,6 @@ describe('guards', () => {
     expect(summaries[0].status).toBe('succeeded');
   });
 });
-
-/* ------------------------------------------------------------------------- */
-/*  run recording                                                             */
-/* ------------------------------------------------------------------------- */
 
 describe('run recording', () => {
   it('creates a site-level run carrying the trigger summary and correlation id', async () => {
@@ -544,10 +520,6 @@ describe('run recording', () => {
     expect(logs[0].machineName).toBe('LOBBY-01');
   });
 });
-
-/* ------------------------------------------------------------------------- */
-/*  outputs                                                                   */
-/* ------------------------------------------------------------------------- */
 
 describe('outputs', () => {
   it('records every output individually, including the webhook http status', async () => {
@@ -757,10 +729,6 @@ describe('outputs', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  command outputs                                                           */
-/* ------------------------------------------------------------------------- */
-
 describe('command outputs', () => {
   function commandTalon(): StoredTalon {
     return seedTalon('t1', {
@@ -907,10 +875,6 @@ describe('command outputs', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  visual-check condition                                                    */
-/* ------------------------------------------------------------------------- */
-
 describe('visual_check condition', () => {
   function visualTalon(overrides: Partial<TalonDoc> = {}): StoredTalon {
     return seedTalon('t1', {
@@ -1050,10 +1014,6 @@ describe('visual_check condition', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  bookkeeping + auto-disable                                                */
-/* ------------------------------------------------------------------------- */
-
 describe('talon bookkeeping', () => {
   it('denormalizes the execution onto the talon and resets the failure counter', async () => {
     const talon = seedTalon('t1', { consecutiveFailures: 4 });
@@ -1152,10 +1112,6 @@ describe('talon bookkeeping', () => {
     expect(mockEmitMutation).not.toHaveBeenCalled();
   });
 });
-
-/* ------------------------------------------------------------------------- */
-/*  immediate disable on an unrecoverable author problem                      */
-/* ------------------------------------------------------------------------- */
 
 describe('unrecoverable author problems', () => {
   it.each([
@@ -1273,10 +1229,6 @@ describe('unrecoverable author problems', () => {
     expect(talonDoc('t1').disabledReason).toBeUndefined();
   });
 });
-
-/* ------------------------------------------------------------------------- */
-/*  trigger descriptions                                                      */
-/* ------------------------------------------------------------------------- */
 
 describe('describeTrigger', () => {
   it('describes each trigger shape in lowercase', () => {

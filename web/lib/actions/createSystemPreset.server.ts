@@ -1,16 +1,11 @@
 /**
- * createSystemPreset action core (security-boundary-migration wave 3.11).
+ * createSystemPreset action core: id from `software_name` + epoch, doc written
+ * to `system_presets/{presetId}`, `createdAt` server-stamped.
  *
- * Mirrors `useSystemPresets:createPreset` (web/hooks/useSystemPresets.ts:126-143):
- * generates a deterministic preset id from `software_name` + epoch, writes
- * the doc to `system_presets/{presetId}`, and stamps `createdAt` with a
- * server timestamp.
+ * `system_presets/` is PLATFORM-level, not site-scoped — unlike the
+ * schedule/distribution presets under `config/{siteId}/...` it resembles.
  *
- * firestore path: `system_presets/{presetId}` (platform-level — NOT
- * site-scoped, despite the surface similarity to schedule/distribution
- * presets which live under `config/{siteId}/...`).
- *
- * Pure action — does not touch HTTP. The route shim wraps this with
+ * Pure action, no HTTP: the route shim wraps it with
  * `authorizedPlatformHandler({ capability: 'SYSTEM_PRESET_MANAGE' })`.
  */
 
@@ -60,10 +55,8 @@ function slugify(value: string): string {
 }
 
 /**
- * Strip undefined values from an object. Firestore rejects undefined field
- * values; optional system-preset fields (description, icon, verify_path,
- * close_processes, parallel_install, timeout_seconds) come through as
- * undefined when the caller leaves them blank.
+ * Strip undefined values — Firestore rejects them, and the optional preset
+ * fields arrive undefined whenever the caller leaves them blank.
  */
 function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Record<string, unknown> = {};
@@ -77,7 +70,6 @@ export async function createSystemPreset(
   ctx: CreateSystemPresetContext,
   input: CreateSystemPresetInput,
 ): Promise<CreateSystemPresetResult> {
-  // ── validation ──────────────────────────────────────────────────────────
   if (typeof input.name !== 'string' || input.name.trim().length === 0) {
     throw new SystemPresetValidationError('name', 'name is required and must be a non-empty string');
   }
@@ -169,8 +161,7 @@ export async function createSystemPreset(
     );
   }
 
-  // ── firestore write ─────────────────────────────────────────────────────
-  // ID convention mirrors useSystemPresets.ts:134 — `preset-{slug}-{epochMs}`.
+  // Id convention mirrors useSystemPresets.ts: `preset-{slug}-{epochMs}`.
   const presetId = `preset-${slug}-${Date.now()}`;
   const db = getAdminDb();
   const presetRef = db.collection('system_presets').doc(presetId);

@@ -1,45 +1,19 @@
 /**
- * rate limit helper (security-boundary-migration wave 1.4).
+ * Two-layer per-capability rate limiter with isolated user and system buckets —
+ * hoot bursts and scheduled jobs can't squeeze human operators out of quota.
  *
- * Two-layer per-capability rate limiter with separate buckets for user and
- * system actors. The two buckets are completely isolated — system traffic
- * cannot consume user-bucket tokens and vice versa — so hoot bursts and
- * scheduled-job traffic don't squeeze human operators out of their quota.
+ * Layer 1: per-process token bucket keyed `{bucket}:{subject}:{capability}`,
+ * refilling at `limit / 60s`. Best-effort CACHE, not enforcement — railway runs
+ * N replicas each with its own Map, so a caller can pass it N times in parallel.
  *
- *   layer 1 — in-memory token bucket (best-effort optimization only)
- *   --------------------------------------------------------------
- *   Per-process Map keyed by `{bucket}:{subject}:{capability}`, where
- *   subject is `user:<uid>` for sessions, `apiKey:<keyId>` for API-key
- *   calls, and `system:<name>` for system actors. We refill tokens at
- *   `limit / 60s` and reject when the bucket is empty.
- *   This layer absorbs the trivial bursts of one client hammering one
- *   replica, so we don't pay a firestore round-trip for every call. It is
- *   NOT authoritative — railway runs multiple replicas and each replica
- *   has its own Map. A determined caller can pass this layer N times in
- *   parallel (one per replica). Treat it as cache, not enforcement.
+ * Layer 2 (authoritative): 10-shard fixed-window counter at
+ *   `sites/{siteId}/rate_limits/{bucket}/subjects/{subjectHash}/capabilities/{capability}/shards/{0..9}`
+ * Each request increments one random shard in a transaction; the check sums all
+ * 10. Sharding lifts firestore's 1 write/sec/doc contention ceiling to ~10.
+ * Stale shards reset transactionally on read-modify-write, so it self-heals.
  *
- *   layer 2 — firestore sharded counter (authoritative)
- *   ---------------------------------------------------
- *   10-shard fixed-window counter at
- *     `sites/{siteId}/rate_limits/{bucket}/subjects/{subjectHash}/capabilities/{capability}/shards/{0..9}`
- *   where `bucket` is `'user'` or `'system'` and `subjectHash` derives from
- *   the stable subject string above. Each request increments one randomly
- *   selected shard inside a transaction; the limit check sums all
- *   10 shards. Using shards instead of a single counter avoids the 1
- *   write/sec/document firestore contention ceiling — 10 shards lift the
- *   ceiling to ~10 writes/sec/(siteId × capability × bucket), which is
- *   well above any expected legitimate workload. Window state
- *   (`{ count, windowStart }`) is rolled forward on the first write into a
- *   new window; stale shards are reset transactionally on read-modify-write
- *   so the limiter is self-healing if a shard is touched after the window
- *   it was last incremented in has elapsed.
- *
- * The combined entry point is `checkRateLimit(actor, capability, siteId)`,
- * which fails fast on the in-memory layer (so a hot loop on one replica
- * never hits firestore) and otherwise consults the appropriate bucket in
- * firestore. A rejection always returns `{ ok: false, reason: 'rate_limited',
- * retryAfterSec, limit, remaining, resetAtMs }`; a metered pass returns the
- * same counter metadata with `{ ok: true }`.
+ * `checkRateLimit(actor, capability, siteId)` fails fast on layer 1 so a hot
+ * loop on one replica never reaches firestore.
  */
 
 import crypto from 'crypto';
@@ -54,21 +28,14 @@ import type { RateLimitedReason } from '@/lib/rateLimit';
 import { FieldValue } from 'firebase-admin/firestore';
 import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
 
-/* -------------------------------------------------------------------------- */
-/*  default per-minute limits                                                 */
-/* -------------------------------------------------------------------------- */
-
 export interface CapabilityLimit {
   /** Tokens granted per 60-second window. */
   perMinute: number;
 }
 
 /**
- * Default user-bucket limits. These are the per-actor ceilings for human
- * operators (sessions + api keys) and are deliberately tight enough to
- * blunt a misconfigured CI loop while staying well above the
- * fastest-fingered human dashboard user. Calibrated in wave 8.0 against
- * shadow data; current numbers are reasonable starting points.
+ * Per-actor ceilings for humans (sessions + api keys): tight enough to blunt a
+ * misconfigured CI loop, well above the fastest human dashboard user.
  */
 export const USER_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
   [CapabilityEnum.MACHINE_EXEC_COMMAND]: { perMinute: 60 },
@@ -93,10 +60,8 @@ export const USER_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
 };
 
 /**
- * Default system-bucket limits — 5x user. Hoot autonomous mode produces
- * legitimate burst traffic when reconciling many machines (e.g. reacting
- * to a fleet-wide drift event), and scheduled-cleanup jobs sweep large
- * windows in tight loops. Both need headroom user traffic doesn't.
+ * System bucket — 5x user. Hoot autonomous mode and scheduled sweeps produce
+ * legitimate bursts that human traffic never does.
  */
 export const SYSTEM_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
   [CapabilityEnum.MACHINE_EXEC_COMMAND]: { perMinute: 300 },
@@ -120,10 +85,6 @@ export const SYSTEM_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
   [CapabilityEnum.USER_SELF_DELETE]: { perMinute: 5 },
 };
 
-/* -------------------------------------------------------------------------- */
-/*  shared types                                                              */
-/* -------------------------------------------------------------------------- */
-
 export type Bucket = 'user' | 'system';
 export const SHARD_COUNT = 10;
 export const WINDOW_SEC = 60;
@@ -141,27 +102,18 @@ export type RateLimitResult =
 
 type RateLimitObservationSource = 'in_memory' | 'firestore';
 
-/**
- * Resolve which bucket an actor lives in. User sessions and api keys both
- * map to `'user'`; hoot / scheduled jobs map to `'system'`.
- */
+/** Sessions and api keys map to `'user'`; hoot / scheduled jobs to `'system'`. */
 export function bucketForActor(actor: Actor): Bucket {
   return actor.type === 'system' ? 'system' : 'user';
 }
 
-/**
- * Stable display identifier for an actor inside its bucket.
- */
+/** Stable display identifier for an actor inside its bucket. */
 export function actorIdentifier(actor: Actor): string {
   if (actor.type === 'system') return actor.name;
   return actor.apiKeyId ?? actor.userId;
 }
 
-/**
- * Authoritative rate-limit subject. Sessions are bucketed by user id; API-key
- * mediated requests are bucketed by key id; system actors stay bucketed by
- * actor name.
- */
+/** Authoritative subject: sessions by uid, API-key calls by key id, system by name. */
 export function rateLimitSubjectKey(actor: Actor): string {
   if (actor.type === 'system') return `system:${actor.name}`;
   if (actor.apiKeyId) return `apiKey:${actor.apiKeyId}`;
@@ -199,9 +151,7 @@ export function rateLimitHeaders(result: RateLimitResult): Record<string, string
   return headers;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  layer 1 — in-memory token bucket (best-effort)                            */
-/* -------------------------------------------------------------------------- */
+// layer 1 — in-memory token bucket (best-effort)
 
 interface TokenBucket {
   tokens: number;
@@ -209,13 +159,8 @@ interface TokenBucket {
 }
 
 /**
- * Per-process token-bucket map. SEPARATE buckets for sessions, API keys,
- * and system actors are guaranteed by including the bucket and stable
- * subject in the key prefix.
- *
- * NOT shared across replicas — railway spins up N processes and each has
- * its own Map. Use `__resetInMemoryBucketsForTests()` in tests; in
- * production the only persistence is the Map's own lifecycle.
+ * Per-process token buckets, keyed by bucket + stable subject so sessions, API
+ * keys, and system actors never share one. NOT shared across replicas.
  */
 const inMemoryBuckets = new Map<string, TokenBucket>();
 
@@ -224,15 +169,9 @@ function inMemoryKey(actor: Actor, capability: Capability): string {
 }
 
 /**
- * Best-effort in-memory token bucket. Consumes one token if available and
- * returns `true`; returns `false` when empty. Refill rate = `perMinute /
- * 60` tokens per second. Bucket capacity = `perMinute` (a fresh actor
- * starts with a full bucket so legitimate burst usage is allowed).
- *
- * Documented elsewhere as best-effort: a single replica enforces this
- * limit, but multi-replica deployments will let approximately
- * `replicas × perMinute` requests through before the firestore layer
- * catches up.
+ * Best-effort burst check; consumes a token if one is available. Refill =
+ * `perMinute / 60`/s, capacity = `perMinute` (fresh actors start full).
+ * Multi-replica deployments leak ~`replicas × perMinute` before layer 2 catches up.
  */
 export function checkInMemoryBurst(
   actor: Actor,
@@ -315,19 +254,14 @@ async function recordRateLimitObservation(params: {
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  layer 2 — firestore sharded counter (authoritative)                       */
-/* -------------------------------------------------------------------------- */
+// layer 2 — firestore sharded counter (authoritative)
 
 interface ShardDoc {
   count: number;
   windowStart: number; // epoch seconds
 }
 
-/**
- * Pick a random shard index. Module-scoped indirection so tests can stub
- * shard selection deterministically.
- */
+/** Random shard index; module-scoped so tests can stub it deterministically. */
 export function pickShardIndex(): number {
   return Math.floor(Math.random() * SHARD_COUNT);
 }
@@ -351,21 +285,10 @@ function shardsCollection(
 }
 
 /**
- * Increment one random shard and verify the (siteId, bucket, capability)
- * total stays within `limit` for the active 60-second window.
- *
- * Returns `{ ok: true }` if the post-increment total is `<= limit`.
- * Returns `{ ok: false, reason: 'rate_limited', retryAfterSec }` if the
- * limit was already at/over before this call (we still write the
- * increment so the counter reflects attempted load — this is consistent
- * with a fixed-window counter and means observability sees the pressure).
- *
- * `retryAfterSec` is the time remaining in the current window, clamped to
- * [1, WINDOW_SEC].
- *
- * Authoritative: this layer is the source of truth. Any caller bypassing
- * it (e.g. the in-memory layer being the only check) is documented as
- * best-effort, not enforcement.
+ * Increment one random shard and check the (siteId, bucket, capability) total
+ * against `limit` for the active window. Rejections still write the increment so
+ * observability sees the attempted load. `retryAfterSec` is the window remainder,
+ * clamped to [1, windowSec].
  */
 export async function checkFirestoreLimit(
   siteId: string,
@@ -399,8 +322,7 @@ export async function checkFirestoreLimit(
   const col = shardsCollection(siteId, bucket, options.subjectKey ?? bucket, capability);
   const targetRef = col.doc(String(shardIndex));
 
-  // 1. Increment the chosen shard transactionally, rolling the window
-  //    forward if this shard's stored windowStart is stale.
+  // 1. Increment the chosen shard, rolling the window forward if stale.
   let chosenWindowStart = nowSec;
   try {
     chosenWindowStart = await db.runTransaction(async (tx) => {
@@ -414,12 +336,9 @@ export async function checkFirestoreLimit(
       return nextStart;
     });
   } catch (err) {
-    // Authoritative layer failed. Fail-closed would penalize legitimate
-    // traffic during a firestore outage; fail-open would let abuse
-    // through. We log loudly and fail-open — in-memory layer still
-    // applies, and the 5s securityConfig kill-switch (wave 2.1) is the
-    // operator's escape hatch. Surface the error so observability sees
-    // it.
+    // Fail open, loudly: fail-closed would punish legitimate traffic during a
+    // firestore outage. Layer 1 still applies and the securityConfig kill-switch
+    // (wave 2.1) is the operator's escape hatch.
     logger.error('[rateLimit] firestore increment failed; failing open', {
       context: 'rateLimit',
       data: {
@@ -438,9 +357,8 @@ export async function checkFirestoreLimit(
     };
   }
 
-  // 2. Read all 10 shards and sum counts that belong to the window we
-  //    just incremented into. Stale shards (windowStart < chosenStart)
-  //    are silently ignored — they'll be reset on their next write.
+  // 2. Sum the shards belonging to the window we just incremented into; stale
+  //    shards are ignored and reset on their next write.
   let total = 0;
   try {
     const snapshot = await col.get();
@@ -450,8 +368,7 @@ export async function checkFirestoreLimit(
       if (data.windowStart === chosenWindowStart) {
         total += data.count ?? 0;
       } else if (data.windowStart > chosenWindowStart) {
-        // A racing increment landed in a newer window after our write.
-        // Count it — anything that belongs to a window ≥ ours is live.
+        // A racing increment landed in a newer window — anything ≥ ours is live.
         total += data.count ?? 0;
       }
     });
@@ -498,40 +415,20 @@ export async function checkFirestoreLimit(
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  combined entry point                                                      */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Check the rate limit for `actor` on `capability` (scoped to `siteId`
- * for the firestore layer). Routes the actor to its appropriate bucket
- * (`'user'` or `'system'`); separate buckets are keyed at distinct
- * firestore paths and in distinct in-memory map slots, so a system actor
- * cannot consume a user-bucket token and vice versa.
- *
- * Order of operations:
- *   1. Resolve bucket + per-minute limit from `USER_LIMITS` /
- *      `SYSTEM_LIMITS`. Capabilities not present in the relevant map are
- *      allowed (treated as "no limit configured").
- *   2. Best-effort in-memory burst check. If empty, reject without ever
- *      hitting firestore — this keeps a runaway loop on one replica from
- *      inflating the firestore counter.
- *   3. Authoritative firestore sharded counter check.
- *
- * Returns `{ ok: true }` on pass, `{ ok: false, reason: 'rate_limited',
- * retryAfterSec }` on reject. `retryAfterSec` is the window remainder
- * for firestore-layer rejections; for in-memory rejections it is
- * `WINDOW_SEC` (we don't track per-bucket refill time precisely enough
- * to give a tighter answer).
+ * Rate-limit `actor` on `capability` within `siteId`. Buckets live at distinct
+ * firestore paths and map slots, so a system actor can never consume a user
+ * token. Capabilities absent from the bucket's map are allowed. Layer-1
+ * rejections report `retryAfterSec = WINDOW_SEC` — per-bucket refill time isn't
+ * tracked precisely enough for a tighter answer.
  */
 export async function checkRateLimit(
   actor: Actor,
   capability: Capability,
   siteId: string
 ): Promise<RateLimitResult> {
-  // E2E runs exercise many capability-protected routes back-to-back through
-  // one browser actor. Keep production enforcement on by default, but honor
-  // the explicit Playwright env override used by the older API limiter.
+  // E2E hits many capability-gated routes back-to-back as one actor; enforcement
+  // stays on in production, so this needs the explicit Playwright env override.
   if (process.env.E2E_DISABLE_RATE_LIMIT === 'true') {
     return { ok: true };
   }

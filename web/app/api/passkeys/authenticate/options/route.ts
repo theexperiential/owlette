@@ -1,13 +1,7 @@
 /**
- * Passkey Authentication Options API
- *
- * Generates WebAuthn authentication options for passkey login.
- * No authentication required — this is a pre-login endpoint.
- * Uses discoverable credentials so users don't need to type their email.
- *
- * POST /api/passkeys/authenticate/options
- * Request: {} (empty)
- * Response: { options: PublicKeyCredentialRequestOptionsJSON, challengeId: string }
+ * POST /api/passkeys/authenticate/options — WebAuthn options for passkey login.
+ * Unauthenticated by nature (pre-login). Discoverable credentials, so no email is typed.
+ * in: {}   out: { options: PublicKeyCredentialRequestOptionsJSON, challengeId }
  */
 
 import { NextResponse } from 'next/server';
@@ -21,14 +15,13 @@ export const POST = withRateLimit(async () => {
   try {
     const options = await generateAuthenticationOptions({
       rpID: getRpId(),
-      // Require user verification (PIN/biometric) — single-touch FIDO keys aren't sufficient for full account access.
+      // PIN/biometric required: a single-touch FIDO key is not enough for full account access.
       userVerification: 'required',
     });
 
-    // Generate random challenge ID (no user known yet)
+    // Random id — no user is known yet.
     const challengeId = randomBytes(32).toString('hex');
 
-    // Store challenge for verification
     await storeChallenge(challengeId, options.challenge, null, 'authentication');
 
     return NextResponse.json({ options, challengeId });

@@ -1,31 +1,18 @@
 /** @jest-environment node */
 
 /**
- * eslint config test for the `no-system-invoker-outside-allowlist`
- * policy added in security-boundary-migration wave 2.3.
+ * eslint config test for `no-system-invoker-outside-allowlist`.
  *
- * Strategy: instead of spinning up the eslint runtime (which is
- * heavyweight + flaky in jest because eslint flat config resolves the
- * @next/eslint plugin chain), we read `web/eslint.config.mjs` as text
- * and assert the rule shape is present in two places:
+ * Reads `web/eslint.config.mjs` as TEXT rather than running eslint — flat
+ * config resolves the @next/eslint plugin chain, which is heavyweight and flaky
+ * under jest. Asserts a global block restricting `@/lib/systemInvoker.server`
+ * plus an override re-allowing it for `lib/hoot/**`, `lib/jobs/**`, the module
+ * itself, and `__tests__/**`.
  *
- *   1. A global block restricts `@/lib/systemInvoker.server` (and
- *      relative-path equivalents).
- *   2. An override block re-allows the import inside the allowlist:
- *      `lib/hoot/**`, `lib/jobs/**`, `lib/systemInvoker.server.ts`
- *      (the file itself, for re-export-style usage), and `__tests__/**`.
- *
- * The companion runtime + ci checks own the deeper end-to-end behavior:
- *   - `web/__tests__/lib/systemInvoker.test.ts` (the runtime alert
- *     `UNEXPECTED_SYSTEM_INVOKER_CALLER` is exercised against fake
- *     stack traces).
- *   - `scripts/check-system-invoker-callers.mjs --test` (the ci
- *     scanner re-implements the allowlist on top of a typescript ast
- *     walk — that's the load-bearing gate; this test just ensures the
- *     editor-time eslint rule stays consistent with it).
- *
- * If the rule shape changes, update this test AND the ci script in
- * lockstep so both gates stay in sync.
+ * The load-bearing gate is `scripts/check-system-invoker-callers.mjs --test`
+ * (ts-ast walk); the runtime alert is covered by
+ * `__tests__/lib/systemInvoker.test.ts`. Change the rule shape and this test
+ * AND the ci script must move in lockstep.
  */
 
 import { readFileSync } from 'fs';
@@ -56,10 +43,8 @@ describe('eslint config — no-system-invoker-outside-allowlist', () => {
   });
 
   it('re-allows imports in the allowlist directories', () => {
-    // Confirm hoot / jobs / __tests__ paths each appear in an override block
-    // that turns the rule off. Order is asserted by the regex spanning across
-    // the override block's `files` array and the `"no-restricted-imports": "off"`
-    // entry that follows.
+    // The regex spans the override's `files` array through the following
+    // `"no-restricted-imports": "off"`, so order is asserted too.
     const overrideBlock = configText.match(
       /files:\s*\[[\s\S]*?hoot[\s\S]*?jobs[\s\S]*?__tests__[\s\S]*?\][\s\S]*?"no-restricted-imports":\s*"off"/,
     );

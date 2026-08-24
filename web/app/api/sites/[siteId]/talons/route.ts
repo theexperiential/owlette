@@ -2,16 +2,13 @@
  * GET  /api/sites/{siteId}/talons — every talon on the site, ordered by name.
  * POST /api/sites/{siteId}/talons — create one.
  *
- * Thin http shim. Every rule that decides whether a talon may exist — input
- * validation, the per-site cap, the `command`-output privilege gate, the SSRF
- * check on webhook outputs, the author-llm-key precondition, `nextRunAt`
- * stamping, secret minting, and the mutation audit — lives in
- * `@/lib/talons/store.server`. Adding a caller here can never sidestep them.
+ * Thin http shim: every rule deciding whether a talon may exist (validation,
+ * per-site cap, `command`-output privilege gate, webhook SSRF check,
+ * author-llm-key precondition, `nextRunAt` stamping, secret minting, audit)
+ * lives in `@/lib/talons/store.server`, so no caller here can sidestep them.
  *
- * Capability: TALON_MANAGE. GET takes read-class api-key scope
+ * Capability TALON_MANAGE. GET takes read-class api-key scope
  * (`site=<siteId>:read`); POST takes the write-class default.
- *
- * talons wave 1.2.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -60,17 +57,10 @@ const PROBLEM_TYPE_BY_STATUS: Readonly<Record<number, string>> = {
   409: ProblemType.Conflict,
 };
 
-/* -------------------------------------------------------------------------- */
-/*  shared helpers (imported by the item and runs routes)                     */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Trusted store context, derived entirely from what the wrapper already
- * authorized — never from the request body.
- *
- * `via: 'ui'` is hardcoded: these are the dashboard/public-api routes. The
- * hoot tool path builds its own context with `via: 'cortex'` and the
- * originating `chatId`.
+ * Trusted store context, derived from what the wrapper authorized — never from
+ * the request body. `via: 'ui'` is hardcoded; the hoot tool path builds its own
+ * with `via: 'cortex'` and the originating `chatId`.
  */
 export function talonStoreContext(
   request: NextRequest,
@@ -87,9 +77,8 @@ export function talonStoreContext(
 }
 
 /**
- * Group the validator's field errors by path for the RFC 7807 `errors`
- * member. One path can carry several messages (e.g. a schedule entry with a
- * bad day list and a bad time), so the values are arrays.
+ * Group validator field errors by path for the RFC 7807 `errors` member. One
+ * path can carry several messages, so the values are arrays.
  */
 function problemErrorsFrom(fieldErrors: TalonFieldError[]): Record<string, string[]> {
   const grouped: Record<string, string[]> = {};
@@ -101,11 +90,9 @@ function problemErrorsFrom(fieldErrors: TalonFieldError[]): Record<string, strin
 }
 
 /**
- * Render a store rejection as its problem+json response.
- *
- * Validation failures carry both shapes: `errors` for generic RFC 7807
- * clients, and the structured `fieldErrors` list the talon editor renders
- * inline (it needs the per-field `code`, which `errors` cannot express).
+ * Render a store rejection as problem+json. Validation failures carry both
+ * shapes: `errors` for generic RFC 7807 clients, and `fieldErrors` for the
+ * talon editor, which needs the per-field `code` that `errors` can't express.
  */
 export function talonStoreProblem(err: TalonStoreError, instance: string): NextResponse {
   return problem({
@@ -122,13 +109,11 @@ export function talonStoreProblem(err: TalonStoreError, instance: string): NextR
 }
 
 /**
- * Wire form of a talon. Timestamps become ISO-8601 strings; optional run
- * bookkeeping becomes explicit `null` so clients never have to distinguish
- * "absent" from "never run".
+ * Wire form of a talon: timestamps become ISO-8601; optional run bookkeeping
+ * becomes explicit `null` so clients need not distinguish absent from never-run.
  *
- * The webhook signing secret lives in `talon_secrets` and is deliberately not
- * reachable from here — unlike `webhooks`, whose `signingSecret` any site
- * member can read.
+ * The webhook signing secret lives in `talon_secrets` and is deliberately
+ * unreachable here — unlike `webhooks.signingSecret`, which any member reads.
  */
 export function serializeTalon(talon: StoredTalon) {
   return {
@@ -152,15 +137,11 @@ export function serializeTalon(talon: StoredTalon) {
     lastRunStatus: talon.lastRunStatus ?? null,
     lastRunId: talon.lastRunId ?? null,
     consecutiveFailures: talon.consecutiveFailures,
-    // Why the system switched it off. `null` on a talon that is enabled, or
-    // one an operator paused themselves — a human decision states no cause.
+    // Why the SYSTEM switched it off; `null` when enabled or paused by a human.
     disabledReason: talon.disabledReason ?? null,
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  GET — list talons                                                         */
-/* -------------------------------------------------------------------------- */
 
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'TALON_MANAGE',
@@ -169,8 +150,7 @@ export const GET = authorizedSiteHandler<RouteParams>({
   apiKeyPermission: 'read',
 })(async (_request: NextRequest, ctx: SiteHandlerContext) => {
   try {
-    // Unpaginated on purpose: MAX_TALONS_PER_SITE caps the collection at 20,
-    // and the editor lists all of them at once.
+    // Unpaginated: MAX_TALONS_PER_SITE caps the collection at 20.
     const talons = await listTalons(getAdminDb(), ctx.siteId);
     return NextResponse.json({ talons: talons.map(serializeTalon) });
   } catch (err) {
@@ -178,9 +158,6 @@ export const GET = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* -------------------------------------------------------------------------- */
-/*  POST — create a talon                                                     */
-/* -------------------------------------------------------------------------- */
 
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'TALON_MANAGE',

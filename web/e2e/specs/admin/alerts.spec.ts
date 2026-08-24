@@ -1,22 +1,12 @@
 /**
- * Admin — alerts page (C3.4)
+ * Admin — alerts page.
  *
- * Alert rules are stored differently from webhooks/schedules: a single
- * Firestore doc at `sites/{siteId}/settings/alerts` with a `rules`
- * array field. Each rule carries id, name, metric, operator, value,
- * severity, channels, enabled, cooldownMinutes.
+ * Unlike webhooks/schedules, alert rules live in ONE doc at
+ * `sites/{siteId}/settings/alerts` under a `rules` array (id, name, metric,
+ * operator, value, severity, channels, enabled, cooldownMinutes).
  *
- * Covered:
- *   - list rendering — a seeded rule appears with severity badge and
- *     the metric-summary line ("CPU usage (%) > 80 · email · cooldown 30m")
- *   - create flow — open dialog → fill form → create → toast + row +
- *     Admin SDK verifies the rules array now contains the new entry
- *   - add preset — presets dropdown → pick "GPU Overheating" → toast +
- *     row + Admin SDK verifies
- *   - toggle enabled — click the Switch on a seeded-enabled rule →
- *     Admin SDK verifies `rules[0].enabled === false`
- *   - delete — trash → confirmation dialog → delete → Admin SDK
- *     verifies the rules array no longer contains the deleted rule
+ * Covers list rendering, create, add-preset, toggle-enabled and delete — each
+ * asserted through the UI and then read back with the Admin SDK.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -72,15 +62,14 @@ async function getAlertRules(): Promise<AlertRule[]> {
 
 test.beforeEach(async () => {
   await seedSite({ id: SITE_ID, name: SITE_NAME, owner: 'someone-else', timezone: 'UTC' });
-  // Reset to empty rules; individual tests can then seed what they need.
+  // Reset to empty; each test seeds what it needs.
   await setAlertRules([]);
 });
 
 async function gotoAlertsForSeededSite(page: Page) {
   await page.goto('/admin/alerts');
-  // Bumped to 10s because RequireSuperadmin renders a "verifying permissions..."
-  // gate while AuthContext hydrates against the auth emulator; the default 5s
-  // expect timeout occasionally races that hydration on cold-emulator runs.
+  // 10s, not 5s: RequireSuperadmin holds a "verifying permissions..." gate while
+  // AuthContext hydrates against the auth emulator, racing the default on cold runs.
   await expect(
     page.getByRole('heading', { name: 'alerts', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
@@ -96,10 +85,9 @@ test('lists a seeded rule with its severity badge and summary line', async ({ pa
 
   const row = page.locator('div.rounded-lg.border').filter({ hasText: SEEDED_RULE.name });
   await expect(row).toBeVisible();
-  // Severity badge.
   await expect(row.getByText('warning', { exact: true })).toBeVisible();
-  // Summary line — the page renders getMetricLabel(metric) so "cpu_percent"
-  // displays as "CPU usage (%)". Assert on the operator + threshold + channel.
+  // getMetricLabel renders "cpu_percent" as "CPU usage (%)"; assert on the
+  // operator + threshold + channel instead.
   await expect(row).toContainText('> 80');
   await expect(row).toContainText('email');
   await expect(row).toContainText('cooldown 30m');
@@ -108,8 +96,7 @@ test('lists a seeded rule with its severity badge and summary line', async ({ pa
 test('creating a rule adds it to the Firestore rules array', async ({ page }) => {
   await gotoAlertsForSeededSite(page);
 
-  // With an empty rules array, the page renders TWO "create rule" buttons
-  // (header + empty-state CTA). Either opens the same dialog.
+  // Empty rules renders TWO "create rule" buttons (header + empty-state CTA).
   await page.getByRole('button', { name: /^create rule$/i }).first().click();
 
   const dialog = page.getByRole('dialog', { name: /^create alert rule$/i });
@@ -117,7 +104,7 @@ test('creating a rule adds it to the Firestore rules array', async ({ page }) =>
 
   const ruleName = `E2E rule ${Date.now()}`;
   await dialog.getByLabel('name').fill(ruleName);
-  // metric + operator + severity keep their defaults (cpu_percent, >, warning)
+  // metric/operator/severity keep their defaults (cpu_percent, >, warning)
   await dialog.getByLabel('threshold').fill('95');
   // cooldown defaults to 30 (see openCreateDialog)
 
@@ -125,11 +112,10 @@ test('creating a rule adds it to the Firestore rules array', async ({ page }) =>
 
   await expect(page.getByText('Rule created', { exact: true })).toBeVisible();
 
-  // Row appears in the list.
   const row = page.locator('div.rounded-lg.border').filter({ hasText: ruleName });
   await expect(row).toBeVisible();
 
-  // Admin SDK — the rules array now has exactly one entry matching.
+  // Admin SDK — exactly one matching entry.
   const rules = await getAlertRules();
   const matching = rules.find((r) => r.name === ruleName);
   expect(matching).toBeDefined();
@@ -145,7 +131,7 @@ test('adding a preset from the dropdown writes the template rule to Firestore', 
   await gotoAlertsForSeededSite(page);
 
   await page.getByRole('button', { name: /^presets$/i }).click();
-  // The dropdown menu items are labelled "GPU Overheating (gpu temp > 85)".
+  // Menu items read "GPU Overheating (gpu temp > 85)".
   await page.getByRole('menuitem', { name: /^GPU Overheating/ }).click();
 
   await expect(page.getByText('Preset "GPU Overheating" added', { exact: true })).toBeVisible();
@@ -167,7 +153,6 @@ test('toggling the enabled switch flips the rule in Firestore', async ({ page })
   const toggle = row.getByRole('switch');
   await expect(toggle).toHaveAttribute('data-state', 'checked');
   await toggle.click();
-  // UI should flip to unchecked.
   await expect(toggle).toHaveAttribute('data-state', 'unchecked');
 
   // Admin SDK — rule is now disabled.

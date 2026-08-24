@@ -1,14 +1,8 @@
-/**
- * Shared Test Utilities for API Route Handler Tests
- *
- * Provides mock factories for NextRequest objects and common mock setups.
- */
+/** Mock factories for API route-handler tests. */
 
 import { NextRequest } from 'next/server';
 
-/**
- * Create a NextRequest for testing API route handlers.
- */
+/** Build a NextRequest against http://localhost. */
 export function createMockRequest(
   url: string,
   options?: {
@@ -26,14 +20,11 @@ export function createMockRequest(
     headers['content-type'] = 'application/json';
   }
 
-  // NextRequest's constructor wants its own RequestInit type (stricter subset
-  // of the DOM one) — cast via unknown to bridge the nominal mismatch.
+  // NextRequest wants its own stricter RequestInit; cast bridges the mismatch.
   return new NextRequest(new URL(url, 'http://localhost'), init as unknown as ConstructorParameters<typeof NextRequest>[1]);
 }
 
-/**
- * Helper to extract JSON body from NextResponse.
- */
+/** Status + parsed JSON body from a NextResponse. */
 export async function parseResponse(response: Response): Promise<{
   status: number;
   body: Record<string, unknown>;

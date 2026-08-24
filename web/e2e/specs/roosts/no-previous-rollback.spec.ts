@@ -1,12 +1,9 @@
 /**
- * Roosts — single-version roost cannot be rolled back (task 2.4)
+ * Roosts — a single-version roost cannot be rolled back.
  *
- * Gating pattern (b): VersionRow.tsx renders "rollback to this version"
- * with `disabled={isCurrent}` — when the only version IS the head, the
- * menu item is present but disabled. No /api/roosts/{id}/rollback route
- * exists today, so server-side defense is not asserted (flagged in report).
- *
- * Data plane: none.
+ * VersionRow renders "rollback to this version" with `disabled={isCurrent}`, so
+ * on a one-version roost the item is present but disabled. There is no
+ * /api/roosts/{id}/rollback route yet, so no server-side assertion here.
  */
 
 import { test, expect } from '@playwright/test';
@@ -31,7 +28,7 @@ async function cleanup() {
 
 test.beforeEach(async () => {
   await cleanup();
-  // versionCount: 1 — v1 is both the only version AND the current head.
+  // v1 is both the only version and the current head.
   await seedRoostWithVersionHistory(SITE_ID, ROOST_ID, { versionCount: 1 });
 });
 
@@ -45,7 +42,6 @@ test('rollback action is disabled on the only/current version', async ({ page })
     page.getByRole('heading', { name: 'roosts', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
 
-  // Expand the seeded roost row.
   const roostRow = page.locator(`[data-roost-row="${ROOST_ID}"]`);
   await expect(roostRow).toBeVisible();
   await roostRow.click();
@@ -53,19 +49,16 @@ test('rollback action is disabled on the only/current version', async ({ page })
     page.getByRole('button', { name: 'version history' }),
   ).toBeVisible();
 
-  // Exactly one version row. Walk up from `#1` to the row container —
-  // mirrors version-history.spec.ts + three-dot-menu.spec.ts.
+  // Walk up from `#1` to the row container, as version-history.spec.ts does.
   const versionRows = page.getByTestId('roost-version-row');
   await expect(versionRows).toHaveCount(1);
 
   const v1Row = page.locator('[data-testid="roost-version-row"][data-version-number="1"]');
   await expect(v1Row.getByLabel('current version')).toBeVisible();
 
-  // Open the three-dot menu on v1.
   await v1Row.getByRole('button', { name: 'version actions' }).click();
 
-  // Pattern (b): rollback item rendered but disabled. Radix surfaces the
-  // disabled state via aria-disabled — Playwright's toBeDisabled accepts it.
+  // Radix marks disabled items with aria-disabled, which toBeDisabled accepts.
   const rollback = page.getByRole('menuitem', {
     name: /^rollback to this version$/i,
   });

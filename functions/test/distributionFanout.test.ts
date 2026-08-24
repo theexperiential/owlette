@@ -1,13 +1,9 @@
 /**
- * Contract tests for the sync_pull command payload emitted by the
- * distribution fan-out function.
+ * Contract for the sync_pull payload from the distribution fan-out.
  *
- * The agent's `_handle_sync_pull` (agent/src/sync_commands.py) calls
- * `_require_str(cmd_data, '<field>')` for every field below — a missing
- * or renamed field crashes the agent before any disk work. Two other
- * call sites (web routes /api/roosts/{roostId}/deploy and /resync)
- * emit the same shape; this test pins the contract for the fan-out
- * trigger so all three stay aligned.
+ * The agent's `_handle_sync_pull` `_require_str`s every field below, so a
+ * missing or renamed one crashes it before any disk work. /api/roosts/{id}/deploy
+ * and /resync emit the same shape; this pins the fan-out side.
  */
 
 import { describe, it } from 'node:test';
@@ -38,10 +34,8 @@ describe('buildSyncPullCommand', () => {
   });
 
   it('does not emit the legacy `folder_id` key', () => {
-    // Regression guard: an earlier version of distributionFanout.ts
-    // queued `folder_id: roostId`, which the agent's `_require_str`
-    // call rejected before any disk work. Every fanout-triggered sync
-    // failed silently. Keep this assertion forever.
+    // Regression guard — keep forever: distributionFanout.ts once queued
+    // `folder_id: roostId`, and every fanout-triggered sync failed silently.
     const cmd = buildSyncPullCommand('s', 'r', 'v', 'u', 'e', null);
     assert.equal('folder_id' in cmd, false);
   });

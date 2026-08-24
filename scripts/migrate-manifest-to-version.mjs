@@ -1,52 +1,18 @@
 #!/usr/bin/env node
 /**
- * Firestore migration: `sites/{siteId}/roosts/{roostId}/manifests/*` →
- *                      `sites/{siteId}/roosts/{roostId}/versions/*`.
+ * Firestore migration for the roost manifest → version rename
+ * (rename-map.md §9): `roosts/{id}/manifests/*` → `roosts/{id}/versions/*`.
  *
- * Part of roost manifest → version rename (rename-map.md §9). For every
- * roost under every site, this script:
- *   1. Fetches the `manifests/` sub-collection, sorted by `createdAt` asc.
- *   2. Writes each doc to `versions/{manifestDocId}` with the original
- *      fields plus `versionNumber` (1-indexed integer), `versionId`
- *      (== doc id), and `description` (preserved if present, else null).
- *   3. Updates the roost doc:
- *        - `versionCounter` = total manifest count
- *        - `currentVersionId` = old `currentManifestId`
- *        - `previousVersionId` = old `previousManifestId`
- *        - original `currentManifestId` / `previousManifestId` fields
- *          are deleted from the roost doc.
- *   4. Verifies `versions/` count == `manifests/` count; on mismatch the
- *      roost is flagged and its `manifests/` docs are NOT deleted.
- *   5. Deletes `manifests/*` docs (only after verification passes).
- *   6. If `roost.name` is missing/empty, backfills with
- *      `untitled roost {id-prefix-8chars}`.
+ * Per roost: copy each manifest (createdAt asc) to `versions/{sameDocId}`
+ * adding `versionNumber` (1-indexed), `versionId`, and `description`; rewrite
+ * the roost's pointer fields (`currentManifestId`/`previousManifestId` →
+ * `current/previousVersionId`, plus `versionCounter`); verify counts match
+ * BEFORE deleting `manifests/*`; backfill a missing `roost.name`.
  *
- * Idempotent: a roost whose `versions/` sub-collection already matches
- * the `manifests/` sub-collection count (or whose `manifests/` is empty
- * with `versions/` populated) is skipped on subsequent runs.
+ * Idempotent — a roost whose `versions/` already matches is skipped. Writes
+ * `migration-log.json` beside the script; `--rollback` replays it in reverse.
  *
- * A `migration-log.json` file is written alongside the script recording
- * the before/after state of every touched roost, enabling `--rollback`.
- *
- * Usage:
- *   node scripts/migrate-manifest-to-version.mjs --help
- *   node scripts/migrate-manifest-to-version.mjs --dry-run
- *   node scripts/migrate-manifest-to-version.mjs --project dev
- *   node scripts/migrate-manifest-to-version.mjs --project prod --site SITE_ID
- *   node scripts/migrate-manifest-to-version.mjs --rollback --project dev
- *
- * Flags:
- *   --dry-run              report intended writes; no mutations
- *   --project <dev|prod>   target Firebase project (default: dev)
- *   --site <siteId>        limit to one site (default: all sites)
- *   --concurrency <n>      parallel roost migrations (default: 4)
- *   --rollback             reverse a previous run using migration-log.json
- *   --log-file <path>      override log file path
- *                          (default: scripts/migration-log.json)
- *   -h, --help             show usage and exit
- *
- * Exit codes: 0 on clean success, 1 if any roost failed to migrate or
- * rollback, 2 on fatal setup error (bad flag, missing creds, etc).
+ * `--help` for flags. Exit 0 clean, 1 if any roost failed, 2 on setup error.
  */
 
 import { createRequire } from 'module';
@@ -57,12 +23,10 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-// firebase-admin lives in web/node_modules — resolve from there so this
-// script runs without a root-level package.json.
+// firebase-admin lives in web/node_modules — no root-level package.json.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 
-// ─── CLI parsing ───────────────────────────────────────────────────────
-
+// CLI parsing
 const USAGE = `Usage: node scripts/migrate-manifest-to-version.mjs [options]
 
 Migrates \`sites/*/roosts/*/manifests/*\` → \`sites/*/roosts/*/versions/*\`
@@ -155,8 +119,7 @@ if (opts.help) {
   process.exit(0);
 }
 
-// ─── .env loading ──────────────────────────────────────────────────────
-
+// .env loading
 function loadEnvFile(path) {
   if (!existsSync(path)) return;
   for (const raw of readFileSync(path, 'utf8').split('\n')) {
@@ -180,8 +143,7 @@ loadEnvFile(join(ROOT, 'web', '.env.local'));
 loadEnvFile(join(ROOT, '.claude', '.env.local'));
 loadEnvFile(join(ROOT, 'scripts', '.env.local'));
 
-// ─── Credentials ───────────────────────────────────────────────────────
-
+// Credentials
 function resolveCredentials(project) {
   const suffix = project === 'prod' ? '_PROD' : '_DEV';
   const projectId =
@@ -191,7 +153,7 @@ function resolveCredentials(project) {
   const rawPrivateKey =
     process.env[`FIREBASE_PRIVATE_KEY${suffix}`] || process.env.FIREBASE_PRIVATE_KEY;
 
-  // Standard pattern also supported for parity with gcloud tooling.
+  // Also accepted for parity with gcloud tooling.
   const gacPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 
   if (projectId && clientEmail && rawPrivateKey) {
@@ -210,8 +172,7 @@ function resolveCredentials(project) {
   return null;
 }
 
-// ─── Firestore init ────────────────────────────────────────────────────
-
+// Firestore init
 let admin;
 let db;
 
@@ -226,26 +187,21 @@ function initFirestore(creds) {
       }),
     });
   } else {
-    // GOOGLE_APPLICATION_CREDENTIALS — applicationDefault reads it.
+    // applicationDefault reads GOOGLE_APPLICATION_CREDENTIALS.
     admin.initializeApp({ credential: admin.credential.applicationDefault() });
   }
   db = admin.firestore();
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────
-
-/**
- * Firestore Timestamp comparator. Null / missing timestamps sort first so
- * the oldest (including unknown-date) manifests still get stable version
- * numbers on re-runs.
- */
+// Helpers
+/** Timestamp comparator; nulls sort first to keep version numbers stable. */
 function compareByCreatedAtAsc(a, b) {
   const at = a.data().createdAt;
   const bt = b.data().createdAt;
   const av = at?.toMillis?.() ?? (typeof at === 'number' ? at : 0);
   const bv = bt?.toMillis?.() ?? (typeof bt === 'number' ? bt : 0);
   if (av !== bv) return av - bv;
-  // Stable tiebreaker on doc id so re-runs produce identical ordering.
+  // Doc-id tiebreaker so re-runs order identically.
   if (a.id < b.id) return -1;
   if (a.id > b.id) return 1;
   return 0;
@@ -287,12 +243,8 @@ function writeLog(path, log) {
   writeFileSync(path, JSON.stringify(log, null, 2) + '\n', 'utf8');
 }
 
-// ─── Migration: forward ────────────────────────────────────────────────
-
-/**
- * Returns a migration plan for a single roost, or null if already migrated.
- * Reads only — no writes.
- */
+// Migration: forward
+/** Read-only. Returns a plan for one roost, or null if already migrated. */
 async function planRoost(siteId, roostId) {
   const roostRef = db.collection('sites').doc(siteId).collection('roosts').doc(roostId);
   const roostSnap = await roostRef.get();
@@ -305,15 +257,14 @@ async function planRoost(siteId, roostId) {
   const manifestCount = manifestsSnap.size;
   const versionCount = versionsSnap.size;
 
-  // Idempotency: already migrated if versions/ is populated and at least
-  // matches the manifests/ count (either manifests/ still exists from a
-  // failed delete, or has been cleaned up).
+  // Migrated already if versions/ is populated and >= the manifests/ count
+  // (manifests/ may linger from a failed delete).
   const alreadyMigrated =
     versionCount > 0 && (manifestCount === 0 || versionCount >= manifestCount);
 
   const needsNameBackfill = !roost.name || typeof roost.name !== 'string' || !roost.name.trim();
 
-  // If fully migrated AND name is already populated, nothing to do.
+  // Fully migrated and named — nothing to do.
   if (alreadyMigrated && !needsNameBackfill) return null;
 
   const ordered = [...manifestsSnap.docs].sort(compareByCreatedAtAsc);
@@ -361,7 +312,6 @@ async function migrateRoost(plan, { dryRun }, logEntries) {
     writtenVersionIds: [],
   };
 
-  // 1. Plan version writes.
   const versionWrites = manifestDocs.map((doc, i) => ({
     id: doc.id,
     number: i + 1,
@@ -376,8 +326,8 @@ async function migrateRoost(plan, { dryRun }, logEntries) {
   );
 
   if (!dryRun && !alreadyMigrated && versionWrites.length > 0) {
-    // 2. Write versions. Use BulkWriter so a roost with thousands of
-    // manifests doesn't exceed the 500-write-per-commit cap.
+    // BulkWriter: a roost with thousands of manifests would blow the
+    // 500-write-per-commit cap.
     const bulk = db.bulkWriter();
     for (const v of versionWrites) {
       const payload = {
@@ -396,7 +346,7 @@ async function migrateRoost(plan, { dryRun }, logEntries) {
     entry.after.versionsWritten = versionWrites.length;
   }
 
-  // 3. Update roost doc — rename pointer fields + set counter.
+  // Rename pointer fields + set counter.
   const nextCounter = Math.max(
     versionWrites.length,
     typeof roostData.versionCounter === 'number' ? roostData.versionCounter : 0,
@@ -412,8 +362,8 @@ async function migrateRoost(plan, { dryRun }, logEntries) {
     previousVersionId,
   };
 
-  // Only clear old fields if they actually exist — avoids dirty writes on
-  // already-migrated roosts that need a name backfill.
+  // Only clear fields that exist — avoids dirty writes on an already-migrated
+  // roost that only needs a name backfill.
   const admin_ = admin;
   if (roostData.currentManifestId !== undefined) {
     roostUpdate.currentManifestId = admin_.firestore.FieldValue.delete();
@@ -434,7 +384,7 @@ async function migrateRoost(plan, { dryRun }, logEntries) {
   entry.after.currentVersionId = currentVersionId;
   entry.after.previousVersionId = previousVersionId;
 
-  // 4. Verify: re-fetch versions/ count matches manifests/ count.
+  // Verify before deleting anything.
   let verified = true;
   if (!dryRun && !alreadyMigrated && versionWrites.length > 0) {
     const [versSnap, manSnap] = await Promise.all([
@@ -449,7 +399,6 @@ async function migrateRoost(plan, { dryRun }, logEntries) {
     }
   }
 
-  // 5. Delete manifests.
   if (verified && !dryRun && manifestDocs.length > 0) {
     const bulk = db.bulkWriter();
     for (const doc of manifestDocs) {
@@ -468,8 +417,7 @@ async function migrateRoost(plan, { dryRun }, logEntries) {
   }
 }
 
-// ─── Migration: rollback ───────────────────────────────────────────────
-
+// Migration: rollback
 async function rollbackRoost(entry, { dryRun }) {
   const { siteId, roostId, before, writtenVersionIds } = entry;
   const roostRef = db.collection('sites').doc(siteId).collection('roosts').doc(roostId);
@@ -481,7 +429,6 @@ async function rollbackRoost(entry, { dryRun }) {
 
   const admin_ = admin;
 
-  // 1. Re-create manifests/* from versions/*.
   if (writtenVersionIds.length > 0) {
     const copyBulk = dryRun ? null : db.bulkWriter();
     for (const vid of writtenVersionIds) {
@@ -491,9 +438,9 @@ async function rollbackRoost(entry, { dryRun }) {
         continue;
       }
       const vData = vSnap.data() || {};
-      // Strip fields added by the forward migration; preserve everything else.
+      // Strip forward-migration fields; preserve everything else.
       const { versionNumber: _vn, versionId: _vid, description: _desc, ...restored } = vData;
-      // description was preserved-or-null'd. Only restore it if it was set.
+      // description was preserved-or-null'd; only restore if it was set.
       const manifestPayload =
         _desc !== null && _desc !== undefined ? { ...restored, description: _desc } : restored;
       if (copyBulk) {
@@ -503,7 +450,7 @@ async function rollbackRoost(entry, { dryRun }) {
     if (copyBulk) await copyBulk.close();
   }
 
-  // 2. Restore roost pointer fields + drop new ones.
+  // Restore roost pointer fields + drop the new ones.
   const roostUpdate = {};
   if (before.currentManifestId !== null && before.currentManifestId !== undefined) {
     roostUpdate.currentManifestId = before.currentManifestId;
@@ -523,7 +470,7 @@ async function rollbackRoost(entry, { dryRun }) {
     await roostRef.update(roostUpdate);
   }
 
-  // 3. Delete the versions/* docs the forward run wrote.
+  // Delete the versions/* docs the forward run wrote.
   if (!dryRun && writtenVersionIds.length > 0) {
     const delBulk = db.bulkWriter();
     for (const vid of writtenVersionIds) {
@@ -533,8 +480,7 @@ async function rollbackRoost(entry, { dryRun }) {
   }
 }
 
-// ─── Entrypoint ────────────────────────────────────────────────────────
-
+// Entrypoint
 async function listRoostRefs(siteFilter) {
   const siteIds = siteFilter
     ? [siteFilter]
@@ -564,7 +510,7 @@ async function runForward() {
 
   console.log(`discovered ${roostRefs.length} roost(s) to inspect`);
 
-  // Plan pass (sequential to keep log ordering deterministic & output clean).
+  // Sequential to keep log ordering deterministic.
   const plans = [];
   for (const { siteId, roostId } of roostRefs) {
     try {
@@ -601,7 +547,7 @@ async function runForward() {
 
   const failed = planResults.filter((r) => !r.ok).length;
 
-  // Persist log entries (even on partial failure — rollback needs them).
+  // Persist even on partial failure — rollback needs these.
   if (!opts.dryRun && newEntries.length > 0) {
     log.entries.push({
       runStartedAt: startedAt,
@@ -640,7 +586,6 @@ async function runRollback() {
   }
   const log = loadLog(opts.logFile);
 
-  // Flatten per-run entries, filtering by site if requested.
   const entries = [];
   for (const run of log.entries) {
     if (run.dryRun) continue;
@@ -655,7 +600,7 @@ async function runRollback() {
     return 0;
   }
 
-  // Reverse chronological so the newest migration is undone first.
+  // Newest migration undone first.
   entries.reverse();
 
   console.log(`rolling back ${entries.length} roost migration(s); concurrency=${opts.concurrency}\n`);

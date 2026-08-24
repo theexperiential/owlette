@@ -1,12 +1,10 @@
 /**
- * Roosts — version description empty-state + null-transition (task 3.2)
+ * Roosts — version description empty state and its null transitions: the
+ * "(no description)" placeholder, click-to-edit save (null → set), and clear +
+ * blur (set → null). Empty/whitespace normalises to `description: null`
+ * (VersionRow.tsx; the route re-applies defensively).
  *
- * Asserts the "(no description)" placeholder render path on a version with
- * description=null, click-to-edit → save (null → set), and clear → blur
- * (set → null) round-trips. Empty/whitespace normalises to `description: null`
- * (VersionRow.tsx:148; route.ts:224-225 defensively re-applies).
- *
- * Data plane: none — no push, no chunks, no /api/chunks calls.
+ * No data plane — no push, no chunks, no /api/chunks calls.
  */
 
 import { test, expect } from '@playwright/test';
@@ -34,8 +32,8 @@ async function cleanup() {
 test.beforeEach(async () => {
   await cleanup();
   await seedMachine(SITE_ID, MACHINE_ID);
-  // versionCount=1 with description=null mirrors currentVersionDescription=null
-  // onto the parent roost — same end-state as a manual seedRoost+seedVersion+update.
+  // versionCount=1 + description=null mirrors currentVersionDescription=null onto
+  // the parent roost — same end state as seedRoost+seedVersion+update.
   await seedRoostWithVersionHistory(SITE_ID, ROOST_ID, {
     versionCount: 1,
     descriptions: [null],
@@ -56,7 +54,7 @@ test('description placeholder renders, edits round-trip null → set → null', 
   await page.locator(`[data-roost-row="${ROOST_ID}"]`).click();
   await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 
-  // Walk from the `#1` cell up to the VersionRow wrapper (flex items-center gap-3).
+  // Walk from the `#1` cell up to the VersionRow wrapper.
   const row = page
     .locator('span.font-mono', { hasText: '#1' })
     .locator('xpath=ancestor::div[contains(@class, "items-center") and contains(@class, "gap-3")][1]');
@@ -77,7 +75,7 @@ test('description placeholder renders, edits round-trip null → set → null', 
 
   await textarea.fill('added intro graphic');
 
-  // ControlOrMeta+Enter — works on both Windows runners and mac dev.
+  // ControlOrMeta+Enter works on both Windows runners and mac dev.
   const setResponsePromise = page.waitForResponse(
     (res) =>
       res.url().includes(`/api/roosts/${ROOST_ID}/versions/${VERSION_ID}`) &&
@@ -104,7 +102,7 @@ test('description placeholder renders, edits round-trip null → set → null', 
   await textarea2.fill('');
   await expect(textarea2).toHaveValue('');
 
-  // Blur triggers saveDescription → empty draft normalises to `description: null`.
+  // Blur runs saveDescription; an empty draft normalises to `description: null`.
   const clearResponsePromise = page.waitForResponse(
     (res) =>
       res.url().includes(`/api/roosts/${ROOST_ID}/versions/${VERSION_ID}`) &&

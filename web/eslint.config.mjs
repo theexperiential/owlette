@@ -21,14 +21,10 @@ const eslintConfig = defineConfig([
           destructuredArrayIgnorePattern: "^_",
         },
       ],
-      // roost wave 5.10 — dev-time guard against logging auth tokens.
-      // AST-based check flags `console.*(...)` calls whose arguments
-      // include an identifier whose name matches common token/credential
-      // shapes. The repo-wide scanner at `scripts/check-no-token-logs.mjs`
-      // is the authoritative CI gate (catches python + template-literal
-      // interpolation across files); this rule catches obvious cases in
-      // the editor so they never reach CI. Exempt a line by appending
-      // `// no-token-logs-allow` where a false positive is unavoidable.
+      // Editor-time guard against logging auth tokens (roost wave 5.10). The
+      // authoritative CI gate is `scripts/check-no-token-logs.mjs`, which also
+      // covers python and template literals. Exempt a line with
+      // `// no-token-logs-allow`.
       "no-restricted-syntax": [
         "error",
         {
@@ -40,9 +36,8 @@ const eslintConfig = defineConfig([
       ],
     },
   },
-  // security-boundary-migration wave 2.3 — editor-time import boundary
-  // for system actors. The CI-time gate is
-  // `scripts/check-system-invoker-callers.mjs`; update both together.
+  // Editor-time system-actor import boundary (wave 2.3). CI gate is
+  // `scripts/check-system-invoker-callers.mjs` — update both together.
   {
     rules: {
       "no-restricted-imports": [

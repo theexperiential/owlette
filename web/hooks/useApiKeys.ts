@@ -4,18 +4,12 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ApiKeyListItem, ApiKeyScope } from '@/lib/apiKeyTypes';
 
 /**
- * The single owner of every `/api/keys` request.
+ * The single owner of every `/api/keys` request — six inline fetch sites had
+ * drifted into inconsistent revoke/sort/validate behaviour.
  *
- * Before this, six inline fetch sites across four files talked to the same
- * routes with quietly different behaviour: revoke filtered the row out locally
- * in one place and refetched in another, one surface sorted expired keys last
- * and the other did not, and only one validated the name before POSTing. The
- * two create paths had drifted far enough that one could not express what the
- * other could. Consolidating the transport is what makes one panel possible.
- *
- * Modelled on {@link usePasskeys} — fetch-based, never a direct Firestore read.
- * `users/{uid}/api_keys` and `api_keys/{keyHash}` are Admin-SDK-only; the
- * client has no read access to either and must not be given any.
+ * Fetch-based, never a direct Firestore read: `users/{uid}/api_keys` and
+ * `api_keys/{keyHash}` are Admin-SDK-only and the client must stay unable to
+ * read them.
  */
 
 export interface CreateKeyInput {
@@ -24,11 +18,7 @@ export interface CreateKeyInput {
   ttlDays?: number;
 }
 
-/**
- * `scopes` is a full replacement, not a merge — the route treats it that way,
- * and a partial merge on the client would disagree with the server about what
- * the key ends up holding.
- */
+/** `scopes` is a full replacement, not a merge — matches the route. */
 export interface UpdateKeyInput {
   name?: string;
   scopes?: ApiKeyScope[];
@@ -63,9 +53,7 @@ export function useApiKeys() {
       const res = await fetch('/api/keys');
       if (!res.ok) throw new Error(await problemMessage(res, 'failed to load keys'));
       const data = (await res.json()) as { keys?: ApiKeyListItem[] };
-      // Usable keys first. The route already orders by createdAt desc and
-      // Array.prototype.sort is stable, so that ordering survives within each
-      // group.
+      // Usable keys first; sort is stable so the route's createdAt-desc holds.
       const rows = data.keys ?? [];
       setKeys(
         [...rows].sort(
@@ -133,9 +121,8 @@ export function useApiKeys() {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error(await problemMessage(res, 'failed to revoke key'));
-      // Refetch rather than filtering locally: rotation can leave a
-      // predecessor row whose state the server owns, and a local splice would
-      // disagree with it.
+      // Refetch, not local splice: rotation leaves a predecessor row the
+      // server owns.
       await refresh();
     },
     [refresh],

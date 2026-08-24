@@ -1,23 +1,11 @@
 /**
- * api-sprint W5.4 — installer-deploys-api e2e (track 1A).
+ * installer-deploys-api e2e: the public scoped endpoints under
+ * `/api/sites/{siteId}/deployments/*` driven by an `owk_test_*` api key,
+ * asserting response shape + Firestore side-effects.
  *
- * Hits the public scoped endpoints under
- * `/api/sites/{siteId}/deployments/*` with an `owk_test_*` api key,
- * asserting on response shape + Firestore side-effects.
- *
- * Verbs covered (≥1 happy-path each):
- *   - GET    /api/sites/{siteId}/deployments
- *   - POST   /api/sites/{siteId}/deployments
- *   - GET    /api/sites/{siteId}/deployments/{id}
- *   - POST   /api/sites/{siteId}/deployments/{id}/retry
- *   - POST   /api/sites/{siteId}/deployments/{id}/cancel
- *   - POST   /api/sites/{siteId}/deployments/{id}/uninstall
- *   - DELETE /api/sites/{siteId}/deployments/{id}
- *
- * Negative paths:
- *   - 403 scope_insufficient when the api key is missing the `site:write` scope
- *   - 413 over_quota when the create request exceeds the per-site target cap
- *   - Idempotency replay returns the cached body for the same key+body pair
+ * One happy path per verb (list, create, get, retry, cancel, uninstall,
+ * delete), plus: 403 scope_insufficient without `site:write`, 413 over_quota
+ * past the per-site target cap, and idempotency replay of the cached body.
  */
 import crypto from 'crypto';
 import { test, expect } from '@playwright/test';
@@ -52,18 +40,16 @@ async function clearMachineCommands(machineId: string): Promise<void> {
 }
 
 test.beforeAll(async () => {
-  // Seed an isolated site + two machines so this spec doesn't collide with
-  // dispatch/create-deployment.spec.ts which uses the canonical `site-A`.
+  // Isolated site so this doesn't collide with dispatch/create-deployment.spec.ts
+  // on the canonical `site-A`.
   const db = getAdminDb();
   await db
     .collection('sites')
     .doc(SITE_ID)
     .set({ name: SITE_ID, owner: 'admin-uid', timezone: 'UTC', createdAt: new Date() });
 
-  // Promote admin-uid into this isolated site so id-token-based auth would
-  // also pass; key-based auth doesn't strictly need the membership row but
-  // it makes the suite robust if anyone reuses the seed for a session-cookie
-  // path.
+  // Key auth doesn't need the membership row, but granting it keeps the seed
+  // reusable for a session-cookie path.
   await db
     .collection('users')
     .doc('admin-uid')
@@ -89,10 +75,9 @@ test.afterAll(async () => {
   await clearDeployments();
   await Promise.all([clearMachineCommands(MACHINE_ID_A), clearMachineCommands(MACHINE_ID_B)]);
 
-  // Undo the beforeAll membership grant and drop the isolated site. Leaving
-  // SITE_ID in admin-uid's `sites` makes the UI's site auto-selection pick it
-  // over the canonical `site-A` for every later spec in the run — their
-  // site-A seeds then never render (this failed 9 co-run specs on 2026-08-12).
+  // MUST undo the membership grant: leaving SITE_ID in admin-uid's `sites` makes
+  // site auto-selection prefer it over `site-A` for every later spec, whose
+  // seeds then never render (failed 9 co-run specs, 2026-08-12).
   const db = getAdminDb();
   const userRef = db.collection('users').doc('admin-uid');
   const snap = await userRef.get();
@@ -128,7 +113,7 @@ test('POST /api/sites/{s}/deployments — creates deployment + fans out install 
   expect(Array.isArray(body.targets)).toBe(true);
   expect(body.targets).toHaveLength(2);
 
-  // Firestore side-effect — deployment doc exists with the right machines.
+  // Firestore side-effect: the deployment doc lists the right machines.
   const db = getAdminDb();
   const docSnap = await db
     .collection('sites')
@@ -139,7 +124,7 @@ test('POST /api/sites/{s}/deployments — creates deployment + fans out install 
   expect(docSnap.exists).toBe(true);
   expect(docSnap.data()?.installer_url).toBe(installerUrl);
 
-  // Each machine got an install_software command in its pending queue.
+  // Each machine got an install_software command queued.
   for (const machineId of [MACHINE_ID_A, MACHINE_ID_B]) {
     const pendingSnap = await db
       .collection('sites')
@@ -157,7 +142,7 @@ test('POST /api/sites/{s}/deployments — creates deployment + fans out install 
 });
 
 test('GET /api/sites/{s}/deployments — lists newest first, paginates', async ({ request }) => {
-  // Seed two deployment docs directly so we don't rely on POST timing.
+  // Seed directly so this doesn't depend on POST timing.
   const db = getAdminDb();
   const col = db.collection('sites').doc(SITE_ID).collection('deployments');
   const now = Date.now();
@@ -191,7 +176,7 @@ test('GET /api/sites/{s}/deployments — lists newest first, paginates', async (
   const body = await res.json();
   expect(Array.isArray(body.items)).toBe(true);
   expect(body.items.length).toBeGreaterThanOrEqual(2);
-  // First item is the newest (createdAt desc).
+  // Newest first (createdAt desc).
   expect(body.items[0].name).toBe('newer');
   expect(typeof body.next_page_token).toBe('string');
 });
@@ -239,8 +224,8 @@ test('POST /api/sites/{s}/deployments/{id}/retry — re-queues failed targets', 
       installer_name: 'retry.exe',
       installer_url: 'https://example.com/retry.exe',
       silent_flags: '/S',
-      // Pinned checksum keeps the server's legacy self-heal (which would
-      // stream the installer URL) out of this test — network-free retry.
+      // A pinned checksum keeps the server's legacy self-heal (which streams the
+      // installer URL) out of this test — retry stays network-free.
       sha256_checksum: 'ab'.repeat(32),
       targets: [
         { machineId: MACHINE_ID_A, status: 'failed', error: 'boom' },
@@ -261,7 +246,7 @@ test('POST /api/sites/{s}/deployments/{id}/retry — re-queues failed targets', 
   expect(body.retried).toBe(1);
   expect(body.machine_ids).toEqual([MACHINE_ID_A]);
 
-  // The failed target was reset to pending and a new install command was queued.
+  // Failed target reset to pending, new install command queued.
   const updated = await db
     .collection('sites')
     .doc(SITE_ID)
@@ -383,13 +368,12 @@ test('POST /api/sites/{s}/deployments — read-only key gets 403 scope_insuffici
   });
   expect(res.status()).toBe(403);
   const body = await res.json();
-  // RFC 7807 problem+json — `code` carries the stable error string.
+  // RFC 7807 problem+json — `code` is the stable error string.
   expect(body.code).toBe('scope_insufficient');
 });
 
 test('POST /api/sites/{s}/deployments — over_quota when targets exceed cap', async ({ request }) => {
-  // Seed the site with a low quota so we can trip it without listing 100+
-  // machine ids in the request body.
+  // Low quota so we can trip it without 100+ machine ids in the body.
   const db = getAdminDb();
   await db.collection('sites').doc(SITE_ID).update({ deployQuota: 1 });
 
@@ -440,8 +424,7 @@ test('POST /api/sites/{s}/deployments — idempotency replay returns cached body
   });
   expect(replay.status()).toBe(201);
   const replayBody = await replay.json();
-  // deploymentId is stamped from Date.now() at request time. A successful
-  // idempotency replay returns the same id; if the replay re-executed it
-  // would produce a fresh id.
+  // deploymentId is stamped from Date.now(), so a re-executed replay would
+  // return a fresh id — matching ids prove the cache was served.
   expect(replayBody.deploymentId).toBe(firstBody.deploymentId);
 });

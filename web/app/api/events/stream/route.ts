@@ -1,18 +1,10 @@
 /**
- * GET /api/events/stream?siteId=...
- *     -> Server-Sent Events channel. Emits a `connected` event immediately,
- *        then a `keepalive` event + SSE comment every 15s. Auto-closes
- *        after 30 minutes so the connection never outlives the auth's
- *        freshness window.
+ * GET /api/events/stream?siteId=... — SSE channel. `connected` immediately,
+ * then `keepalive` every 15s; auto-closes at 30min so the stream never
+ * outlives the auth's freshness window. Requires `site:<id>:read`.
  *
- * Requires `siteId` and `site:<id>:read`. Auth works through any path
- * `resolveAuth` supports, including the `?api_key=owk_...` query-param
- * and the `Authorization: Bearer owk_...` header.
- *
- * Transport note: this MVP route is scoped and filter-validated, but still
- * emits liveness events only. Real webhook/event fanout remains a Wave 3
- * CLI/SDK readiness item, so docs must not promise production event delivery
- * from this stream yet.
+ * Liveness events ONLY — real event fanout isn't wired yet, so docs must not
+ * promise delivery from this stream.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';

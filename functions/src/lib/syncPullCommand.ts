@@ -1,19 +1,12 @@
 /**
- * sync_pull command payload contract.
- *
- * The pure builder + id helper for the command queued onto each
+ * sync_pull payload contract — pure builder + id helper for the command queued onto each
  * machine's `commands/pending` doc. Three call sites must stay aligned:
+ * functions/src/distributionFanout.ts, and the roost deploy + resync routes.
  *
- *   - `functions/src/distributionFanout.ts` (canary/fleet rollout trigger)
- *   - `web/app/api/roosts/[roostId]/deploy/route.ts`
- *   - `web/app/api/roosts/[roostId]/resync/route.ts`
+ * agent/src/sync_commands.py:_handle_sync_pull runs `_require_str` over every key emitted
+ * here, so a renamed or missing field crashes the agent before any disk work.
  *
- * The agent's handler at `agent/src/sync_commands.py:_handle_sync_pull`
- * calls `_require_str(cmd_data, '<field>')` for every key emitted here.
- * A renamed or missing field crashes the agent before any disk work.
- *
- * Pure (no firebase-admin imports) so a contract test can pin field
- * names without spinning up the firestore client.
+ * No firebase-admin imports, so a contract test can pin field names without a firestore client.
  */
 
 export function buildSyncPullCommand(

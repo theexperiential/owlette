@@ -13,33 +13,27 @@ import { apiError } from '@/lib/apiErrorResponse';
 /**
  * GET /api/cron/display-alerts
  *
- * Railway HTTP cron endpoint that drains the `pending_display_alerts` queue
+ * HTTP cron endpoint (cron-job.org) that drains the `pending_display_alerts` queue
  * and sends batched digest emails grouped by site.
  *
- * Alerts are held for ACCUMULATION_WINDOW_MS before being sent, allowing a
- * burst of related events (e.g. a video-wall power blip emitting 8 drift
- * events + 1 monitor_removed in the same minute) to be grouped into a
- * single email per site instead of an inbox-flooding cascade.
+ * Alerts are held for ACCUMULATION_WINDOW_MS so a burst (a video-wall power
+ * blip emits ~9 events in a minute) becomes one email per site.
  *
  * Authentication: X-Cron-Secret header must match CRON_SECRET env var.
  *
- * Railway cron config (set in Railway dashboard):
+ * cron-job.org config (NOT Railway — register once per environment):
  *   Schedule:  * /3 * * * *   (every 3 minutes — matches process-alerts)
  *   URL:       GET https://<your-app>/api/cron/display-alerts
- *   Header:    X-Cron-Secret: <CRON_SECRET value>
+ *   Header:    X-Cron-Secret: <that environment's CRON_SECRET>
  *
- * Critical-path bypass: `display_monitor_removed` and
- * `display_auto_revert_fired` skip this digest entirely and email
- * immediately via the inline-send path in `/api/agent/alert` (B3.3) so the
- * operator gets a sub-minute alert. Everything else routes through here.
+ * `display_monitor_removed` and `display_auto_revert_fired` bypass the digest
+ * and email inline from `/api/agent/alert` for a sub-minute alert.
  */
 
-// Only process alerts older than this so a burst can accumulate into one
-// digest entry. Matches the process-alerts cadence.
+// Only drain alerts older than this, so a burst accumulates into one digest.
 const ACCUMULATION_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
 
 export async function GET(request: NextRequest) {
-  // Validate cron secret
   const cronSecret = request.headers.get('x-cron-secret');
   if (!process.env.CRON_SECRET || cronSecret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -49,7 +43,6 @@ export async function GET(request: NextRequest) {
   const cutoff = new Date(Date.now() - ACCUMULATION_WINDOW_MS);
 
   try {
-    // Query alerts older than the accumulation window
     const alertsSnap = await db
       .collection('pending_display_alerts')
       .where('timestamp', '<=', cutoff)
@@ -59,7 +52,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: true, alertsProcessed: 0 });
     }
 
-    // Parse alerts
     const alerts: PendingDisplayAlert[] = alertsSnap.docs.map((doc) => {
       const raw = doc.data() as Omit<PendingDisplayAlert, 'docId'>;
       return {
@@ -68,7 +60,6 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    // Group by siteId
     const alertsBySite = new Map<string, PendingDisplayAlert[]>();
     for (const alert of alerts) {
       const existing = alertsBySite.get(alert.siteId) ?? [];
@@ -82,9 +73,8 @@ export async function GET(request: NextRequest) {
 
     for (const [siteId, siteAlerts] of alertsBySite) {
       try {
-        // Filter recipients on the `displayAlerts` opt-out preference (B1.4
-        // extended the union). Users who opted out get no digest, even
-        // though their queue entries get drained alongside everyone else's.
+        // `displayAlerts` opt-outs get no digest, but their queue entries are
+        // still drained alongside everyone else's.
         const recipients = await getSiteAlertRecipients(siteId, 'displayAlerts');
         if (recipients.length === 0) {
           console.warn(`[cron/display-alerts] No recipients for site ${siteId}`);
@@ -96,16 +86,14 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        // Get timezone from the first machine for display
+        // Display timezone comes from the first machine.
         const tz = await getMachineTimezone(siteId, siteAlerts[0].machineId);
         const siteLabel = await getSiteLabel(siteId);
 
-        // Send per-recipient emails (for individual unsubscribe links)
+        // Per-recipient so each carries its own unsubscribe link.
         for (const recipient of recipients) {
           try {
-            // Per-user `mutedMachines` filter — drops alerts for machines
-            // this user has explicitly muted. Empty result = nothing to
-            // email this user, skip the whole send.
+            // Per-user `mutedMachines` filter; an empty result skips the send.
             const userAlerts = siteAlerts.filter(
               (a) => !recipient.mutedMachines.includes(a.machineId),
             );
@@ -115,9 +103,7 @@ export async function GET(request: NextRequest) {
               ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
               : undefined;
 
-            // Subject: collapse to a focused single-event subject when
-            // there's just one alert in this user's filtered set, otherwise
-            // give the count + site for fast inbox triage.
+            // One alert → a focused subject; otherwise count + site, for triage.
             const userSubject = userAlerts.length === 1
               ? `[owlette] display event on ${userAlerts[0].machineId}`
               : `[owlette] ${userAlerts.length} display event(s) in ${siteLabel}`;
@@ -151,7 +137,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Delete all processed alerts (Firestore batch limit: 500)
+    // Firestore batch limit is 500.
     const docs = alertsSnap.docs;
     for (let i = 0; i < docs.length; i += 500) {
       const batch = db.batch();

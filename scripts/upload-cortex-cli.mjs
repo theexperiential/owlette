@@ -2,10 +2,9 @@
 /**
  * upload-cortex-cli — publish the Claude Code CLI that Cortex downloads on demand.
  *
- * Since 3.0.0 the agent installer deletes `claude_agent_sdk/_bundled/claude.exe`
- * (241.5 MB, ~60% of the old payload) from the build tree. `agent/src/
- * cortex_cli_fetch.py` puts one back on first Cortex enable, pinned by sha256
- * through a single Firestore document:
+ * Since 3.0.0 the installer strips `claude_agent_sdk/_bundled/claude.exe`
+ * (241.5 MB) from the build tree; `agent/src/cortex_cli_fetch.py` fetches it on
+ * first Cortex enable, pinned by sha256 through one Firestore document:
  *
  *   installer_metadata/cortex_cli
  *     { version, downloadUrl, sha256, size, storagePath, md5Base64, uploadedAt }
@@ -14,15 +13,11 @@
  * changes — i.e. whenever `claude-agent-sdk` is upgraded and ships a different
  * `_cli_version.py`. See docs/internal/cortex-cli-provisioning.md.
  *
- * Why not POST /api/installer/upload?
- *   That route hardcodes `agent-installers/versions/{version}/Owlette-Installer-
- *   v{version}.exe` and finalizes into `installer_metadata/data/versions/
- *   {version}` (optionally moving `latest`). Pushing claude.exe through it would
- *   publish a bogus agent-installer "2.1.121" — served by the public /download
- *   and /api/installer endpoints — whose bytes are the Claude CLI. So this uses
- *   the same *mechanism* (signed URL upload -> verify -> metadata write, the
- *   installer flow's three steps) against a dedicated `cortex-cli/` prefix,
- *   with the Admin SDK, exactly like every other provisioning script in here.
+ * Not POST /api/installer/upload: that route hardcodes the agent-installer path
+ * and metadata doc, so pushing claude.exe through it would publish a bogus
+ * agent-installer whose bytes are the Claude CLI, served by public /download.
+ * Same three-step mechanism (signed URL -> verify -> metadata write) against a
+ * dedicated `cortex-cli/` prefix instead.
  *
  * Usage:
  *   node scripts/upload-cortex-cli.mjs --env=dev  --file=<path to claude.exe> [--dry-run]
@@ -54,8 +49,8 @@ import readline from 'node:readline';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-// firebase-admin lives in web/node_modules — resolve it from there so this runs
-// without a root-level dependency install.
+// firebase-admin lives in web/node_modules; resolved from there so this needs
+// no root-level install.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 const admin = require('firebase-admin');
 
@@ -66,10 +61,6 @@ const UPLOAD_URL_TTL_MINUTES = 15;
 /** Matches the installer flow's long-lived read URL. */
 const DOWNLOAD_URL_EXPIRY = new Date('2030-01-01');
 const CONTENT_TYPE = 'application/octet-stream';
-
-/* --------------------------------------------------------------------- */
-/*  CLI parsing                                                          */
-/* --------------------------------------------------------------------- */
 
 const args = process.argv.slice(2);
 
@@ -99,10 +90,6 @@ if (typeof fileArg !== 'string' || !fileArg) usage('--file is required');
 
 const filePath = resolve(fileArg);
 if (!existsSync(filePath)) usage(`file not found: ${filePath}`);
-
-/* --------------------------------------------------------------------- */
-/*  env loading                                                          */
-/* --------------------------------------------------------------------- */
 
 function loadEnvFile(path) {
   if (!existsSync(path)) return;
@@ -147,10 +134,6 @@ const bucketName =
   process.env[`FIREBASE_STORAGE_BUCKET_${suffix}`] ||
   (env === 'dev' ? process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET : undefined) ||
   `${projectId}.firebasestorage.app`;
-
-/* --------------------------------------------------------------------- */
-/*  helpers                                                              */
-/* --------------------------------------------------------------------- */
 
 const MB = 1024 * 1024;
 
@@ -288,10 +271,6 @@ function probeDownloadUrl(downloadUrl) {
   });
 }
 
-/* --------------------------------------------------------------------- */
-/*  main                                                                 */
-/* --------------------------------------------------------------------- */
-
 async function main() {
   const size = statSync(filePath).size;
   const version = detectVersion(filePath);
@@ -338,7 +317,7 @@ async function main() {
   const bucket = admin.storage().bucket();
   const file = bucket.file(storagePath);
 
-  // ── step 1: does the object already match? (idempotent re-runs) ──────
+  // step 1: does the object already match? (idempotent re-runs)
   let uploaded = false;
   const [exists] = await file.exists();
   if (exists && !force) {
@@ -358,7 +337,7 @@ async function main() {
     uploaded = true;
   }
 
-  // ── step 3: verify what actually landed ──────────────────────────────
+  // step 3: verify what actually landed
   const [storedMeta] = await file.getMetadata();
   if (String(storedMeta.size) !== String(size)) {
     throw new Error(`size mismatch after upload: stored ${storedMeta.size}, local ${size}`);
@@ -377,7 +356,7 @@ async function main() {
   const probeStatus = await probeDownloadUrl(downloadUrl);
   console.log(`  downloadUrl  ${redactUrl(downloadUrl)} (probe HTTP ${probeStatus})`);
 
-  // ── metadata doc: the pin the agent reads ────────────────────────────
+  // metadata doc: the pin the agent reads
   const payload = {
     version,
     downloadUrl,

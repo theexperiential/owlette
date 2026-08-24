@@ -1,15 +1,12 @@
 /**
- * Screenshot — display capability card preview (api-sprint wave 4.4).
- *
+ * Screenshot — display capability card preview.
  * Output: `web/public/landing-screens/preview-displays.png`
- * Used by:  `components/landing/UseCaseSection.tsx` (display capability card).
+ * Used by: `components/landing/UseCaseSection.tsx`.
  *
- * Drives the dashboard's display layout panel into a 4-monitor 2×2 mosaic
- * topology and screenshots the result. Mirrors the access-control display-
- * panel spec (`e2e/specs/access-control/display-panel.spec.ts`) for the
- * UI flow — list view → "view displays" button on the seeded machine row →
- * panel slides open — because that path is the one already proven stable
- * by the regression suite.
+ * Drives the display layout panel into a 4-monitor 2×2 mosaic and captures it.
+ * The UI flow (list view → "view displays" → panel) mirrors
+ * `e2e/specs/access-control/display-panel.spec.ts` because that path is already
+ * proven stable by the regression suite.
  */
 import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
@@ -23,22 +20,20 @@ test('display capability card preview', async ({ page }) => {
   const ctx = await seedScreenshotFixtures('display-layout-editor');
 
   try {
-    // The dashboard auto-selects `lastSiteId` from the user doc when present.
-    // Pin it to the seeded screenshot site so /dashboard loads the right
-    // machine list without going through the site-switcher dropdown.
+    // Pin `lastSiteId` (the dashboard auto-selects it) to the seeded site so
+    // /dashboard loads the right machine list without the site switcher.
     await getAdminDb()
       .collection('users')
       .doc(TEST_USERS.admin.uid)
       .set({ lastSiteId: ctx.siteId }, { merge: true });
 
-    // Pin the clock so any "x minutes ago" / countdown text is stable.
-    // Install BEFORE goto so the page's own Date.now() picks up the fake.
+    // Pin the clock so relative-time text is stable. Must install BEFORE goto so
+    // the page's own Date.now() picks up the fake.
     await page.clock.install({ time: FIXED_NOW_MS });
 
     await page.goto('/dashboard');
 
-    // Open the display panel via the list view's one-click "view displays"
-    // button — same path as the access-control display-panel regression.
+    // Same "view displays" path as the access-control display-panel regression.
     await page.getByTestId('view-toggle-list').click();
     const row = page
       .getByTestId('machine-row')
@@ -48,14 +43,11 @@ test('display capability card preview', async ({ page }) => {
     const panel = page.getByTestId('display-layout-panel');
     await expect(panel).toBeVisible();
 
-    // Wait for the network to settle so any late-paint (4-monitor canvas
-    // render after the display profile snapshot resolves) finishes before
-    // we capture pixels.
-    // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
+    // The dashboard holds persistent firestore websockets, so the network never
+    // idles — wait for paint instead of networkidle.
     await page.waitForTimeout(1500);
 
-    // Disable CSS animations + transitions so cycling effects (panel slide,
-    // monitor card fade-ins) don't introduce per-run jitter.
+    // Kill animations/transitions so panel slide + card fade-ins can't jitter.
     await page.addStyleTag({
       content: `
         *, *::before, *::after {
@@ -67,10 +59,16 @@ test('display capability card preview', async ({ page }) => {
       `,
     });
 
-    // Pin the clock inside the page once more after navigation so any
-    // hooks that captured Date.now() at mount get the fixed anchor on
-    // their next render tick.
+    // Re-pin after navigation so hooks that captured Date.now() at mount get the
+    // fixed anchor on their next tick.
     await page.clock.setFixedTime(FIXED_NOW_MS);
+
+    // Playwright auto-scrolls `open-display-panel` into view to click it, and the
+    // page stays where that left it — which framed the shot mid-panel, clipping
+    // the layout card's header and the first monitor row off the top. The panel
+    // renders at the top of the dashboard, so scroll back before capturing.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(300);
 
     await page.screenshot({
       path: 'public/landing-screens/preview-displays.png',

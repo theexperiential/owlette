@@ -1,46 +1,17 @@
 /**
  * POST /api/sites/{siteId}/machines/{machineId}/screenshots/finalize
  *
- * Final step of the agent's `capture_screenshot` pipeline. The agent
- * has just PUT image bytes to the signed URL returned by
- * `/screenshots/upload-url`. This endpoint:
+ * Last step of the agent's `capture_screenshot` pipeline, after it PUTs bytes
+ * to the signed URL from `/screenshots/upload-url`: verify the object landed
+ * and its path matches this site+machine, make it public-read, write
+ * `machines/{id}.lastScreenshot`, append a history doc and prune to 20.
  *
- *   1. Verifies the object actually landed at `storagePath` (HEAD via
- *      Firebase Storage admin) and that its path belongs to *this*
- *      site+machine (defense-in-depth — the agent token's
- *      machine_id is already checked by requireMachineAuthAndScope, but
- *      we also reject paths that don't match the URL params).
- *   2. Flips the object to public-read via `file.makePublic()`. Same
- *      pattern the legacy /api/agent/screenshot endpoint uses — the
- *      bucket's general policy is private; only screenshots get
- *      flipped, and the bucket-side lifecycle rule deletes
- *      `screenshots/**` after 30 days.
- *   3. Writes `sites/{siteId}/machines/{machineId}.lastScreenshot = {
- *      url, timestamp, sizeKB }` — the canonical "latest capture"
- *      field the dashboard's ScreenshotDialog subscribes to via
- *      Firestore real-time. Same field the legacy endpoint writes, so
- *      no dashboard changes are needed.
- *   4. Appends a `screenshots/{docId}` history doc and prunes the
- *      subcollection to the most-recent 20 (matching legacy behavior).
+ * A separate step because pre-registering would flash a stub lastScreenshot,
+ * agents hold no GCS credentials (no makePublic / public URLs), and a bucket
+ * trigger would add latency and infra for a one-line action.
  *
- * Why a separate finalize step (rather than letting the upload-url
- * route pre-register everything, or having the agent write Firestore
- * directly)?
- *   - Pre-registering writes a stub lastScreenshot the dashboard would
- *     briefly render before the upload completes.
- *   - Agents don't have GCS service-account credentials and can't mint
- *     public URLs or call makePublic().
- *   - A Cloud Function bucket-trigger could do this, but adds latency
- *     and a new infra surface for a one-line action.
- *
- * Auth: same as /screenshots/upload-url — `machine=<id>:write` (api
- * key) or agent ID-token via requireMachineAuthAndScope.
- *
- * Idempotency: not required. The endpoint is naturally idempotent —
- * calling it twice with the same storagePath flips makePublic twice
- * (no-op the second time) and writes lastScreenshot twice (last-writer
- * wins, same data). The history append IS NOT idempotent so the
- * pruning logic absorbs accidental duplicates.
+ * Auth: `machine=<id>:write` or agent ID-token, as on /screenshots/upload-url.
+ * Naturally idempotent apart from the history append, which pruning absorbs.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -62,14 +33,12 @@ interface RouteParams {
 
 const ALLOWED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg']);
 
-// Max history docs kept in the `screenshots` subcollection. Matches the
-// MAX_HISTORY constant in the legacy /api/agent/screenshot route so the
-// dashboard's sidebar behavior stays the same across the patch window.
+// Matches the legacy /api/agent/screenshot MAX_HISTORY so the sidebar behaves
+// identically across the patch window.
 const MAX_HISTORY = 20;
 
-// Hard cap on the agent-reported size — the actual file size in storage
-// is the source of truth (we read it back via metadata below), but we
-// reject obviously-bogus values up front to bound writes.
+// Bound on the ADVISORY agent-reported size; object metadata below is
+// authoritative. Rejects bogus values before any write.
 const MAX_SIZE_KB = 10_240; // 10 MB
 
 interface FinalizeBody {
@@ -92,10 +61,8 @@ function resolveBucketName(): string {
 }
 
 /**
- * Confirm `storagePath` is shaped like `screenshots/{siteId}/{machineId}/...`
- * with exact match on siteId + machineId. The signed-URL route already
- * generates paths in this shape; this is a server-side reassertion so
- * the agent can't finalize an arbitrary path under another machine.
+ * Reassert `screenshots/{siteId}/{machineId}/...` server-side so an agent
+ * cannot finalize a path belonging to another machine.
  */
 function validateStoragePath(
   storagePath: string,
@@ -105,14 +72,12 @@ function validateStoragePath(
   if (!storagePath.startsWith('screenshots/')) {
     return { ok: false, reason: 'storagePath must start with screenshots/' };
   }
-  // Reject path traversal — Firebase Storage tolerates `..` segments but
-  // we have no reason to allow them.
+  // Firebase Storage tolerates `..` segments; we don't.
   if (storagePath.includes('..')) {
     return { ok: false, reason: 'storagePath must not contain ".."' };
   }
+  // screenshots / siteId / machineId / filename...
   const segments = storagePath.split('/');
-  // segments[0]='screenshots', segments[1]=siteId, segments[2]=machineId,
-  // segments[3+]=timestamped filename(s)
   if (segments.length < 4) {
     return {
       ok: false,
@@ -202,10 +167,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const bucket = storage.bucket(resolveBucketName());
     const file = bucket.file(body.storagePath);
 
-    // Verify the object actually landed. The agent's PUT could have
-    // failed silently (network hiccup absorbed by retries) or the
-    // signed URL could have expired between issuance and use — both
-    // would leave us with a finalize call against a missing object.
+    // The PUT can fail silently or the signed URL expire between issuance and
+    // use, either of which finalizes against a missing object.
     const [exists] = await file.exists();
     if (!exists) {
       return problemNotFound(
@@ -213,10 +176,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Pin the content-type metadata server-side. The signed-URL upload
-    // already had a content-type binding, but the legacy /api/agent/
-    // screenshot path uses setMetadata so we mirror that for consistent
-    // CDN/browser handling on the public URL we're about to issue.
+    // Mirror the legacy endpoint's setMetadata so CDN/browser handling of the
+    // public URL matches, despite the signed URL already binding a type.
     await file.setMetadata({
       contentType,
       cacheControl: 'public, max-age=60',
@@ -227,8 +188,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       },
     });
 
-    // Authoritative size from the object's metadata (the agent's
-    // reported size is advisory; we trust the bucket).
+    // Bucket metadata is authoritative; the agent's sizeKB is advisory.
     const [meta] = await file.getMetadata();
     const objectSizeBytes =
       typeof meta.size === 'string'
@@ -241,14 +201,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       Math.round((Number.isFinite(objectSizeBytes) ? objectSizeBytes : 0) / 1024),
     );
 
-    // Flip to public-read so the dashboard can render via a plain
-    // https://storage.googleapis.com/<bucket>/<path> URL without a
-    // signed-URL roundtrip on every poll.
+    // Public-read so the dashboard renders a plain storage.googleapis.com URL
+    // without a signed-URL roundtrip per poll.
     await file.makePublic();
 
-    // Cache-buster ensures browsers fetch the freshest capture even
-    // when two captures hash-collide somehow (storagePath includes a
-    // random suffix today, so identical paths are vanishingly rare).
+    // ?t= cache-buster in case two captures ever share a storagePath.
     const publicUrl = `https://storage.googleapis.com/${bucket.name}/${body.storagePath}?t=${Date.now()}`;
 
     const db = getAdminDb();
@@ -278,18 +235,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       monitor,
     });
 
-    // Prune to MAX_HISTORY, deleting BOTH the Firestore doc AND the
-    // storage object (otherwise the bucket accumulates files until the
-    // 30-day lifecycle rule sweeps them). Matches legacy endpoint
-    // pruning behavior.
+    // Prune doc AND storage object — otherwise the bucket grows until the
+    // 30-day lifecycle rule sweeps it.
     const allDocs = await screenshotsCol.orderBy('timestamp', 'asc').get();
     if (allDocs.size > MAX_HISTORY) {
       const toDelete = allDocs.docs.slice(0, allDocs.size - MAX_HISTORY);
       for (const docSnap of toDelete) {
         const data = docSnap.data();
         try {
-          // The stored url includes the cache-buster ?t=... and the
-          // storage prefix — extract the bucket-relative path.
+          // Strip the storage prefix and ?t= to get the bucket-relative path.
           const rawUrl = typeof data.url === 'string' ? data.url : '';
           const prefix = `${bucket.name}/`;
           const pathStart = rawUrl.indexOf(prefix);
@@ -299,8 +253,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             const oldPath = qIdx === -1 ? tail : tail.slice(0, qIdx);
             if (oldPath) {
               await bucket.file(oldPath).delete().catch(() => {
-                // Object may already be gone (manual delete, lifecycle
-                // rule, etc.) — pruning is best-effort.
+                // Already gone (manual delete, lifecycle rule) — best-effort.
               });
             }
           }

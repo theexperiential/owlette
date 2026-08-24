@@ -1,31 +1,20 @@
 /**
- * Pure logic for roost per-site storage quota enforcement.
+ * Pure logic for roost per-site storage quota enforcement. A flat
+ * `SITE_STORAGE_BYTES` cap per site — not an entitlement; nothing consults a plan.
  *
- * A flat capacity limit — `SITE_STORAGE_BYTES` per site, applied to every
- * site identically. This bounds what one site may hold in R2; it is not an
- * entitlement, and nothing here consults a plan.
+ * Alarms fire on the TRANSITION across 50/80/100 %, diffed against the previous
+ * level, so a 40 % → 85 % jump fires 80 % once and never 50 % retroactively.
  *
- * Alarm thresholds fire at 50 / 80 / 100 % of cap. The transition — not
- * the absolute level — is what an alerting caller wants, so the pure
- * function also reports "new crossings" by diffing the previous alarm
- * level against the current one. That way an upload that takes a tenant
- * from 40 % → 85 % in one go fires the 80 % alarm exactly once, not
- * retroactively for 50 % too.
- *
- * Atomic upload admission uses `(used + pending)` as the denominator
- * so two concurrent uploads can't both individually "fit" when their
- * sum exceeds the cap. Callers reserve `pendingBytes` before issuing
+ * Admission counts `(used + pending)` so two concurrent uploads can't each "fit"
+ * while their sum exceeds the cap. Callers reserve `pendingBytes` before issuing
  * the signed URL.
  */
 
 const TIB = 1024 ** 4;
 
 /**
- * Included storage per site, in bytes.
- *
- * Mirrored by `SITE_STORAGE_BYTES` in `web/lib/roostStorage.ts` — web can't
- * import from functions/, so the number exists on both sides and the two
- * must stay in sync.
+ * Included storage per site. Duplicated as `SITE_STORAGE_BYTES` in
+ * `web/lib/roostStorage.ts` (web can't import from functions/) — keep in sync.
  */
 export const SITE_STORAGE_BYTES = 1 * TIB;
 
@@ -36,11 +25,7 @@ export type AlarmLevel = (typeof ALARM_LEVELS)[number];
 export interface QuotaState {
   /** Bytes already finalised in R2 for this site. */
   usedBytes: number;
-  /**
-   * Bytes reserved for uploads that have been issued a signed URL but
-   * not yet finalised. Counted toward the cap so concurrent uploads
-   * can't overcommit.
-   */
+  /** Signed-URL-issued but unfinalised bytes; counted so concurrency can't overcommit. */
   pendingBytes: number;
 }
 
@@ -77,10 +62,7 @@ export function reportQuota(state: QuotaState): QuotaReport {
   };
 }
 
-/**
- * Pick the strictly-greatest alarm threshold crossed by `fractionUsed`.
- * For fractionUsed=0.75 this returns 0.5 (50% is crossed; 80% is not).
- */
+/** Greatest threshold crossed: 0.75 → 0.5, since 80 % is not yet crossed. */
 function currentAlarmLevel(fractionUsed: number): AlarmLevel {
   let highest: AlarmLevel = 0;
   for (const t of ALARM_LEVELS) {
@@ -90,9 +72,8 @@ function currentAlarmLevel(fractionUsed: number): AlarmLevel {
 }
 
 /**
- * Return the alarm levels newly crossed going from `before` → `after`.
- * Ordering guarantees monotonic alarms: a big jump fires every unfired
- * threshold in order. Empty if nothing new crossed.
+ * Alarm levels newly crossed from `before` → `after`, in order, so a big jump
+ * fires every unfired threshold. Empty when nothing new crossed.
  */
 export function newAlarmCrossings(
   before: AlarmLevel,
@@ -105,10 +86,6 @@ export function newAlarmCrossings(
   }
   return result;
 }
-
-/* --------------------------------------------------------------------- */
-/*  Upload admission                                                     */
-/* --------------------------------------------------------------------- */
 
 export interface UploadAdmissionInput {
   state: QuotaState;
@@ -128,15 +105,12 @@ export interface UploadAdmission {
 }
 
 /**
- * Decide if a new upload may proceed.
+ * Decide if a new upload may proceed: 402 when it would cross the allowance,
+ * 400 on a non-positive `requestedBytes`.
  *
- * Returns 402 ("Payment Required") when the site would cross its storage
- * allowance, and 400 when the caller sent a non-positive `requestedBytes`
- * (malformed).
- *
- * The caller reserves `requestedBytes` as pendingBytes on admission and
- * releases on chunk upload success/failure. This is the backpressure
- * that keeps two concurrent uploads from both fitting in isolation.
+ * The caller reserves `requestedBytes` as pendingBytes on admission and releases
+ * on success/failure — the backpressure that stops two concurrent uploads from
+ * each fitting in isolation.
  */
 export function admitUpload(input: UploadAdmissionInput): UploadAdmission {
   if (
@@ -154,7 +128,6 @@ export function admitUpload(input: UploadAdmissionInput): UploadAdmission {
 
   const report = reportQuota(input.state);
 
-  // already at cap: straight 402.
   if (report.atCap) {
     return {
       allowed: false,
@@ -165,7 +138,7 @@ export function admitUpload(input: UploadAdmissionInput): UploadAdmission {
     };
   }
 
-  // would the new upload push us over? compute against cap, not remaining.
+  // Against the cap, not `remaining`.
   const afterBytes = report.committedBytes + input.requestedBytes;
   if (afterBytes > report.planLimitBytes) {
     return {

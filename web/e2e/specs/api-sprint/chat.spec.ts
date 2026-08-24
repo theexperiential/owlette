@@ -1,31 +1,17 @@
 /**
- * api-sprint W5.4 — chat-api e2e (track 3A / hoot noun).
+ * chat-api e2e — hits the chat conversation endpoints with a `chat=<siteId>:write` api key.
  *
- * Hits the chat conversation endpoints with a `chat=<siteId>:write` api key.
+ * DELIBERATELY still on `/api/cortex/*`. The hoot rename made `/api/hoot/conversations*` canonical
+ * and left thin re-export routes at every `/api/cortex/*` path for the shipped `@owlette/cli`, the
+ * SDKs, and pinned fleet agents. This spec is the regression gate on that back-compat surface —
+ * do NOT "modernize" these URLs; add a hoot-path spec alongside if you want both.
  *
- * DELIBERATELY still on `/api/cortex/*`. The hoot rename made
- * `/api/hoot/conversations*` canonical and left thin re-export route files at
- * every `/api/cortex/*` path for the shipped `@owlette/cli`, the SDKs, and any
- * fleet agent pinned to the old surface. Exercising the alias here is the point:
- * this spec is the regression gate that the published back-compat surface keeps
- * routing, authorizing, and streaming exactly like the canonical one. Do not
- * "modernize" these URLs — add a hoot-path spec alongside if you want both.
+ * One happy path each for GET/POST /conversations, PATCH/DELETE/POST
+ * /conversations/{conversationId}.
  *
- * Verbs covered (≥1 happy-path each):
- *   - GET    /api/cortex/conversations
- *   - POST   /api/cortex/conversations
- *   - PATCH  /api/cortex/conversations/{conversationId}
- *   - DELETE /api/cortex/conversations/{conversationId}
- *   - POST   /api/cortex/conversations/{conversationId}    (SSE stream — see notes)
- *
- * Notes on the streaming case:
- *   The send endpoint funnels through `runHootStream`, which returns 503
- *   when the targeted machine is offline (or in our case, has no
- *   `cortexStatus.online`). For the e2e we don't need a real LLM completion —
- *   we only assert the route returns either a streaming response (Content-
- *   Type starting with `text/event-stream`) when the path is healthy, or a
- *   `cortex_unavailable` problem+json when the upstream is unreachable. Both
- *   prove the routing + auth + idempotency wrapper executed.
+ * The send endpoint goes through `runHootStream`, which 503s when the target machine is offline.
+ * No real LLM completion is needed: either `text/event-stream` or a `cortex_unavailable`
+ * problem+json proves routing + auth + the idempotency wrapper ran.
  */
 import crypto from 'crypto';
 import { test, expect } from '@playwright/test';
@@ -88,7 +74,6 @@ test('POST /api/cortex/conversations — creates a conversation', async ({ reque
   expect(typeof body.data.conversationId).toBe('string');
   expect(body.data.siteId).toBe(SITE_ID);
 
-  // Firestore side-effect: doc exists.
   const db = getAdminDb();
   const docSnap = await db
     .collection('chat_conversations')
@@ -98,7 +83,6 @@ test('POST /api/cortex/conversations — creates a conversation', async ({ reque
 });
 
 test('GET /api/cortex/conversations — lists conversations the caller can access', async ({ request }) => {
-  // Seed a couple of conversations directly.
   const db = getAdminDb();
   const now = Date.now();
   await Promise.all(
@@ -125,7 +109,6 @@ test('GET /api/cortex/conversations — lists conversations the caller can acces
   const body = await res.json();
   expect(body.ok).toBe(true);
   expect(Array.isArray(body.data.conversations)).toBe(true);
-  // The list should include our seeded conversations.
   const ids = body.data.conversations.map((c: { conversationId: string }) => c.conversationId);
   expect(ids).toEqual(expect.arrayContaining([`conv_${SUFFIX}_1`, `conv_${SUFFIX}_2`]));
 });
@@ -180,11 +163,8 @@ test('POST /api/cortex/conversations/{conversationId} — SSE response when stre
     data: { role: 'user', content: 'hello, are you online?' },
   });
 
-  // Two valid outcomes prove the route's auth + idempotency executed and the
-  // request was forwarded into the hoot pipeline:
-  //   - 200 with a `text/event-stream` body (LLM is reachable)
-  //   - 503 with a problem+json body whose code is `cortex_unavailable`
-  //     (machine offline / hoot disabled / no LLM creds in test env)
+  // Either outcome proves auth + idempotency ran and the request reached the hoot pipeline:
+  // 200 `text/event-stream`, or 503 problem+json with code `cortex_unavailable`.
   const status = res.status();
   expect([200, 423, 503]).toContain(status);
   const ct = res.headers()['content-type'] || '';
@@ -193,7 +173,6 @@ test('POST /api/cortex/conversations/{conversationId} — SSE response when stre
       ct.includes('text/event-stream') ||
         (ct.includes('text/plain') && res.headers()['x-vercel-ai-data-stream'] === 'v1'),
     ).toBe(true);
-    // Drain the stream body to confirm the framing.
     const text = await res.text();
     expect(text.length).toBeGreaterThan(0);
   } else {

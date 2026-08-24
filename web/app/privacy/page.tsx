@@ -27,9 +27,10 @@ export default function PrivacyPage() {
             <section>
               <h2 className="text-xl font-semibold text-foreground mb-4">1. introduction</h2>
               <p>
-                The Experiential Company, LLC (&quot;TEC,&quot; &quot;we,&quot; &quot;our,&quot; or &quot;us&quot;) operates owlette, a cloud-connected
-                process management and remote deployment system. this privacy policy explains how we
-                collect, use, disclose, and safeguard your information when you use our service.
+                Tridant Inc., a Delaware corporation (&quot;Tridant,&quot; &quot;we,&quot; &quot;our,&quot;
+                or &quot;us&quot;), operates owlette, a cloud-connected process management and remote
+                deployment system. this privacy policy explains how we collect, use, disclose, and
+                safeguard your information when you use our service.
               </p>
               <p className="mt-4">
                 owlette is an operations tool: you install an agent on machines you own or administer,
@@ -444,10 +445,10 @@ export default function PrivacyPage() {
                 </a>
               </p>
               <p className="mt-2">
-                <strong>company:</strong> The Experiential Company, LLC
+                <strong>company:</strong> Tridant Inc., a Delaware corporation
               </p>
               <p className="mt-2">
-                <strong>location:</strong> California, USA
+                <strong>principal place of business:</strong> California, USA
               </p>
             </section>
           </div>

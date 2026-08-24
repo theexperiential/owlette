@@ -1,21 +1,12 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/actions/deleteOwnAccount.server.ts`
- * (security-boundary-migration wave 3.10).
+ * Unit tests for `web/lib/actions/deleteOwnAccount.server.ts`.
  *
- * Coverage targets:
- *   - input validation (missing userId / operationId throws)
- *   - happy-path cascade deletes every path the legacy client cascade
- *     deleted (machines, deployments, logs, sites, users)
- *   - DIFF TEST: server-side deleted-path set === legacy client-side
- *     cascade deleted-path set against identical seed data
- *   - dry-run mode: returns counts without deleting anything
- *   - idempotency: second call replays the recorded outcome
- *   - chunking: 250 machines fan out into 3 batches of <=100
- *   - missing user doc: short-circuits to a noop result
- *   - missing site doc: skipped without crashing the cascade
- *   - non-fatal progress-doc write failures don't abort the cascade
+ * Covers input validation, the happy-path cascade, a DIFF TEST asserting the
+ * server-side deleted-path set equals the legacy client cascade's against
+ * identical seed data, dry-run, idempotent replay, 100-doc batch chunking,
+ * missing user / site docs, and non-fatal progress-doc write failures.
  */
 
 const loggerWarnSpy = jest.fn();
@@ -30,9 +21,8 @@ jest.mock('@/lib/logger', () => ({
   },
 }));
 
-// `deleteOwnAccount` resolves the default db once at the top of its body,
-// so the firebase-admin mock must be in place before import even though
-// every test injects an explicit `db`.
+// `deleteOwnAccount` resolves the default db once at the top of its body, so the
+// firebase-admin mock must be in place before import.
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({ collection: () => ({ doc: () => ({}) }) }),
 }));
@@ -48,10 +38,6 @@ import {
   BATCH_SIZE,
 } from '@/lib/actions/deleteOwnAccount.server';
 
-/* -------------------------------------------------------------------------- */
-/*  fake firestore                                                            */
-/* -------------------------------------------------------------------------- */
-
 interface DocSeed {
   exists: boolean;
   data?: Record<string, unknown>;
@@ -61,10 +47,8 @@ interface FakeDbOptions {
   /** Seeded doc states keyed by canonical path (e.g. `users/uid_alice`). */
   seedDocs?: Record<string, DocSeed>;
   /**
-   * Seeded subcollection contents keyed by parent collection path
-   * (e.g. `sites/site-a/machines` → ['m1', 'm2']). Returned in the order
-   * provided. Drained progressively as `delete()` is called against
-   * matching paths.
+   * Seeded subcollection contents keyed by parent collection path (e.g.
+   * `sites/site-a/machines` → ['m1', 'm2']), drained as `delete()` is called.
    */
   seedCollections?: Record<string, string[]>;
   /** When set, calls to `progressRef.set()` reject with this error. */
@@ -209,10 +193,9 @@ function buildFakeDb(opts: FakeDbOptions = {}): FakeDbResult {
             wheres: [...(state.wheres ?? []), { field, op, value }],
           }),
         get: async () => {
-          // For a `where()` query against the top-level `users` collection
-          // (used by the site classifier), enumerate all docs under that
-          // prefix — not just `collections.get(colPath)`, which only
-          // tracks subcollection contents.
+          // A `where()` query on the top-level `users` collection (the site
+          // classifier) must enumerate every doc under that prefix, not just
+          // `collections.get(colPath)`, which only tracks subcollections.
           let candidateIds: string[];
           if ((state.wheres?.length ?? 0) > 0 && !collections.has(colPath)) {
             const prefix = `${colPath}/`;
@@ -294,15 +277,10 @@ function buildFakeDb(opts: FakeDbOptions = {}): FakeDbResult {
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  legacy client cascade simulator (for the diff test)                        */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Simulate the legacy client-side `writeBatch` cascade from
- * `AuthContext.tsx` BEFORE migration. The simulator returns the set of
- * Firestore paths the legacy code would have deleted, so the diff test can
- * assert the server-side cascade matches bit-for-bit.
+ * Simulate the legacy client-side `writeBatch` cascade from `AuthContext.tsx`
+ * before migration, returning the Firestore paths it would have deleted so the
+ * diff test can assert the server cascade matches bit-for-bit.
  */
 function simulateLegacyClientCascade(
   userId: string,
@@ -312,10 +290,8 @@ function simulateLegacyClientCascade(
   const deleted = new Set<string>();
 
   for (const siteId of userSites) {
-    // Legacy code did `getDoc(siteRef)` first; if missing, no deletes for
-    // that site. We emulate by checking whether ANY tracked subcollection
-    // is keyed under the site (the seed builder always seeds at least one
-    // entry per existing site for the diff tests).
+    // Legacy did `getDoc(siteRef)` first; a missing site meant no deletes. Emulated
+    // by checking for any tracked subcollection keyed under the site.
     const machines = collections[`sites/${siteId}/machines`] ?? [];
     const deployments = collections[`sites/${siteId}/deployments`] ?? [];
     const logs = collections[`sites/${siteId}/logs`] ?? [];
@@ -329,10 +305,6 @@ function simulateLegacyClientCascade(
   deleted.add(`users/${userId}`);
   return deleted;
 }
-
-/* -------------------------------------------------------------------------- */
-/*  test setup helpers                                                        */
-/* -------------------------------------------------------------------------- */
 
 function seedUser(
   userId: string,
@@ -375,10 +347,6 @@ beforeEach(() => {
   loggerErrorSpy.mockClear();
 });
 
-/* -------------------------------------------------------------------------- */
-/*  input validation                                                          */
-/* -------------------------------------------------------------------------- */
-
 describe('deleteOwnAccount — input validation', () => {
   it('throws when userId is empty', async () => {
     const fake = buildFakeDb();
@@ -395,18 +363,12 @@ describe('deleteOwnAccount — input validation', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  cascade — happy path                                                      */
-/* -------------------------------------------------------------------------- */
-
 describe('deleteOwnAccount — happy path cascade', () => {
   it('deletes machines, deployments, logs, site doc, then user doc — for each site', async () => {
     const userId = 'uid_alice';
     const sites = ['site-a', 'site-b'];
     const seedDocs = seedUser(userId, sites);
-    // Seed the sites with `owner` so the classifier treats them as
-    // sole-owner sites (no other members; arrayContains query returns
-    // empty in the fake db).
+    // Seed with `owner` so the classifier treats them as sole-owner sites.
     for (const s of sites) {
       seedDocs[`sites/${s}`] = { exists: true, data: { name: s, owner: userId } };
     }
@@ -471,9 +433,8 @@ describe('deleteOwnAccount — happy path cascade', () => {
       storage: null,
     });
 
-    // The 4 sub-doc deletes should land in the batch (commit happens before
-    // we delete the site), and the site delete should be the FIRST entry in
-    // `deleteCalls`. The user doc delete follows.
+    // The 4 sub-doc deletes land in the batch (commit precedes the site delete), so
+    // the site delete is the FIRST `deleteCalls` entry and the user doc is last.
     const allBatched = fake.batchDeleteCalls;
     expect(allBatched).toContain('sites/site-a/machines/m_site-a_0');
     expect(allBatched).toContain('sites/site-a/deployments/d_site-a_0');
@@ -512,10 +473,6 @@ describe('deleteOwnAccount — happy path cascade', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  diff test against legacy client cascade                                   */
-/* -------------------------------------------------------------------------- */
-
 describe('deleteOwnAccount — diff test vs. legacy client cascade', () => {
   it('the deleted-path set matches the legacy client cascade exactly', async () => {
     const userId = 'uid_diff';
@@ -538,10 +495,8 @@ describe('deleteOwnAccount — diff test vs. legacy client cascade', () => {
       storage: null,
     });
 
-    // The new cascade visits more paths than the legacy one (passkeys,
-    // api_keys, mfa_pending, etc.) — but with empty seeds those paths
-    // produce no deletes. The diff set we compare here is the SITE path
-    // set + user doc path, which must still match the legacy cascade.
+    // The new cascade visits more paths (passkeys, api_keys, mfa_pending) but with
+    // empty seeds those produce no deletes, so the site paths + user doc must match.
     const serverDeleted = new Set<string>([
       ...fake.batchDeleteCalls,
       ...fake.deleteCalls,
@@ -555,15 +510,10 @@ describe('deleteOwnAccount — diff test vs. legacy client cascade', () => {
 
     expect(serverDeleted).toEqual(legacyDeleted);
 
-    // Sanity check: the path set is non-trivial. (Three sites with 5+3+7
-    // children plus the site doc and the user doc.)
+    // Sanity: non-trivial path set (three sites with 5+3+7 children, plus docs).
     expect(serverDeleted.size).toBe(3 * (5 + 3 + 7) + sites.length + 1);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  dry-run mode                                                              */
-/* -------------------------------------------------------------------------- */
 
 describe('deleteOwnAccount — dry-run mode', () => {
   it('returns counts without performing any deletes', async () => {
@@ -673,10 +623,6 @@ describe('deleteOwnAccount — dry-run mode', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  idempotency                                                               */
-/* -------------------------------------------------------------------------- */
-
 describe('deleteOwnAccount — idempotency', () => {
   it('a re-issued call with the same operationId is a no-op replay', async () => {
     const userId = 'uid_idem';
@@ -722,10 +668,6 @@ describe('deleteOwnAccount — idempotency', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  chunking                                                                  */
-/* -------------------------------------------------------------------------- */
-
 describe('deleteOwnAccount — chunking', () => {
   it('250 machines drain in 3 batches of <= BATCH_SIZE', async () => {
     expect(BATCH_SIZE).toBe(100);
@@ -759,17 +701,11 @@ describe('deleteOwnAccount — chunking', () => {
     expect(machineDeletes.length).toBe(250);
     expect(new Set(machineDeletes).size).toBe(250);
 
-    // 250 / BATCH_SIZE === 3 batches (100 + 100 + 50). The action also
-    // commits a small batch for any non-empty deployments / logs scan,
-    // but we seeded zero of those, so the only batch commits come from
-    // the machines drain.
+    // 250 / BATCH_SIZE === 3 batches (100 + 100 + 50); deployments and logs are
+    // seeded empty, so the machines drain is the only source of batch commits.
     expect(fake.batchCommitCount).toBe(3);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  edge cases                                                                */
-/* -------------------------------------------------------------------------- */
 
 describe('deleteOwnAccount — edge cases', () => {
   it('returns alreadyCompleted=true when the user doc is already gone', async () => {
@@ -935,8 +871,7 @@ describe('deleteOwnAccount — edge cases', () => {
           exists: true,
           data: { sites: ['site-shared'], role: 'member' },
         },
-        // The owner doc — present so `array-contains` queries see another
-        // member of the site (though we don't query for them in this path).
+        // The owner doc — present so `array-contains` sees another site member.
         [`users/${ownerUid}`]: {
           exists: true,
           data: { sites: ['site-shared'], role: 'admin' },

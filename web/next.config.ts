@@ -21,9 +21,7 @@ const nextConfig: NextConfig = {
   },
   async redirects() {
     return [
-      // Cortex became hoot in 3.0.0. These three docs pages carried the old
-      // name in their URL; the app's own /cortex -> /hoot redirects set the
-      // precedent, and these paths are linked from outside the repo.
+      // cortex -> hoot (3.0.0). Linked from outside the repo.
       {
         source: '/docs/dashboard/cortex',
         destination: '/docs/dashboard/hoot',
@@ -89,10 +87,8 @@ const nextConfig: NextConfig = {
         destination: '/docs/api',
         permanent: true,
       },
-      // cortex → hoot rename. `/hoot` is the canonical route; these keep
-      // bookmarks, shared conversation links, and anything that still points at
-      // the old path working. The API surface keeps its own back-compat aliases
-      // under `app/api/cortex/*` (see web/lib/hoot/WIRE_NAMES.md).
+      // `/hoot` is canonical; these keep bookmarks and shared links alive. The
+      // API keeps its own aliases under `app/api/cortex/*` (hoot/WIRE_NAMES.md).
       {
         source: '/cortex',
         destination: '/hoot',
@@ -117,55 +113,38 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [
-      // NOTE: a wildcard CORS block (`Access-Control-Allow-Origin: *`) used to
-      // live here for `/api/admin/:path*`. That namespace was removed in
-      // 644c57f ("feat(api): eliminate admin namespace") and its routes now
-      // live under `/api/platform/*` and `/api/installer/*`. The rule was
-      // therefore dead — but it was also a trap: any future `/api/admin/...`
-      // route would have silently inherited wildcard CORS. The public API is
-      // consumed server-side (CLI, SDKs), which is not subject to CORS, so no
-      // replacement is needed. If a browser client is ever added, scope the
-      // allowed origin explicitly — never `*` on a namespace that can read
-      // cookies.
+      // Do NOT add a wildcard CORS rule here. One existed for the (now
+      // removed, 644c57f) `/api/admin/:path*` namespace and would have silently
+      // covered any future route under it. The public API is consumed
+      // server-side, so CORS is not needed; scope any browser client explicitly.
       {
-        // Apply static security headers to all routes.
-        // CSP is emitted from proxy.ts instead of next.config.ts because it
-        // needs a fresh per-request nonce. Script inline execution must use
-        // that nonce (with strict-dynamic) rather than 'unsafe-inline'. Style
-        // inline execution allows 'unsafe-inline' because Next 16 emits
-        // inline <style> blocks during client navigation that the request-
-        // header nonce doesn't cover — see proxy.ts for the full rationale.
+        // Static security headers only. CSP lives in proxy.ts because it needs
+        // a fresh per-request nonce.
         source: '/:path*',
         headers: [
           {
-            // Prevent clickjacking attacks by disallowing the site to be embedded in iframes
             key: 'X-Frame-Options',
             value: 'DENY',
           },
           {
-            // Prevent browsers from MIME-sniffing a response away from the declared content-type
             key: 'X-Content-Type-Options',
             value: 'nosniff',
           },
           {
-            // Control how much referrer information is sent with requests
-            // strict-origin-when-cross-origin: Send full URL for same-origin, only origin for cross-origin
+            // Full URL same-origin, origin only cross-origin.
             key: 'Referrer-Policy',
             value: 'strict-origin-when-cross-origin',
           },
           {
-            // Control which browser features and APIs can be used
-            // Disable potentially dangerous features
             key: 'Permissions-Policy',
             value: 'camera=(), microphone=(), geolocation=()',
           },
           {
-            // Enable browser's XSS filter (legacy, but doesn't hurt)
+            // Legacy, harmless.
             key: 'X-XSS-Protection',
             value: '1; mode=block',
           },
           {
-            // Enforce HTTPS for 1 year — prevents downgrade/MITM attacks
             key: 'Strict-Transport-Security',
             value: 'max-age=31536000; includeSubDomains',
           },
@@ -178,11 +157,10 @@ const nextConfig: NextConfig = {
 const withMDX = createMDX();
 
 export default withSentryConfig(withMDX(nextConfig), {
-  // Suppress source map upload logs during build
   silent: true,
-  // Built-in tunnel route (bypasses ad-blockers)
+  // Bypasses ad-blockers.
   tunnelRoute: "/api/sentry-tunnel",
-  // Delete source maps after upload so they're not publicly accessible
+  // Source maps must not stay publicly reachable after upload.
   sourcemaps: {
     filesToDeleteAfterUpload: [".next/static/**/*.map"],
   },

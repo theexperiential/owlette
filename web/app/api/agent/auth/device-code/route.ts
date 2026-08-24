@@ -9,29 +9,20 @@ import { getSessionFromRequest } from '@/lib/sessionManager.server';
 import logger from '@/lib/logger';
 
 /**
- * POST /api/agent/auth/device-code
+ * POST /api/agent/auth/device-code — mint a pairing phrase + device code for
+ * agent registration; the agent shows the phrase and polls for authorization.
  *
- * Generate a pairing phrase and device code for agent registration.
- * The agent displays the phrase and polls for authorization.
- *
- * Request body:
- * - machineId: string - Machine hostname (optional for pre-authorized codes)
- * - version: string - Agent version (optional for pre-authorized codes)
- *
- * Response (200):
- * - pairPhrase: string - 3-word human-readable phrase (e.g., "silver-compass-drift")
- * - deviceCode: string - Opaque code for polling (64 bytes, base64url)
- * - verificationUri: string - URL to visit for authorization
- * - pairingUrl: string - Full URL with phrase pre-filled (for browser auto-open)
- * - expiresIn: number - Seconds until expiry (600 = 10 minutes)
- * - interval: number - Minimum polling interval in seconds (5)
+ * Body: `{ machineId?, version? }` (both optional for pre-authorized codes).
+ * Returns `pairPhrase` (3 words), `deviceCode` (opaque, 64 bytes base64url),
+ * `verificationUri`, `pairingUrl` (phrase pre-filled), `expiresIn` (600s) and
+ * `interval` (min poll seconds).
  */
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     const body = await request.json();
     const { machineId, version } = body;
 
-    // Generate unique pairing phrase (retry on collision)
+    // Retry on phrase collision.
     const adminDb = getAdminDb();
     let pairPhrase: string;
     let attempts = 0;
@@ -50,17 +41,15 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Generate device code (opaque secret for polling — never shown to user)
+    // Opaque polling secret — never shown to the user.
     const crypto = await import('crypto');
     const deviceCode = crypto.randomBytes(64).toString('base64url');
     const deviceCodeHash = crypto.createHash('sha256').update(deviceCode).digest('hex');
 
-    // Detect the dashboard "Generate Code" pre-authorise path: an
-    // authenticated session means the request originated from a
-    // logged-in browser tab (where the deviceCode will be discarded
-    // immediately after authorize). Anonymous requests come from the
-    // agent installer, which keeps the deviceCode in process memory
-    // and can therefore receive an encrypted credential blob.
+    // An authenticated session means the dashboard "Generate Code" path, where
+    // the browser discards the deviceCode right after authorize. Anonymous
+    // callers are installers, which hold it in memory and can be sent an
+    // encrypted credential blob.
     let isDashboardOrigin = false;
     try {
       const session = await getSessionFromRequest(request);
@@ -68,37 +57,22 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         isDashboardOrigin = true;
       }
     } catch {
-      // No session = anonymous installer call. Treat as interactive.
+      // No session = anonymous installer call; treat as interactive.
       isDashboardOrigin = false;
     }
 
-    // Determine base URL from request
     const host = request.headers.get('host') || 'owlette.app';
     const protocol = host.includes('localhost') ? 'http' : 'https';
     const baseUrl = `${protocol}://${host}`;
 
     const expiresAt = Timestamp.fromDate(new Date(Date.now() + 10 * 60 * 1000)); // 10 minutes
 
-    // Store device code in Firestore.
-    //
-    // Note on `deviceCode` plaintext storage: this is the polling secret
-    // (held in the agent's process memory and never shown to the user),
-    // not a credential. We persist it briefly so the authorize endpoint
-    // can derive the HKDF key without the dashboard user ever holding
-    // it. The authorize transaction wipes this field the moment it
-    // encrypts the credentials, closing the window.
-    //
-    // For pre-authorised silent-install codes (Generate Code from the
-    // dashboard), the deviceCode is discarded by the browser before
-    // authorize runs, so authorize falls through to the legacy plaintext
-    // path. Poll-by-phrase is permitted only for that flow.
-    // For pre-authorised (dashboard "Generate Code") codes the
-    // deviceCode is intentionally NOT persisted: the browser never
-    // sends it back, and the agent installer that consumes the phrase
-    // via /ADD=phrase has no way to obtain it. Authorize will see the
-    // missing deviceCode and fall through to the plaintext path; the
-    // /poll endpoint allows phrase-based redemption only for these
-    // documents.
+    // The stored `deviceCode` is the polling secret, not a credential: persisted
+    // only so authorize can derive the HKDF key without the dashboard user ever
+    // holding it, and wiped by the authorize transaction as soon as it encrypts
+    // the bundle. Pre-authorised codes deliberately do NOT persist it (nothing
+    // can send it back), so authorize falls through to the plaintext path — and
+    // /poll allows phrase-based redemption only for those documents.
     const docPayload: Record<string, unknown> = {
       deviceCodeHash,
       wrapVersion: DEVICE_CODE_WRAP_VERSION,
@@ -111,13 +85,11 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       siteId: null,
       authorizedBy: null,
       authorizedAt: null,
-      // Encrypted credential bundle (HKDF-AES-256-GCM, see
-      // lib/deviceCodeCrypto.ts). Populated by authorize for the
-      // interactive flow; left null for pre-authorised codes.
+      // Encrypted bundle (HKDF-AES-256-GCM, lib/deviceCodeCrypto.ts); set by
+      // authorize for the interactive flow, null for pre-authorised codes.
       encryptedCredentials: null,
-      // Legacy plaintext credential fields, retained only for the
-      // pre-authorised silent-install flow where no client holds the
-      // HKDF key. New interactive flows leave these null.
+      // Legacy plaintext fields, only for the pre-authorised silent-install flow
+      // where no client holds the HKDF key.
       accessToken: null,
       refreshToken: null,
     };
@@ -125,9 +97,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     if (isDashboardOrigin) {
       docPayload.preauthorizedIntent = true;
     } else {
-      // Interactive flow only: keep the deviceCode briefly so the
-      // authorize transaction can derive the HKDF key. Wiped from the
-      // doc the moment authorize encrypts the credential bundle.
+      // Interactive flow only — wiped once authorize encrypts the bundle.
       docPayload.deviceCode = deviceCode;
     }
 

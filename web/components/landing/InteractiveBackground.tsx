@@ -9,7 +9,7 @@ interface MousePosition {
 
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 
-/** Touch support can't change mid-session, so there is nothing to subscribe to. */
+/** Touch support can't change mid-session — nothing to subscribe to. */
 const subscribeNever = () => () => undefined;
 
 function subscribeReducedMotion(onChange: () => void) {
@@ -25,15 +25,14 @@ const getReducedMotionSnapshot = () =>
   window.matchMedia(REDUCED_MOTION_QUERY).matches;
 
 /**
- * Both capabilities report false during SSR *and* during the hydration render,
- * so the client's first pass matches the server HTML exactly; React then
- * re-renders with the real values once hydration has committed.
+ * Reports false during SSR *and* the hydration render, so the client's first
+ * pass matches the server HTML; the real values arrive on the post-hydration
+ * re-render.
  *
- * A lazy `useState` initializer looks equivalent but runs during the hydration
- * render itself, so it returned the real value where the server had returned
- * false. On every touch device that swapped the animated branch for the static
- * one mid-hydration, and React discarded and re-rendered the subtree
- * (hydration-mismatch error #418).
+ * Do NOT switch to a lazy `useState` initializer: it runs during the hydration
+ * render itself and returns the real value where the server returned false,
+ * which swapped the animated branch for the static one mid-hydration on every
+ * touch device (React error #418).
  */
 const getServerSnapshot = () => false;
 
@@ -56,17 +55,15 @@ export function InteractiveBackground() {
   const currentPos = useRef<MousePosition>({ x: 0.5, y: 0.5 });
 
   useEffect(() => {
-    // Skip animation for touch devices or reduced motion
     if (isTouchDevice || prefersReducedMotion) return;
 
-    // Track mouse globally for smooth following anywhere
     const handleMouseMove = (e: MouseEvent) => {
       const x = e.clientX / window.innerWidth;
       const y = e.clientY / window.innerHeight;
       targetPos.current = { x, y };
     };
 
-    // Exponential decay smoothing — updates DOM directly, no React re-renders
+    // Exponential decay; writes the DOM directly to avoid React re-renders.
     const animate = () => {
       const dx = targetPos.current.x - currentPos.current.x;
       const dy = targetPos.current.y - currentPos.current.y;
@@ -103,7 +100,6 @@ export function InteractiveBackground() {
     };
   }, [isTouchDevice, prefersReducedMotion]);
 
-  // Static background for touch devices or reduced motion
   if (isTouchDevice || prefersReducedMotion) {
     return (
       <div className="absolute inset-0 overflow-hidden">

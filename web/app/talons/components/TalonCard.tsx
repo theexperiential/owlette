@@ -1,23 +1,15 @@
 'use client';
 
 /**
- * One talon in the `/talons` list — a single dense row in an aligned-column
- * list: a chevron that expands recent history, the talon's name, what fires
- * it, what it does, where it runs, when it last ran, and per-action icon
- * buttons that each spin on their own.
+ * One dense row in the `/talons` list.
  *
- * The columns are a CSS grid rather than a `<table>` for two reasons: the run
- * history expands as a natural full-width block *beneath* a row, and the
- * repo's fixed-table-layout rules (dashboard lists — content cannot grow a
- * declared column) would apply. Grid gets the same guarantee more cheaply, as
- * long as every text cell carries `min-w-0` + `truncate` and hands the full
- * value to a `title`.
+ * CSS grid, not a `<table>`: the run history expands as a full-width block
+ * *beneath* a row, and the repo's fixed-table-layout rule would otherwise
+ * apply. Grid gives the same guarantee as long as every text cell carries
+ * `min-w-0` + `truncate` and hands the full value to a `title`.
  *
- * Mutations go through the api (`PATCH` / `DELETE` / `POST .../test`); the
- * list itself is a live `useTalons` subscription, so nothing here has to ask
- * the page to refetch — the write lands and the snapshot follows.
- *
- * talons wave 4.2.
+ * Mutations go through the api; the list is a live `useTalons` subscription,
+ * so a write lands and the snapshot follows — nothing refetches.
  */
 
 import { useState } from 'react';
@@ -60,23 +52,21 @@ import { formatRelative, talonStatusIcon, TalonRunRow } from './TalonRunRow';
 const RUN_HISTORY_LIMIT = 20;
 
 /**
- * The one column definition the list header and every talon row share. Each
- * row is its own grid element, so the tracks only line up if they resolve
- * identically everywhere — which means **no `auto` tracks**: a header cell and
- * a five-button action cluster would size the same `auto` track differently
- * and skew every `fr` column after it. Every non-`fr` track here is a fixed
- * length for exactly that reason — the trailing `11.75rem` is sized off the
- * five `h-8 w-8` action buttons plus their gaps, with slack. Adding or removing
- * an action means changing that literal in ALL THREE variants below.
+ * Shared by the list header and every row. Each row is its own grid element, so
+ * tracks line up only if they resolve identically everywhere — hence **no
+ * `auto` tracks**: a header cell and a five-button cluster would size the same
+ * `auto` track differently and skew every `fr` after it. The trailing
+ * `11.75rem` is sized off five `h-8 w-8` buttons plus gaps; adding or removing
+ * an action means editing that literal in ALL THREE variants.
  *
- * Cells are placed by document order, so hiding one at a breakpoint shifts the
- * rest up a track. The three tiers below are therefore prefix-compatible:
+ * Cells place by document order, so hiding one at a breakpoint shifts the rest
+ * up a track. The tiers are therefore prefix-compatible:
  *
  *   `xl` (7): state · name · trigger · outputs · scope · last run · actions
- *   `lg` (6): scope drops out — it rides along as a suffix on `trigger`
- *   `md` (5): outputs drops out too — its chips move under the name
+ *   `lg` (6): scope drops out, riding along as a suffix on `trigger`
+ *   `md` (5): outputs drops out too, its chips moving under the name
  *
- * Below `md` the grid never engages and rows fall back to the stacked layout.
+ * Below `md` the grid never engages; rows fall back to the stacked layout.
  */
 export const TALON_ROW_GRID =
   'md:grid md:items-center md:gap-x-3 ' +
@@ -85,9 +75,8 @@ export const TALON_ROW_GRID =
   'xl:grid-cols-[2.25rem_minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,0.9fr)_8rem_9.5rem_11.75rem]';
 
 /**
- * A talon as the client sees it. Deliberately permissive past `id`, `name`,
- * and `enabled`: the documents arrive straight off a Firestore listener, so a
- * talon written by an older build has to render rather than throw.
+ * Deliberately permissive past `id`/`name`/`enabled` — docs arrive straight off
+ * a Firestore listener, so an older build's talon must render, not throw.
  */
 export interface TalonListItem {
   id: string;
@@ -102,11 +91,8 @@ export interface TalonListItem {
   lastRunAt?: TalonTimestamp | null;
   lastRunStatus?: string | null;
   consecutiveFailures?: number | null;
-  /**
-   * Why the SYSTEM switched this talon off. Typed loosely for the same reason
-   * as everything above it: a reason added by a newer build has to render as
-   * "disabled" rather than crash an older client.
-   */
+  /** Why the SYSTEM switched it off. Loose type: an unknown reason from a newer
+   * build must still render as "disabled". */
   disabledReason?: string | null;
 }
 
@@ -117,17 +103,12 @@ interface TalonCardProps {
   machines: Machine[];
   onEdit: () => void;
   /**
-   * Templatize this talon. Owned by the page rather than the row: one
-   * `useTalonPresets` subscription for the whole list, not one per row, and the
-   * name-collision confirm belongs where that list lives. Omit it and the
-   * action simply isn't offered.
+   * Templatize. Owned by the page, not the row — one `useTalonPresets`
+   * subscription for the whole list, and the collision confirm belongs where
+   * that list lives. Omit to hide the action.
    */
   onSaveAsTemplate?: () => void | Promise<void>;
 }
-
-/* -------------------------------------------------------------------------- */
-/*  summaries                                                                 */
-/* -------------------------------------------------------------------------- */
 
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri'];
 const WEEKENDS = ['sat', 'sun'];
@@ -165,10 +146,9 @@ function formatClock(time: string, use24h: boolean): string {
 }
 
 /**
- * Day grouping matching `formatScheduleSummary`'s vocabulary (daily /
- * weekdays / weekends / an explicit list). That helper itself takes
- * start–stop *ranges*; a talon schedule entry is a single instant, so it
- * would render `9 am–9 am`. Same words, right shape.
+ * Same vocabulary as `formatScheduleSummary` (daily / weekdays / weekends /
+ * list) but reimplemented: that helper takes start-stop ranges, and a talon
+ * entry is a single instant, so it would render `9 am-9 am`.
  */
 function formatDays(days: string[]): string {
   if (days.length === 0 || days.length === 7) return 'daily';
@@ -200,8 +180,8 @@ function formatTrigger(trigger: TalonTrigger | null | undefined, use24h: boolean
         : `${trigger.metric} ${trigger.operator} ${trigger.value}`;
     }
     case 'event': {
-      // Matches `describeTrigger` in the engine: the wait is part of what the
-      // talon does, so the row says so rather than reading like an instant one.
+      // Matches `describeTrigger` in the engine — the wait is part of what the
+      // talon does, so don't let the row read as instant.
       const events = `on ${trigger.eventTypes.join(', ')}`;
       return trigger.delayMinutes ? `${events} · after ${trigger.delayMinutes} min` : events;
     }
@@ -236,14 +216,10 @@ function summarizeRuns(runs: Array<{ status?: string | null }>): string {
   return [...counts.entries()].map(([status, count]) => `${count} ${status}`).join(' · ');
 }
 
-/* -------------------------------------------------------------------------- */
-/*  cells                                                                     */
-/* -------------------------------------------------------------------------- */
-
 /**
- * The output type chips. Rendered in two places by design — as the `outputs`
- * column at `lg`+, and as a second line under the name below `lg`, where that
- * column has been dropped for width. Only one of the two is ever visible.
+ * Output type chips. Rendered twice by design — the `outputs` column at `lg`+,
+ * and a line under the name below `lg` where that column is dropped. Only one
+ * is ever visible.
  */
 function OutputChips({ outputs }: { outputs: TalonOutput[] }) {
   return (
@@ -261,14 +237,9 @@ function OutputChips({ outputs }: { outputs: TalonOutput[] }) {
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/*  run history                                                               */
-/* -------------------------------------------------------------------------- */
-
 /**
- * The expanded history. Split out so the subscription only exists while the
- * card is open, and so the card's refresh button can tear it down and
- * re-establish it by remounting on a changed `key`.
+ * Split out so the subscription exists only while the card is open, and so the
+ * refresh button can re-establish it by remounting on a changed `key`.
  */
 function TalonRunList({ siteId, talonId }: { siteId: string; talonId: string }) {
   const { runs, loading, error } = useTalonRuns(siteId, talonId, RUN_HISTORY_LIMIT);
@@ -302,10 +273,6 @@ function TalonRunList({ siteId, talonId }: { siteId: string; talonId: string }) 
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/*  card                                                                      */
-/* -------------------------------------------------------------------------- */
-
 export function TalonCard({
   talon,
   siteId,
@@ -318,21 +285,19 @@ export function TalonCard({
   const [expanded, setExpanded] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
-  // Bumped by the refresh button — remounting the list drops and re-opens its
-  // subscription, which is what "refresh" means for live data.
+  // Bumped to remount the list, dropping and re-opening its subscription —
+  // what "refresh" means for live data.
   const [runsKey, setRunsKey] = useState(0);
 
   const talonUrl = `/api/sites/${encodeURIComponent(siteId)}/talons/${encodeURIComponent(talon.id)}`;
   const outputs = talon.outputs ?? [];
   const failures = talon.consecutiveFailures ?? 0;
   const isVisualCheck = talon.condition?.type === 'visual_check';
-  // Only meaningful while the talon is off — the toggle clears the field, so a
-  // reason surviving next to an enabled talon would be a stale document, not a
-  // state worth explaining.
+  // Only meaningful while off: the toggle clears the field, so a reason next to
+  // an enabled talon is a stale document, not a state worth explaining.
   const disabledReason = talon.enabled ? null : describeTalonDisabledReason(talon.disabledReason);
 
-  // Every column truncates, so each one also carries the full value as a
-  // `title` — the list stays dense without hiding anything from the operator.
+  // Every column truncates, so each carries the full value as a `title`.
   const triggerSummary = formatTrigger(talon.trigger, use24h);
   const scopeSummary = formatScope(talon.scope, machines.length);
   const lastRunStatus = talon.lastRunStatus ?? null;
@@ -417,7 +382,7 @@ export function TalonCard({
       <div
         className={`flex items-start gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50 dark:hover:bg-muted/30 ${TALON_ROW_GRID}`}
       >
-        {/* (a) expand chevron + enabled state */}
+        {/* (a) chevron + enabled state */}
         <div className="flex flex-shrink-0 items-center gap-1.5 pt-0.5 md:pt-0">
           <button
             type="button"
@@ -432,8 +397,7 @@ export function TalonCard({
               <ChevronRight className="h-4 w-4" />
             )}
           </button>
-          {/* Filled vs hollow, not just green vs grey — the state has to read
-              without relying on colour alone. */}
+          {/* Filled vs hollow, not just green vs grey — must read without colour. */}
           <Tooltip>
             <TooltipTrigger asChild>
               <span
@@ -452,8 +416,8 @@ export function TalonCard({
           </Tooltip>
         </div>
 
-        {/* Below `md` this is the stacked card's content column; at `md`+ it
-            dissolves so cells (b)–(f) become grid items of the row itself. */}
+        {/* Below `md` this is the stacked content column; at `md`+ it dissolves
+            so (b)-(f) become grid items of the row itself. */}
         <div className="min-w-0 flex-1 md:contents">
           {/* (b) name */}
           <div className="flex min-w-0 flex-col">
@@ -472,9 +436,8 @@ export function TalonCard({
                 </Badge>
               )}
             </div>
-            {/* Why the system switched it off, on the row itself: the whole
-                point of the reason is that an operator learns it WITHOUT
-                having to expand the history and read a run. */}
+            {/* On the row itself — the point is learning it without expanding
+                the history and reading a run. */}
             {disabledReason && (
               <p
                 data-testid="talon-disabled-reason"
@@ -489,8 +452,7 @@ export function TalonCard({
                 {talon.description}
               </p>
             )}
-            {/* The outputs column does not exist below `lg`; its chips live
-                here instead so nothing is lost at those widths. */}
+            {/* No outputs column below `lg`; the chips live here instead. */}
             {outputs.length > 0 && (
               <div className="mt-1.5 flex min-w-0 flex-wrap gap-1 lg:hidden">
                 <OutputChips outputs={outputs} />
@@ -525,8 +487,8 @@ export function TalonCard({
             )}
           </div>
 
-          {/* Below `md` scope and last run share one meta line, as they do
-              today; at `md`+ this wrapper dissolves into columns (e) and (f). */}
+          {/* Below `md` scope and last run share a meta line; at `md`+ this
+              wrapper dissolves into columns (e) and (f). */}
           <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 md:contents">
             {/* (e) scope */}
             <span
@@ -669,9 +631,8 @@ export function TalonCard({
         </div>
       </div>
 
-      {/* A sibling of the grid row rather than a cell in it: the history is a
-          full-width block under the row, and keeping the grid single-row is
-          what guarantees the columns resolve identically on every row. */}
+      {/* Sibling of the grid row, not a cell: keeping the grid single-row is
+          what guarantees columns resolve identically on every row. */}
       {expanded && (
         <div className="border-t border-border bg-muted/20 px-3 py-3 dark:bg-muted/10">
           <div className="mb-2 flex items-center justify-between">

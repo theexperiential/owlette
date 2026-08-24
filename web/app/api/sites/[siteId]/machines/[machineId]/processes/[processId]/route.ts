@@ -1,9 +1,7 @@
 /**
- * Public Scoped Process API - detail / update / delete
+ * Public scoped process API — detail / update / delete.
  *
- * `GET    /api/sites/{siteId}/machines/{machineId}/processes/{processId}`
- * `PATCH  /api/sites/{siteId}/machines/{machineId}/processes/{processId}`
- * `DELETE /api/sites/{siteId}/machines/{machineId}/processes/{processId}`
+ * `GET|PATCH|DELETE /api/sites/{siteId}/machines/{machineId}/processes/{processId}`
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -28,9 +26,7 @@ interface RouteContext {
   params: Promise<{ siteId: string; machineId: string; processId: string }>;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  GET - single process detail                                               */
-/* -------------------------------------------------------------------------- */
+/* GET - single process detail */
 
 export const GET = withRateLimit(
   async (request: NextRequest, context: RouteContext) => {
@@ -74,9 +70,7 @@ export const GET = withRateLimit(
   { strategy: 'api', identifier: 'ip' }
 );
 
-/* -------------------------------------------------------------------------- */
-/*  PATCH - partial update                                                    */
-/* -------------------------------------------------------------------------- */
+/* PATCH - partial update */
 
 const patchWrapped = authorizedSiteHandler<{
   siteId: string;
@@ -110,8 +104,7 @@ const patchWrapped = authorizedSiteHandler<{
       ? `apiKey:${auth.keyContext.keyId}`
       : `user:${auth.userId}`;
 
-    // PATCH idempotency-key is optional per api-surface convention but if
-    // supplied we honour replay.
+    // Idempotency-Key is optional on PATCH per api-surface convention, but honoured when supplied.
     return withIdempotency(
       request,
       {
@@ -147,9 +140,7 @@ export const PATCH = withRateLimit(patchWrapped, {
   identifier: 'ip',
 });
 
-/* -------------------------------------------------------------------------- */
-/*  DELETE - remove from array (true-idempotent: 200 on missing)              */
-/* -------------------------------------------------------------------------- */
+/* DELETE - remove from array (true-idempotent: 200 on missing) */
 
 const deleteWrapped = authorizedSiteHandler<{
   siteId: string;
@@ -190,9 +181,7 @@ export const DELETE = withRateLimit(deleteWrapped, {
   identifier: 'ip',
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Helpers                                                                   */
-/* -------------------------------------------------------------------------- */
+/* Helpers */
 
 function shapeProcessForResponse(
   p: PublicProcessConfig,
@@ -208,9 +197,8 @@ function shapeProcessForResponse(
     visibility: p.visibility || 'Show',
     time_delay: p.time_delay || '0',
     time_to_init: p.time_to_init || '10',
-    // 0 is meaningful — "relaunch forever, never escalate to a machine
-    // restart" — so it must survive the round trip. `|| '3'` treated it as
-    // absent and handed the operator back a 3 they never set.
+    // 0 means "relaunch forever, never escalate to a machine restart" and must survive the round
+    // trip; `|| '3'` treated it as absent and handed back a 3 the operator never set.
     relaunch_attempts:
       p.relaunch_attempts === undefined || p.relaunch_attempts === null || p.relaunch_attempts === ''
         ? '3'

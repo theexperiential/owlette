@@ -1,14 +1,12 @@
 /**
- * GET  /api/roosts/{roostId}/versions?siteId=...&limit=20&cursor=...
- *      → list published versions (rollback ui) — wave 2a.4
+ * GET  /api/roosts/{roostId}/versions?siteId=&limit=&cursor=
+ *      List published versions (rollback ui).
  *
  * POST /api/roosts/{roostId}/versions
- *      input:  { siteId, version, expectedCurrentVersionId? }
- *      output: { versionId, currentVersionId, previousVersionId }
- *      → finalize a new version with **firestore transaction**
- *        for compare-and-swap on currentVersionId. Writes version body
- *        to R2, audit-log entry, trips the fan-out cloud function (2b.3).
- *        wave 2a.3.
+ *      { siteId, version, expectedCurrentVersionId? }
+ *        -> { versionId, currentVersionId, previousVersionId }
+ *      Finalizes a version: writes the body to R2, then compare-and-swaps
+ *      currentVersionId in a firestore transaction. Trips the fan-out function.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -58,10 +56,6 @@ async function readSiteDocForGate(siteId: string): Promise<Record<string, unknow
   const snap = await getAdminDb().collection('sites').doc(siteId).get();
   return snap.exists ? (snap.data() ?? null) : null;
 }
-
-/* --------------------------------------------------------------------- */
-/*  GET — list version history                                           */
-/* --------------------------------------------------------------------- */
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
@@ -157,10 +151,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-/* --------------------------------------------------------------------- */
-/*  POST — finalize a new version                                        */
-/* --------------------------------------------------------------------- */
-
 interface VersionShape {
   schemaVersion: number;
   mediaType: string;
@@ -217,10 +207,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const m = version as VersionShape;
 
-    // wave 3.6 follow-up: the client-facing display name + per-deploy
-    // target set travel alongside the version. Without these the
-    // roost doc ends up nameless with empty targets[], which
-    // breaks both the UI listing and the fan-out cloud function.
+    // Display name + per-deploy target set travel with the version; without
+    // them the roost doc is nameless with empty targets[], which breaks the UI
+    // listing and the fan-out function.
     let deployName: string | undefined;
     if (body.name !== undefined) {
       if (typeof body.name !== 'string' || body.name.trim().length === 0) {
@@ -237,7 +226,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           'body.targets': ['must be string[]'],
         });
       }
-      // Dedup + cap at 500 to prevent firestore doc bloat.
+      // Cap at 500 — firestore doc bloat.
       deployTargets = [...new Set(body.targets as string[])].slice(0, 500);
     }
     let deployExtractPath: string | undefined;
@@ -250,11 +239,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       deployExtractPath = body.extractPath.trim().slice(0, 500) || undefined;
     }
 
-    // Optional plaintext description — commit-message style "what changed?".
-    // Stored as null (not empty string) when missing/whitespace-only so
-    // downstream consumers can branch cleanly on presence. Reject > 500 chars
-    // rather than silently truncating — operators who paste paragraphs get
-    // an explicit 400 so they can re-enter a summary deliberately.
+    // Commit-message style "what changed?". Null, not '', when absent so
+    // consumers can branch on presence. Over-length 400s rather than
+    // truncating, so a pasted paragraph gets re-entered deliberately.
     let deployDescription: string | null = null;
     if (body.description !== undefined && body.description !== null) {
       if (typeof body.description !== 'string') {
@@ -288,9 +275,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Verify every referenced chunk exists in R2. Missing chunks = caller
-    // didn't finish uploading; reject with a listing of missing hashes so
-    // the client can retry the missing set via /chunks/upload-urls.
+    // Missing chunks mean the caller never finished uploading; return the
+    // hashes so the client can retry just those via /chunks/upload-urls.
     const allHashes = new Set<string>();
     for (const f of m.files) for (const c of f.chunks) allHashes.add(c.hash);
     const missing = await verifyChunksPresent(site.siteId, [...allHashes]);
@@ -307,26 +293,22 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // Derive a stable versionId from the canonical JSON body.
+    // versionId is content-addressed off the canonical JSON body.
     const canonicalBody = canonicalJson(m);
     const versionId = await sha256Hex(canonicalBody);
     const chunkReferrers = summariseChunkReferences(m);
 
-    // Write the version body to R2. Done BEFORE the firestore transaction
-    // so a transaction-abort doesn't leave an orphan version-pointer
-    // referencing bytes that don't exist. R2 put is idempotent on the
-    // content-addressed key (versionId).
+    // BEFORE the transaction: an abort must not leave a version pointer aimed
+    // at bytes that don't exist. The put is idempotent on the versionId key.
     await putVersionBody(site.siteId, roostId, versionId, m);
     const versionUrl =
       `https://${bucketFor(currentEnv(), 'manifests')}.${process.env.R2_S3_ENDPOINT?.replace(/^https?:\/\//, '')}/` +
       versionKey(site.siteId, roostId, versionId);
 
-    // Firestore transaction: compare-and-swap on currentVersionId +
-    // monotonic versionNumber mint. The counter lives on the roost doc
-    // itself; reading + updating both in the same tx is what guarantees
-    // no two concurrent publishes end up with the same versionNumber.
-    // Firestore's optimistic-concurrency layer retries the transaction on
-    // conflict, so the second publisher sees the incremented counter.
+    // CAS on currentVersionId + monotonic versionNumber mint. The counter lives
+    // on the roost doc; reading and updating both in one tx is what stops two
+    // concurrent publishes minting the same versionNumber — firestore retries
+    // the loser, which then reads the incremented counter.
     const db = getAdminDb();
     const roostRef = db
       .collection('sites')
@@ -345,9 +327,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       const existing = roostSnap.exists ? roostSnap.data() ?? {} : {};
       const currentId = (existing.currentVersionId as string | undefined) ?? null;
 
-      // Content-addressed no-op: publishing bytes that are already the
-      // current head must not advance versionCounter or overwrite the same
-      // version doc with a new versionNumber.
+      // Publishing bytes that are already the head must not advance
+      // versionCounter or rewrite the version doc with a new versionNumber.
       if (currentId === versionId) {
         const existingNumber =
           typeof existing.currentVersionNumber === 'number'
@@ -359,12 +340,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           typeof existing.previousVersionId === 'string'
             ? existing.previousVersionId
             : null;
-        // Re-publishing the exact current head is a no-op for *versioning*, but
-        // the client may still be restating deploy config (name / targets /
-        // extractPath). Apply any explicitly-provided fields so a target change
-        // isn't silently dropped — without advancing the counter or rewriting
-        // the immutable version doc. Omitted fields are left untouched (a true
-        // no-op stays a no-op and writes nothing).
+        // A no-op for versioning, but the client may still be restating deploy
+        // config. Apply provided fields so a target change isn't silently
+        // dropped; omitted fields write nothing at all.
         const providedRoostPatch: Record<string, unknown> = {
           ...(deployName !== undefined ? { name: deployName } : {}),
           ...(deployTargets !== undefined ? { targets: deployTargets } : {}),
@@ -372,9 +350,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         };
         const configApplied = Object.keys(providedRoostPatch).length > 0;
         if (configApplied) {
-          // The config write must honor optimistic concurrency too — otherwise a
-          // stale expectedHead could ride a config change in via the no-op branch,
-          // bypassing the CAS guard the promote/create paths enforce below.
+          // The config write honors CAS too, or a stale expectedHead could ride
+          // a config change in through this branch and skip the guard below.
           if (expectedHead !== undefined && currentId !== expectedHead) {
             return { conflict: true as const, currentId };
           }
@@ -395,19 +372,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         };
       }
 
-      // optimistic concurrency: if the client passed an expected head
-      // and the current head doesn't match, 412. Prevents two operators
-      // racing to publish over each other. Runs inside the tx so the
-      // check + write are atomic against the roost doc — a stale head
-      // can't slip past a concurrent publisher.
+      // 412 on a stale expected head — two operators must not publish over each
+      // other. Inside the tx so check + write are atomic against the roost doc.
       if (expectedHead !== undefined && currentId !== expectedHead) {
         return { conflict: true as const, currentId };
       }
 
-      // Always overwrite name/targets/extractPath when the client provides
-      // them (each deploy is an explicit re-statement of intent). If the
-      // client omits them, retain existing values - this lets a rollback
-      // or version-only republish keep the prior config.
+      // Provided fields overwrite (each deploy restates intent); omitted ones
+      // retain, so a rollback or version-only republish keeps the prior config.
       const nameField =
         deployName !== undefined
           ? { name: deployName }
@@ -423,10 +395,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       const extractPathField =
         deployExtractPath !== undefined ? { extractPath: deployExtractPath } : {};
 
-      // Content-addressed promote: the requested content already exists in
-      // history but is not the current head. Move only the roost pointer and
-      // denormalised current-version summary; keep the historical version doc
-      // immutable and do not advance versionCounter.
+      // Promote: the content exists in history but isn't head. Move the pointer
+      // and summary only — the version doc stays immutable, counter unchanged.
       if (versionSnap.exists) {
         const existingVersion = versionSnap.data() ?? {};
         const existingVersionNumber =
@@ -485,11 +455,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         };
       }
 
-      // Monotonic 1-indexed version number per roost. starts at 0 (new
-      // roost, no versions yet) so the first publish lands as v1. The
-      // counter only advances inside a successful tx — if the tx retries
-      // due to a contending publish, the retried read picks up the new
-      // counter and we get v(N+1) cleanly, no ties.
+      // 1-indexed per roost: the counter starts at 0 so the first publish is v1.
+      // It advances only inside a committed tx, so a retried loser reads the new
+      // value and lands v(N+1) — never a tie.
       const currentCounter =
         typeof existing.versionCounter === 'number' ? existing.versionCounter : 0;
       const nextNumber = currentCounter + 1;
@@ -512,16 +480,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           schemaVersion: 2,
           versionCounter: nextNumber,
           currentVersionId: versionId,
-          // Denormalised current-version summary so the /roost list can
-          // render "v{N} · description" without fanning out to each
-          // version subdoc on render.
+          // Denormalised so the /roost list renders "v{N} · description" without
+          // fanning out to every version subdoc.
           currentVersionNumber: nextNumber,
           currentVersionDescription: deployDescription,
           previousVersionId: currentId,
           versionUrl,
-          // Denormalised summary so the /roost list can show "N files · X MB"
-          // without needing to load each roost's version subdoc on render.
-          // Matches what we write to the versions subcollection above.
+          // Denormalised for "N files · X MB" in the list; mirrors the version
+          // subcollection write above.
           totalFiles: m.files.length,
           totalSize,
           updatedAt: FieldValue.serverTimestamp(),
@@ -586,8 +552,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       auth.scopeCheck,
     );
     if (idem.mode === 'proceed') await saveIdempotency(idem.token, response);
-    // Emit for real versioning changes (create/promote) and for a same-head
-    // republish that actually restated deploy config — but not for a pure no-op.
+    // Emit for create/promote and for a same-head republish that restated
+    // config — never for a pure no-op.
     const configOnly = result.outcome === 'noop' && 'configApplied' in result && result.configApplied;
     if (result.outcome !== 'noop' || configOnly) {
       emitMutation({
@@ -618,10 +584,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     return problemFromError(err, 'v2/roosts/[roostId]/versions (POST)');
   }
 }
-
-/* --------------------------------------------------------------------- */
-/*  Helpers                                                              */
-/* --------------------------------------------------------------------- */
 
 function validateVersionShape(
   version: unknown,

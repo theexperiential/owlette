@@ -1,14 +1,11 @@
 /**
- * Action core: create a new process on a machine.
+ * Action core: create a new process on a machine. Extracted from the POST in
+ * `.../machines/[machineId]/processes/route.ts` so the public route and server-side
+ * callers (hoot tool dispatch, scheduled jobs) share it.
  *
- * Extracted from `web/app/api/sites/[siteId]/machines/[machineId]/processes/route.ts`
- * (POST) so it can be reused from the public route + future server-side
- * callers (hoot tool dispatch, scheduled jobs).
- *
- * Pure-ish logic: validates the input, runs the transactional
- * `withProcessLock` write, emits the audit event. Auth + capability +
- * rate-limit are the wrapper's job — this function assumes it's running
- * inside an `authorizedSiteHandler` (or `invokeAsSystem`) call frame.
+ * Validates, runs the transactional `withProcessLock` write, emits the audit event.
+ * Auth, capability and rate limit belong to the wrapper — this assumes an
+ * `authorizedSiteHandler` (or `invokeAsSystem`) call frame.
  */
 import {
   withProcessLock,

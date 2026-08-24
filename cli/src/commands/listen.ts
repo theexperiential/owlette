@@ -1,33 +1,16 @@
 /**
- * `owlette listen --forward-to <url>`.
+ * `owlette listen --forward-to <url>` — holds an SSE connection to
+ * `/api/events/stream` and replays each event as a POST to a local URL.
  *
- * Opens a persistent SSE connection to `/api/events/stream` on the
- * owlette API, parses each incoming event, and replays it as an HTTP
- * POST to the user's local URL. Today this is a scoped liveness stream;
- * production event fanout is a follow-up server task.
+ * Auth is `?api_key=<token>` as a query param, not a header: middleboxes strip
+ * headers off long-lived streams, and the query form is the documented contract.
  *
- * Auth: passes `?api_key=<token>` as a query param (EventSource-style)
- * because the native Node streaming `fetch` for SSE honors the
- * `Authorization` header but many middleboxes strip cookies / headers
- * off long-lived streams; the query-param form is the contract
- * `/api/events/stream` documents.
+ * Wire format: `event: <kind>\n data: <json>\n\n`. The server currently emits
+ * only `connected` and a ~15s `keepalive`; real event fanout is a later server
+ * wave, and this relays whatever arrives.
  *
- * Event wire format:
- *   event: <kind>\n
- *   data: <json>\n
- *   \n
- *
- * The server today emits `connected` on open and `keepalive` every
- * ~15s as a scoped liveness signal. Real-event fanout is
- * deferred to a follow-up server wave; the CLI is already ready to
- * relay whatever events arrive when
- * the server starts emitting canonical events such as
- * `version.published` and `deployment.completed`.
- *
- * Exit codes:
- *   0 — clean shutdown via SIGINT
- *   1 — connection error, forward failure, stream closed by server
- *   2 — usage / auth problem
+ * Exit codes: 0 clean SIGINT shutdown; 1 connection/forward failure or server
+ * closed the stream; 2 usage/auth problem.
  */
 
 import { Command } from 'commander';
@@ -74,7 +57,6 @@ export function registerListenCommand(program: Command): void {
         return;
       }
 
-      // Parse --forward-to + event filter.
       let forwardUrl: URL;
       try {
         forwardUrl = new URL(String(opts.forwardTo));
@@ -110,7 +92,6 @@ export function registerListenCommand(program: Command): void {
             : `       (no re-sign secret — forwarded payloads carry the server's original Roost-Signature if present)\n`),
       );
 
-      // Wire SIGINT for clean shutdown.
       const aborter = new AbortController();
       let stopping = false;
       process.on('SIGINT', () => {
@@ -135,10 +116,9 @@ export function registerListenCommand(program: Command): void {
         return;
       }
 
-      // Bare `fetch` on purpose — fetchWithTimeout's 30s signal would sever a
-      // long-lived stream — so the trial advisory is surfaced by hand. Outside
-      // the try: a fault here is not a connection failure and must not be
-      // reported as one.
+      // Bare `fetch`: fetchWithTimeout's 30s signal would sever the stream, so
+      // the trial advisory is surfaced by hand. Outside the try — a fault here
+      // is not a connection failure and must not be reported as one.
       noteBillingWarning(res);
 
       if (!res.ok || !res.body) {
@@ -216,10 +196,6 @@ export function registerListenCommand(program: Command): void {
     });
 }
 
-/* --------------------------------------------------------------------- */
-/*  SSE parser                                                           */
-/* --------------------------------------------------------------------- */
-
 export interface SseEvent {
   kind: string;
   id: string | null;
@@ -227,14 +203,9 @@ export interface SseEvent {
 }
 
 /**
- * Parse an SSE byte stream into discrete events. Yields one event per
- * `event:` / `data:` block — intentionally minimal vs. the full SSE
- * spec (we don't implement retry fields because the server doesn't
- * emit them, and multi-line `data:` concatenation because every event
- * roost emits is single-line JSON).
- *
- * Exported for tests; also consumable by other cli commands if they
- * ever want to tap the event stream.
+ * Parse an SSE byte stream into events, one per `event:`/`data:` block.
+ * Deliberately below spec: no retry fields (the server emits none) and no
+ * multi-line `data:` concatenation (every roost event is single-line JSON).
  */
 export async function* sseEvents(
   body: ReadableStream<Uint8Array>,
@@ -280,20 +251,10 @@ export function parseSseBlock(block: string): SseEvent | null {
   };
 }
 
-/* --------------------------------------------------------------------- */
-/*  forward headers                                                      */
-/* --------------------------------------------------------------------- */
-
 /**
- * Build the header set sent to --forward-to.
- *
- * If a signing secret is supplied, re-signs the payload with the
- * stripe-style `t=<unix>,v1=<hmac>` scheme so local test suites can
- * verify against a known-to-them secret. Without a secret, the
- * original server-issued signature (if any) passes through
- * unmodified.
- *
- * Exported for tests.
+ * Headers sent to --forward-to. With a signing secret, re-signs the payload
+ * stripe-style (`t=<unix>,v1=<hmac>`) so local suites can verify against a
+ * secret they know; without one, the server's original signature passes through.
  */
 export function buildForwardHeaders(
   event: SseEvent,
@@ -312,10 +273,8 @@ export function buildForwardHeaders(
       .digest('hex');
     headers['Roost-Signature'] = `t=${t},v1=${signed}`;
   } else {
-    // Try to forward the server's original Roost-Signature if it
-    // travelled inside the SSE data payload (server wire format under
-    // discussion). For the transport-only v0 stream, there is no
-    // signature embedded; this branch is a no-op today.
+    // Forward the server's Roost-Signature if it rode inside the data payload.
+    // A no-op on the transport-only v0 stream, which embeds none.
     try {
       const parsed = JSON.parse(event.data) as { roostSignature?: string };
       if (typeof parsed?.roostSignature === 'string') {

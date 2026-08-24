@@ -1,34 +1,18 @@
 /**
  * Config loader for the owlette CLI.
  *
- * Resolution order (first-wins for each field):
- *   1. Environment: OWLETTE_TOKEN | OWLETTE_API_URL | OWLETTE_PROFILE |
- *      OWLETTE_ENVIRONMENT.
- *   2. Stored credential for the active profile (OS keychain when available,
- *      otherwise ~/.config/owlette/credentials.json).
- *   3. Profile in ~/.config/owlette/config.toml (default profile: `default`).
- *   4. Built-in defaults (apiUrl → https://owlette.app).
+ * Per-field resolution, first wins:
+ *   1. env (OWLETTE_TOKEN / _API_URL / _PROFILE / _ENVIRONMENT)
+ *   2. stored credential for the active profile (OS keychain, else
+ *      ~/.config/owlette/credentials.json)
+ *   3. the profile in ~/.config/owlette/config.toml
+ *   4. built-in defaults (apiUrl → https://owlette.app)
  *
- * Config file schema (TOML):
+ * config.toml holds top-level `api_url` / `environment` plus
+ * `[profiles.<name>]` tables of `token` / `api_url` / `environment`. The
+ * active profile is OWLETTE_PROFILE or --profile, defaulting to 'default'.
  *
- *     # top-level default values
- *     api_url = "https://owlette.app"
- *     environment = "live"          # 'live' | 'test'
- *
- *     [profiles.default]
- *     token = "owk_live_..."
- *     api_url = "https://owlette.app"
- *
- *     [profiles.dev]
- *     token = "owk_test_..."
- *     api_url = "https://dev.owlette.app"
- *     environment = "test"
- *
- * The active profile is chosen by OWLETTE_PROFILE env or --profile CLI flag;
- * default is 'default'.
- *
- * The config file is read lazily on first `loadConfig()` call and cached.
- * Tests pass `opts.reload: true` to bypass the cache.
+ * Read lazily on first `loadConfig()` and cached; `opts.reload` bypasses it.
  */
 
 import { existsSync, readFileSync } from 'fs';

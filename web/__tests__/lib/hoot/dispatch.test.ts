@@ -1,32 +1,25 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/hoot/dispatch.server.ts`
- * (security-boundary-migration wave 3.12).
+ * Unit tests for `web/lib/hoot/dispatch.server.ts`.
  *
- * Verifies that every cortex_autonomous tool dispatch path:
- *   1. flows through `invokeAsSystem` with `actor.type === 'system'` +
- *      `actor.name === 'cortex_autonomous'` and capability
- *      `MACHINE_EXEC_COMMAND`
- *   2. calls `executeMachineCommand` so the audit correlation id is
- *      stamped into the firestore command
- *   3. propagates `cortexChatId` + `cortexEventId` into audit metadata
- *   4. polls the agent's response off the privileged frame and surfaces
- *      timeouts as `{ error: ... }` rather than throwing
- *   5. cleans up the pending entry on timeout (best-effort)
+ * Every cortex_autonomous tool dispatch path must:
+ *   1. go through `invokeAsSystem` with actor.type 'system',
+ *      actor.name 'cortex_autonomous', capability MACHINE_EXEC_COMMAND
+ *   2. call `executeMachineCommand` so the audit correlation id is stamped
+ *      into the firestore command
+ *   3. propagate `cortexChatId` + `cortexEventId` into audit metadata
+ *   4. poll the agent's response off the privileged frame, surfacing timeouts
+ *      as `{ error: ... }` rather than throwing
+ *   5. clean up the pending entry on timeout (best-effort)
  *
- * The system rate-limit bucket isolation is enforced inside
- * `invokeAsSystem` itself and covered by `systemInvoker.test.ts`. This
- * suite asserts that the dispatch helpers are wired through that
- * pipeline (i.e. they call `invokeAsSystem` with a system-typed actor),
- * which is the contract `executeMachineCommand` migration depends on.
+ * Rate-limit bucket isolation lives in `invokeAsSystem` and is covered by
+ * `systemInvoker.test.ts`; this suite only asserts the wiring.
  */
 
 import { Capability } from '@/lib/capabilities';
 
-/* -------------------------------------------------------------------------- */
-/*  mocks                                                                     */
-/* -------------------------------------------------------------------------- */
+// mocks
 
 interface InvokeArgs {
   actor: { type: string; name: string; siteId: string };
@@ -81,12 +74,10 @@ jest.mock('@/lib/auditLogClient', () => ({
   emitMutation: jest.fn(),
 }));
 
-// executeMachineCommand uses Timestamp + FieldValue from firebase-admin/firestore.
-// The above mock keeps it deterministic.
+// executeMachineCommand pulls Timestamp + FieldValue from
+// firebase-admin/firestore; the mock above keeps them deterministic.
 
-/* -------------------------------------------------------------------------- */
-/*  fake firestore                                                            */
-/* -------------------------------------------------------------------------- */
+// fake firestore
 
 interface RecordedSet {
   path: string[];
@@ -150,9 +141,7 @@ function buildFakeDb(opts: {
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  setup                                                                     */
-/* -------------------------------------------------------------------------- */
+// setup
 
 import {
   dispatchToolCallAsSystem,
@@ -169,9 +158,7 @@ beforeEach(() => {
   invokeAsSystemSpy.mockClear();
 });
 
-/* -------------------------------------------------------------------------- */
-/*  dispatchToolCallAsSystem                                                  */
-/* -------------------------------------------------------------------------- */
+// dispatchToolCallAsSystem
 
 describe('dispatchToolCallAsSystem', () => {
   it('routes through invokeAsSystem with cortex_autonomous actor + MACHINE_EXEC_COMMAND', async () => {
@@ -277,12 +264,10 @@ describe('dispatchToolCallAsSystem', () => {
   });
 
   it('skips a non-terminal running marker without deleting it, then returns the later real result', async () => {
-    // The agent writes `{status:'running', startedAt}` at command START
-    // (restart safety + progress signal). It is NON-terminal: pollForResult
-    // must skip it (keep polling) and never delete it, so the agent's real
-    // terminal result is still consumed on a later poll. Regression guard for
-    // the finding-3 bug where the running marker was consumed + deleted and
-    // the tool returned undefined to the LLM.
+    // `{status:'running', startedAt}` is written at command START and is
+    // NON-terminal: pollForResult must keep polling and never delete it.
+    // Guard for finding-3, where it was consumed + deleted and the tool
+    // returned undefined to the LLM.
     let access = 0;
     const { db, updates } = buildFakeDb({
       completedResults: new Proxy({}, {
@@ -379,9 +364,7 @@ describe('dispatchToolCallAsSystem', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  dispatchExistingCommandAsSystem                                           */
-/* -------------------------------------------------------------------------- */
+// dispatchExistingCommandAsSystem
 
 describe('dispatchExistingCommandAsSystem', () => {
   it('routes through invokeAsSystem with cortex_autonomous actor', async () => {

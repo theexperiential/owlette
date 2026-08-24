@@ -2,25 +2,16 @@ import { authenticator } from 'otplib';
 import QRCode from 'qrcode';
 import crypto from 'crypto';
 
-// Configure TOTP settings
 authenticator.options = {
   step: 30, // Time step in seconds (standard is 30)
   window: 1, // Allow 1 time step before and after (prevents timing issues)
 };
 
-/**
- * Generate a new TOTP secret for a user
- */
 export function generateTOTPSecret(): string {
   return authenticator.generateSecret();
 }
 
-/**
- * Generate a QR code data URL for TOTP setup
- * @param email User's email address
- * @param secret TOTP secret
- * @returns Data URL for QR code image
- */
+/** Data-URL QR code for authenticator-app enrollment. */
 export async function generateQRCode(email: string, secret: string): Promise<string> {
   const appName = 'Owlette';
   const otpauth = authenticator.keyuri(email, appName, secret);
@@ -34,12 +25,6 @@ export async function generateQRCode(email: string, secret: string): Promise<str
   }
 }
 
-/**
- * Verify a TOTP token against a secret
- * @param token 6-digit TOTP code from user
- * @param secret User's TOTP secret
- * @returns true if valid, false otherwise
- */
 export function verifyTOTP(token: string, secret: string): boolean {
   try {
     return authenticator.verify({ token, secret });
@@ -49,16 +34,11 @@ export function verifyTOTP(token: string, secret: string): boolean {
   }
 }
 
-/**
- * Generate backup codes for account recovery
- * @param count Number of backup codes to generate (default: 10)
- * @returns Array of backup codes
- */
+/** Account-recovery backup codes. */
 export function generateBackupCodes(count: number = 10): string[] {
   const codes: string[] = [];
 
   for (let i = 0; i < count; i++) {
-    // Generate 8-character alphanumeric code
     const code = crypto
       .randomBytes(4)
       .toString('hex')
@@ -69,11 +49,6 @@ export function generateBackupCodes(count: number = 10): string[] {
   return codes;
 }
 
-/**
- * Hash a backup code for secure storage
- * @param code Plain text backup code
- * @returns Hashed backup code
- */
 export function hashBackupCode(code: string): string {
   return crypto
     .createHash('sha256')
@@ -81,23 +56,12 @@ export function hashBackupCode(code: string): string {
     .digest('hex');
 }
 
-/**
- * Verify a backup code against stored hash
- * @param code Plain text backup code from user
- * @param hash Stored hash to compare against
- * @returns true if valid, false otherwise
- */
 export function verifyBackupCode(code: string, hash: string): boolean {
   const codeHash = hashBackupCode(code);
   return codeHash === hash;
 }
 
-/**
- * Encrypt TOTP secret for storage using AES-256-GCM
- * @param secret TOTP secret to encrypt
- * @param userKey User-specific encryption key (e.g., derived from UID)
- * @returns Encrypted secret in format: salt:iv:authTag:ciphertext (base64)
- */
+/** AES-256-GCM. Output is base64 `salt:iv:authTag:ciphertext`. */
 export function encryptSecret(secret: string, userKey: string): string {
   const salt = crypto.randomBytes(16);
   const iv = crypto.randomBytes(12);
@@ -116,15 +80,9 @@ export function encryptSecret(secret: string, userKey: string): string {
   ].join(':');
 }
 
-/**
- * Decrypt TOTP secret from storage (AES-256-GCM)
- * @param encryptedSecret Encrypted TOTP secret in format: salt:iv:authTag:ciphertext
- * @param userKey User-specific encryption key
- * @returns Decrypted secret
- */
 export function decryptSecret(encryptedSecret: string, userKey: string): string {
   try {
-    // Guard against legacy AES-CBC hex format (pre-GCM migration)
+    // Legacy AES-CBC hex (pre-GCM migration) has no ':' separator.
     if (!encryptedSecret.includes(':')) {
       throw new Error('Legacy TOTP secret format — user must re-enroll MFA');
     }

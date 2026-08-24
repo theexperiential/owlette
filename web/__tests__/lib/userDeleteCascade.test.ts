@@ -1,21 +1,12 @@
 /** @jest-environment node */
 
 /**
- * Item 21: admin-side user delete cascade revokes Firebase Auth tokens
- * AND disables the Auth user.
- *
- * This complements the existing deleteOwnAccount.test.ts (covers the
- * self-delete path). `performUserDeleteCascade` is the superadmin path
- * triggered by `DELETE /api/users/{uid}`.
- *
- * Coverage:
- *   - happy path: revokeRefreshTokens + updateUser({disabled:true})
- *     are both invoked exactly once each
- *   - both fire even when the user has no owned sites
- *   - auth/user-not-found from updateUser → still reports authDisabled
- *     (the user is already gone, no rollback needed)
- *   - getAdminAuth() throwing entirely → cascade still completes the
- *     Firestore soft-delete (rules already gate on deletedAt)
+ * `performUserDeleteCascade` — the superadmin path behind `DELETE /api/users/{uid}`
+ * (self-delete lives in deleteOwnAccount.test.ts). Asserts revokeRefreshTokens +
+ * updateUser({disabled:true}) each fire exactly once, with or without owned
+ * sites; `auth/user-not-found` still reports authDisabled; and a throwing
+ * getAdminAuth() still completes the Firestore soft-delete, which the rules gate
+ * on via deletedAt.
  */
 
 const mockRevokeRefreshTokens = jest.fn();
@@ -61,10 +52,8 @@ function makeDocRef(path: string): Record<string, unknown> {
 }
 
 /**
- * Return snapshot docs for the direct children of a collection path — i.e.
- * seeded `docs` entries whose parent is exactly `path`. Enables the
- * subcollection-sweep assertions (passkeys / trustedDevices) without any
- * per-collection seeding plumbing.
+ * Snapshot docs for the direct children of `path`, so the subcollection-sweep
+ * assertions (passkeys / trustedDevices) need no per-collection seeding.
  */
 function collectionDocs(path: string): Array<Record<string, unknown>> {
   const prefix = `${path}/`;
@@ -89,11 +78,8 @@ function makeCollectionRef(path: string): Record<string, unknown> {
     doc: (id: string) => makeDocRef(`${path}/${id}`),
     where: () => ({
       get: async () => {
-        // The only `where` queries in the cascade are:
-        //   sites.where('owner','==',uid)
-        // For tests we always return an empty result (the orphan-sites
-        // path is exercised by deleteOwnAccount.test.ts; here we only
-        // care about the Auth-revoke side).
+        // The cascade's only `where` is sites.where('owner','==',uid); always
+        // empty here — orphan sites are deleteOwnAccount.test.ts's business.
         return { docs: [] };
       },
     }),
@@ -154,15 +140,24 @@ describe('performUserDeleteCascade — Firebase Auth revoke side-effect', () => 
     const softDelete = updateCalls.find((call) => call.path === 'users/uid-victim');
     expect(softDelete?.payload).toMatchObject({
       sites: [],
-      passkeyEnrolled: false,
       mfaEnrolled: false,
+      // Zero the denormalized inventory too: a stale `{totp:true, passkeys:n}` is
+      // well-formed enough for `normalizeMfaFactors` to trust, so the next
+      // recompute would resurrect `mfaEnrolled: true` on a deleted account.
+      mfaFactors: { totp: false, passkeys: 0 },
       mfaSecret: '__FIELD_DELETE__',
       backupCodes: [],
       mfaEnrolledAt: '__FIELD_DELETE__',
+      // Deliberately false, not re-armed — written directly rather than via
+      // `applyMfaFactorChange`, which derives `requiresMfaSetup = true` on zero
+      // factors and would push a soft-deleted account into mandatory 2FA setup.
       requiresMfaSetup: false,
       deletedBy: 'superadmin',
     });
     expect(softDelete?.payload.deletedAt).toEqual(expect.any(Number));
+    // toMatchObject is subset-matching, so assert the zeroed inventory exactly.
+    expect(softDelete?.payload.mfaFactors).toEqual({ totp: false, passkeys: 0 });
+    expect(softDelete?.payload.requiresMfaSetup).toBe(false);
   });
 
   it('treats auth/user-not-found from updateUser as already-disabled (no rollback)', async () => {
@@ -178,8 +173,7 @@ describe('performUserDeleteCascade — Firebase Auth revoke side-effect', () => 
 
     expect(outcome.kind).toBe('deleted');
     if (outcome.kind !== 'deleted') throw new Error('expected deleted');
-    // The cascade still flags authDisabled — the user has no Auth record
-    // to disable, which is the same end-state.
+    // Still flags authDisabled: no Auth record to disable is the same end state.
     expect(outcome.authDisabled).toBe(true);
   });
 
@@ -196,10 +190,8 @@ describe('performUserDeleteCascade — Firebase Auth revoke side-effect', () => 
 
     expect(outcome.kind).toBe('deleted');
     if (outcome.kind !== 'deleted') throw new Error('expected deleted');
-    // Firestore soft-delete still happened — the deletedAt stamp is
-    // what authoritatively gates dashboard reads via firestore.rules.
+    // Soft-delete still happened — deletedAt is what firestore.rules gates on.
     expect(outcome.authDisabled).toBe(false);
-    // The user doc should carry deletedAt.
     const userDoc = docs.get('users/uid-no-auth');
     expect(userDoc?.data?.deletedAt).toBeDefined();
   });
@@ -258,8 +250,8 @@ describe('performUserDeleteCascade — Firebase Auth revoke side-effect', () => 
     expect(outcome.kind).toBe('deleted');
     if (outcome.kind !== 'deleted') throw new Error('expected deleted');
 
-    // Both device-trust docs were deleted — a surviving cookie can no longer
-    // resolve to a valid record and skip the MFA challenge post-deletion.
+    // Both device-trust docs deleted, so a surviving cookie can't resolve to a
+    // record and skip the MFA challenge.
     expect(deletePaths).toContain('users/uid-td/trustedDevices/hash-1');
     expect(deletePaths).toContain('users/uid-td/trustedDevices/hash-2');
     expect(docs.get('users/uid-td/trustedDevices/hash-1')?.exists).toBe(false);

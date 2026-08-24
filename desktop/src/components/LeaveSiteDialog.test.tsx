@@ -32,9 +32,9 @@ function scmStatus(state: ServiceStatus['state']): ServiceStatus {
 }
 
 /**
- * The SCM as the dialog sees it: running until it is stopped, stopped until it
- * is started. The real sequence polls, so a query is answered from whatever the
- * last command did rather than from a fixed script.
+ * The SCM as the dialog sees it: running until stopped, stopped until started.
+ * Queries answer from the last command, not a fixed script, because the real
+ * sequence polls.
  */
 function fakeService() {
   let state: ServiceStatus['state'] = 'running'
@@ -359,10 +359,9 @@ describe('LeaveSiteDialog', () => {
 
   describe('the host log', () => {
     it('records every step of a teardown that worked', async () => {
-      // The 2026-08-13 leave stopped the service and then went silent, and the
-      // app's own log had nothing between "window opened" and the next launch.
-      // Each step announces itself before it runs, so a sequence that dies
-      // half-way says which half.
+      // The 2026-08-13 leave stopped the service and went silent, with nothing in
+      // the app log between "window opened" and the next launch. Each step
+      // announces itself first, so a sequence that dies says which half.
       fakeService()
       const run = fakeRun()
       open()

@@ -1,19 +1,12 @@
 /**
- * Time-travel — display apply deadline auto-revert UI (E2.1)
+ * Time-travel — display apply deadline auto-revert UI.
  *
- * DisplayLayoutPanel's ack banner is wrapped in an absolute-deadline
- * effect (components/charts/DisplayLayoutPanel.tsx:283-304):
- *   - when apply dispatch succeeds, `ackDeadlineMs = Date.now() + 30_000`.
- *   - a 250ms setInterval checks `Date.now() >= ackDeadlineMs`; on
- *     expiry it clears state AND toasts "no confirmation sent — agent
- *     will auto-revert".
+ * DisplayLayoutPanel sets `ackDeadlineMs = Date.now() + 30_000` on a successful
+ * apply dispatch, then a 250ms interval clears state and toasts "no confirmation
+ * sent — agent will auto-revert" once it passes.
  *
- * This spec drives that deadline via page.clock:
- *   1. Pre-seed assigned layout so restore is enabled.
- *   2. Install clock BEFORE goto (E1.2 lesson) so setInterval is
- *      captured by the fake clock from mount.
- *   3. Dispatch restore → banner appears.
- *   4. fastForward 31s → banner clears + auto-revert toast fires.
+ * Driven via page.clock, installed BEFORE goto so the interval is captured from
+ * mount: seed the assigned layout, dispatch restore, fastForward 31s.
  */
 
 import { test, expect } from '@playwright/test';
@@ -73,9 +66,8 @@ async function clearMachineCommands() {
 
 test('apply deadline expires without ack — banner clears + auto-revert toast fires', async ({ page }) => {
   const realNow = Date.now();
-  // Install clock BEFORE navigation — same rule as E1.2. Anchor = Date.now()
-  // so Firebase Auth's timing still resolves and the dashboard doesn't
-  // stall on "buffering…".
+  // Clock BEFORE navigation, anchored at Date.now() so Firebase Auth's timing
+  // still resolves and the dashboard doesn't stall on "buffering…".
   await page.clock.install({ time: realNow });
 
   await seedMachine(SITE_ID, MACHINE_ID);
@@ -90,29 +82,24 @@ test('apply deadline expires without ack — banner clears + auto-revert toast f
   const panel = page.getByTestId('display-layout-panel');
   await expect(panel).toBeVisible();
 
-  // Dispatch restore — apply_display_topology lands, 30s banner appears.
   await panel.getByTestId('display-recall-button').click();
   const confirmDialog = page.getByRole('dialog', { name: new RegExp(`restore this layout to ${MACHINE_ID}\\?`, 'i') });
   await expect(confirmDialog).toBeVisible();
   await confirmDialog.getByRole('button', { name: /^restore$/i }).click();
 
-  // DisplayLayoutPanel has two role="status" elements: the ack banner
-  // and the loading spinner (aria-label="loading displays"). A restore
-  // dispatch can re-flip `loading` on the display hook mid-tick, so
-  // `getByRole('status')` alone hits a strict-mode violation. Scope to
-  // the banner via its distinctive text.
+  // Two role="status" elements exist (ack banner + loading spinner), and a
+  // restore can re-flip `loading` mid-tick, so a bare getByRole('status') hits
+  // a strict-mode violation. Scope by the banner's text.
   const banner = panel.getByRole('status').filter({ hasText: /keep this layout/i });
   await expect(banner).toBeVisible();
   await expect(banner).toContainText(/keep this layout\? auto-revert in \d+s/);
 
-  // Fast-forward past the 30-second deadline. The 250ms tick should fire
-  // at least once with `Date.now() >= ackDeadlineMs`, triggering
-  // toast.error + state clear.
+  // Past the 30s deadline, so at least one 250ms tick sees it expired.
   await page.clock.fastForward(31_000);
 
-  // Banner clears (role="status" no longer rendered — ackDeadlineMs = null).
+  // Banner clears once ackDeadlineMs is null.
   await expect(banner).toHaveCount(0, { timeout: 5_000 });
-  // Auto-revert toast — exact wording from DisplayLayoutPanel:294.
+  // Auto-revert toast — exact wording from DisplayLayoutPanel.
   await expect(
     page.getByText('no confirmation sent — agent will auto-revert', { exact: true }),
   ).toBeVisible();

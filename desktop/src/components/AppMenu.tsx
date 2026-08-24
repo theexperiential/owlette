@@ -16,7 +16,7 @@ import { MENU_SURFACE } from '@/lib/surfaces'
 /** Where the logs the operator wants live, relative to the data root. */
 export const LOGS_DIR = 'logs'
 
-/** Public documentation. Both environments read the same site. */
+/** Public docs — both environments read the same site. */
 export const DOCS_URL = 'https://owlette.app/docs'
 
 interface AppMenuProps {
@@ -33,22 +33,17 @@ interface AppMenuProps {
 }
 
 /**
- * The overflow menu, ported from the legacy GUI's `···` panel
- * (`owlette_gui._toggle_overflow_menu`, :2524-2574).
+ * The overflow menu: config, logs, docs, feedback (the legacy GUI's `···` items,
+ * same order) plus the site action.
  *
- * Same four items in the same order — config, logs, docs, feedback — plus the
- * site action the legacy GUI kept in its firebase status footer.
- *
- * Both places carry it now, for different readers. This menu is where an
- * operator who knows the app looks for `leave site`; the footer's `join site`
- * button is for the one who does not yet know this menu exists, and a machine
- * that belongs to no site cannot be talked about without offering the way back.
- * The footer shows only that one, only while the service is up, so it never
+ * The site action lives BOTH here and in the footer, for different readers —
+ * this menu is where someone who knows the app looks for `leave site`, the
+ * footer's `join site` is for someone who doesn't know the menu exists. The
+ * footer shows only `join`, and only while the service is up, so it never
  * competes with `start service`.
  *
- * Opening a file, a folder or a link goes through the host
- * (`src-tauri/src/shell_open.rs`), which is what `os.startfile` was doing under
- * the legacy items; nothing is spawned from here.
+ * Opening a file/folder/link goes through the host (`src-tauri/src/shell_open.rs`);
+ * nothing is spawned from here.
  */
 export function AppMenu({
   paired,
@@ -127,20 +122,14 @@ export function AppMenu({
             start on login
           </DropdownMenuCheckboxItem>
         )}
-        {/*
-          The recovery pair, escalating in scope: restart the service (the same
-          restart.flag the tray's right-click writes — discoverable here for
-          operators who never right-click a tray icon), then reload this UI.
-        */}
+        {/* Recovery pair, escalating: the same restart.flag the tray writes,
+            surfaced here for operators who never right-click a tray icon. */}
         <DropdownMenuItem data-testid="menu-restart-service" onSelect={onRestartService}>
           <RotateCcw aria-hidden className="size-4" />
           restart service
         </DropdownMenuItem>
-        {/*
-          Last resort for a wedged UI. Every pane is a view over the files the
-          service owns, so a reload rebuilds everything from disk truth — the
-          same recovery Slack and VS Code ship, and equally safe here.
-        */}
+        {/* Safe last resort: every pane is a view over service-owned files, so a
+            reload rebuilds from disk truth. */}
         <DropdownMenuItem data-testid="menu-reload" onSelect={() => window.location.reload()}>
           <RotateCw aria-hidden className="size-4" />
           reload window

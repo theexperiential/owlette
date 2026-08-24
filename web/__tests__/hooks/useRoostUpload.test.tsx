@@ -2,20 +2,15 @@
 /**
  * @jest-environment jsdom
  *
- * Focused unit tests for `useRoostUpload`.
- *
- * The orchestrator (`uploadFolder`) is already exercised end-to-end in
- * `__tests__/lib/roostUpload.test.ts`; these tests just verify that the
- * hook's lifecycle — idle → uploading → success/error/cancelled —
- * transitions correctly and that terminal callbacks land on the right
- * state without requiring a real fetch chain.
+ * `useRoostUpload` lifecycle only: idle → uploading → success/error/cancelled,
+ * and terminal callbacks landing on the right state. The orchestrator itself is
+ * covered end-to-end in `__tests__/lib/roostUpload.test.ts`.
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react';
 
-// Mock the orchestrator so we can drive progress + resolution by hand.
-// The hook doesn't care about the internals — only the shape of what
-// uploadFolder accepts + resolves.
+// Mock the orchestrator to drive progress + resolution by hand; the hook only
+// cares about what uploadFolder accepts and resolves.
 jest.mock('@/lib/roostUpload', () => ({
   uploadFolder: jest.fn(),
 }));
@@ -118,8 +113,7 @@ describe('useRoostUpload — lifecycle', () => {
   });
 
   it('forwards progress events and carries phase into state', async () => {
-    // Resolve once we've emitted one progress tick — enough to assert
-    // that the hook wires the callback through to its `state.progress`.
+    // One progress tick is enough to prove the callback reaches `state.progress`.
     mockUploadFolder.mockImplementation(async (opts) => {
       opts.onProgress?.({ phase: 'hashing', hashFraction: 0.5, message: 'half' });
       return {
@@ -137,9 +131,7 @@ describe('useRoostUpload — lifecycle', () => {
       await result.current.start(baseInputs());
     });
 
-    // After resolution we settle in success, but the progress we want to
-    // assert on is the final state transitionally reached — just check
-    // the final state shape matches our expectations.
+    // Assert on the final settled state, not the intermediate progress.
     await waitFor(() => expect(result.current.state.status).toBe('success'));
     expect(result.current.state.result?.versionId).toBe('vrs_p');
   });

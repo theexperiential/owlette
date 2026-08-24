@@ -1,16 +1,12 @@
 /**
- * auto-rollback on `deployment.failed` webhook.
+ * auto-rollback on the `deployment.failed` webhook (mirrors
+ * docs/api/examples/auto-rollback.md): verify the Roost-Signature hmac, roll the
+ * offending roost back, ping slack. Framework-free on purpose — deploy behind
+ * nginx / cloudflare / vercel.
  *
- * Mirrors docs/api/examples/auto-rollback.md. Runs as a tiny node http
- * server that verifies the Roost-Signature hmac, calls rollback for the
- * offending roost, and pings slack. Deploy behind nginx / cloudflare /
- * vercel — the handler is framework-free on purpose.
- *
- * Required env vars:
- *   OWLETTE_TOKEN            — roost:<id>:rollback scope
- *   WEBHOOK_SIGNING_SECRET   — whsec_* returned by webhooks.subscribe()
- *   SLACK_WEBHOOK_URL        — slack incoming webhook
- *   AUTO_ROLLBACK_SITE_IDS   — comma-separated allowlist
+ * Env: OWLETTE_TOKEN (roost:<id>:rollback scope), WEBHOOK_SIGNING_SECRET
+ * (whsec_* from webhooks.subscribe()), SLACK_WEBHOOK_URL,
+ * AUTO_ROLLBACK_SITE_IDS (comma-separated allowlist).
  */
 
 import http from 'node:http';

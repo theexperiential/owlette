@@ -1,20 +1,14 @@
 'use client';
 
 /**
- * DisplayCanvas Component
+ * SVG topology of a machine's monitor layout: rects in scaled virtual-desktop
+ * coords, primary highlight, drift ghosts, and Mosaic grids collapsed into one
+ * block with dashed inner dividers.
  *
- * SVG-based topology visualization of a machine's monitor layout.
- *
- * Renders each monitor as a rectangle in scaled virtual-desktop coordinates,
- * with primary highlight, ghost overlays for drift visualization, and Mosaic
- * grids collapsed into a single atomic block with inner dashed dividers.
- *
- * Scaling strategy:
- *  - The container's pixel width is measured via ResizeObserver so the SVG
- *    viewBox matches rendered px (keeps text + stroke widths visually stable).
- *  - Height is driven by `className` (e.g. `h-[280px]`) or defaults to 280px.
- *  - Monitor positions / sizes are projected from virtual-desktop coords into
- *    px coords with a single uniform scale so aspect ratio is preserved.
+ * Container px width is measured via ResizeObserver so the viewBox matches
+ * rendered px (keeps text + stroke widths stable); height comes from
+ * `className` or DEFAULT_HEIGHT. Positions project through a single uniform
+ * scale so aspect ratio is preserved.
  */
 
 import {
@@ -34,68 +28,34 @@ interface DisplayCanvasProps {
   mosaicGrids?: MosaicGrid[];
   selectedMonitorId?: string;
   onMonitorClick?: (id: string) => void;
-  /**
-   * Id of the monitor currently hovered in either the canvas or a linked
-   * sibling view (e.g. DisplayMonitorTable). Drives a shared highlight so
-   * hovering a row in the table lights up the matching rect here, and vice
-   * versa.
-   */
+  /** Monitor hovered here or in a linked sibling (DisplayMonitorTable) — shared highlight. */
   hoveredMonitorId?: string;
   /** Fires on mouse enter/leave of a clickable rect — id is undefined on leave. */
   onMonitorHover?: (id: string | undefined) => void;
   ghostMonitors?: MonitorInfo[];
-  /**
-   * Color used for the selected-monitor stroke. Defaults to the primary CSS
-   * variable. Callers can override to communicate semantic mode (e.g. live
-   * vs assigned) without theming the whole canvas.
-   */
+  /** Selected-monitor stroke color. Override to signal mode (live vs assigned). */
   accentColor?: string;
-  /**
-   * Set of monitor ids that have drifted from their assigned configuration.
-   * Drifted rects get a warm coral fill tint; selection still owns the
-   * stroke channel so a selected drifted monitor reads as coral fill + tab
-   * accent stroke simultaneously, with no channel collision.
-   */
+  /** Drifted monitors take a coral fill; selection still owns the stroke channel. */
   driftedMonitorIds?: Set<string>;
   /**
-   * Set of monitor `edidHash` values that exist in the rendered layout
-   * (typically the assigned tab) but are NOT in the current live topology
-   * — i.e., stored monitors that aren't physically connected right now.
-   * These rects render with a dimmed fill + an amber "⚠ not connected"
-   * badge so the operator immediately sees that part of the layout is
-   * referencing absent hardware (apply will fail for those rects).
+   * `edidHash`es present in the rendered layout but absent from live topology —
+   * dimmed fill + "not connected" badge; apply will fail for those rects.
    */
   staleEdidHashes?: Set<string>;
-  /**
-   * Label rendering mode. `auto` (default) picks the label tier based on
-   * rendered rect area: full info for big rects, abbreviated for medium,
-   * just the index number for small. `indexOnly` forces every rect to show
-   * just its index number — useful for compact previews where the textual
-   * detail lives outside the canvas.
-   */
+  /** `auto` picks label detail by rect area; `indexOnly` shows only the index. */
   labelMode?: 'auto' | 'indexOnly';
   /**
-   * When true, monitor rects respond to pointer drags and emit `onMonitorMove`
-   * with the updated virtual-desktop position. Pure drag snaps to 1px virtual;
-   * shift-drag snaps to 16px multiples. Callers wire this to a draft-state
-   * setter — the canvas never mutates monitor data itself.
+   * Enables drag, emitting `onMonitorMove` in virtual-desktop coords (1px snap,
+   * 16px on shift-drag). The canvas never mutates monitor data itself.
    */
   editable?: boolean;
   onMonitorMove?: (id: string, position: { x: number; y: number }) => void;
-  /**
-   * Fires when the user double-clicks a monitor rect. The panel wires this
-   * to the `DisplayEditorDialog` so double-click opens the full monitor
-   * editor (access to resolution, refresh, and other fields not exposed in
-   * the inline table cells).
-   */
+  /** Double-click a rect — the panel wires this to DisplayEditorDialog. */
   onMonitorDoubleClick?: (id: string) => void;
   /**
-   * Optional callback fired while the user drags the primary monitor. The
-   * primary is pinned at (0, 0) by Windows, so we can't move it directly —
-   * instead we translate the drag into an inverse shift of every other
-   * monitor, which visually reads as "the primary moved". Delta is
-   * incremental (frame-over-frame), in virtual-desktop units. When omitted,
-   * the primary stays non-draggable.
+   * Windows pins the primary at (0,0), so "moving" it means shifting every other
+   * monitor by the inverse. Delta is incremental (frame-over-frame), in
+   * virtual-desktop units. Omit to make the primary non-draggable.
    */
   onLayoutShift?: (dx: number, dy: number) => void;
   className?: string;
@@ -112,10 +72,7 @@ const PADDING_RATIO = 0.1;
 const LABEL_AREA_FULL = 12000;
 const LABEL_AREA_ABBREV = 4000;
 
-/**
- * Dimensions a monitor occupies on the virtual desktop, taking rotation into
- * account. Portrait orientations (90 / 270) swap the nominal width/height.
- */
+/** Virtual-desktop footprint, accounting for rotation (90/270 swap w/h). */
 function effectiveDimensions(monitor: MonitorInfo): { w: number; h: number } {
   const { width, height } = monitor.resolution;
   const rot = monitor.rotation % 360;
@@ -156,16 +113,9 @@ function computeBBox(all: MonitorInfo[]): BBox | null {
 }
 
 /**
- * Pull the dragged monitor's edges toward any other-monitor edge that sits
- * within `thresholdVirt` virtual units. Each axis is snapped independently
- * from the closest candidate across all other monitors, so the rect can
- * align its left edge with one neighbour while its top edge aligns with
- * another — the common "tile into the gap" case.
- *
- * Edges considered per axis: same-side alignment (left↔left / right↔right /
- * top↔top / bottom↔bottom) and touching alignment (left↔right / right↔left /
- * top↔bottom / bottom↔top). Together these cover every natural "click
- * together" outcome.
+ * Snap each axis independently to the nearest other-monitor edge within
+ * `thresholdVirt`, so the rect can align left with one neighbour and top with
+ * another. Covers same-side (left↔left) and touching (left↔right) pairs.
  */
 function computeSnappedPosition(
   dragged: { id: string; width: number; height: number },
@@ -219,12 +169,9 @@ function computeSnappedPosition(
 }
 
 /**
- * Locate the Mosaic member display whose virtual-desktop position is the
- * top-left corner of the composite surface. Used to anchor the outer border.
- *
- * The Mosaic payload references members by `displayId` (Windows targetId),
- * so we match against `MonitorInfo.targetId`. If no member resolves we return
- * null and the caller skips the grid entirely rather than drawing it at (0,0).
+ * Mosaic member at the composite's top-left, used to anchor the outer border.
+ * Members reference `displayId` (Windows targetId). Returns null when no member
+ * resolves so the caller skips the grid instead of drawing it at (0,0).
  */
 function findGridAnchor(
   grid: MosaicGrid,
@@ -267,17 +214,12 @@ function DisplayCanvasImpl({
   const [canvasW, setCanvasW] = useState<number>(0);
   const [canvasH, setCanvasH] = useState<number>(DEFAULT_HEIGHT);
 
-  // Defer the heavy monitor arrays so rapid Firestore snapshot updates (e.g.
-  // arriving while the parent slide-up animation is still running) don't stall
-  // the transition. React keeps the previous deferred value until the next
-  // non-urgent render commits, which naturally coalesces bursts.
+  // Deferred so bursts of Firestore snapshots don't stall the parent's slide-up.
   const monitors = useDeferredValue(monitorsProp);
   const ghostMonitors = useDeferredValue(ghostMonitorsProp);
 
-  // Single ResizeObserver tracks both dimensions. Equality guards prevent
-  // redundant re-renders during parent animations where one axis may change
-  // without the other. Rounding to whole pixels avoids sub-pixel setState
-  // churn from sub-pixel fluctuations during grid-rows transitions.
+  // One ResizeObserver for both axes. Equality guards + px rounding avoid setState
+  // churn from sub-pixel wobble during grid-rows transitions.
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -289,8 +231,7 @@ function DisplayCanvasImpl({
       setCanvasH((prev) => (prev === roundedH ? prev : roundedH));
     };
 
-    // Initial measurement runs synchronously before paint so the first render
-    // has usable dimensions.
+    // Measure synchronously so the first render already has dimensions.
     update();
 
     const observer = new ResizeObserver(update);
@@ -316,8 +257,7 @@ function DisplayCanvasImpl({
     const scaleX = (canvasW - 2 * padding) / bboxW;
     const scaleY = (canvasH - 2 * padding) / bboxH;
     const scale = Math.max(0, Math.min(scaleX, scaleY));
-    // Centre the topology inside the padded canvas so small layouts don't
-    // hug the top-left corner.
+    // Centre the topology so small layouts don't hug the top-left corner.
     const contentW = bboxW * scale;
     const contentH = bboxH * scale;
     const offsetX = (canvasW - contentW) / 2 - bbox.minX * scale;
@@ -331,9 +271,7 @@ function DisplayCanvasImpl({
     return map;
   }, [monitors]);
 
-  // Fast id → index lookup for the small-label tier. Previously we called
-  // `monitors.indexOf(monitor)` per rect per render, which is O(n²) across the
-  // whole canvas. A Map makes it O(n) to build and O(1) per lookup.
+  // O(1) index lookup; `monitors.indexOf` per rect per render was O(n²).
   const monitorIndexById = useMemo(() => {
     const map = new Map<string, number>();
     for (let i = 0; i < monitors.length; i++) {
@@ -342,9 +280,7 @@ function DisplayCanvasImpl({
     return map;
   }, [monitors]);
 
-  // Stable onClick delegate so memoizing at the rect level would be meaningful
-  // if we ever split rects into their own component. Also avoids allocating a
-  // fresh arrow per rect per render.
+  // Stable delegates — no fresh arrow allocated per rect per render.
   const handleRectClick = useCallback(
     (id: string) => {
       onMonitorClick?.(id);
@@ -361,18 +297,11 @@ function DisplayCanvasImpl({
     onMonitorHover?.(undefined);
   }, [onMonitorHover]);
 
-  // Drag state lives in a ref so mid-drag pointer moves don't cascade into
-  // parent renders — only the onMonitorMove / onLayoutShift callbacks (fired
-  // for virtual-coord changes) trigger draft updates. `startScale` is
-  // captured at pointerdown so mid-drag bbox growth (the rect expanding the
-  // viewport) doesn't wobble the cursor-to-rect mapping.
-  //
-  // For primary drags, `lastEmittedDx/Dy` tracks the cumulative (snapped)
-  // virtual delta we've already pushed to `onLayoutShift`, so each
-  // pointermove can emit the *incremental* delta instead of an absolute.
-  // Absolutes would compound: the secondaries have already shifted, and
-  // re-applying the full cumulative against the shifted state would move
-  // them twice as far as intended.
+  // Drag state in a ref so pointermove doesn't re-render; only onMonitorMove /
+  // onLayoutShift push draft updates. `startScale` is captured at pointerdown so
+  // mid-drag bbox growth doesn't wobble the cursor-to-rect mapping.
+  // `lastEmittedDx/Dy` lets primary drags emit *incremental* deltas — absolutes
+  // would compound against already-shifted secondaries and move them twice as far.
   const dragStateRef = useRef<{
     monitorId: string;
     isPrimary: boolean;
@@ -388,31 +317,27 @@ function DisplayCanvasImpl({
     lastEmittedDx: number;
     lastEmittedDy: number;
     /**
-     * Initial positions of the non-dragged monitors, snapshotted at
-     * pointerdown. Used for snap-target comparison during primary drag so
-     * thresholds are measured against where the operator *sees* the
-     * secondaries — not against their mid-drag shifted positions, which
-     * move in lock-step with the virtual primary and would halve the
-     * effective snap distance.
+     * Non-dragged monitors as of pointerdown. Primary-drag snap must measure
+     * against where the operator sees them — current positions shift in lock-step
+     * with the virtual primary and would halve the effective snap distance.
      */
     initialOthersForSnap: MonitorInfo[];
   } | null>(null);
-  // Set on pointerup when a drag occurred; consumed+cleared by the next click
-  // so drag-release doesn't also toggle selection.
+  // Set on pointerup after a drag; consumed by the next click so release doesn't
+  // also toggle selection.
   const suppressClickRef = useRef(false);
 
   const handleRectPointerDown = useCallback(
     (e: React.PointerEvent<SVGGElement>, monitor: MonitorInfo) => {
       if (!editable || !projection || projection.scale <= 0) return;
-      // Primary uses onLayoutShift; secondaries use onMonitorMove. Bail if
-      // the caller didn't wire up the matching callback for this monitor.
+      // Primary routes through onLayoutShift, secondaries through onMonitorMove.
       if (monitor.primary ? !onLayoutShift : !onMonitorMove) return;
       if (e.button !== 0) return;
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
       } catch {
-        // Some browsers reject capture on SVG — drag still works without it,
-        // it just loses tracking when the pointer leaves the rect.
+        // Some browsers reject capture on SVG — drag still works, it just loses
+        // tracking once the pointer leaves the rect.
       }
       const { w, h } = effectiveDimensions(monitor);
       dragStateRef.current = {
@@ -429,8 +354,7 @@ function DisplayCanvasImpl({
         moved: false,
         lastEmittedDx: 0,
         lastEmittedDy: 0,
-        // Only populated for primary drags — snap targets need initial
-        // positions because secondaries shift mid-drag under our feet.
+        // Primary drags only — snap needs pre-drag positions (secondaries shift).
         initialOthersForSnap: monitor.primary
           ? monitors.filter((m) => m.id !== monitor.id)
           : [],
@@ -457,16 +381,10 @@ function DisplayCanvasImpl({
         newX = Math.round(newX / 16) * 16;
         newY = Math.round(newY / 16) * 16;
       } else {
-        // Edge-snap threshold is CSS-px-derived so it feels consistent at
-        // any zoom level. 8 CSS px is wide enough for quick alignment,
-        // narrow enough to avoid "sticky" feel when dragging away.
-        //
-        // Primary drag snaps against the *initial* positions of the other
-        // monitors (snapshotted at pointerdown). Current positions shift in
-        // lock-step with the virtual primary as the drag proceeds, so
-        // using them would double the effective distance and make snap
-        // fire at half the apparent gap. Secondary drags snap against
-        // current positions, which are stable relative to the drag.
+        // Snap threshold is CSS-px-derived so it feels the same at any zoom.
+        // Primary snaps against pointerdown-time positions (secondaries shift in
+        // lock-step and would halve the effective distance); secondaries snap
+        // against current positions.
         const snapTargets = state.isPrimary ? state.initialOthersForSnap : monitors;
         const snapThresholdVirt = 8 / state.startScale;
         const snapped = computeSnappedPosition(
@@ -479,10 +397,8 @@ function DisplayCanvasImpl({
         newY = Math.round(snapped.y);
       }
       if (state.isPrimary) {
-        // Translate the primary's virtual delta into an inverse shift of
-        // every other monitor. Emit *incremental* deltas so the hook's
-        // shift logic doesn't compound the cumulative movement on top of
-        // already-shifted state.
+        // Inverse-shift every other monitor; incremental so the hook's shift
+        // logic doesn't compound on already-shifted state.
         const incDx = newX - state.lastEmittedDx;
         const incDy = newY - state.lastEmittedDy;
         if (incDx !== 0 || incDy !== 0) {
@@ -528,10 +444,8 @@ function DisplayCanvasImpl({
     if (rectW <= 0 || rectH <= 0) return null;
 
     const area = rectW * rectH;
-    // Ghosts never take the selection stroke — selectedMonitorId matches by
-    // monitor.id and ghosts share ids with their live counterparts, so
-    // without this guard selecting a live rect would also repaint the ghost
-    // in the cyan selection accent and lose the purple "assigned" signal.
+    // Ghosts share ids with their live counterparts — without this guard,
+    // selecting a live rect would repaint the ghost too and lose the "assigned" hue.
     const isSelected =
       !opts.ghost && !!selectedMonitorId && selectedMonitorId === monitor.id;
     const isHovered =
@@ -540,31 +454,15 @@ function DisplayCanvasImpl({
     const clickable = !!onMonitorClick && !opts.ghost;
     const hoverable = !opts.ghost && !!onMonitorHover;
 
-    // Color system: fill carries identity/state, stroke carries interaction.
-    // Every signal owns exactly one channel so combinations stack cleanly —
-    // a selected, drifted, primary rect reads as coral-warm fill + cyan
-    // stroke + ★ glyph, three independent signals with no collisions.
-    //
-    // Fill priority: ghost > drifted > primary > default. Drift overrides
-    // primary tint so operators can spot drift even on the primary monitor;
-    // the ★ glyph still indicates primary independently. Drift uses coral
-    // (hue ~30°) and primary uses warm amber (hue ~55°) — the same warm
-    // family so they never clash, but with enough hue separation to
-    // distinguish at a glance.
-    //
-    // Non-drifted non-ghost rects tint with the tab's accent color, so every
-    // monitor on a given tab reads as "part of the same set" instead of
-    // primary popping in a different hue from everyone else. Primary keeps a
-    // higher saturation so it's still distinguishable at a glance without
-    // hunting for the ★ star. Drift still overrides with coral (a cross-tab
-    // alert signal), and ghosts still paint in --chart-4 to flag "assigned".
+    // One signal per channel: fill = identity/state, stroke = interaction, so they
+    // stack (selected + drifted + primary = coral fill + accent stroke + ★).
+    // Fill priority: ghost > drifted > primary > default — drift (coral) overrides
+    // primary (warm amber) so drift shows even on the primary. Non-drifted rects
+    // tint with the tab accent so a tab's monitors read as one set.
     const isDrifted =
       !opts.ghost && driftedMonitorIds?.has(monitor.id) === true;
-    // [A4.4] Stale-edidHash check. The monitor is in the rendered layout but
-    // not in the current live topology — operator stored it once, but right
-    // now it's not connected. Only meaningful for non-ghost rects (ghosts
-    // ARE the assigned-on-live overlay; staleness for them is conceptually
-    // the same signal already encoded in their dashed style).
+    // [A4.4] In the rendered layout but not in live topology — stored once, not
+    // connected now. Ghosts already encode this via their dashed style.
     const isStale =
       !opts.ghost &&
       !!monitor.edidHash &&
@@ -572,9 +470,7 @@ function DisplayCanvasImpl({
     let fill: string;
     let strokeDash: string | undefined;
     if (opts.ghost) {
-      // Ghosts use --chart-4 (the assigned-tab accent) so the dashed overlay
-      // reads semantically as "this is the assigned layout" — matches the
-      // purple used on the assigned tab pill and apply-button drift accent.
+      // --chart-4 is the assigned-tab accent, matching the pill and drift accent.
       fill = 'color-mix(in oklab, var(--chart-4) 10%, transparent)';
       strokeDash = '5,4';
     } else if (isDrifted) {
@@ -584,12 +480,8 @@ function DisplayCanvasImpl({
       fill = `color-mix(in oklab, ${accentColor} ${tintPct}%, var(--secondary))`;
     }
 
-    // Stroke priority: selection > ghost-dashed > default. Selection owns
-    // the stroke channel alone — drift is on fill (above), so selecting a
-    // drifted monitor still reads the coral wash *and* the cyan outline
-    // simultaneously, with no channel collision. Default stroke uses
-    // `--muted-foreground` (not `--border`, which is identical to `--accent`
-    // in dark mode and gives near-zero contrast against the navy fills).
+    // Selection owns the stroke channel alone. Default is --muted-foreground, not
+    // --border, which equals --accent in dark mode (no contrast on navy fills).
     let stroke: string;
     let strokeWidth: number;
     if (isSelected) {
@@ -603,23 +495,13 @@ function DisplayCanvasImpl({
       strokeWidth = 1;
     }
 
-    // Ghosts split fill vs stroke opacity: keep the fill nearly invisible so
-    // live monitors read as primary, but the dashed border needs to be
-    // visible enough to actually communicate the assigned layout.
-    // Stale rects (assigned but not connected) drop fill opacity to ~0.5 so
-    // they read as muted — the badge below is the explicit signal; the dim
-    // fill reinforces "this position is reserved for hardware that's not
-    // here right now".
+    // Ghost fill stays faint but its dashed border must remain readable. Stale
+    // rects dim to 0.5 to reinforce the "not connected" badge.
     const fillOpacity = opts.ghost ? 0.4 : isStale ? 0.5 : 1;
     const strokeOpacity = opts.ghost ? 0.85 : 1;
-    // Cross-panel hover lights up both canvas rect and table row for the same
-    // monitor via a subtle brightness bump — state-driven (not :hover) so it
-    // fires when the sibling sees the hover.
-    // Primary is pinned at (0, 0) by Windows, so we can't emit a plain
-    // position update for it — instead we rely on `onLayoutShift` to
-    // translate every *other* monitor inversely, which reads to the operator
-    // as "the primary moved". Falls back to non-draggable when that callback
-    // isn't wired.
+    // Hover brightness is state-driven (not :hover) so the sibling table row can
+    // light this rect up too.
+    // Primary is pinned at (0,0) by Windows — only onLayoutShift can "move" it.
     const draggable =
       editable &&
       !opts.ghost &&
@@ -631,21 +513,16 @@ function DisplayCanvasImpl({
       touchAction: draggable ? 'none' : undefined,
     };
 
-    // Text label tier driven by rendered area. Using the rect area (not just
-    // width) means very tall narrow portrait monitors don't get crammed with
-    // text that won't fit.
+    // Label tier from rendered area (not width) so tall portrait rects don't
+    // get crammed with text that won't fit.
     let labelContent: React.ReactNode = null;
     if (!opts.ghost) {
       const cx = x + rectW / 2;
       const cy = y + rectH / 2;
       const rotationSuffix = monitor.rotation ? `/${monitor.rotation}°` : '';
-      // Show post-rotation (effective) dimensions so the label matches what
-      // Windows actually treats the panel as — and matches the rect's aspect.
-      // A 4K panel rotated 270° reads as 2160×3840, not 3840×2160.
+      // Effective (post-rotation) dims — a 4K panel at 270° reads 2160×3840.
       const effRes = effectiveDimensions(monitor);
-      // labelMode='indexOnly' short-circuits the area-tier logic and forces
-      // every rect to render only its index number. Used by compact previews
-      // (card view) where the textual detail lives outside the canvas.
+      // indexOnly: compact previews keep the textual detail outside the canvas.
       if (labelMode === 'indexOnly') {
         const idx = monitorIndexById.get(monitor.id) ?? -1;
         labelContent = (
@@ -744,13 +621,8 @@ function DisplayCanvasImpl({
       }
     }
 
-    // Star + "primary" badge sits in the top-left corner of the primary rect.
-    // Uses the warm accent so it reads as the same "identity" signal as the
-    // warm fill tint underneath, and never collides with the cyan selection
-    // stroke on the rect border. Matches the amber star in the names list.
-    // Suppressed in indexOnly mode — when the canvas is a compact preview the
-    // primary indicator lives outside the rect (e.g. amber star in the names
-    // list) so the in-rect badge would be redundant noise.
+    // Primary star, top-left. Warm accent matches the fill tint and never collides
+    // with the selection stroke. Redundant in indexOnly mode.
     const primaryBadge =
       isPrimary && !opts.ghost && labelMode !== 'indexOnly' ? (
         <text
@@ -766,9 +638,8 @@ function DisplayCanvasImpl({
         </text>
       ) : null;
 
-    // [A4.4] "Not connected" badge — top-right corner so it never collides
-    // with the top-left primary star. Suppressed in indexOnly mode where
-    // any in-rect text would crowd the index number.
+    // [A4.4] Top-right so it never collides with the primary star; hidden in
+    // indexOnly, where it would crowd the index number.
     const staleBadge =
       isStale && labelMode !== 'indexOnly' ? (
         <text
@@ -791,34 +662,23 @@ function DisplayCanvasImpl({
             suppressClickRef.current = false;
             return;
           }
-          // Give the rect explicit keyboard focus on click. Without this,
-          // SVG `<g>` elements don't receive focus on mouse activation in
-          // Chrome / Edge even with tabIndex=0, so arrow-key nudging
-          // (handleKeyDown below) would silently never fire — the key
-          // events would land on `document.body` and we'd miss them.
+          // Chrome/Edge don't focus an SVG <g> on mouse activation even with
+          // tabIndex=0, so arrow-key nudging would silently never fire.
           e.currentTarget.focus();
           handleRectClick(monitor.id);
         }
       : undefined;
 
-    // Double-click opens the full monitor editor dialog when the panel is
-    // in edit mode. Only wire the handler when the caller opts in —
-    // otherwise a double-click degrades to two back-to-back selection
-    // clicks, which is the read-only default.
+    // Only wired when the caller opts in; otherwise double-click degrades to two
+    // back-to-back selection clicks (the read-only default).
     const handleGroupDoubleClick =
       clickable && onMonitorDoubleClick
         ? () => onMonitorDoubleClick(monitor.id)
         : undefined;
 
-    // Clickable groups get button semantics + keyboard activation so
-    // screen readers announce them as selectable and keyboard-only users
-    // can cycle through and select monitors with Tab + Enter/Space. In
-    // edit mode arrow keys nudge the focused rect by 1 virtual px (shift
-    // for 10) — essential for precision on dense topologies where the
-    // virtual↔CSS scale lets 1 CSS px represent 50+ virtual px. Nudging
-    // the primary rotates through `onLayoutShift` (inverse delta) so the
-    // data model keeps the primary pinned at (0, 0) — same contract as
-    // drag.
+    // Button semantics + keyboard activation. In edit mode arrows nudge 1 virtual
+    // px (shift: 10) — needed where 1 CSS px can span 50+ virtual px. Primary
+    // nudges route through onLayoutShift, same contract as drag.
     const handleKeyDown = clickable
       ? (e: React.KeyboardEvent<SVGGElement>) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -844,8 +704,7 @@ function DisplayCanvasImpl({
           else dy = step;
           e.preventDefault();
           if (isPrimary) {
-            // Primary is pinned at (0, 0); visually "moving" it means
-            // shifting every secondary by the inverse delta.
+            // Primary is pinned at (0,0); shift every secondary by the inverse.
             onLayoutShift?.(-dx, -dy);
           } else {
             onMonitorMove?.(monitor.id, {
@@ -861,12 +720,8 @@ function DisplayCanvasImpl({
         key={`${opts.ghost ? 'ghost-' : ''}${monitor.id}`}
         role={clickable ? 'button' : undefined}
         tabIndex={clickable ? 0 : undefined}
-        // Suppress the browser's default focus outline on the <g>. The
-        // rect's own cyan selection stroke is our focus affordance — the
-        // UA ring on top of it reads as a second, mismatched border on
-        // click. `tabIndex={0}` is still needed so keyboard users can
-        // Tab through monitors and so arrow-key nudging receives the
-        // focused rect's keydown events.
+        // The UA focus ring would double up with the selection stroke. tabIndex=0
+        // stays for Tab order and arrow-key nudging.
         style={clickable ? { outline: 'none' } : undefined}
         aria-label={
           clickable ? (monitor.friendlyName || monitor.id) : undefined
@@ -917,9 +772,8 @@ function DisplayCanvasImpl({
     const h = grid.compositeHeight * scale;
     if (w <= 0 || h <= 0) return null;
 
-    // Inner dashed dividers: one per interior row/col boundary, rendered as
-    // individual <line>s so stroke-dash spacing is uniform rather than being
-    // chopped by the rect outline.
+    // Interior dividers as individual <line>s so dash spacing stays uniform
+    // instead of being chopped by the rect outline.
     const dividers: React.ReactNode[] = [];
     const cellW = w / grid.cols;
     const cellH = h / grid.rows;
@@ -974,25 +828,16 @@ function DisplayCanvasImpl({
     );
   };
 
-  // Pre-built SVG children. Memoizing these collapses the per-render work to
-  // a reference-equality check when nothing changed — the common case during
-  // the parent's slide-up/down animation, when React re-renders ancestors but
-  // the display data itself is stable. Deps intentionally include every piece
-  // of state `renderMonitor` / `renderGrid` reads so the cache is correct
-  // (renderMonitor reads `onMonitorClick` directly to derive clickability,
-  // in addition to dispatching through `handleRectClick`). The exhaustive-deps
-  // lint rule can't see through the nested closures, hence the targeted
-  // suppression.
+  // Memoized so unrelated parent re-renders (e.g. the slide-up animation) skip the
+  // SVG rebuild. Deps list every value renderMonitor/renderGrid reads;
+  // exhaustive-deps can't see through the nested closures, hence the suppression.
   const ghostElements = useMemo(
     () => (ghostMonitors ?? []).map((m) => renderMonitor(m, { ghost: true })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [ghostMonitors, projection, selectedMonitorId, hoveredMonitorId, onMonitorClick, onMonitorHover, handleRectClick, handleRectEnter, handleRectLeave, monitorIndexById, accentColor, driftedMonitorIds, labelMode, editable, onMonitorMove, onMonitorDoubleClick, onLayoutShift, handleRectPointerDown, handleRectPointerMove, handleRectPointerUp, staleEdidHashes],
   );
-  // SVG paint order is document order, not z-index — there's no z-index for
-  // SVG elements. So we render non-selected monitors first, then the selected
-  // one, so the selection's stroke never gets clipped by an adjacent rect
-  // that happens to come later in the input array. Stable order is preserved
-  // for everything else, only the selected rect is hoisted.
+  // SVG has no z-index — paint order is document order. Render the selected rect
+  // last so its stroke isn't clipped by an adjacent later sibling.
   const monitorElements = useMemo(() => {
     const selected: MonitorInfo[] = [];
     const rest: MonitorInfo[] = [];
@@ -1066,10 +911,7 @@ function DisplayCanvasImpl({
 }
 
 /**
- * Memoized public export. The parent (DisplayLayoutPanel, MachineCardView)
- * re-renders on unrelated state changes; shallow-compare prop equality lets
- * us skip the entire SVG rebuild when monitor data, selection, and callbacks
- * are all stable. Callers must pass stable `onMonitorClick` (useCallback) and
- * memoize `monitors` / `ghostMonitors` / `mosaicGrids` arrays where possible.
+ * Memoized. Callers must pass a stable `onMonitorClick` and memoized
+ * `monitors` / `ghostMonitors` / `mosaicGrids` for this to help.
  */
 export const DisplayCanvas = memo(DisplayCanvasImpl);

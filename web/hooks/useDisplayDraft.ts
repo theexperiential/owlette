@@ -1,13 +1,9 @@
 'use client';
 
 /**
- * useDisplayDraft — local draft state for editing a machine's display layout.
- *
- * Holds an editable clone of `assigned.monitors` while the panel is in edit
- * mode, persists dirty drafts to sessionStorage so a mid-edit reload doesn't
- * lose work, and exposes a small API for partial monitor updates + explicit
- * reset/discard. The draft is only auto-seeded on entering edit mode —
- * changes to `assigned` while editing do NOT clobber in-flight edits.
+ * Local draft state for editing a machine's display layout: an editable clone of
+ * `assigned.monitors`, persisted to sessionStorage so a mid-edit reload doesn't lose work.
+ * Seeded only on entering edit mode — changes to `assigned` while editing never clobber edits.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -29,13 +25,9 @@ export interface UseDisplayDraftResult {
   isDirty: boolean;
   updateMonitor: (id: string, partial: Partial<MonitorInfo>) => void;
   /**
-   * Translate every non-primary monitor by (dx, dy) while the primary stays
-   * pinned at (0, 0). Exists so the canvas can offer primary-drag UX: the
-   * user visually drags the primary rect, but the data model shifts the
-   * world around it instead. Pass incremental (frame-over-frame) deltas —
-   * `updateMonitor` cannot absorb an absolute primary-position update
-   * because each call compounds the shift on top of the already-shifted
-   * state.
+   * Translate every non-primary monitor by (dx, dy), primary stays pinned at (0, 0) — lets the
+   * canvas offer primary-drag by shifting the world instead. Deltas must be INCREMENTAL
+   * (frame-over-frame); each call compounds on the already-shifted state.
    */
   shiftSecondariesBy: (dx: number, dy: number) => void;
   resetToAssigned: () => void;
@@ -89,7 +81,7 @@ function writeToSession(key: string, value: MonitorInfo[]): void {
   try {
     window.sessionStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // Quota or serialization failure — drafts are best-effort; swallow.
+    // Drafts are best-effort.
   }
 }
 
@@ -103,13 +95,9 @@ function deleteFromSession(key: string): void {
 }
 
 /**
- * True when the draft's physical identity set still matches the current
- * assigned layout. Used to decide whether a sessionStorage-restored draft
- * is still applicable: if another admin saved a different layout while the
- * tab was closed, or a monitor was swapped out, the draft now describes a
- * topology that no longer exists and must be discarded. Edid hash is the
- * right key — monitor.id can change on reconnect even when the physical
- * panel is identical.
+ * Whether a sessionStorage-restored draft still applies: if another admin saved a different layout
+ * or a monitor was swapped, the draft describes a topology that no longer exists. Keyed on edidHash
+ * because monitor.id can change on reconnect even for an identical physical panel.
  */
 function draftMatchesAssigned(
   draft: MonitorInfo[],
@@ -119,8 +107,7 @@ function draftMatchesAssigned(
   if (draft.length !== assigned.length) return false;
   const draftHashes = new Set(draft.map((m) => m.edidHash).filter(Boolean));
   if (draftHashes.size !== draft.length) {
-    // Draft contains monitors without edidHash (demo / legacy). Fall back
-    // to id-set comparison; if those also disagree, treat as stale.
+    // Monitors without edidHash (demo/legacy): fall back to id-set comparison.
     const draftIds = new Set(draft.map((m) => m.id));
     const assignedIds = new Set(assigned.map((m) => m.id));
     if (draftIds.size !== assignedIds.size) return false;
@@ -136,35 +123,23 @@ function draftMatchesAssigned(
 export function useDisplayDraft(args: UseDisplayDraftArgs): UseDisplayDraftResult {
   const { siteId, machineId, assigned, mode } = args;
   const [draft, setDraft] = useState<MonitorInfo[] | null>(null);
-  // Track the previous mode as a state value (not a ref) so the transition
-  // detection is a pure derivation during render. Using a ref here would
-  // require writing to it during render, which React flags as unsafe.
+  // State, not a ref: transition detection is a pure render derivation, and writing a ref during
+  // render is unsafe.
   const [prevMode, setPrevMode] = useState<'view' | 'edit'>(mode);
 
-  // Keep assigned in a ref so callback identities stay stable and the mode-
-  // transition derivation below can read the latest without re-running.
+  // Ref keeps callback identities stable while the derivation below reads the latest value.
   const assignedRef = useRef<AssignedLayout | null | undefined>(assigned);
   useEffect(() => {
     assignedRef.current = assigned;
   }, [assigned]);
 
-  // Mode-transition seed: when mode flips view -> edit, hydrate the draft
-  // from sessionStorage or clone from assigned. When mode flips edit -> view,
-  // drop the in-memory draft (sessionStorage is preserved so the caller can
-  // decide via clearDraft whether to commit or discard). React's "setState
-  // during render" pattern short-circuits the current render — no cascading
-  // render, no extra effect that would trigger a cascading-setState lint.
+  // Mode-transition seed. view→edit hydrates from sessionStorage or clones `assigned`; edit→view
+  // drops the in-memory draft but keeps sessionStorage, so the caller decides via clearDraft.
+  // setState-during-render short-circuits this render — no cascade, no extra effect.
   //
-  // Both seed paths run through `normalizePrimaryToOrigin` so any pre-existing
-  // non-canonical data (legacy captures made before the capture-time guard
-  // existed) self-heals the first time the user opens the editor.
-  //
-  // A sessionStorage-restored draft only wins when its edidHash set still
-  // matches the current assigned layout. Otherwise the draft is stale —
-  // another admin saved a different layout, or a monitor was swapped —
-  // and restoring it would give the operator a form representing a
-  // topology that no longer exists. Stale drafts are dropped from storage
-  // and the seed falls back to a fresh clone of assigned.
+  // Both seed paths go through `normalizePrimaryToOrigin` so legacy non-canonical captures
+  // self-heal the first time the editor opens. A restored draft only wins when its edidHash set
+  // still matches `assigned`; stale drafts are deleted and the seed falls back to a fresh clone.
   if (mode !== prevMode) {
     setPrevMode(mode);
     if (mode === 'edit') {
@@ -185,11 +160,8 @@ export function useDisplayDraft(args: UseDisplayDraftArgs): UseDisplayDraftResul
   const assignedMonitors = assigned?.monitors;
   const isDirty = useMemo(() => {
     if (!draft) return false;
-    // The draft is always normalized (seeded through normalizePrimaryToOrigin
-    // and maintained by updateMonitor / shiftSecondariesBy). The baseline
-    // must be normalized on the same basis, otherwise a legacy assigned
-    // layout with the primary at e.g. (0, −130) makes every freshly-opened
-    // editor report dirty even before the operator types anything.
+    // The draft is always normalized, so the baseline must be too — otherwise a legacy layout with
+    // the primary at e.g. (0, −130) reports dirty before the operator types anything.
     const baseline = normalizePrimaryToOrigin(assignedMonitors ?? []);
     return JSON.stringify(draft) !== JSON.stringify(baseline);
   }, [draft, assignedMonitors]);
@@ -207,17 +179,12 @@ export function useDisplayDraft(args: UseDisplayDraftArgs): UseDisplayDraftResul
         if (!prev) return prev;
         const target = prev.find((m) => m.id === id);
         if (!target) return prev;
-        // Windows pins the primary monitor at (0, 0). Dropping position
-        // updates on the primary keeps the draft canonical — moving the
-        // primary rect would produce a preview the OS would translate away
-        // on restore. The primary-drag canvas gesture goes through
-        // `shiftSecondariesBy` instead so the operator still has a way to
-        // visually reposition the primary.
+        // Windows pins the primary at (0, 0), so primary position updates are dropped — a moved
+        // primary rect previews something the OS translates away on restore. The canvas drag goes
+        // through `shiftSecondariesBy` instead.
         //
-        // The key must be *omitted* from the partial (not set to undefined):
-        // spreading `{ position: undefined }` into `merged` overwrites the
-        // monitor's real position with undefined, which then crashes
-        // `normalizePrimaryToOrigin` when it reaches for `.x`.
+        // The key must be OMITTED, not set to undefined: spreading `{ position: undefined }`
+        // nulls the real position and crashes `normalizePrimaryToOrigin` on `.x`.
         let scrubbedPartial: Partial<MonitorInfo>;
         if (target.primary && partial.position) {
           scrubbedPartial = { ...partial };
@@ -239,17 +206,14 @@ export function useDisplayDraft(args: UseDisplayDraftArgs): UseDisplayDraftResul
           return merged;
         });
         if (!changed) return prev;
-        // Single-primary invariant: setting primary=true on one clears it on
-        // every other. Zero-primary states are disallowed by only firing on
-        // true; toggles off aren't supported by the primary picker in the UI.
+        // Single-primary invariant. Only fires on true, so no zero-primary state is reachable —
+        // the UI's primary picker has no toggle-off.
         if (scrubbedPartial.primary === true) {
           next = next.map((m) =>
             m.id === id ? m : { ...m, primary: false },
           );
         }
-        // Primary-origin normalization: after any change, translate all
-        // monitors so the primary lands at (0, 0). Handles the primary-change
-        // case where the new primary had a non-zero position.
+        // Re-pin the primary to (0, 0); covers a new primary that had a non-zero position.
         return normalizePrimaryToOrigin(next);
       });
     },

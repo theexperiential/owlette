@@ -1,20 +1,11 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/authorizedHandler.server.ts` — the
- * `authorizedSiteHandler` and `authorizedPlatformHandler` wrappers.
- *
- * Coverage targets:
- *   - happy path: handler invoked with the right ctx
- *   - allow-audit blocking: audit failure -> 503, handler not called
- *   - capability kill switch bypass + bypass metadata
- *   - rate-limit kill switch bypass + bypass metadata
- *   - api-key scope check NEVER bypassed (read-only key + both kill switches off → 403)
- *   - site access denied -> 404
- *   - capability denied -> 403 + deny audit
- *   - rate-limit denied -> 429 + deny audit
- *   - platform handler: superadmin gate + audits to global path
- *   - typescript: `siteIdParam: 'body'` is a build error
+ * Unit tests for `authorizedSiteHandler` / `authorizedPlatformHandler` in
+ * `web/lib/authorizedHandler.server.ts`: happy path, allow-audit failure → 503,
+ * capability + rate-limit kill-switch bypass (and their bypass metadata),
+ * api-key scope never bypassed, site-access 404, capability 403, rate-limit 429,
+ * the platform handler's superadmin gate, and the `siteIdParam: 'body'` type error.
  */
 
 import type { NextRequest } from 'next/server';
@@ -30,9 +21,8 @@ let siteDoc: { exists: boolean; data: () => unknown } = {
   exists: true,
   data: () => ({ owner: 'uid_alice' }),
 };
-// `customers/{uid}` for the control-plane billing gate. Absent by default,
-// which `resolveBillingState()` reads as `'trialing'` — the posture every
-// pre-existing test in this file assumes.
+// `customers/{uid}` for the control-plane billing gate. Absent by default, which
+// `resolveBillingState()` reads as 'trialing' — the posture every other test here assumes.
 let customerDoc: { exists: boolean; data: () => unknown } = {
   exists: false,
   data: () => undefined,
@@ -221,9 +211,8 @@ beforeEach(() => {
 });
 
 function makeRequest(url = 'http://localhost/api/sites/site-a/test', method = 'POST'): NextRequest {
-  // NextRequest from "next/server" requires a fully-formed Request; the
-  // wrapper only inspects nextUrl + headers + method, so a stub Request works.
-  // We wrap in NextRequest's class via the helper from next/server.
+  // NextRequest requires a fully-formed Request; the wrapper only inspects
+  // nextUrl + headers + method, so a stub Request works.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { NextRequest: NR } = require('next/server');
   return new NR(url, { method });
@@ -233,9 +222,7 @@ function pathParamsFor(siteId: string): { params: Promise<{ siteId: string }> } 
   return { params: Promise.resolve({ siteId }) };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  authorizedSiteHandler                                                     */
-/* -------------------------------------------------------------------------- */
+// authorizedSiteHandler
 
 type SiteHandler = Parameters<ReturnType<typeof authorizedSiteHandler>>[0];
 type PlatformHandler = Parameters<ReturnType<typeof authorizedPlatformHandler>>[0];
@@ -498,13 +485,7 @@ describe('authorizedSiteHandler — handler error path', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  control-plane billing lockout (billing-system wave 0.6)                   */
-/* -------------------------------------------------------------------------- */
-
-/* -------------------------------------------------------------------------- */
-/*  authorizedPlatformHandler                                                 */
-/* -------------------------------------------------------------------------- */
+// authorizedPlatformHandler
 
 describe('authorizedPlatformHandler', () => {
   beforeEach(() => {
@@ -607,18 +588,15 @@ describe('authorizedPlatformHandler', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  typescript: siteIdParam: 'body' must be a build error                     */
-/* -------------------------------------------------------------------------- */
+// typescript: siteIdParam: 'body' must be a build error
 
 describe('typescript: siteIdParam type-system rejection', () => {
   it('only "path" and "query" are valid SiteIdSource values', () => {
     const valid: SiteIdSource[] = ['path', 'query'];
     expect(valid).toEqual(['path', 'query']);
 
-    // The next line is intentionally a type-error to confirm `'body'` is
-    // rejected at compile time. ts-expect-error fails if the line is NOT
-    // actually an error (i.e. if someone widens the type to `string`).
+    // Intentionally a type error — ts-expect-error fails if the line is NOT an
+    // error (i.e. if someone widens the type to `string`).
     // @ts-expect-error -- 'body' is not assignable to SiteIdSource
     const invalid: SiteIdSource = 'body';
     expect(invalid).toBe('body'); // runtime is unchanged; compile-time is the gate

@@ -3,11 +3,9 @@
 /**
  * Geometry for the talon pipeline's connector overlay.
  *
- * The component itself is untestable in jsdom — every `getBoundingClientRect`
- * there returns zeros, so a rendered assertion would only prove that nothing
- * is drawn. `computeConnectorPaths` is exported precisely so the MATH can be
- * pinned down: one arrow trigger → condition, and one elbow per output row so
- * a talon with three outputs looks like three outputs.
+ * The component is untestable in jsdom — every `getBoundingClientRect` returns zeros, so
+ * a rendered assertion would only prove nothing is drawn. `computeConnectorPaths` is
+ * exported to pin the MATH: one arrow trigger → condition, one elbow per output row.
  */
 import { computeConnectorPaths, type ConnectorRect } from '@/app/talons/components/PipelineConnectors';
 

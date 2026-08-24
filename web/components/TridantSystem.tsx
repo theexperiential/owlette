@@ -1,13 +1,11 @@
 /**
- * TridantSystem — a reusable "a tridant system" brand mark.
+ * TridantSystem — the inline "a tridant system" brand mark.
  *
- * A compact, inline wordmark. The "tridant" word is set in a light grey
- * (`foreground/80`) so it reads as the brand without going full white, and it's
- * the only part that reacts to hover — brightening to the cyan accent. "a" /
- * "system" inherit the host text color, so the mark adapts to any context.
- * Style color / size via `className` (on the component or its parent).
+ * "tridant" is set in `foreground/80` and is the only part that reacts to hover
+ * (brightening to the cyan accent); "a" / "system" inherit the host text colour, so the
+ * mark adapts to any context. Style colour / size via `className`.
  *
- * Note the spelling: the company is "tridant" (no "e").
+ * Spelling: the company is "tridant" (no "e").
  */
 
 interface TridantSystemProps {

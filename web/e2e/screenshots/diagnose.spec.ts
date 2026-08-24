@@ -1,18 +1,13 @@
 /**
- * Screenshot — diagnose capability card preview (api-sprint wave 4.3).
- *
+ * Screenshot for the landing page's diagnose capability card.
  * Output: `web/public/landing-screens/preview-diagnose.png`
- * Used by: the landing page diagnose capability card (wired up by wave 4.5).
  *
- * Drives the hoot chat into the `diagnose-cortex-chat` scenario: a seeded
- * conversation against `media-server-stage` showing a realistic incident
- * Q&A (crash diagnosis + recurrence prediction). The fixture also seeds the
- * user's LLM key bypass so the hoot page renders the chat surface
- * instead of the no-key gate.
+ * Uses the `diagnose-cortex-chat` scenario — a seeded incident Q&A against
+ * `media-server-stage`, plus the LLM-key bypass so hoot renders the chat rather
+ * than the no-key gate.
  *
- * Hoot's page doesn't accept a conversation id via URL params, so we
- * click the seeded conversation in the sidebar to open it (its title is
- * deterministic — "03:14 incident — media-server-stage").
+ * Hoot takes no conversation id via URL params, so the seeded conversation is
+ * opened by clicking its (deterministic) sidebar title.
  */
 import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
@@ -31,23 +26,18 @@ test('diagnose capability card preview', async ({ page }) => {
       .doc(TEST_USERS.admin.uid)
       .set({ lastSiteId: ctx.siteId }, { merge: true });
 
-    // Pin the clock BEFORE goto so the chat sidebar's relative "x ago"
-    // timestamps render deterministically.
+    // Pin the clock BEFORE goto or the sidebar's "x ago" stamps drift.
     await page.clock.install({ time: FIXED_NOW_MS });
 
     await page.goto('/hoot');
 
-    // Find the seeded conversation in the sidebar and click it to load
-    // its persisted message history into the chat window.
     const conversationItem = page
       .getByText('03:14 incident — media-server-stage', { exact: false })
       .first();
     await expect(conversationItem).toBeVisible();
     await conversationItem.click();
 
-    // Confirm the assistant's first reply rendered (the persisted message
-    // load is async — we want to capture pixels only after the chat body
-    // has the seeded Q&A).
+    // The persisted message load is async — capture only once it has rendered.
     await expect(
       page.getByText('access violation', { exact: false })
     ).toBeVisible();
@@ -68,8 +58,7 @@ test('diagnose capability card preview', async ({ page }) => {
 
     await page.clock.setFixedTime(FIXED_NOW_MS);
 
-    // Markdown-rendered messages mount a frame after the chat doc resolves;
-    // give them a beat before screenshotting.
+    // Markdown messages mount a frame after the chat doc resolves.
     await page.waitForTimeout(500);
 
     await page.screenshot({

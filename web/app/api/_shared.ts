@@ -1,9 +1,8 @@
 /**
- * shared helpers for roost API routes (chunks/, roosts/).
+ * Shared helpers for roost API routes (chunks/, roosts/).
  *
- * no URL or header versioning — the routes ARE the API. backward compat
- * with the legacy single-url distribution is NOT a goal; v3.0.0 agents
- * are required to consume new uploads (clean cutover).
+ * No URL or header versioning — the routes ARE the API. No backward compat with
+ * legacy single-url distribution: v3.0.0 agents are required (clean cutover).
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -42,9 +41,7 @@ const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 const RESOURCE_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const SITE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
-/* ------------------------------------------------------------------------- */
-/*  legacy helpers kept for routes that still use requireAdminOrIdToken      */
-/* ------------------------------------------------------------------------- */
+// legacy helpers, for routes still on requireAdminOrIdToken
 
 export async function requireAuthOrProblem(
   req: NextRequest,
@@ -197,8 +194,8 @@ export async function parseJsonBody(
 }
 
 /**
- * Read the request body as text once, then JSON-parse. Returns both the
- * raw text (for idempotency body-hashing) and the parsed body.
+ * Read the body as text once, then JSON-parse. Returns both — the raw text is
+ * what idempotency body-hashing needs.
  */
 export async function readAndParseJsonBody(
   req: NextRequest,
@@ -223,9 +220,7 @@ export async function readAndParseJsonBody(
   return { ok: true, raw, body };
 }
 
-/* ------------------------------------------------------------------------- */
-/*  scope-aware auth helpers (roost public api wave 2)                       */
-/* ------------------------------------------------------------------------- */
+// scope-aware auth helpers
 
 export interface ScopedAuthSuccess {
   ok: true;
@@ -383,21 +378,19 @@ export async function requireSiteAuthAndScope(
 }
 
 /**
- * machine-scoped auth + scope check. used by `/api/sites/{siteId}/machines/{machineId}/...`
- * routes (api-sprint wave 2 — track 2A).
+ * Machine-scoped auth + scope check for
+ * `/api/sites/{siteId}/machines/{machineId}/...`.
  *
- * - session/id-token callers: must have site access (membership / ownership /
- *   superadmin); scope check is bypassed (consistent with `requireScope`
- *   semantics for non-key auth).
- * - api-key callers: must additionally satisfy `machine=<machineId>:<permission>`.
- *   wildcard id (`machine=*`) matches any machineId.
+ * - session/id-token: needs site access; scope check bypassed (same as
+ *   `requireScope` for non-key auth).
+ * - api-key: must also satisfy `machine=<machineId>:<permission>`; `machine=*`
+ *   matches any id.
  *
- * machineId validation matches siteId — 1-128 chars of letters / digits /
- * underscore / hyphen — since machine ids in this codebase have multiple
- * historical shapes (`mach_*`, hostnames, uuids).
+ * machineId validation matches siteId (1-128 of [A-Za-z0-9_-]) because machine
+ * ids have several historical shapes (`mach_*`, hostnames, uuids).
  *
- * Skips `checkRoostVersion()` because machine endpoints are not part of the
- * roost (project distribution) surface and don't need the deprecation header.
+ * No `checkRoostVersion()` — machine endpoints aren't part of the roost surface
+ * and take no deprecation header.
  */
 export async function requireMachineAuthAndScope(
   req: NextRequest,
@@ -422,11 +415,10 @@ export async function requireMachineAuthAndScope(
     };
   }
 
-  // Agent short-circuit: an agent's Firebase ID token carries role + site_id
-  // + machine_id claims set by the device-code exchange. assertSiteAccessOrProblem
-  // below reads users/{uid}.sites[] which agents don't have a doc in, so a plain
-  // fall-through would 404 every agent screenshot/command call. Validate the
-  // token's site_id and machine_id directly instead.
+  // Agent short-circuit: an agent ID token carries role + site_id + machine_id
+  // claims, but assertSiteAccessOrProblem reads users/{uid}.sites[] and agents
+  // have no user doc — falling through would 404 every agent screenshot/command
+  // call. Validate the token's claims directly instead.
   const authHeader = req.headers.get('authorization') || '';
   const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
   if (bearerMatch && !bearerMatch[1].startsWith('owk_')) {
@@ -519,23 +511,16 @@ export async function requireRoostAuthAndScope(
 }
 
 /**
- * superadmin-gated platform-wide auth + scope check. used by routes that
- * operate on platform-level resources (`installer`, `user`) where access
- * is not site-scoped — only superadmins may call these endpoints, even
- * with a session or id-token.
+ * Superadmin-gated platform-wide auth + scope check, for non-site-scoped
+ * resources (`installer`, `user`). Superadmin only, even with a session.
  *
- * for api-key callers the scope check enforces `<resource>=*:<permission>`;
- * scope minting for `SUPERADMIN_ONLY_RESOURCES` is already restricted to
- * superadmins at key-creation time (wave 0.1), but we still re-verify the
- * caller's role here as defense-in-depth (e.g. the user could have been
- * demoted after the key was minted).
+ * api-key callers additionally need `<resource>=*:<permission>`. Minting scopes
+ * for `SUPERADMIN_ONLY_RESOURCES` is already superadmin-restricted at key
+ * creation, but the role is re-verified here as defense-in-depth: the user may
+ * have been demoted since the key was minted.
  *
- * for session/id-token callers, only the role check applies — they bypass
- * scope enforcement (consistent with `requireScope` semantics for non-key
- * auth).
- *
- * audit log emission for api-key callers uses `siteId=''` since platform
- * mutations have no site association.
+ * session/id-token callers get the role check only (scope bypassed, as
+ * elsewhere). Audit emission uses `siteId=''` — platform mutations have no site.
  */
 export async function requirePlatformAuthAndScope(
   req: NextRequest,
@@ -572,15 +557,11 @@ export async function requirePlatformAuthAndScope(
 }
 
 /**
- * site-scoped Hoot conversation auth + scope check. used by
- * `/api/hoot/conversations/*`.
+ * Site-scoped Hoot conversation auth + scope check for
+ * `/api/hoot/conversations/*`. session/id-token: site access, scope bypassed.
+ * api-key: `chat=<siteId>:<permission>`, `chat=*` matches any siteId.
  *
- * - session/id-token callers: must have site access; scope check is bypassed.
- * - api-key callers: must satisfy `chat=<siteId>:<permission>`. wildcard id
- *   (`chat=*`) matches any siteId.
- *
- * Skips `checkRoostVersion()` because chat endpoints are not part of the
- * roost (project distribution) surface and don't need the deprecation header.
+ * No `checkRoostVersion()` — chat isn't part of the roost surface.
  */
 export async function requireChatAuthAndScope(
   req: NextRequest,

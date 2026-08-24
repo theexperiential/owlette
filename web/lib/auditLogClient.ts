@@ -3,17 +3,12 @@ import type { ApiKeyScope } from '@/lib/apiKeyTypes';
 import { HOOT_INTERNAL_SECRET_ENV, hootInternalSecret } from '@/lib/hootInternalSecret';
 
 /**
- * Fire-and-forget HTTP client for the audit log cloud function
- * (`recordAuditEvent`). Never awaits, never throws — audit log failures
- * must not degrade request latency or fail the request.
+ * Fire-and-forget HTTP client for the `recordAuditEvent` cloud function. Never awaits,
+ * never throws — audit failures must not add latency or fail the request.
  *
- * Resolution order for the endpoint URL:
- *   1. env `AUDIT_LOG_URL` (full https url to the function)
- *   2. computed from `FIREBASE_PROJECT_ID` + `AUDIT_LOG_REGION`
- *      (default region: us-central1)
- *
- * If neither is available, the call is a no-op (dev environments without
- * cloud functions deployed don't emit — safe default).
+ * Endpoint: env `AUDIT_LOG_URL`, else computed from `FIREBASE_PROJECT_ID` +
+ * `AUDIT_LOG_REGION` (default us-central1). Neither set → no-op, so dev environments
+ * without deployed functions stay quiet.
  */
 
 const DEFAULT_REGION = 'us-central1';
@@ -39,10 +34,9 @@ function getAuditLogUrl(): string | null {
 }
 
 /**
- * Produce a compact, stable fingerprint of a key's scope set. First 12
- * chars of SHA-256 over canonical JSON — tiny (6 bytes of entropy is
- * plenty for audit differentiation), privacy-preserving vs. logging
- * exact resource IDs, and survives scope reordering.
+ * Compact stable fingerprint of a key's scope set: first 12 chars of SHA-256 over
+ * canonical JSON — enough entropy to differentiate, avoids logging exact resource ids,
+ * and survives scope reordering.
  */
 export function scopeFingerprint(scopes: ApiKeyScope[] | null): string {
   if (!scopes || scopes.length === 0) return 'legacy';
@@ -75,10 +69,8 @@ export interface ApiKeyUsedEvent {
 }
 
 /**
- * Fire-and-forget `api_key_used` audit event. Never throws.
- *
- * The returned promise is `void` — callers should NOT await it. Any error
- * is swallowed + logged so audit outages never fail the request path.
+ * Fire-and-forget `api_key_used` audit event. Returns `void` — do NOT await. Errors are
+ * swallowed + logged so an audit outage never fails the request path.
  */
 export function emitApiKeyUsed(event: ApiKeyUsedEvent): void {
   const url = getAuditLogUrl();
@@ -103,9 +95,8 @@ export function emitApiKeyUsed(event: ApiKeyUsedEvent): void {
 }
 
 /**
- * Mutation-event taxonomy used by api-sprint waves 1-3. Each track picks
- * the kind that matches the surface it's promoting; new kinds are added
- * here (and in the cloud function's recogniser) when a new track lands.
+ * Mutation-event taxonomy (api-sprint waves 1-3). Add a kind here AND in the cloud
+ * function's recogniser when a new track lands.
  */
 export type MutationKind =
   | 'api_key_mutated' // api-key lifecycle: create / update / rotate / revoke
@@ -128,37 +119,28 @@ export interface MutationEvent {
   /** Mutation kind — see {@link MutationKind}. */
   kind: MutationKind;
   /**
-   * Site this mutation belongs to. For platform-wide mutations
-   * (`user_mutated`, `installer_mutated`) pass an empty string — the
-   * cloud-function side records these under the platform tenant.
+   * Site this mutation belongs to. Platform-wide mutations (`user_mutated`,
+   * `installer_mutated`) pass an empty string — recorded under the platform tenant.
    */
   siteId: string;
-  /**
-   * Who did it. `apiKey:<keyId>` for key-mediated mutations,
-   * `user:<uid>` for session/ID-token mediated mutations.
-   */
+  /** `apiKey:<keyId>` for key-mediated mutations, `user:<uid>` for session/ID-token ones. */
   actor: string;
   /**
-   * The resource being mutated — `deploymentId`, `processId`, `uid`,
-   * `installerVersion`, `conversationId`, etc. Used as the dedup target
-   * for "did this entity change?" queries.
+   * Resource being mutated (`deploymentId`, `processId`, `uid`, …). Dedup target for
+   * "did this entity change?" queries.
    */
   targetId: string;
   /**
-   * Free-form attributes. Convention: include `endpoint` + `method` for
-   * traceability, and the verb-specific delta (e.g. `from`/`to` for
-   * promote/demote, `reason` for cancel).
+   * Free-form attributes. Convention: `endpoint` + `method` for traceability plus the
+   * verb-specific delta (`from`/`to` for promote/demote, `reason` for cancel).
    */
   attributes: Record<string, unknown>;
 }
 
 /**
- * Fire-and-forget mutation audit. Never throws. Same delivery/abort
- * semantics as {@link emitApiKeyUsed} — callers should not await.
- *
- * One call per mutation. The integration test in
- * `__tests__/api/auditMutationCoverage.test.ts` (added in api-sprint
- * waves 1-3) asserts every mutating route produces exactly one entry.
+ * Fire-and-forget mutation audit; same delivery/abort semantics as {@link emitApiKeyUsed}.
+ * One call per mutation — `__tests__/api/auditMutationCoverage.test.ts` asserts every
+ * mutating route produces exactly one entry.
  */
 export function emitMutation(event: MutationEvent): void {
   const url = getAuditLogUrl();
@@ -181,12 +163,10 @@ function postAudit(url: string, body: unknown, label: string): void {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AUDIT_TIMEOUT_MS);
 
-  // The `recordAuditEvent` cloud function requires `x-internal-secret`
-  // (Wave 1A — see functions/src/lib/requireInternalSecret.ts). Without
-  // it the cloud function returns 401, fetch resolves successfully (not
-  // a network error), and the .catch() below would never fire — so audit
-  // events would silently disappear. We pass the secret in the header
-  // here AND check response.ok below to fail loudly on misconfiguration.
+  // The `recordAuditEvent` function requires `x-internal-secret` (Wave 1A, see
+  // functions/src/lib/requireInternalSecret.ts). Without it the function 401s, fetch still
+  // resolves, and .catch() never fires — audit events would vanish silently. Hence the
+  // header here AND the response.ok check below.
   const internalSecret = hootInternalSecret();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -202,9 +182,8 @@ function postAudit(url: string, body: unknown, label: string): void {
     signal: controller.signal,
   })
     .then((response) => {
-      // Audit log failures must NOT propagate. We log loudly so ops sees
-      // the outage; an unnoticed silent audit-gap is worse than a noisy
-      // log line because it breaks compliance + forensics.
+      // Audit failures must NOT propagate, but log loudly: a silent audit gap breaks
+      // compliance + forensics.
       if (!response.ok) {
         console.warn(
           `[auditLogClient] ${label} emit returned ${response.status} — audit event was DROPPED. ` +

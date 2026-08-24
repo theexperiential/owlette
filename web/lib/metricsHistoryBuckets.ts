@@ -1,19 +1,15 @@
 /**
- * metrics_history bucket-id contract (single source of truth)
+ * metrics_history bucket-id contract — SINGLE SOURCE OF TRUTH for readers.
  *
- * Time-series metrics live in `sites/{siteId}/machines/{machineId}/metrics_history/{bucketId}`.
- * There are two bucket shapes, both keyed off the sample's UTC time:
- *   - hourly: `YYYY-MM-DD-HH` — written by the cloud function for all current data
- *   - daily:  `YYYY-MM-DD`    — legacy buckets + the e2e screenshot fixtures
+ * `sites/{siteId}/machines/{machineId}/metrics_history/{bucketId}`, two shapes,
+ * both keyed off the sample's UTC time: hourly `YYYY-MM-DD-HH` (current data) and
+ * daily `YYYY-MM-DD` (legacy buckets + e2e fixtures).
  *
- * The writer is `functions/src/metricsHistory.ts` (`hourlyBucketId` / `dailyBucketId`);
- * these formatters MUST stay byte-for-byte identical to it. Every reader
- * (useSparklineData, useHistoricalMetrics) imports from here so the contract
- * can't drift per-file again — drift between writer and one reader is exactly
- * what blanked the inline sparklines once before.
+ * MUST stay byte-for-byte identical to the writer, `hourlyBucketId` /
+ * `dailyBucketId` in `functions/src/metricsHistory.ts`. Every reader imports from
+ * here — writer/reader drift is what blanked the inline sparklines once already.
  *
- * `toISOString()` is always UTC and starts `YYYY-MM-DDTHH:...`, so these are
- * timezone-independent and match the writer regardless of server locale.
+ * `toISOString()` is UTC, so these are locale-independent.
  */
 
 /** `YYYY-MM-DD-HH` (hourly UTC bucket). Mirrors metricsHistory.ts hourlyBucketId. */

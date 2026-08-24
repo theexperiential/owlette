@@ -1,26 +1,15 @@
 /**
- * `owlette audit-log list | get`.
- *
- * Drives:
+ * `owlette audit-log list | get`, over:
  *   GET /api/sites/{siteId}/audit-log?kind=&actor=&since=&page_size=&page_token=
  *   GET /api/sites/{siteId}/audit-log/{recordHash}
  *
- * `list` walks the server's cursor pagination until exhausted or the
- * caller's `--limit` cap is reached, with `--page-size N` controlling
- * the server-side page size and `--cursor T` allowing a resume from a
- * previously-returned `nextPageToken`. CSV `--kind` and `--until`
- * filters are applied client-side because the route handler accepts a
- * single exact-match `kind` and has no `until` filter; `--since`
- * accepts ISO 8601 timestamps OR relative durations (e.g. `24h`,
- * `7d`, `30m`) and is converted to ISO 8601 before being sent.
+ * `list` auto-paginates until exhausted or `--limit`. CSV `--kind` and `--until` are filtered
+ * CLIENT-side — the route accepts one exact-match `kind` and no `until`. `--since` takes ISO 8601
+ * or a relative duration (`24h`, `7d`, `30m`) and is sent as ISO 8601.
  *
- * `get` fetches one record by recordHash and renders the full payload
- * including the hash chain (`previousHash` + `hash`) and the server's
- * verification report.
+ * `get` renders one record with its hash chain and the server's verification report.
  *
- * Each command renders a plain-ascii table by default and emits the
- * raw server response as JSON when `--json` is passed at the program
- * level — important for users piping output into `jq`.
+ * Plain-ascii table by default; raw JSON under the program-level `--json` for jq pipelines.
  */
 
 import { Command } from 'commander';
@@ -74,11 +63,10 @@ export function registerAuditLogCommands(program: Command): void {
     (program.commands.find((c) => c.name() === 'audit-log') as Command | undefined) ??
     program.command('audit-log').description('inspect site audit log records');
 
-  // Overwrite any earlier stub description so the help text stays
-  // canonical regardless of registration order.
+  // Overwrite any earlier stub description so help text is canonical whatever the load order.
   auditLog.description('inspect site audit log records');
 
-  // Remove any stubs left by earlier file-load ordering.
+  // Drop stubs left by earlier file-load ordering.
   for (const verb of ['list', 'get'] as const) {
     const existing = auditLog.commands.find((c) => c.name() === verb);
     if (existing) {
@@ -87,8 +75,6 @@ export function registerAuditLogCommands(program: Command): void {
       if (idx >= 0) list.splice(idx, 1);
     }
   }
-
-  /* -------------------- list -------------------- */
 
   auditLog
     .command('list')
@@ -115,9 +101,7 @@ export function registerAuditLogCommands(program: Command): void {
       const untilMs = untilIso ? Date.parse(untilIso) : null;
 
       const kinds = parseKinds(opts.kind);
-      // Server only supports single-kind exact-match. When the caller
-      // passed exactly one kind, push the filter to the server; for CSV
-      // (or zero entries) we filter client-side after the fetch loop.
+      // Server does single-kind exact-match only; CSV falls back to client-side filtering.
       const serverKind = kinds.length === 1 ? kinds[0] : null;
       const clientKindSet = kinds.length > 1 ? new Set(kinds) : null;
 
@@ -196,8 +180,6 @@ export function registerAuditLogCommands(program: Command): void {
       }
     });
 
-  /* -------------------- get -------------------- */
-
   auditLog
     .command('get <recordHash>')
     .description('print one audit record with hash-chain verification')
@@ -228,10 +210,6 @@ export function registerAuditLogCommands(program: Command): void {
       process.stdout.write(formatAuditDetail(data));
     });
 }
-
-/* --------------------------------------------------------------------- */
-/*  formatters                                                           */
-/* --------------------------------------------------------------------- */
 
 function formatAuditDetail(r: AuditLogDetail): string {
   const out: string[] = [];
@@ -268,15 +246,11 @@ function formatAuditDetail(r: AuditLogDetail): string {
   return out.join('\n') + '\n';
 }
 
-/** Format a unix-ms timestamp as ISO 8601, or `-` when null. */
+/** unix ms → ISO 8601, or `-` when null. */
 function formatTimestamp(ms: number | null): string {
   if (ms === null || !Number.isFinite(ms)) return '-';
   return new Date(ms).toISOString();
 }
-
-/* --------------------------------------------------------------------- */
-/*  util                                                                 */
-/* --------------------------------------------------------------------- */
 
 /** Parse a CSV `--kind` string into a deduped, trimmed list of kinds. */
 function parseKinds(raw: unknown): string[] {
@@ -298,13 +272,8 @@ const DURATION_MS: Record<string, number> = {
 };
 
 /**
- * Parse a `--since` / `--until` value. Accepts:
- *   - relative durations (`30s`, `15m`, `24h`, `7d`) → resolved to
- *     `now - duration` and returned as ISO 8601
- *   - ISO 8601 strings (or anything `Date.parse` accepts) → returned
- *     as ISO 8601 normalised through `new Date()`
- *
- * Returns null and prints an error on parse failure.
+ * `--since`/`--until`: a relative duration (`30s`, `15m`, `24h`, `7d`) resolves to `now - d`;
+ * anything `Date.parse` accepts is normalised. Both return ISO 8601. Null + error on failure.
  */
 function parseWhen(raw: string, flag: string): string | null {
   const match = DURATION_RE.exec(raw);

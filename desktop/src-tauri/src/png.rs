@@ -1,41 +1,35 @@
-//! A minimal PNG encoder, and the base64 that carries one over the IPC bridge.
+//! A minimal PNG encoder, plus the base64 that carries one over the IPC bridge.
 //!
-//! The only image this app ever produces is a 32×32 icon lifted out of an
-//! executable, and every crate that could encode it would be a new dependency
-//! for what is, at this size, a hundred lines of format. So this writes the file
-//! by hand.
+//! The only image this app produces is a 32×32 icon lifted from an executable —
+//! not worth a new crate for ~100 lines of format.
 //!
-//! **Nothing here compresses.** PNG's payload is a zlib stream, and deflate's
-//! "stored" block type — a length, its complement, and the bytes — is a legal
-//! member of that stream. A 32×32 RGBA icon is 4 KB of pixels; the base64 that
-//! carries it costs more than deflate would ever save, and a compressor is a
-//! great deal of code to get wrong for one icon per process row.
+//! **Nothing here compresses.** deflate's "stored" block (length, complement,
+//! bytes) is a legal member of the zlib stream PNG requires. At 4 KB per icon
+//! the base64 overhead already exceeds anything deflate would save, and a
+//! compressor is a lot of code to get wrong.
 //!
-//! The output is a spec-conforming PNG: signature, `IHDR`, one `IDAT`, `IEND`,
-//! each chunk CRC'd, the zlib stream closed with its adler-32.
+//! Output is spec-conforming: signature, `IHDR`, one `IDAT`, `IEND`, each chunk
+//! CRC'd, the zlib stream closed with its adler-32.
 
-/// The eight bytes every PNG starts with (§5.2). The high bit and the CRLF pair
-/// are there to catch a transfer that mangled the file; we write them for the
-/// same reason anyone does — a decoder that does not see them stops.
+/// The eight bytes every PNG starts with (§5.2).
 const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 
 /// Colour type 6: truecolour with alpha, 8 bits per sample.
 const COLOR_TYPE_RGBA: u8 = 6;
 const BIT_DEPTH: u8 = 8;
 
-/// Largest run of bytes one stored deflate block can carry (§3.2.4 of RFC 1951).
+/// Largest payload one stored deflate block can carry (RFC 1951 §3.2.4).
 const MAX_STORED_BLOCK: usize = u16::MAX as usize;
 
 /// Encode straight (non-premultiplied) RGBA pixels as a base64 PNG.
 ///
-/// `rgba` is top-down, four bytes per pixel. Returns `None` rather than a
-/// half-formed file when the buffer does not describe the image it claims to —
-/// the caller treats that the same way it treats a file with no icon at all.
+/// `rgba` is top-down, 4 bytes per pixel. Returns `None` rather than a
+/// half-formed file when the buffer doesn't match the stated dimensions.
 pub fn rgba_as_base64_png(width: u32, height: u32, rgba: &[u8]) -> Option<String> {
   Some(base64(&rgba_as_png(width, height, rgba)?))
 }
 
-/// The PNG bytes themselves. Split out so the tests can walk the file.
+/// The PNG bytes. Split out so the tests can walk the file.
 fn rgba_as_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
   if width == 0 || height == 0 {
     return None;
@@ -69,8 +63,8 @@ fn rgba_as_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
   Some(png)
 }
 
-/// Prefix every row with its filter byte. Filter 0 is "none": the row is stored
-/// as it is, which is what makes the stored-block trick above worth having.
+/// Prefix every row with its filter byte. Filter 0 = none, so rows are verbatim
+/// — which is what makes the stored-block approach viable.
 fn scanlines(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
   let stride = width as usize * 4;
   let mut raw = Vec::with_capacity((stride + 1) * height as usize);
@@ -83,12 +77,11 @@ fn scanlines(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
 
 /// Wrap `raw` in a zlib stream of stored deflate blocks.
 fn zlib_stored(raw: &[u8]) -> Vec<u8> {
-  // 0x78 0x01: deflate, 32 KB window, no preset dictionary, "fastest" level.
-  // The pair is also the checksum zlib demands — 0x7801 divides by 31.
+  // 0x78 0x01: deflate, 32 KB window, no preset dict, fastest level. The pair
+  // doubles as zlib's header check — 0x7801 divides by 31.
   let mut out = vec![0x78, 0x01];
 
-  // An empty payload still needs one (final, empty) block, so this runs at
-  // least once rather than iterating an empty chunk list.
+  // An empty payload still needs one final empty block, hence loop-not-for.
   let mut offset = 0;
   loop {
     let end = (offset + MAX_STORED_BLOCK).min(raw.len());
@@ -109,7 +102,7 @@ fn zlib_stored(raw: &[u8]) -> Vec<u8> {
   out
 }
 
-/// Append one chunk: length, type, data, and the CRC of the last two.
+/// Append one chunk: length, type, data, CRC of the last two.
 fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
   out.extend_from_slice(&(data.len() as u32).to_be_bytes());
   out.extend_from_slice(kind);
@@ -120,14 +113,12 @@ fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
   out.extend_from_slice(&crc32_finish(crc).to_be_bytes());
 }
 
-// ─── checksums ──────────────────────────────────────────────────────────────
-
 fn crc32(bytes: &[u8]) -> u32 {
   crc32_continue(u32::MAX, bytes)
 }
 
-/// The PNG/IEEE CRC, reflected, computed a bit at a time so there is no
-/// 256-entry table to build for the three chunks this encoder writes.
+/// PNG/IEEE CRC, reflected, bitwise — three chunks doesn't justify a 256-entry
+/// table.
 fn crc32_continue(mut crc: u32, bytes: &[u8]) -> u32 {
   const POLYNOMIAL: u32 = 0xedb8_8320;
   for &byte in bytes {
@@ -158,11 +149,9 @@ fn adler32(bytes: &[u8]) -> u32 {
   (high << 16) | low
 }
 
-// ─── base64 ─────────────────────────────────────────────────────────────────
-
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/// Standard base64 with padding (RFC 4648 §4) — what a `data:` URL expects.
+/// Standard base64 with padding (RFC 4648 §4), as a `data:` URL expects.
 fn base64(bytes: &[u8]) -> String {
   let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
   for group in bytes.chunks(3) {
@@ -197,7 +186,7 @@ mod tests {
     data: Vec<u8>,
   }
 
-  /// Walk a PNG, verifying the signature and every CRC on the way through.
+  /// Walk a PNG, verifying the signature and every CRC.
   fn chunks(png: &[u8]) -> Vec<Chunk> {
     assert_eq!(&png[..8], &SIGNATURE, "png signature");
 
@@ -268,16 +257,14 @@ mod tests {
     assert_eq!(header[9], COLOR_TYPE_RGBA);
     assert_eq!(&header[10..13], &[0, 0, 0]);
 
-    // Filter byte, then the pixel.
     assert_eq!(inflate_stored(&chunks[1].data), [0, 0xff, 0x00, 0x00, 0xff]);
     assert!(chunks[2].data.is_empty());
   }
 
   #[test]
   fn the_terminator_matches_the_one_every_png_ends_with() {
-    // IEND is empty, so its twelve bytes are the same in every PNG ever
-    // written — including a CRC the spec's own examples quote. If the CRC here
-    // were wrong, this is the byte pattern that would say so.
+    // IEND is empty, so its twelve bytes are identical in every PNG — a wrong
+    // CRC shows up here.
     let png = rgba_as_png(1, 1, &[0; 4]).expect("encodes");
     assert_eq!(
       &png[png.len() - 12..],
@@ -287,7 +274,6 @@ mod tests {
 
   #[test]
   fn every_row_keeps_its_filter_byte_and_its_pixels() {
-    // Two rows of three pixels, each pixel distinguishable.
     let rgba: Vec<u8> = (0..24).collect();
     let png = rgba_as_png(3, 2, &rgba).expect("encodes");
     let raw = inflate_stored(&chunks(&png)[1].data);
@@ -301,9 +287,9 @@ mod tests {
 
   #[test]
   fn an_image_past_one_block_is_split_and_still_reassembles() {
-    // 256×256 RGBA is 263 KB of scanlines — five stored blocks, four of them
-    // full. Nothing in the icon path is this big today; the encoder must not
-    // quietly truncate the day something is.
+    // 256×256 RGBA is 263 KB of scanlines — five stored blocks. Nothing in the
+    // icon path is this big yet; the encoder must not silently truncate when
+    // something is.
     let edge = 256;
     let rgba: Vec<u8> = (0..edge * edge * 4).map(|i| (i % 251) as u8).collect();
     let png = rgba_as_png(edge as u32, edge as u32, &rgba).expect("encodes");
@@ -335,14 +321,14 @@ mod tests {
     assert_eq!(base64(b"foob"), "Zm9vYg==");
     assert_eq!(base64(b"fooba"), "Zm9vYmE=");
     assert_eq!(base64(b"foobar"), "Zm9vYmFy");
-    // The whole alphabet, so a transposed character in the table cannot hide.
+    // Whole alphabet, so a transposed table entry can't hide.
     assert_eq!(&base64(&(0u8..=255).collect::<Vec<u8>>())[..8], "AAECAwQF");
   }
 
   #[test]
   fn the_base64_png_starts_with_the_signature_a_decoder_looks_for() {
     let encoded = rgba_as_base64_png(1, 1, &[0; 4]).expect("encodes");
-    // Base64 of the eight signature bytes — what every PNG data URL opens with.
+    // Base64 of the signature bytes — what every PNG data URL opens with.
     assert!(encoded.starts_with("iVBORw0KGgo"), "{encoded}");
     assert!(rgba_as_base64_png(1, 1, &[0; 3]).is_none());
   }

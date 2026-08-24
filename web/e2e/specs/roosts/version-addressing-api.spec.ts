@@ -1,19 +1,15 @@
 /**
- * Roosts — version-addressing API (task 4.1)
+ * Roosts — version-addressing API.
  *
- * Exercises the GET /api/roosts/{roostId}/versions/{versionRef} resolver
- * grammar end-to-end against the next.js handler. Verifies every
- * accepted ref form (alias, stable id, number, prefixed number) maps
- * to the right version doc, and that malformed/missing inputs return
- * the `version_ref_malformed` (400) / `version_not_found` (404) RFC 7807
- * envelopes from `web/lib/resolveVersion.ts`.
+ * Drives the GET /api/roosts/{roostId}/versions/{versionRef} resolver grammar
+ * against the real handler: every accepted ref form (alias, stable id, number,
+ * prefixed number) resolves to the right doc, and bad input returns the
+ * `version_ref_malformed` (400) / `version_not_found` (404) envelopes from
+ * `web/lib/resolveVersion.ts`. Pure resolver coverage — no push, no chunks.
  *
- * data plane: none — pure resolver coverage, no push, no chunks.
- *
- * Network: we drive requests via `page.evaluate(fetch(...))` rather than
- * Playwright's `request` fixture — the iron-session `__session` cookie is
- * HttpOnly + Secure, and only the page's own JS context carries it on
- * same-origin fetches (see `web/e2e/specs/access-control/admin-api-403.spec.ts`).
+ * Requests go through `page.evaluate(fetch(...))`, not Playwright's `request`
+ * fixture: the `__session` cookie is HttpOnly + Secure, so only the page's own
+ * JS context carries it on same-origin fetches.
  */
 import { test, expect, type Page } from '@playwright/test';
 import { roleState } from '../../helpers/roles';
@@ -84,8 +80,8 @@ test.afterEach(async () => {
   await cleanup();
 });
 
-// ── happy paths: every ref form should resolve to v3 (current). ────────
-//   exception rows pin alias `'previous'`/`'first'` to v2/v1.
+// A — happy paths: every ref form resolves to v3 (current), except the rows
+// pinning `'previous'`/`'first'` to v2/v1.
 const HAPPY_REFS: ReadonlyArray<{
   ref: string;
   expectVersionId: string;
@@ -117,7 +113,7 @@ for (const row of HAPPY_REFS) {
   });
 }
 
-// ── B — number forms across non-current versions ───────────────────────
+// B — number forms across non-current versions.
 const NUMBER_REFS: ReadonlyArray<{ ref: string; expectVersionNumber: 1 | 2 }> = [
   { ref: '1', expectVersionNumber: 1 },
   { ref: '2', expectVersionNumber: 2 },
@@ -135,7 +131,7 @@ for (const row of NUMBER_REFS) {
   });
 }
 
-// ── C — error paths: malformed (400) + not-found (404) ─────────────────
+// C — error paths: malformed (400) + not-found (404).
 const ERROR_REFS: ReadonlyArray<{
   ref: string;
   expectStatus: 400 | 404;

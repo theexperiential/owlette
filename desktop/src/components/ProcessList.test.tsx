@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProcessList } from '@/components/ProcessList'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -67,10 +67,7 @@ function rows() {
   return screen.getAllByTestId('process-row')
 }
 
-/**
- * jsdom lays nothing out and has no pointer capture, so the drag needs both
- * faked: 40 px rows stacked from the top, and a capture call that no-ops.
- */
+/** jsdom lays nothing out and has no pointer capture — fake 40px stacked rows. */
 const ROW_HEIGHT = 40
 function stubGeometry() {
   rows().forEach((row, index) => {
@@ -92,10 +89,8 @@ function stubGeometry() {
 }
 
 /**
- * jsdom has no `PointerEvent`, so testing-library builds a bare `Event` whose
- * `button` and `clientY` are undefined — useless for a drag. A `MouseEvent`
- * carries both, and the pointer id is the one property that has to be pinned on
- * by hand.
+ * jsdom has no `PointerEvent`, so testing-library builds a bare `Event` with
+ * undefined `button`/`clientY`. `MouseEvent` carries both; pointerId is pinned on.
  */
 function pointer(
   element: Element,
@@ -182,16 +177,12 @@ describe('process list', () => {
   it('keeps whispering the drop gesture once there are rows to list', () => {
     setup()
 
-    // The empty state is where an operator learns that a dropped file becomes a
-    // process; with rows on screen that lesson has nowhere else to live.
     const hint = screen.getByTestId('process-list-drop-hint')
     expect(hint.textContent).toMatch(/drop an app or script here to add it/)
-    // Inert on purpose: a drop target, a reorder drag and a context menu all
-    // live in this column already.
+    // Inert: a drop target, reorder drag and context menu share this column.
     expect(hint.className).toContain('pointer-events-none')
     expect(hint.className).toContain('text-sm')
-    // It floats in the room the rows leave: outside the `ul` (so it is not part
-    // of the reorder surface) in a region that takes the leftover height.
+    // Outside the `ul`, so it is not part of the reorder surface.
     expect(hint.closest('ul')).toBeNull()
     const region = hint.parentElement
     expect(region?.className).toContain('flex-1')
@@ -230,8 +221,7 @@ describe('exe icons', () => {
     const fallbacks = screen.getAllByTestId('process-icon-fallback')
     // node.exe answered null, and the nameless entry has no exe at all.
     expect(fallbacks).toHaveLength(2)
-    // Same box as the image it stands in for, so an icon arriving late moves
-    // nothing beside it.
+    // Same box as the image, so a late icon moves nothing beside it.
     expect(fallbacks[0].getAttribute('class')).toContain('size-4')
     expect(screen.getAllByTestId('process-icon')[0].getAttribute('class')).toContain('size-4')
   })
@@ -329,10 +319,19 @@ describe('the collapsed rail', () => {
 })
 
 describe('the collapse toggle', () => {
-  /** The row the toggle lives in: the last child of the list column. */
+  /**
+   * The toggle's row. Found through the button because `TooltipTrigger asChild`
+   * renders no wrapper: button → opaque ground → this row.
+   */
   function footer() {
-    const list = screen.getByTestId('process-list')
-    return list.lastElementChild as HTMLElement
+    return ground().parentElement as HTMLElement
+  }
+
+  /** The opaque patch the button stands on, which is the button's parent. */
+  function ground() {
+    const toggle =
+      screen.queryByTestId('collapse-sidebar') ?? screen.getByTestId('expand-sidebar')
+    return toggle.parentElement as HTMLElement
   }
 
   it('sits at the bottom of the column, right-aligned while expanded', () => {
@@ -343,6 +342,18 @@ describe('the collapse toggle', () => {
     // Below the list, not in the header beside `+`.
     expect(footer().contains(collapse)).toBe(true)
     expect(footer().className).toContain('justify-end')
+    // Inside the scroller, stuck to its floor. A row BELOW the scroller cut the
+    // scrollbar track short of the sidebar's edge and read as a render fault.
+    expect(footer().className).toContain('sticky')
+    expect(footer().nextElementSibling).toBeNull()
+    // Veils rather than cuts: the ground fades in from transparent so a row
+    // dissolves into it. The button keeps its own solid patch to stay legible.
+    expect(footer().className).toContain('linear-gradient(to_bottom,transparent,var(--background)_60%)')
+    expect(ground().className).toContain('bg-background')
+    expect(ground().className).toContain('p-1')
+    const column = footer().parentElement
+    expect(column?.className).toContain('min-h-full')
+    expect(column?.parentElement?.className).toContain('overflow-y-auto')
     expect(screen.getByRole('button', { name: 'add process' }).closest('header')).toBeTruthy()
 
     fireEvent.click(collapse)
@@ -374,6 +385,76 @@ describe('the collapse toggle', () => {
 
     expect(screen.queryByTestId('collapse-sidebar')).toBeNull()
     expect(screen.queryByTestId('expand-sidebar')).toBeNull()
+  })
+})
+
+describe('the room the drop hint needs', () => {
+  /** Every box a ResizeObserver was pointed at, and the way to make it fire. */
+  let watching: { element: Element; fire: () => void }[] = []
+
+  beforeEach(() => {
+    watching = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        callback: () => void
+        constructor(callback: () => void) {
+          this.callback = callback
+        }
+        observe(element: Element) {
+          watching.push({ element, fire: () => this.callback() })
+        }
+        unobserve() {}
+        disconnect() {}
+      },
+    )
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** jsdom lays nothing out, so the box is told how tall it came out. */
+  function measure(height: number) {
+    const room = screen.getByTestId('process-list-drop-room')
+    Object.defineProperty(room, 'clientHeight', { value: height, configurable: true })
+    act(() => {
+      watching.filter((watch) => watch.element === room).forEach((watch) => watch.fire())
+    })
+  }
+
+  it('withholds the sentence once the rows leave it nowhere to sit', () => {
+    setup()
+
+    measure(400)
+    expect(screen.getByTestId('process-list-drop-hint')).toBeTruthy()
+
+    measure(140)
+    expect(screen.queryByTestId('process-list-drop-hint')).toBeNull()
+    // The box stays behind: it is what the next measurement is taken from.
+    expect(screen.getByTestId('process-list-drop-room')).toBeTruthy()
+  })
+
+  it('draws the line where the sentence stops sitting comfortably', () => {
+    setup()
+
+    // 160px is the ~70px stack plus 45px of air on each side of it.
+    measure(159)
+    expect(screen.queryByTestId('process-list-drop-hint')).toBeNull()
+
+    measure(160)
+    expect(screen.getByTestId('process-list-drop-hint')).toBeTruthy()
+  })
+
+  it('keeps the hint out of the scrollable extent entirely', () => {
+    setup()
+
+    // `flex-1 min-h-0`: the box is exactly the room the rows leave, and it
+    // collapses to nothing once they take it all — so the scrollbar measures
+    // the list of processes and nothing else.
+    const room = screen.getByTestId('process-list-drop-room')
+    expect(room.className).toContain('flex-1')
+    expect(room.className).toContain('min-h-0')
   })
 })
 

@@ -154,9 +154,8 @@ export function PageHeader({
   }, [feedbackRotating]);
 
   const currentSiteName = sites.find(s => s.id === currentSiteId)?.name ?? 'Select site';
-  // Non-null only when there is actually a site to switch to. Holds the
-  // narrowed callback so the bar and the drawer can both call it directly
-  // instead of re-testing the same three conditions.
+  // Non-null only when there is actually a site to switch to. Holds the narrowed
+  // callback so bar and drawer can call it without re-testing the same conditions.
   const selectSite = sites.length > 0 && currentSiteId && onSiteChange ? onSiteChange : null;
   const PageIcon = PAGE_ICONS[currentPage.toLowerCase()];
 
@@ -164,9 +163,7 @@ export function PageHeader({
     <>
     <header className="border-b border-border bg-background">
       <div className="mx-auto flex h-14 max-w-screen-2xl items-center justify-between px-2 md:px-3">
-        {/* Left: Logo + Breadcrumb navigation */}
         <nav className="flex items-center gap-1.5 min-w-0">
-          {/* App Logo */}
           <div className="flex items-center gap-1.5 flex-shrink-0 mr-1">
             <OwletteEyeIcon size={24} className="translate-y-[1px]" />
             <span className="text-base font-semibold text-foreground hidden md:block translate-y-[1px]">owlette</span>
@@ -231,7 +228,6 @@ export function PageHeader({
 
             <span className="text-muted-foreground/60 text-lg select-none">/</span>
 
-            {/* Page Selector */}
             {disableNav ? (
               <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground px-1.5 py-1">
                 {PageIcon ? <PageIcon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground translate-y-[0.5px]" /> : null}
@@ -271,11 +267,9 @@ export function PageHeader({
           </div>
         </nav>
 
-        {/* Right: Actions + User */}
         <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
           {actionButton}
 
-          {/* Help Menu */}
           {!disableNav && (
             <DropdownMenu onOpenChange={(open) => { setHelpMenuOpen(open); handleMenuOpenChange(open); }}>
               <DropdownMenuTrigger asChild>
@@ -318,7 +312,6 @@ export function PageHeader({
               </Link>
             </div>
           ) : (
-          /* User Menu */
           <DropdownMenu onOpenChange={handleMenuOpenChange}>
             <DropdownMenuTrigger asChild>
               <button

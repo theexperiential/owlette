@@ -1,38 +1,22 @@
 #!/usr/bin/env node
 /**
- * Firestore migration: `sites/{siteId}/synced_folders/{folderId}` →
- *                      `sites/{siteId}/roosts/{roostId}`.
+ * Firestore migration: `sites/{siteId}/synced_folders/{id}` →
+ * `sites/{siteId}/roosts/{id}`. Internal rename only — doc ids are preserved and
+ * no user-visible id changes.
  *
- * Part of roost public-api wave 1.11. Internal-only renaming — the
- * collection holds the manifest-pointer docs for the v2 distribution
- * engine. No user-visible IDs change; doc ids are preserved verbatim.
+ * Per site: copy each doc's top-level fields, recursively copy the `manifests`,
+ * `target_state` and `rollouts` subcollections, verify, then delete the source.
  *
- * For each site, this script:
- *   1. Lists every doc under `sites/{siteId}/synced_folders/`.
- *   2. For each doc, copies the top-level fields to
- *      `sites/{siteId}/roosts/{id}` (overwrite semantics — idempotent
- *      because the doc body is the same).
- *   3. Recursively copies the `manifests` + `target_state` + `rollouts`
- *      subcollections under the new parent.
- *   4. After verifying the copy, deletes the source docs + subcollections.
- *
- * Default is `--dry-run`. Pass `--apply` to write + delete. Safe to
- * re-run — if `roosts/{id}` already exists it is overwritten with the
- * latest source snapshot; already-deleted sources are skipped.
- *
- * Usage:
- *   node scripts/migrate-synced-folders-to-roosts.mjs --env=dev
- *   node scripts/migrate-synced-folders-to-roosts.mjs --env=dev --apply
- *   node scripts/migrate-synced-folders-to-roosts.mjs --env=prod --apply --site=SITE_ID
+ * Dry-run by default; `--apply` writes and deletes. Idempotent — an existing
+ * `roosts/{id}` is overwritten from the latest source, deleted sources are skipped.
  *
  * Flags:
  *   --env=dev|prod   required — target Firebase project
- *   --apply          commit writes + deletes (otherwise dry-run)
- *   --site=<id>      limit to one site (default: all sites)
- *   --keep-source    copy to roosts/ but do NOT delete synced_folders/
- *                    (for a safety soak period before the hard cutover)
+ *   --apply          commit writes + deletes
+ *   --site=<id>      limit to one site
+ *   --keep-source    copy but do NOT delete, for a soak before hard cutover
  *
- * Exit codes: 0 on success, 1 on failure of any kind.
+ * Exits 0 on success, 1 on any failure.
  */
 
 import { createRequire } from 'module';
@@ -43,12 +27,11 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-// firebase-admin lives in web/node_modules — resolve it from there so
-// the script runs without a root-level package.json.
+// firebase-admin lives in web/node_modules; the repo root has no package.json.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 const admin = require('firebase-admin');
 
-// ─── CLI parsing ───────────────────────────────────────────────────────
+// CLI parsing
 
 const args = process.argv.slice(2);
 
@@ -73,7 +56,7 @@ if (env !== 'dev' && env !== 'prod') {
 
 const dryRun = !apply;
 
-// ─── .env loading ──────────────────────────────────────────────────────
+// .env loading
 
 function loadEnvFile(path) {
   if (!existsSync(path)) return;
@@ -98,7 +81,7 @@ loadEnvFile(join(ROOT, 'web', '.env.local'));
 loadEnvFile(join(ROOT, '.claude', '.env.local'));
 loadEnvFile(join(ROOT, 'scripts', '.env.local'));
 
-// ─── Credentials ───────────────────────────────────────────────────────
+// Credentials
 
 const suffix = env === 'prod' ? '_PROD' : '_DEV';
 const projectId =
@@ -122,7 +105,7 @@ admin.initializeApp({
 });
 const db = admin.firestore();
 
-// ─── Core migration ────────────────────────────────────────────────────
+// Core migration
 
 /** Subcollections we know live under a synced_folder/roost doc. */
 const KNOWN_SUBCOLLECTIONS = ['manifests', 'target_state', 'rollouts'];
@@ -132,9 +115,8 @@ async function copyDoc(srcRef, dstRef) {
   if (!snap.exists) return false;
   const data = snap.data();
   if (dryRun) return true;
-  // Use set() without merge so the destination is an exact snapshot of
-  // the source. Safe because this is the first time `roosts/{id}` exists
-  // on a clean cutover; on re-run we want the latest source state.
+  // No merge: the destination must be an exact snapshot of the source, which is
+  // also what a re-run wants.
   await dstRef.set(data);
   return true;
 }
@@ -143,8 +125,8 @@ async function copySubcollection(srcParent, dstParent, subName) {
   const snap = await srcParent.collection(subName).get();
   if (snap.empty) return 0;
   let copied = 0;
-  // BulkWriter handles batching + retries — avoids the 500-per-commit cap
-  // when a roost has thousands of manifests.
+  // BulkWriter batches + retries, dodging the 500-per-commit cap on roosts with
+  // thousands of manifests.
   const bulk = dryRun ? null : db.bulkWriter();
   for (const doc of snap.docs) {
     if (dryRun) {
@@ -173,9 +155,8 @@ async function verifyCopy(srcRef, dstRef) {
   if (dryRun) return true;
   const [srcSnap, dstSnap] = await Promise.all([srcRef.get(), dstRef.get()]);
   if (!dstSnap.exists) return false;
-  // Compare top-level keys (not values — admin SDK Timestamp equality is
-  // brittle). A missing key on the destination is the failure mode we
-  // care about; identical shape is good enough before deleting.
+  // Keys, not values — admin SDK Timestamp equality is brittle, and a missing
+  // destination key is the failure mode that matters before a delete.
   if (!srcSnap.exists) return true; // already migrated + deleted; treat as ok
   const srcKeys = Object.keys(srcSnap.data() || {}).sort();
   const dstKeys = Object.keys(dstSnap.data() || {}).sort();
@@ -209,7 +190,7 @@ async function migrateSite(siteId) {
     try {
       const copied = await copyDoc(srcRef, dstRef);
       if (!copied) {
-        // src vanished mid-iteration; nothing to do.
+        // vanished mid-iteration
         continue;
       }
       let localSubs = 0;
@@ -252,7 +233,7 @@ async function listSiteIds() {
   return snap.map((d) => d.id);
 }
 
-// ─── Entrypoint ────────────────────────────────────────────────────────
+// Entrypoint
 
 async function main() {
   console.log(

@@ -1,13 +1,8 @@
 /**
- * updateSchedulePreset action core (security-boundary-migration wave 3.6).
- *
- * Mirrors `useSchedulePresets:updatePreset` (web/hooks/useSchedulePresets.ts:150-171).
- * Two paths:
- *   - presetId starts with `builtin-`: setDoc({ merge: true }) so the
- *     override doc is created on first edit. Always restamps `isBuiltIn: true`.
- *   - otherwise: updateDoc, after confirming the custom doc exists.
- *
- * Both paths stamp `updatedAt = serverTimestamp()`.
+ * updateSchedulePreset action core, mirroring `useSchedulePresets:updatePreset`.
+ * A `builtin-` presetId takes setDoc({ merge: true }) so the override doc is
+ * created on first edit, always restamping `isBuiltIn: true`; anything else
+ * takes updateDoc after confirming the doc exists. Both stamp `updatedAt`.
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';

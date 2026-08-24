@@ -31,10 +31,10 @@ const COMPONENT_ENV = {
   cortex_chat: 'INSTATUS_COMPONENT_CORTEX_CHAT_ID',
 };
 
-// alert_delivery's and talon_dispatch's status-page components are optional — their
-// primary alert channel is Sentry, so a missing Instatus id must not block readiness.
-// They're still listed in STATUS_COMPONENTS so a live probe recognizes them instead
-// of flagging them unexpected.
+// alert_delivery and talon_dispatch have optional status-page components —
+// their primary alert channel is Sentry, so a missing Instatus id must not block
+// readiness. Still listed in STATUS_COMPONENTS so a live probe recognises rather
+// than flags them.
 const OPTIONAL_COMPONENTS = ['alert_delivery', 'talon_dispatch'];
 
 const REQUIRED_ENV = [

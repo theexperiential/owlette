@@ -512,7 +512,7 @@ Invoke-Check -Name 'JDK 21' -OnError Warn -ScriptBlock {
     Write-Detail "JDK 21 detail: version $javaVersionLine; path $javaPath"
 }
 
-Invoke-Check -Name 'firebase-tools 13.x' -OnError Warn -ScriptBlock {
+Invoke-Check -Name 'firebase-tools 15.x' -OnError Warn -ScriptBlock {
     $firebaseVersion = $null
     $firebasePath = $null
     $source = $null
@@ -536,16 +536,16 @@ Invoke-Check -Name 'firebase-tools 13.x' -OnError Warn -ScriptBlock {
     }
 
     if ($null -eq $firebaseVersion) {
-        Write-Warn 'firebase-tools 13.x: missing; install firebase-tools 13.x for full e2e tests'
+        Write-Warn 'firebase-tools 15.x: missing; install firebase-tools 15.x for full e2e tests'
         return
     }
 
     $firebaseParsedVersion = ConvertTo-Version $firebaseVersion
-    if ($null -ne $firebaseParsedVersion -and $firebaseParsedVersion.Major -eq 13) {
-        Write-Pass "firebase-tools 13.x: $firebaseVersion"
+    if ($null -ne $firebaseParsedVersion -and $firebaseParsedVersion.Major -ge 15) {
+        Write-Pass "firebase-tools 15.x: $firebaseVersion"
     }
     else {
-        Write-Warn "firebase-tools 13.x: $firebaseVersion found; install firebase-tools 13.x for full e2e tests"
+        Write-Warn "firebase-tools 15.x: $firebaseVersion found; install firebase-tools 15.x for full e2e tests"
     }
 
     Write-Detail "firebase-tools detail: version $firebaseVersion; path $firebasePath; source $source"

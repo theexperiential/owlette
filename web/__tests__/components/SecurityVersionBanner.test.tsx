@@ -2,11 +2,9 @@
 /**
  * @jest-environment jsdom
  *
- * Tests for SecurityVersionBanner. The banner is non-dismissible by
- * design — the only way to clear it is a real `window.location.reload()`,
- * which fetches the new bundle and resets module-level state. These
- * tests pin both halves of that contract: it shows when stale, and
- * there's no close affordance.
+ * SecurityVersionBanner is non-dismissible by design — only a real
+ * `window.location.reload()` (new bundle, reset module state) clears it. These
+ * pin both halves: it shows when stale, and no close affordance exists.
  *
  * !! THIS IS UX, NOT SAFETY !! — see `lib/securityVersion.ts`.
  */
@@ -33,9 +31,8 @@ describe('SecurityVersionBanner', () => {
     window.fetch = originalFetch;
   });
 
-  // jsdom does not expose a global `Response` constructor; the hook only
-  // reads `response.headers.get(...)`, so a plain object with a real
-  // `Headers` instance satisfies the surface without pulling in a polyfill.
+  // jsdom has no global `Response`; the hook only reads `headers.get(...)`, so
+  // a plain object with a real `Headers` is enough — no polyfill needed.
   function fakeResponse(headers: Record<string, string>): Response {
     return { headers: new Headers(headers) } as unknown as Response;
   }
@@ -72,7 +69,7 @@ describe('SecurityVersionBanner', () => {
     const buttons = screen.getAllByRole('button');
     expect(buttons).toHaveLength(1);
     expect(buttons[0]).toHaveTextContent('reload');
-    // No close affordance under any of the common a11y names.
+    // No close affordance under any common a11y name.
     expect(screen.queryByRole('button', { name: /close/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /dismiss/i })).toBeNull();
     expect(screen.queryByLabelText(/close/i)).toBeNull();
@@ -97,8 +94,7 @@ describe('SecurityVersionBanner', () => {
     await user.click(screen.getByRole('button', { name: /reload/i }));
     expect(reloadSpy).toHaveBeenCalledTimes(1);
 
-    // Banner does NOT clear after the click — only a true page reload
-    // (which resets module state) can clear it.
+    // Does NOT clear on click — only a real reload resets module state.
     expect(
       screen.getByText('a security update is available. reload to continue.'),
     ).toBeInTheDocument();

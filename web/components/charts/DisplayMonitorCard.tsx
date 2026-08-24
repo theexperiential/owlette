@@ -1,12 +1,8 @@
 'use client';
 
 /**
- * DisplayMonitorCard
- *
- * Per-monitor info card used by the display state view. Mirrors the stat-card
- * styling from MetricsDetailPanel (p-2 rounded-lg bg-secondary border with a
- * 3px colored left border). Parent is responsible for grid layout — this is a
- * single cell.
+ * Per-monitor info card for the display state view. Mirrors MetricsDetailPanel's
+ * stat-card styling. One grid cell — the parent owns the layout.
  */
 
 import { memo } from 'react';
@@ -19,17 +15,14 @@ interface DisplayMonitorCardProps {
   index: number;
   selected?: boolean;
   /**
-   * Invoked with the monitor's id on click. Taking the id here (rather than a
-   * zero-arg closure the parent has to rebuild per row) lets the parent pass a
-   * single stable useCallback reference, which in turn makes React.memo on
-   * this card actually skip re-renders for siblings that haven't changed.
+   * Takes the monitor id rather than a per-row zero-arg closure, so the parent
+   * can pass one stable useCallback and React.memo below actually holds.
    */
   onClick?: (id: string) => void;
   driftFields?: string[];
   /**
-   * Color used for the 3px left border. Lets the parent push the active tab's
-   * semantic color (live vs assigned) so the card row reads as a coherent
-   * group instead of a rainbow of unrelated indices.
+   * 3px left-border color. The parent pushes the active tab's semantic color
+   * (live vs assigned) so the row reads as one group, not a rainbow.
    */
   accentColor?: string;
   className?: string;
@@ -129,10 +122,8 @@ function DisplayMonitorCardImpl({
 }
 
 /**
- * Memoized export. Cards render inside a grid that rebuilds on unrelated
- * DisplayLayoutPanel state changes (tab switch, selection, write-action
- * spinners). Shallow prop equality lets us skip the full re-render when the
- * per-card data is stable. Callers must pass a stable `onClick` — see the
- * `handleMonitorClick` useCallback in DisplayLayoutPanel.
+ * Memoized: the grid rebuilds on unrelated DisplayLayoutPanel state (tab
+ * switch, selection, write spinners). Callers MUST pass a stable `onClick` —
+ * see `handleMonitorClick` in DisplayLayoutPanel.
  */
 export const DisplayMonitorCard = memo(DisplayMonitorCardImpl);

@@ -15,10 +15,8 @@ import {
 import { getAdminDb } from '@/lib/firebase-admin';
 import * as Sentry from '@sentry/nextjs';
 
-// Components whose degrade transition pages Sentry. Scoped to alert_delivery for
-// now: the HTTP-probe components (dashboard/api/agent_registry) currently produce
-// server-side-probe false-negatives, so paging on them would be noise. Broaden
-// this set once those probes are fixed.
+// Components whose degrade transition pages Sentry. alert_delivery only: the HTTP-probe
+// components produce server-side-probe false-negatives, so paging on them is noise.
 const SENTRY_ALERTING_COMPONENTS = new Set<StatusComponent>(['alert_delivery']);
 
 interface StatusPingDoc {
@@ -203,23 +201,16 @@ export async function GET(request: NextRequest) {
 
   try {
     const previousPings = await latestStatusPings();
-    // Server env only — deliberately NOT `request.nextUrl.origin`.
+    // Server env only — deliberately NOT `request.nextUrl.origin`: that derives from the
+    // Host header, so a CRON_SECRET holder could aim these probes at an arbitrary host
+    // (blind SSRF — status + latency leak reachability) and poison the status page.
     //
-    // The origin derives from the Host header, so a caller holding CRON_SECRET
-    // could point these probes at an arbitrary host (blind SSRF: the response
-    // body is discarded, but status code and latency leak internal
-    // reachability) and simultaneously poison the status page with health data
-    // for an origin that isn't ours.
-    //
-    // Omitting the key lets publicBaseUrl() resolve from trusted sources only:
-    // OWLETTE_STATUS_BASE_URL -> NEXT_PUBLIC_APP_URL -> RAILWAY_PUBLIC_DOMAIN
-    // -> https://owlette.app. RAILWAY_PUBLIC_DOMAIN is platform-injected, so on
-    // Railway each service still probes its own domain (dev probes dev, prod
-    // probes prod) with no per-environment config; the Vercel failover origin,
-    // which has no RAILWAY_* vars by design, lands on the owlette.app default.
-    //
-    // Mirrors trustedBaseUrl() in /api/auth/forgot-password, which refuses the
-    // Host header for the same reason.
+    // Without the key, publicBaseUrl() resolves from trusted sources only:
+    // OWLETTE_STATUS_BASE_URL -> NEXT_PUBLIC_APP_URL -> RAILWAY_PUBLIC_DOMAIN ->
+    // https://owlette.app. RAILWAY_PUBLIC_DOMAIN is platform-injected, so each Railway
+    // service probes its own domain with no per-env config; the Vercel failover origin has
+    // no RAILWAY_* vars and lands on the default. Mirrors trustedBaseUrl() in
+    // /api/auth/forgot-password.
     const results = await runStatusHealthChecks({});
     const ping = await writeStatusPing(results);
     const updates = computeComponentStatusUpdates(
@@ -228,9 +219,8 @@ export async function GET(request: NextRequest) {
       previousPings[1]?.results,
     );
 
-    // Fail loud: when a component newly degrades, raise it to Sentry (+ logs) so
-    // it reaches a human even when nobody is watching the status page. Fires only
-    // on the degrade transition (second consecutive failure), not every cycle.
+    // Fail loud on the degrade transition (second consecutive failure) only, so a human sees
+    // it without watching the status page — not every cycle.
     for (const update of updates) {
       if (update.reason !== 'second_consecutive_failure') continue;
       const detail = results.find((entry) => entry.component === update.component);
@@ -238,13 +228,10 @@ export async function GET(request: NextRequest) {
         `[status-ping] component degraded: ${update.component}`,
         detail?.error ?? '',
       );
-      // Sentry is scoped to alert_delivery (see SENTRY_ALERTING_COMPONENTS): the
-      // HTTP-probe components have pre-existing server-side-probe false-negatives,
-      // so paging on them would be noise. Broaden the set once those are fixed.
+      // Scoped by SENTRY_ALERTING_COMPONENTS — see the note on that constant.
       if (!SENTRY_ALERTING_COMPONENTS.has(update.component)) continue;
-      // Only forward non-identifying detail. The error string already carries the
-      // safe summary (counts, status codes); raw component metadata can include a
-      // machine hostname (agent_registry.latest_machine_id), so it is NOT sent.
+      // Non-identifying detail only: the error string has the safe summary, while raw
+      // component metadata can carry a hostname (agent_registry.latest_machine_id).
       Sentry.captureMessage(`status.${update.component}_degraded`, {
         level: 'error',
         tags: { status_component: update.component, surface: 'status-ping' },

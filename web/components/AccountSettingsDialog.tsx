@@ -12,14 +12,14 @@ import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Check, Loader2, User, Bell, BellOff, Trash2, Key, Plus, X, Code } from 'lucide-react';
-import Link from 'next/link';
 import { toast } from '@/lib/toast';
-import { PasskeyManager } from '@/components/PasskeyManager';
+import { MfaFactorsSection } from '@/components/MfaFactorsSection';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { HootIcon } from '@/components/icons/HootIcon';
 import { ApiKeysManager } from '@/components/ApiKeysManager';
+import { useScrollFade } from '@/hooks/useScrollFade';
 
 type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'hoot' | 'security' | 'api' | 'danger';
 
@@ -61,6 +61,9 @@ interface AccountSettingsDialogProps {
 }
 
 export function AccountSettingsDialog({ open, onOpenChange, initialSection }: AccountSettingsDialogProps) {
+  // The section dissolves under the dialog header rather than being cut by it.
+  const bodyRef = useScrollFade<HTMLDivElement>();
+
   const { user, userPreferences, updateUserProfile, updateUserPhoto, updatePassword, updateUserPreferences, deleteAccount } = useAuth();
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection || 'profile');
   const [firstName, setFirstName] = useState('');
@@ -74,8 +77,8 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [healthAlerts, setHealthAlerts] = useState(true);
   const [processAlerts, setProcessAlerts] = useState(true);
   const [thresholdAlerts, setThresholdAlerts] = useState(true);
-  // Firestore keeps the legacy field name `cortexAlerts` (see web/lib/hoot/WIRE_NAMES.md);
-  // the local state carries the product name and is mapped at the wire boundary.
+  // Firestore keeps the legacy `cortexAlerts` field (web/lib/hoot/WIRE_NAMES.md);
+  // local state uses the product name and maps at the wire boundary.
   const [hootAlerts, setHootAlerts] = useState(true);
   const [displayAlerts, setDisplayAlerts] = useState(true);
   const [talonAlerts, setTalonAlerts] = useState(true);
@@ -84,7 +87,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [ccEmailError, setCcEmailError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Password change state
   const [showPasswordSection, setShowPasswordSection] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -94,7 +96,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
 
-  // LLM API key state
   const [llmProvider, setLlmProvider] = useState<'anthropic' | 'openai'>('anthropic');
   const [llmApiKey, setLlmApiKey] = useState('');
   const [llmModel, setLlmModel] = useState('');
@@ -105,12 +106,10 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [llmModelsLoading, setLlmModelsLoading] = useState(false);
 
 
-  // Account deletion state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
 
-  // Fetch available models from provider API
   const fetchLlmModels = async (provider: string) => {
     setLlmModelsLoading(true);
     try {
@@ -120,19 +119,17 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         setLlmModels(data.models || []);
       }
     } catch {
-      // Fall back to hardcoded list (already in state)
+      // Keep the hardcoded fallback list already in state.
     }
     setLlmModelsLoading(false);
   };
 
-  // Navigate to initial section when dialog opens
   useEffect(() => {
     if (open && initialSection) {
       setActiveSection(initialSection);
     }
   }, [open, initialSection]);
 
-  // Load form state when dialog opens
   useEffect(() => {
     if (open) {
       if (user?.displayName) {
@@ -248,7 +245,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
 
   const handlePhotoPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    // Reset the input value so picking the same file twice in a row still fires onChange.
+    // Reset so picking the same file twice still fires onChange.
     e.target.value = '';
     if (!file) return;
 
@@ -271,7 +268,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
     try {
       await updateUserPhoto(blob);
     } catch {
-      // AuthContext surfaces its own toast
+      // AuthContext toasts.
     } finally {
       setPhotoUploading(false);
     }
@@ -282,7 +279,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
     try {
       await updateUserPhoto(null);
     } catch {
-      // Toast handled in AuthContext
+      // AuthContext toasts.
     } finally {
       setPhotoUploading(false);
     }
@@ -322,7 +319,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       }
       onOpenChange(false);
     } catch {
-      // Error already handled by AuthContext with toast
+      // AuthContext toasts.
     } finally {
       setLoading(false);
     }
@@ -392,7 +389,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
 
           {/* Content */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0">
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+            <div ref={bodyRef} className="flex-1 overflow-y-auto p-4 sm:p-6">
               {/* ─── Profile ─── */}
               {activeSection === 'profile' && (
                 <div className="space-y-5">
@@ -939,22 +936,16 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                     <p className="text-xs text-muted-foreground mt-1">authentication and access control</p>
                   </div>
 
-                  <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
-                    <div>
-                      <p className="text-sm text-white">two-factor authentication</p>
-                      <p className="text-xs text-muted-foreground">add an extra layer of security to your account</p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      asChild
-                      className="h-8 cursor-pointer border-border text-accent-cyan hover:bg-muted hover:text-accent-cyan"
-                    >
-                      <Link href="/setup-2fa" onClick={() => onOpenChange(false)}>
-                        manage
-                      </Link>
-                    </Button>
-                  </div>
+                  {/* Every second factor — TOTP and passkeys — in one list.
+                      The passkey card used to sit further down this section as
+                      an unrelated sibling; it is nested inside the section now
+                      because any one factor satisfies the same gate. */}
+                  {user && (
+                    <MfaFactorsSection
+                      userId={user.uid}
+                      onNavigateAway={() => onOpenChange(false)}
+                    />
+                  )}
 
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -1080,11 +1071,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       </div>
                     )}
                   </div>
-
-                  {/* Passkey management */}
-                  {user && (
-                    <PasskeyManager userId={user.uid} compact />
-                  )}
                 </div>
               )}
 

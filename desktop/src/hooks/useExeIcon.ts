@@ -2,18 +2,16 @@ import { useEffect, useState } from 'react'
 import { exeIcon } from '@/lib/ipc'
 
 /**
- * Icons already asked for, by the path they were asked about.
+ * Icons already asked for, keyed by path.
  *
- * Two maps rather than one: the promise so several rows mounting in the same
- * frame — which is what happens on every launch — share one host call instead of
- * racing each other, and the settled value so a row that already knows its icon
- * can render it on the first paint rather than flashing the fallback for a
- * frame. The host caches as well, by path and modified time; this pair exists so
- * a re-render costs nothing at all.
+ * Two maps: the promise so rows mounting in the same frame share one host call
+ * instead of racing, and the settled value so a known icon paints on the first
+ * frame rather than flashing the fallback. The host caches too (by path +
+ * mtime); this pair makes a re-render free.
  *
- * Keyed by the path as written in `config.json`, not normalised: two spellings
- * of the same file are two entries here and one extraction there, which is a
- * cheaper trade than reimplementing the host's normalisation on this side.
+ * Keyed by the path as written in `config.json`, unnormalised — two spellings
+ * cost two entries and one extraction, cheaper than reimplementing the host's
+ * normalisation here.
  */
 const inflight = new Map<string, Promise<string | null>>()
 const settled = new Map<string, string | null>()
@@ -46,13 +44,10 @@ export function resetExeIconCache(): void {
 }
 
 /**
- * The icon for an executable, as a `data:` URL, or null while it is loading and
- * for anything that has none.
- *
- * Null is not an error state — most of the time it means "not yet" — so the
- * caller draws its fallback glyph in the same box and swaps the image in when
- * it arrives. Nothing here reports a failure: an icon that could not be read is
- * indistinguishable, on screen, from a file type that has none.
+ * An executable's icon as a `data:` URL; null while loading and for anything
+ * without one. Null is not an error — usually it means "not yet" — so callers
+ * draw a fallback glyph and swap the image in. Nothing here reports failure: an
+ * unreadable icon looks the same on screen as a file type with none.
  */
 export function useExeIcon(path: string | undefined): string | null {
   const [icon, setIcon] = useState<string | null>(() => knownExeIcon(path?.trim() ?? '') ?? null)
@@ -70,13 +65,11 @@ export function useExeIcon(path: string | undefined): string | null {
       return
     }
 
-    // Nothing is known about this path yet, and whatever is on screen belongs to
-    // the previous one — an operator retyping an exe would otherwise keep the
-    // old application's icon until the new one resolved.
+    // Whatever is on screen belongs to the previous path — an operator retyping
+    // an exe would otherwise keep the old icon until the new one resolved.
     setIcon(null)
 
-    // …and a path that changes again while this is in flight must not take the
-    // answer to the question it replaced.
+    // A path that changes again in flight must not take the old answer.
     let current = true
     void loadExeIcon(target).then((loaded) => {
       if (current) setIcon(loaded)

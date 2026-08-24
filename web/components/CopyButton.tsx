@@ -12,31 +12,20 @@ import {
 import { cn } from '@/lib/utils';
 
 interface CopyButtonProps {
-  /** The value written to the clipboard when clicked. */
   value: string;
-  /** Toast message shown on successful copy. Defaults to "copied to clipboard". */
   successMessage?: string;
-  /** Tooltip label. Defaults to "copy". */
   tooltipLabel?: string;
-  /** Extra classes for the underlying Button. */
   className?: string;
-  /** Button size. Defaults to "sm". */
   size?: 'sm' | 'default' | 'lg' | 'icon';
-  /** Button variant. Defaults to "outline". */
   variant?: 'outline' | 'default' | 'ghost' | 'secondary';
-  /** How long (ms) the success state (check icon) sticks. Defaults to 2000. */
+  /** ms the check icon sticks. */
   successDuration?: number;
 }
 
 /**
- * Copy-to-clipboard button with in-place visual confirmation.
- *
- * Why this exists: a bare `navigator.clipboard.writeText(value); toast.success(...)`
- * fires-and-forgets and the toast was easy to miss — operators reported clicking
- * the copy icon and getting no confirmation at all. This component gives the
- * primary signal *at the cursor* (icon swap to a check for 2s), keeps the toast
- * as a secondary signal, and properly handles a rejected clipboard promise so
- * a permissions failure surfaces an error toast instead of silently lying.
+ * Copy-to-clipboard button. The icon swap is the primary confirmation — the
+ * toast alone was routinely missed. Awaits the clipboard promise so a denied
+ * permission surfaces an error instead of a false success.
  */
 export function CopyButton({
   value,
@@ -48,8 +37,7 @@ export function CopyButton({
   successDuration = 2000,
 }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
-  // Track the latest timer so a second click before the first reset doesn't
-  // get clobbered into "stuck checked forever" if the new write fails.
+  // Tracked so a rapid second click can't leave the check stuck on.
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function handleCopy() {
@@ -60,8 +48,7 @@ export function CopyButton({
       if (resetTimer.current) clearTimeout(resetTimer.current);
       resetTimer.current = setTimeout(() => setCopied(false), successDuration);
     } catch (err) {
-      // Permissions denied / insecure context / clipboard API unavailable.
-      // Tell the operator instead of pretending it worked.
+      // Denied permission / insecure context / no clipboard API.
       console.error('clipboard write failed:', err);
       toast.error('copy failed — select the text manually and copy with Ctrl+C');
     }

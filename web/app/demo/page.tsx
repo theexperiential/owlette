@@ -36,16 +36,12 @@ const noopAsync = async () => {};
 const noop = () => {};
 
 export default function DemoPage() {
-  // Demo machine synthesis (`getDemoMachines()`) calls Math.random() and
-  // Date.now() — values that drift between SSR and client render. React 19
-  // discards the SSR DOM on hydration mismatch and re-renders fresh, which
-  // re-fires the wrapper's CSS fade-in. Gating the body on a post-mount flag
-  // makes SSR + initial CSR render identical (an empty shell), so the
-  // animation only plays once after hydration.
-  //
-  // The set-state-in-effect lint rule flags this pattern as cascading-render,
-  // but here that's exactly the point: the cascade is a single mount → render
-  // boundary, not a value-syncing loop.
+  // `getDemoMachines()` uses Math.random() + Date.now(), so SSR and client
+  // render differ; React 19 throws away the SSR DOM on mismatch and re-renders,
+  // which re-fires the wrapper's CSS fade-in. Gating on a post-mount flag makes
+  // SSR and the first CSR render identical (an empty shell) so the animation
+  // plays once. The set-state-in-effect rule flags the cascade, but here it IS
+  // the point: one mount → render boundary, not a value-syncing loop.
   const [mounted, setMounted] = useState(false);
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setMounted(true), []);
@@ -55,9 +51,8 @@ export default function DemoPage() {
   const [statsExpanded, setStatsExpanded] = useState(false);
   const [detailPanel, setDetailPanel] = useState<DetailPanelState | null>(null);
 
-  // Slide-reveal animation for the detail panel — same hook the
-  // dashboard uses, so demo and prod feel identical when expanding /
-  // collapsing a metric or display panel.
+  // Same hook the dashboard uses, so demo and prod feel identical when
+  // expanding / collapsing a panel.
   const {
     wrapperRef: slideWrapperRef,
     contentRef: slideContentRef,
@@ -69,7 +64,6 @@ export default function DemoPage() {
     reflowKey: (p) => (p.metric === 'display' ? 'display' : 'metric'),
   });
 
-  // Per-row expand state — initialize all as collapsed
   const [expandedMachineIds, setExpandedMachineIds] = useState<Set<string>>(
     () => new Set()
   );

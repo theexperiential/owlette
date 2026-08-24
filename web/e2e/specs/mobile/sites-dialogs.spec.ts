@@ -1,37 +1,23 @@
 /**
- * Mobile — sites dialogs (nav drawer → manage sites → create site)
+ * Mobile — sites dialogs (nav drawer → manage sites → create site).
+ * Viewport/isMobile/hasTouch come from the `mobile-chromium` project in playwright.config.ts.
  *
- * Viewport / isMobile / hasTouch come from the `mobile-chromium` project in
- * playwright.config.ts, which owns every spec under specs/mobile/**.
+ * Below `md` the PageHeader site switcher isn't rendered at all; the breadcrumb collapses
+ * into a left nav drawer. The desktop sites specs drive `site-switcher-trigger`, which
+ * doesn't exist at 390px, so only this spec proves the dialogs are reachable on a phone.
  *
- * Below `md` the site switcher in PageHeader is not rendered at all — the
- * breadcrumb collapses into a left nav drawer (PageHeader.tsx:170-179,
- * 390-500). `sites/create-site.spec.ts` and `sites/edit-site.spec.ts` drive
- * the desktop `site-switcher-trigger`, which does not exist at 390px, so
- * neither proves these dialogs are reachable on a phone. This spec walks the
- * drawer route end to end and asserts the resulting Firestore write.
+ * REGRESSION GUARD — inline site edit/delete were unreachable at 390px: ManageSitesDialog's
+ * header was a no-wrap flex with a `w-64 shrink-0` filter whose min-content exceeded the
+ * dialog's max width, inflating the DialogContent grid column. Every row inherited it, so
+ * the fixed 64px actions column and the header ✕ fell outside the viewport with no
+ * scroller. Fixed by wrapping the header (`flex-wrap`, `min-w-0 w-full max-w-64`).
  *
- * REGRESSION GUARD — inline site edit/delete used to be unreachable at 390px.
- * `ManageSitesDialog`'s header row was a no-wrap flex holding a `w-64
- * shrink-0` filter input; its min-content exceeded the dialog's
- * `max-w-[calc(100%-2rem)]` (~358px here), which inflated the DialogContent
- * grid's single auto column. Every site row inherits that column width, so
- * the fixed `64px` actions column carrying the per-row edit/delete buttons
- * landed outside the viewport with no horizontal scroller to bring it back,
- * and the header's close ✕ went off-screen for the same reason. The header
- * now wraps (`flex-wrap` on the row, `min-w-0 w-full max-w-64` on the filter),
- * so the search cluster takes its own line here while staying 256px wide on
- * desktop. "inline site edit and delete are reachable" below locks that in.
+ * `assertNoHorizontalOverflow` can't catch this — the dialog is position-fixed, so its
+ * overflow never reaches document scroll width; hence the explicit
+ * `expectFullyWithinViewport` checks. Never substitute a forced click on an off-screen
+ * control: that greens a test for something a thumb cannot do.
  *
- * `assertNoHorizontalOverflow` does NOT catch this class of bug: the dialog is
- * position-fixed, so its overflow never reaches the document scroll width —
- * hence the explicit `expectFullyWithinViewport` geometry checks. And never
- * substitute a synthetic/forced click at an off-screen button: that would be a
- * green test for something a phone user cannot do.
- *
- * Isolation: both the seeded collision fixture and every site created here are
- * deleted in `afterAll`, so the superadmin's site list is identical before and
- * after this file runs.
+ * Isolation: the seeded fixture and every site created here are deleted in `afterAll`.
  */
 
 import { test, expect, type Locator, type Page } from '@playwright/test';
@@ -40,18 +26,11 @@ import { assertNoHorizontalOverflow, expectFullyWithinViewport } from '../../hel
 import { roleState } from '../../helpers/roles';
 import { seedSite } from '../../helpers/seed';
 
-/**
- * The baseline's `site-A` / `site-B` carry an uppercase letter and the
- * create dialog's id input downcases whatever is typed, so neither can be
- * used to trigger the "already taken" branch. Seed an all-lowercase id for
- * that case instead (same reasoning as `sites/create-site.spec.ts`).
- */
+/** The baseline's site-A/site-B have uppercase letters and the id input downcases input, so
+ * neither can trigger the "already taken" branch — seed an all-lowercase id. */
 const TAKEN_SITE_ID = 'site-mobile-taken';
-/**
- * Name of that same seeded site. It doubles as the row the reachability test
- * drives: it is owned by this file (deleted in `afterAll`) and the test only
- * opens the inline editor and cancels, so the baseline is never mutated.
- */
+/** Also the row the reachability test drives — owned by this file, and the test only opens
+ * the inline editor and cancels. */
 const TAKEN_SITE_NAME = 'Mobile Taken Site';
 
 /** Site ids created by this file, deleted in afterAll. */
@@ -59,11 +38,8 @@ const createdSiteIds: string[] = [];
 
 test.use(roleState('superadmin'));
 
-/**
- * Open the mobile nav drawer and enter "manage sites". The drawer is plain
- * markup gated on `md:hidden` (not a portalled sheet), so it only exists at
- * this viewport.
- */
+/** Open the nav drawer and enter "manage sites". The drawer is plain `md:hidden` markup,
+ * not a portalled sheet, so it exists only at this viewport. */
 async function openManageSitesViaDrawer(page: Page): Promise<Locator> {
   await page.goto('/dashboard');
 
@@ -102,8 +78,7 @@ test('the nav drawer lists sites and reaches manage-sites', async ({ page }) => 
   const drawer = page.getByRole('navigation', { name: /site and page navigation/i });
   await expect(drawer).toBeVisible();
 
-  // The drawer is the mobile stand-in for the desktop breadcrumb: site list
-  // first, then the page nav, then manage-sites.
+  // Drawer order mirrors the desktop breadcrumb: sites, page nav, manage-sites.
   await expect(drawer.getByRole('button', { name: 'Site A (Assigned)' })).toBeVisible();
   await expect(drawer.getByRole('button', { name: /^roost/ })).toBeVisible();
   await assertNoHorizontalOverflow(page);
@@ -129,14 +104,12 @@ test('the create-site dialog writes the site from the drawer route', async ({ pa
   await expect(createDialog).toBeVisible();
 
   await createDialog.getByLabel('site name').fill(newSiteName);
-  // The auto-generated slug is derived from the name; replace it with a
-  // deterministic id so re-runs never collide.
+  // Replace the name-derived slug with a deterministic id so re-runs never collide.
   await createDialog.getByRole('button', { name: /customize site id/i }).click();
   await createDialog.locator('#site-id').fill(newSiteId);
   await assertNoHorizontalOverflow(page);
 
-  // Availability is debounced 500ms — the submit button enabling is the
-  // signal that the check resolved to "available".
+  // Availability is debounced 500ms; submit enabling is the signal it resolved.
   const submit = createDialog.getByRole('button', { name: /^create site$/i });
   await expect(submit).toBeEnabled({ timeout: 5_000 });
   await submit.click();
@@ -144,8 +117,7 @@ test('the create-site dialog writes the site from the drawer route', async ({ pa
   await expect(page.getByText(/created successfully/i)).toBeVisible();
   await expect(createDialog).toBeHidden();
 
-  // Admin SDK read-through — the mobile path wrote the same doc shape the
-  // desktop path does.
+  // Admin SDK read-through: the mobile path wrote the desktop doc shape.
   const snap = await getAdminDb().collection('sites').doc(newSiteId).get();
   expect(snap.exists).toBe(true);
   expect(snap.data()!.name).toBe(newSiteName);
@@ -157,20 +129,17 @@ test('the create-site dialog writes the site from the drawer route', async ({ pa
 test('inline site edit and delete are reachable at 390px', async ({ page }) => {
   const dialog = await openManageSitesViaDrawer(page);
 
-  // The filter input only renders above one site, and it is the control whose
-  // width used to inflate the dialog — assert it is on screen before relying on
-  // the rows behind it.
+  // The filter renders only above one site and is the control that used to inflate the
+  // dialog — assert it is on screen before trusting the rows behind it.
   await expect(dialog.getByLabel('filter sites')).toBeVisible();
 
   const editButton = dialog.getByRole('button', { name: `edit ${TAKEN_SITE_NAME}` });
-  // Geometry before interaction: a tap that only "works" because Playwright
-  // scrolled a horizontally overflowing container is not proof a thumb can
-  // reach the control.
+  // Geometry before interaction: a tap that works only because Playwright scrolled an
+  // overflowing container proves nothing about a thumb.
   await expectFullyWithinViewport(page, editButton, 'the row edit button');
   await editButton.tap();
 
-  // The row swaps in place into the inline editor, pre-filled with the site's
-  // current name.
+  // The row swaps in place into the inline editor, pre-filled.
   const nameInput = dialog.getByLabel('site name');
   await expect(nameInput).toBeVisible();
   await expect(nameInput).toHaveValue(TAKEN_SITE_NAME);
@@ -181,15 +150,15 @@ test('inline site edit and delete are reachable at 390px', async ({ page }) => {
   await expect(nameInput).toBeHidden();
   await expect(editButton).toBeVisible();
 
-  // Delete is the second control in the same fixed 64px actions column — the
-  // half of it that never got its own tap here, but has to be on screen.
+  // Delete is the other control in the same fixed 64px actions column; untapped here, but
+  // it still has to be on screen.
   await expectFullyWithinViewport(
     page,
     dialog.getByRole('button', { name: `delete ${TAKEN_SITE_NAME}` }),
     'the row delete button',
   );
 
-  // The header ✕ rode the same overflow off-screen; it has to be tappable too.
+  // The header ✕ rode the same overflow off-screen.
   const closeButton = dialog.getByRole('button', { name: 'close', exact: true });
   await expectFullyWithinViewport(page, closeButton, 'the dialog close button');
   await closeButton.tap();
@@ -213,8 +182,7 @@ test('the create-site dialog blocks a taken site id at 390px', async ({ page }) 
   await createDialog.getByRole('button', { name: /customize site id/i }).click();
   await createDialog.locator('#site-id').fill(TAKEN_SITE_ID);
 
-  // Debounced availability check resolves → "taken" → inline error + the
-  // submit button stays disabled, all inside the viewport.
+  // Debounced check resolves to "taken": inline error, submit stays disabled, all in view.
   await expect(createDialog.getByText(/already taken/i)).toBeVisible({ timeout: 5_000 });
   await expect(createDialog.getByRole('button', { name: /^create site$/i })).toBeDisabled();
   await assertNoHorizontalOverflow(page);

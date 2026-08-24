@@ -9,11 +9,9 @@ export interface AppStatesStore {
   error: string | null
   reload: () => void
   /**
-   * Read the table straight from disk.
-   *
-   * Kill and restart resolve a pid through this rather than through the cached
-   * copy: a watcher event is milliseconds behind the service, and acting on a
-   * pid that has already been recycled is how a UI kills the wrong process.
+   * Read straight from disk. Kill and restart resolve pids through this, not the cached copy — a
+   * watcher event lags the service by milliseconds, and a recycled pid is how a UI kills the
+   * wrong process.
    */
   read: () => Promise<AppStates>
   /** Read-modify-write the table — used only to stamp the operator's own markers. */
@@ -25,12 +23,9 @@ function message(error: unknown): string {
 }
 
 /**
- * `tmp/app_states.json`, watched rather than polled.
- *
- * The service rewrites this file every time a process changes state, which is
- * what makes the dots live without a timer anywhere in this app. A read that
- * fails (the file is being replaced as we look at it) keeps the last table:
- * dropping to an empty one would blink every dot to inactive.
+ * `tmp/app_states.json`, watched rather than polled — the service rewrites it on every state
+ * change, which is what makes the dots live without a timer. A failed read (file being replaced
+ * mid-look) keeps the last table; dropping to empty would blink every dot to inactive.
  */
 export function useAppStates(): AppStatesStore {
   const [states, setStates] = useState<AppStates>({})

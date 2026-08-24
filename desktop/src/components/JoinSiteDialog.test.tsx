@@ -24,6 +24,26 @@ const PHRASE: AgentEvent = {
   },
 }
 
+/** The same phrase, minted by production — the unbadged, unlabelled default. */
+const PROD_PHRASE: AgentEvent = {
+  event: 'phrase',
+  value: {
+    pairPhrase: 'silver-compass-drift',
+    pairingUrl: 'https://owlette.app/add?code=silver-compass-drift',
+    verificationUri: 'https://owlette.app/add',
+    expiresIn: 600,
+  },
+}
+
+/**
+ * A phrase carrying no URLs at all: `parseAgentLine` defaults both fields to ''
+ * when an older helper omits them, and the copy has to survive that.
+ */
+const HOSTLESS_PHRASE: AgentEvent = {
+  event: 'phrase',
+  value: { pairPhrase: 'silver-compass-drift', pairingUrl: '', verificationUri: '', expiresIn: 600 },
+}
+
 function fakeRun() {
   let emit: (event: AgentEvent) => void = () => {}
   let finish: (outcome: { code: number | null; terminal: null; stderr: string }) => void = () => {}
@@ -110,7 +130,9 @@ describe('JoinSiteDialog', () => {
     await open()
     run.emit(PHRASE)
 
-    fireEvent.click(screen.getByRole('button', { name: /open owlette.app\/add/ }))
+    // The label names the host the button actually opens. It used to say
+    // `owlette.app/add` over a dev URL — the field bug this dialog now guards.
+    fireEvent.click(screen.getByRole('button', { name: /open dev\.owlette\.app\/add/ }))
     expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(
       'https://dev.owlette.app/add?code=silver-compass-drift',
     )
@@ -127,18 +149,33 @@ describe('JoinSiteDialog', () => {
     expect(screen.getByTestId('join-status').textContent).toContain('the service is restarting')
   })
 
-  it('tells the operator to restart the service when the helper could not', async () => {
+  it('does not demand a restart the operator does not need', async () => {
     const run = fakeRun()
     await open()
 
     run.emit(PHRASE)
-    // NSSM needs rights a standard user does not have; pairing still worked, so
-    // the machine is one restart away from showing up rather than silently absent.
+    // The de-elevated app usually lacks SERVICE_STOP, so this is the normal
+    // path — and it needs no restart: the running service re-reads the firebase
+    // config every second main-loop iteration and reconnects on its own.
     run.emit({ event: 'authorized', value: { siteId: 'default_site', serviceRestarted: false } })
 
-    expect(screen.getByTestId('join-status').textContent).toContain(
-      'restart the service from the tray menu',
+    expect(screen.getByTestId('join-status').textContent).toBe(
+      'paired — this machine will appear on your dashboard shortly',
     )
+  })
+
+  it('drops the approve instruction once the machine is paired', async () => {
+    const run = fakeRun()
+    await open()
+
+    run.emit(PHRASE)
+    expect(screen.queryByText(/approve this machine at/)).not.toBeNull()
+
+    run.emit({ event: 'authorized', value: { siteId: 'default_site', serviceRestarted: false } })
+
+    // The stale next step is gone, replaced by where the machine actually went.
+    expect(screen.queryByText(/approve this machine at/)).toBeNull()
+    expect(screen.queryByText(/it will appear on your dashboard at/)).not.toBeNull()
   })
 
   it('kills the helper when the dialog closes — the code is left to expire', async () => {
@@ -174,5 +211,90 @@ describe('JoinSiteDialog', () => {
     await open()
 
     expect(screen.getByTestId('join-error').textContent).toContain('python interpreter is missing')
+  })
+
+  it('names the dev host in both the description and the button, and badges it', async () => {
+    const run = fakeRun()
+    await open()
+    run.emit(PHRASE)
+
+    expect(screen.getByTestId('join-site-dialog').textContent).toContain(
+      'approve this machine at dev.owlette.app/add — from here or from any other device.',
+    )
+    expect(screen.getByTestId('join-environment').textContent).toBe('dev')
+    expect(screen.getByRole('button', { name: /open dev\.owlette\.app\/add/ })).not.toBeNull()
+  })
+
+  it('names production plainly and badges nothing — an unbadged app is the real fleet', async () => {
+    const run = fakeRun()
+    await open()
+    run.emit(PROD_PHRASE)
+
+    expect(screen.getByTestId('join-site-dialog').textContent).toContain(
+      'approve this machine at owlette.app/add — from here or from any other device.',
+    )
+    expect(screen.queryByTestId('join-environment')).toBeNull()
+    expect(screen.getByRole('button', { name: /open owlette\.app\/add/ })).not.toBeNull()
+  })
+
+  it('names no host before a phrase exists rather than guessing one', async () => {
+    fakeRun()
+    await open()
+
+    expect(screen.getByTestId('join-site-dialog').textContent).toContain(
+      'approve this machine from here or from any other device.',
+    )
+    expect(screen.getByTestId('join-site-dialog').textContent).not.toContain('owlette.app/add')
+    expect(screen.queryByTestId('join-environment')).toBeNull()
+    expect(screen.queryByRole('button', { name: /owlette\.app/ })).toBeNull()
+  })
+
+  it('borrows the requested server for the copy while the phrase is still in flight', async () => {
+    fakeRun()
+    await open({ server: 'dev' })
+
+    expect(screen.getByTestId('join-site-dialog').textContent).toContain(
+      'approve this machine at dev.owlette.app/add',
+    )
+    expect(screen.getByTestId('join-environment').textContent).toBe('dev')
+  })
+
+  it('degrades the button label when the phrase carries no URL', async () => {
+    const run = fakeRun()
+    await open()
+    run.emit(HOSTLESS_PHRASE)
+
+    expect(screen.getByRole('button', { name: /open pairing page/ })).not.toBeNull()
+    expect(screen.queryByTestId('join-environment')).toBeNull()
+  })
+
+  it('pairs against the server the installer asked for', async () => {
+    fakeRun()
+    await open({ server: 'dev' })
+
+    expect(startAgentRun).toHaveBeenCalledWith('join', expect.objectContaining({ server: 'dev' }))
+  })
+
+  it('names no server when nothing asked for one — the config keeps its own', async () => {
+    fakeRun()
+    await open()
+
+    const options = startAgentRun.mock.calls[0][1] as { server?: string }
+    expect(options.server).toBeUndefined()
+  })
+
+  it('restarts the run when the server changes — a different cloud is a different phrase', async () => {
+    const run = fakeRun()
+    const { view } = await open({ server: 'dev' })
+    expect(startAgentRun).toHaveBeenCalledTimes(1)
+
+    view.rerender(<JoinSiteDialog open server="prod" onClose={vi.fn()} onJoined={vi.fn()} />)
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(run.cancel).toHaveBeenCalled()
+    expect(startAgentRun).toHaveBeenCalledTimes(2)
+    expect(startAgentRun.mock.calls[1][1]).toEqual(expect.objectContaining({ server: 'prod' }))
   })
 })

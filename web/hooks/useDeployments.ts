@@ -139,9 +139,8 @@ export function useDeploymentTemplates(siteId: string) {
 }
 
 export function useDeployments(siteId: string) {
-  // Status reconciliation and command fan-out now live behind server APIs.
-  // This hook keeps only the read-side subscription and calls API routes for
-  // mutations.
+  // Read-side subscription only; status reconciliation and command fan-out live
+  // behind server APIs, which the mutations call.
   const [state, setState] = useState<{
     deployments: Deployment[];
     loadedSiteId: string | null;
@@ -188,10 +187,9 @@ export function useDeployments(siteId: string) {
       },
       (err) => {
         console.error('Error fetching deployments:', err);
-        // Pin loadedSiteId on the error path too. onSnapshot's error callback
-        // ends the subscription, so leaving it unset held `loading` true
-        // forever — the page then rendered a permanent spinner and never
-        // reached its error branch, because `loading` is checked first.
+        // Pin loadedSiteId on the error path too: onSnapshot's error callback ends
+        // the subscription, so leaving it unset held `loading` true forever and the
+        // page rendered a permanent spinner instead of its error branch.
         setState({ deployments: [], loadedSiteId: siteId, error: err.message });
       }
     );
@@ -240,12 +238,10 @@ export function useDeployments(siteId: string) {
   };
 
   /**
-   * Re-queue install commands for failed targets on an existing deployment.
-   * `machineIds` narrows the retry to specific machines (per-row retry);
-   * omitted → all failed targets. The server self-heals a missing
-   * sha256_checksum by computing it from the installer URL, so legacy
-   * deployments retry cleanly (the call may take a while for large
-   * installers while the server streams + hashes).
+   * Re-queue install commands for failed targets. `machineIds` narrows to
+   * specific machines; omitted → all failed targets. The server self-heals a
+   * missing sha256_checksum from the installer URL, so legacy deployments retry
+   * cleanly (slow for large installers — the server streams and hashes).
    */
   const retryDeployment = async (deploymentId: string, machineIds?: string[]) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
@@ -325,7 +321,7 @@ export function useDeployments(siteId: string) {
   };
 }
 
-// Convenience hook to get both templates and deployments
+// Templates + deployments in one call.
 export function useDeploymentManager(siteId: string) {
   const templates = useDeploymentTemplates(siteId);
   const deployments = useDeployments(siteId);

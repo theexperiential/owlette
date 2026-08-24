@@ -1,24 +1,13 @@
 /**
- * Admin — agent tokens page (C3.5)
+ * Admin — agent tokens page.
  *
- * Agent tokens are stored at the root collection `agent_refresh_tokens`
- * and filtered by the `siteId` field (not a subcollection). The page
- * reads through `/api/sites/{siteId}/agent-tokens` and revokes via
- * POST `/api/sites/{siteId}/agent-tokens/revoke`.
+ * Tokens live in the ROOT `agent_refresh_tokens` collection filtered by the
+ * `siteId` field (not a subcollection). The page reads
+ * `/api/sites/{siteId}/agent-tokens` and revokes via .../revoke.
  *
- * Covered:
- *   - list rendering — seeded tokens appear in the table with machineId,
- *     version, created date, and the "Never expires" / expiring-soon
- *     badge
- *   - empty state — a site with no tokens shows the "no active tokens"
- *     message and no "revoke all" affordance
- *   - revoke single — per-row revoke → confirmation dialog → toast +
- *     row gone + Admin SDK verifies the specific token doc deleted
- *   - revoke all — "revoke all" → confirmation → toast + table empty +
- *     Admin SDK verifies every token with that siteId is gone
- *
- * The page has no create-token UI (tokens are minted by the agent
- * device-code pairing flow), so there's nothing to test there.
+ * Covers list rendering, empty state, revoke-single and revoke-all (each
+ * verified against the Admin SDK). No create-token UI exists — tokens are
+ * minted by the agent device-code pairing flow.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -80,9 +69,9 @@ test.beforeEach(async () => {
 
 async function gotoTokensForSeededSite(page: Page) {
   await page.goto('/admin/tokens');
-  // Bumped to 10s because RequireSuperadmin renders a "verifying permissions..."
-  // gate while AuthContext hydrates against the auth emulator; the default 5s
-  // expect timeout occasionally races that hydration on cold-emulator runs.
+  // 10s: RequireSuperadmin shows a "verifying permissions..." gate while
+  // AuthContext hydrates against the auth emulator, and the default 5s races
+  // that on cold-emulator runs.
   await expect(
     page.getByRole('heading', { name: 'agent tokens', exact: true }),
   ).toBeVisible({ timeout: 10_000 });

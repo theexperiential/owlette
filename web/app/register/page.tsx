@@ -32,52 +32,32 @@ export default function RegisterPage() {
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [loading, setLoading] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState('');
-  /**
-   * Progressive disclosure for the email path. Collapsed by default so Google
-   * is the visually dominant option; latches open on first email focus and
-   * never closes, so a partly-filled form can't collapse mid-entry.
-   */
+  // Collapsed so Google dominates; latches open on first email focus and never
+  // closes, so a partly-filled form can't collapse mid-entry.
   const [emailFormOpen, setEmailFormOpen] = useState(false);
-  /**
-   * Set when Google sign-in fails because the browser refused the popup. Covers
-   * the webviews the user-agent doesn't identify, plus ordinary browsers with a
-   * popup blocker — so the remediation appears even when detection said no.
-   */
+  // Popup refused: covers unidentified webviews and ordinary popup blockers, so
+  // the remediation shows even when detection said no.
   const [popupBlocked, setPopupBlocked] = useState(false);
-  /**
-   * Set when signup fails because the email already has an account. Rendered
-   * inline with a route to /login — see the catch in handleRegister.
-   */
+  // Email already registered — rendered inline with a route to /login.
   const [existingAccount, setExistingAccount] = useState(false);
-  /** Field-targeted validation — see hooks/useFieldError.ts. Marks the
-   *  offending input invalid (red outline) and focuses it, as well as showing
-   *  the message; a message alone does not say WHERE to fix it. */
+  // Marks the offending input invalid and focuses it — a message alone does not
+  // say WHERE to fix it.
   const { error: formError, fail, clear: clearError, fieldProps } = useFieldError('register-form-error');
   const turnstileRef = useRef<TurnstileHandle>(null);
-  /**
-   * Latched for the rest of this page's life once a sign-in starts here, so the
-   * guard below cannot pre-empt our own post-signup navigation. A ref, not the
-   * `loading` state above: `loading` is cleared in the handlers' `finally`,
-   * which runs while the push to /setup-2fa is still in flight.
-   */
+  // Latches once sign-in starts so the guard below can't pre-empt our own
+  // post-signup navigation. A ref, not `loading`: `loading` clears in `finally`,
+  // which runs while the push to /setup-2fa is still in flight.
   const authInFlight = useRef(false);
   const { signUp, signInWithGoogle } = useAuth();
   const inApp = useInAppBrowser();
   const router = useRouter();
 
-  // A signed-in user has no business on the signup form — see the hook. The
-  // proxy rule this mirrors is bypassed entirely by client-side history pops.
+  // Mirrors a proxy rule that client-side history pops bypass entirely.
   useRedirectIfAuthenticated({ skip: authInFlight.current });
 
-  /**
-   * Google is unavailable — either we recognised the host app before the user
-   * spent a tap on it, or the popup was refused when they did.
-   */
   const googleUnavailable = inApp.isInApp || popupBlocked;
-  /**
-   * Force the email path open when Google is out, rather than leaving the
-   * fallback we're pointing at collapsed behind a focus interaction.
-   */
+  // Force the email path open when Google is out — don't leave the fallback
+  // we're pointing at collapsed behind a focus interaction.
   const emailExpanded = emailFormOpen || googleUnavailable;
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -85,8 +65,7 @@ export default function RegisterPage() {
     clearError();
     setExistingAccount(false);
 
-    // Empty-field checks are ours now: the form is noValidate, so the browser's
-    // native bubble no longer fires (and never could be styled to match).
+    // noValidate form: the browser's native bubble no longer fires.
     if (!email.trim()) {
       return fail('email', 'enter your email address');
     }
@@ -118,29 +97,21 @@ export default function RegisterPage() {
     try {
       await signUp(email, password, firstName, lastName, turnstileToken);
       toast.success('account created successfully!');
-      // 2FA setup is mandatory for new users. /setup-2fa is proxy-protected, so
-      // this races the session cookie exactly like the Google path did — less
-      // often, because signUp awaits a profile update and the bootstrap POST
-      // first, and it self-heals (a fresh session has no MFA, so the proxy
-      // sends them straight back). Resolving narrows the window rather than
-      // closing it: if the cookie still is not there after the retry budget,
-      // the helper returns the fallback and the bounce happens anyway.
+      // /setup-2fa is proxy-protected, so this races the session cookie.
+      // Resolving narrows the window; it self-heals either way (a fresh session
+      // has no MFA, so the proxy sends them back here).
       router.push(await resolvePostSignInPath('/setup-2fa'));
     } catch (error) {
-      // Already have an account? That is not a validation failure to scold the
-      // user for — it is a wrong turn with an obvious next step. Render it
-      // inline with a route to sign in rather than a toast that expires and
-      // leaves them on a form that will never succeed.
+      // Not a validation failure — render inline with a route to sign in, not a
+      // toast that expires and leaves them on a form that can't succeed.
       if ((error as { code?: unknown } | null)?.code === 'auth/email-already-in-use') {
         setExistingAccount(true);
       } else {
         toast.error(sanitizeError(error));
       }
-      // Nobody was signed in, so re-arm the guard: this page stays mounted, and
-      // the session could still change under it (signing in from another tab).
+      // Re-arm the guard: the page stays mounted and another tab could sign in.
       authInFlight.current = false;
-      // Turnstile tokens are single-use. The page stays mounted after a failed
-      // submit, so the consumed token has to be cleared before a retry.
+      // Turnstile tokens are single-use; clear the consumed one before a retry.
       turnstileRef.current?.reset();
     } finally {
       setLoading(false);
@@ -148,11 +119,8 @@ export default function RegisterPage() {
   };
 
   const handleGoogleSignup = async () => {
-    // No agreedToTerms gate here. The explicit checkbox lives inside the email
-    // form, so it is not reachable on the Google path; consent for that path is
-    // given by the notice rendered directly beneath the Google button
-    // ("by continuing you agree to..."), which is the standard pattern for
-    // federated sign-up. Both paths still surface the same two links.
+    // No agreedToTerms gate: the checkbox lives in the email form, so consent on
+    // this path comes from the notice under the Google button.
     const alreadyBlocked = googleUnavailable;
     authInFlight.current = true;
     setLoading(true);
@@ -160,31 +128,25 @@ export default function RegisterPage() {
     try {
       const result = await signInWithGoogle();
 
-      // Google OAuth signs in and signs up through the same popup, so landing
-      // here does NOT mean an account was created — a user who already had one
-      // has simply been logged in, which is what they wanted anyway. Claiming
-      // "account created" at them was the misleading part.
+      // One popup serves sign-in and sign-up, so landing here does NOT mean an
+      // account was created.
       toast.success(
         result?.isNewUser
           ? 'account created with Google!'
           : 'welcome back — signing you in',
       );
 
-      // Must resolve the landing rather than pushing /dashboard blind: the
-      // session cookie is minted asynchronously, and racing it is what sent
-      // users to /login?redirect=%2Fdashboard looking like a failed sign-in.
-      // New users are routed onward to /setup-2fa by the dashboard itself.
+      // Resolve, don't push /dashboard blind: the session cookie is minted
+      // asynchronously and racing it sent users to /login?redirect=%2Fdashboard.
       router.push(await resolvePostSignInPath('/dashboard'));
     } catch (error) {
-      // Nobody was signed in — re-arm the guard. See the email path above.
       authInFlight.current = false;
-      // A refused popup is not a transient failure to be re-tried — it is an
-      // environment that cannot do federated sign-in at all. Swap in the
-      // inline remediation instead of a toast that expires with no next step.
+      // A refused popup means this environment can't do federated sign-in at
+      // all — show the inline remediation, not an expiring toast.
       if (isPopupUnavailableError(error)) {
         setPopupBlocked(true);
-        // If the notice was already on screen, the user got here via "try
-        // google anyway" — nothing visible would change, so say so explicitly.
+        // Notice already on screen means they used "try google anyway" — nothing
+        // visible would change, so say so.
         if (alreadyBlocked) {
           toast.error('google sign-in is still blocked in this browser');
         }
@@ -198,23 +160,16 @@ export default function RegisterPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center p-4 pb-32">
-      {/* Grid background */}
       <div className="absolute inset-0 dot-grid opacity-30" />
       <div className="absolute inset-0 blueprint-grid opacity-15" />
-      {/* Two columns from md up: brand on the left, the actual work on the
-          right. Below md it stacks back to the original single column, so the
-          form is never squeezed on a phone. */}
       {/* max-w-4xl, not 3xl: splitting a 3xl card in two left the form column
-          narrower than the original single-column card, which made the terms
-          line wrap mid-phrase. 4xl keeps each column wider than the old form. */}
+          narrower than the old single-column card and wrapped the terms line
+          mid-phrase. */}
       <Card className="relative z-10 w-full max-w-md overflow-hidden border-border bg-card p-0 md:max-w-4xl">
         <div className="grid md:grid-cols-2">
-          {/* Brand panel = hero, not a second grey. Same fill as the form
-              column — near-identical flat fills sharing an edge read as a
-              mistake — so the difference is carried by KIND instead of degree:
-              the brand dot-grid texture plus a radial vignette easing to
-              --card-recessed at the corners. The column border remains the
-              single boundary encoding. */}
+          {/* Same fill as the form column on purpose — near-identical flat
+              fills sharing an edge read as a mistake, so the difference is
+              texture (dot-grid + vignette), not tone. */}
           <CardHeader className="relative flex flex-col items-center justify-center space-y-4 p-8 text-center md:h-full md:border-r md:border-border">
             <div className="dot-grid absolute inset-0 -z-10 opacity-25" aria-hidden="true" />
             <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(120%_120%_at_50%_50%,transparent_35%,var(--card-recessed)_100%)]" aria-hidden="true" />
@@ -226,18 +181,10 @@ export default function RegisterPage() {
               </CardDescription>
             </div>
           </CardHeader>
-          {/* space-y-6 separates the major blocks (google group / divider /
-              form / sign-in). Tighter spacing inside each group is set locally
-              so related controls stay visually attached. */}
           <CardContent className="space-y-6 bg-card p-8">
-          {/* Google first: it is the fastest path, it needs no password, and it
-              skips the Turnstile challenge entirely (the server only gates
-              password-provider signups). Showing the full email form up front
-              buried it below six inputs. */}
-          {/* Google is swapped out entirely when the browser can't run it —
-              an in-app webview, or a popup that was refused when tried. The
-              notice carries its own "try google anyway" escape, so nothing is
-              actually removed; detection only reorders and explains. */}
+          {/* Google first: fastest path, no password, and it skips Turnstile
+              (the server only gates password signups). Swapped for a notice
+              when the browser can't run it; the notice keeps a "try anyway". */}
           {googleUnavailable ? (
             <InAppBrowserNotice
               isInApp={inApp.isInApp}
@@ -247,8 +194,6 @@ export default function RegisterPage() {
               tryAnywayDisabled={loading}
             />
           ) : (
-          /* Button + its consent notice are one group, so they stay tight to
-              each other while space-y-6 pushes the next section away. */
           <div className="space-y-2">
           <Button
             type="button"
@@ -278,13 +223,9 @@ export default function RegisterPage() {
             continue with Google
           </Button>
 
-          {/* Consent for the Google path. The explicit checkbox lives inside
-              the email form, which a Google user never opens, so without this
-              that path would carry no terms notice at all. */}
-          {/* text-balance evens the two lines instead of letting the trailing
-              link drop alone. Needed because the links are whitespace-nowrap
-              (so "terms of service" can't split mid-phrase), which without
-              balancing leaves "privacy policy" orphaned on its own line. */}
+          {/* The only terms notice a Google user ever sees — they never open the
+              email form's checkbox. text-balance is required: the links are
+              whitespace-nowrap, which otherwise orphans "privacy policy". */}
           <p className="text-balance text-center text-xs text-muted-foreground leading-snug">
             by continuing you agree to the{' '}
             <Link href="/terms" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
@@ -298,12 +239,10 @@ export default function RegisterPage() {
           </div>
           )}
 
-          {/* "or" only makes sense when there are two live options. With Google
-              out, the email form is the path, not an alternative to one. */}
+          {/* "or" needs two live options; with Google out there is only one. */}
           {!googleUnavailable && (
-            /* -mx-8 cancels CardContent's p-8 so the rule runs edge to edge of
-                the column instead of floating inset. Card is overflow-hidden, so
-                the bleed can't create a horizontal scrollbar. */
+            /* -mx-8 cancels CardContent's p-8 so the rule bleeds edge to edge;
+                the card is overflow-hidden, so no horizontal scrollbar. */
             <div className="relative -mx-8">
               <div className="absolute inset-0 flex items-center">
                 <span className="w-full border-t border-border" />
@@ -326,9 +265,7 @@ export default function RegisterPage() {
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                // Focus reveals the rest of the form. Focus (not click) so
-                // keyboard tabbing expands it too, and it latches on so the
-                // fields never collapse out from under a partly-filled form.
+                // Focus, not click, so keyboard tabbing expands it too.
                 onFocus={() => setEmailFormOpen(true)}
                 required
                 disabled={loading}
@@ -404,10 +341,9 @@ export default function RegisterPage() {
                     disabled={loading}
                     className="mt-0.5 border-border data-[state=checked]:bg-accent-cyan data-[state=checked]:border-accent-cyan"
                   />
-                  {/* Label defaults to flex, which turns each inline child into
-                      a flex item and lets "terms of service" break mid-phrase
-                      in a narrow column. Force normal inline flow and keep each
-                      link atomic. */}
+                  {/* Label defaults to flex, which makes each inline child a
+                      flex item and breaks "terms of service" mid-phrase in a
+                      narrow column — force normal inline flow. */}
                   <Label htmlFor="terms" className="block text-balance text-sm text-muted-foreground leading-snug cursor-pointer">
                     i agree to the{' '}
                     <Link href="/terms" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
@@ -420,9 +356,8 @@ export default function RegisterPage() {
                   </Label>
                 </div>
 
-                {/* No justify-center wrapper: size:'flexible' spans its
-                    container, so centering a fixed-width child would defeat it
-                    and leave the widget floating narrower than the inputs. */}
+                {/* No justify-center wrapper: size:'flexible' already spans the
+                    container; centering would leave it narrower than the inputs. */}
                 <TurnstileWidget
                   action="register"
                   onToken={setTurnstileToken}
@@ -452,16 +387,9 @@ export default function RegisterPage() {
             )}
           </form>
 
-          {/* Extra top spacing + a divider so this doesn't read as part of the
-              form above it — it was easy to miss sitting flush under the
-              submit button. */}
-          {/* Full-bleed band: -mx-8/-mb-8 cancel CardContent's p-8 on three
-              sides so this owns its own spacing, then symmetric py-6 centers
-              the text within the band. Relying on the card's bottom padding
-              instead left 24px above the text and 32px below it, which read
-              as visually low. */}
-          {/* Hairline only — the fill experiment is retired. One signal per
-              boundary: the border plus symmetric py-6 does the separating. */}
+          {/* Full-bleed band: -mx-8/-mb-8 cancel CardContent's p-8 so symmetric
+              py-6 centers the text; the card's own bottom padding left it 24px
+              above / 32px below and read as low. Border only, no fill. */}
           <div className="-mx-8 -mb-8 border-t border-border px-8 py-6 text-center text-sm text-muted-foreground">
             already have an account?{' '}
             <a href="/login" className="font-medium hl-link text-accent-cyan">

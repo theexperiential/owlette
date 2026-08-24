@@ -1,15 +1,10 @@
 /**
- * Auth and inventory workflow:
- *   1. verify the token with /api/whoami and /api/version
- *   2. list visible sites
- *   3. list machines for the selected site
+ * Auth and inventory workflow: verify the token (/api/whoami, /api/version),
+ * list visible sites, then list machines for the selected site.
  *
- * Required env:
- *   OWLETTE_TOKEN
- *
- * Optional:
- *   OWLETTE_API_URL defaults to https://owlette.app
- *   OWLETTE_SITE_ID overrides the site selection
+ * Required: OWLETTE_TOKEN.
+ * Optional: OWLETTE_API_URL (https://owlette.app), OWLETTE_SITE_ID to override
+ * the site selection.
  */
 
 import { Owlette, OwletteApiError } from '@owlette/sdk';

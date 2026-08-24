@@ -1,33 +1,28 @@
 /**
- * metricsTabs — pure serialization helpers for MetricsDetailPanel's tab state.
+ * Pure serialization helpers for MetricsDetailPanel's tab state.
  *
- * Lives in its own file (no React / Recharts imports) so the dashboard can
- * import `serializeTabs` / `initialMetricToState` synchronously without pulling
- * the entire chart panel (and Recharts) into the main bundle. The heavy
- * `MetricsDetailPanel` component is code-split via `next/dynamic`; these
- * helpers stay eager because they run at click-time to compute the persisted
- * tab list before the panel even mounts.
+ * Kept React/Recharts-free in its own file so the dashboard can import
+ * `serializeTabs` / `initialMetricToState` eagerly — they run at click time,
+ * before the `next/dynamic` chart panel mounts — without dragging Recharts into
+ * the main bundle.
  */
 
 import type { MetricType } from './ChartTooltip';
 
-// Namespaced tab-id storage format. New entity types (per-GPU, per-disk, etc.)
-// slot in with a new prefix without any schema change; unknown prefixes are
-// silently ignored on read so older clients don't crash.
+// Namespaced tab ids: new entity types slot in with a new prefix, and unknown
+// prefixes are ignored on read so older clients don't crash.
 export const METRIC_PREFIX = 'metric:';
 export const NIC_PREFIX = 'nic:';
 export const DISK_PREFIX = 'disk:';
 export const GPU_PREFIX = 'gpu:';
-// Per-volume disk IO activity uses a `diskIO:{volumeId}` id format — one entry
-// per volume. When a volume is selected, the chart renders both read% and write%
-// lines; users don't toggle them independently. Simpler than the previous
-// per-channel sub-toggle scheme that produced UI-overload toggle lists.
+// `diskIO:{volumeId}`, one entry per volume: selecting a volume renders both
+// read% and write% lines, which are never toggled independently (the old
+// per-channel scheme produced overloaded toggle lists).
 export const DISK_IO_PREFIX = 'diskIO:';
 
-// Exhaustive map keyed by MetricType — TypeScript errors here if MetricType
-// gains a new member, forcing us to decide whether it should be persistable
-// as a graph tab. `false` entries are routed to their own panel (e.g. the
-// display topology panel) and never stored in `graphTabs`.
+// Exhaustive over MetricType so a new member is a type error until someone
+// decides whether it is persistable. `false` entries route to their own panel
+// and are never stored in `graphTabs`.
 const KNOWN_METRIC_MAP: Record<MetricType, boolean> = {
   cpu: true, memory: true, disk: true, gpu: true, cpuTemp: true, gpuTemp: true,
   display: false,
@@ -75,9 +70,8 @@ export function deserializeTabs(ids: string[] | undefined): TabSelection {
       gpus.push(id.slice(GPU_PREFIX.length));
     } else if (id.startsWith(DISK_IO_PREFIX)) {
       const rest = id.slice(DISK_IO_PREFIX.length);
-      // Strip any legacy `:channel` suffix from the v1 per-channel format —
-      // older persisted preferences had `diskIO:C::read`, etc. Now we just
-      // store volume ids; collapse duplicates from the legacy format.
+      // Strip the legacy per-channel suffix (`diskIO:C::read`) and collapse the
+      // duplicates it produces — only volume ids are stored now.
       const colonIdx = rest.lastIndexOf(':');
       const volumeId = colonIdx > 0 && colonIdx > rest.indexOf(':') ? rest.slice(0, colonIdx) : rest;
       if (volumeId && !diskIO.includes(volumeId)) diskIO.push(volumeId);

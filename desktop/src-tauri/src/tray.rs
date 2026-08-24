@@ -1,50 +1,34 @@
-//! System tray icon — the native replacement for `agent/src/owlette_tray.py`.
+//! System tray icon — native replacement for `agent/src/owlette_tray.py`.
 //!
-//! The service launches this app with `--tray` and expects a notification-area
-//! icon that survives with no window on screen, so the semantics here are ported
-//! from pystray rather than reinvented:
+//! Status = the SCM's view of `OwletteService` + `tmp/service_status.json`, read
+//! without the JSON mutex. A file older than 120 s means nothing is publishing;
+//! the SCM outranks the file in both directions.
 //!
-//! * **Status** comes from the SCM's view of `OwletteService` plus
-//!   `tmp/service_status.json`, read without the JSON mutex exactly like
-//!   `owlette_tray.read_service_status` (:234-293). A file older than 120 s
-//!   means the service is not publishing, and the SCM outranks the file in
-//!   both directions.
+//! Deliberate split: what the operator *reads* (tooltip, status rows) is always
+//! live and must agree with the window footer's `serviceHealth.deriveFooterState`;
+//! what the operator *sees* (icon flash, toasts) keeps the 60 s last-good
+//! fallback and the debounces so it does not flap on a torn read. Mixing the two
+//! is how the tooltip came to say "connected" while the footer, on the same
+//! screen, said "service not running on TEC-A4D".
 //!
-//!   What the operator *reads* — the tooltip and the four status rows — is
-//!   always live, and derives from those two inputs with the same semantics as
-//!   the window footer's `serviceHealth.deriveFooterState`. What the operator
-//!   *sees* — the icon's error flash and the toasts — keeps the 60 s last-good
-//!   fallback and the debounces below, whose purpose is not to flap on a read
-//!   that caught the service renaming the file. Mixing the two is how the
-//!   tooltip came to say "service: running / status: connected" while the
-//!   footer, on the same screen, said "service not running on TEC-A4D".
-//! * **Icon** encodes that status: amber when connected, dim when the cloud is
-//!   unreachable, and a red flash at 800 ms when the service is stopped or a
-//!   health probe failed (`owlette_tray._start_flash`, :46-76).
-//! * **Toasts** fire only after a degraded state has persisted for 5 s and only
-//!   once per episode, with a 10 s grace period after launch — the debounce that
-//!   stopped the python tray spamming during a service rewrite
-//!   (`_NOTIFY_DELAY`, :41-44 and :681-691).
+//! Toasts fire only after 5 s degraded, once per episode, with a 10 s grace
+//! after launch.
 //!
 //! Two deliberate departures from the python tray:
+//! * "start on login" manages the `{userstartup}` shortcut
+//!   ([`crate::startup_link`]) rather than the service start type — no UAC
+//!   prompt, and it cannot leave the machine unsupervised.
+//! * "restart service" leaves this app running; single-instance means the
+//!   service's post-restart launch folds back into this process.
 //!
-//! * "start on login" manages the `{userstartup}` shortcut (see
-//!   [`crate::startup_link`]) instead of the service start type, so it costs no
-//!   UAC prompt and cannot leave the machine unsupervised.
-//! * "restart service" leaves this app running. pystray had to stop its icon
-//!   because the service relaunched the tray as a fresh process; the desktop app
-//!   is a single instance, so the service's post-restart launch is folded back
-//!   into this one and the menu stays available throughout.
-//!
-//! Every menu action runs on its own short-lived thread. Menu events arrive on
-//! the main thread, and both the tray setters and the window setters marshal
-//! back to it, so doing the work inline would block the event loop for as long
-//! as an SCM call or a UAC prompt takes.
+//! Every menu action runs on its own thread: menu events arrive on the main
+//! thread and both the tray and window setters marshal back to it, so inline
+//! work would block the event loop for the length of an SCM call or UAC prompt.
 
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -70,21 +54,18 @@ const ID_RESTART: &str = "restart";
 const ID_START_ON_LOGIN: &str = "start_on_login";
 const ID_EXIT: &str = "exit";
 
-/// Icons, downsampled to 64 px from `agent/icons/*.png` — the same amber owl eye
-/// the python tray shows, so the notification area does not change appearance
-/// when a machine is upgraded. They are embedded rather than read from
-/// `{app}\agent\icons` so the app still has an icon when the agent tree is
-/// missing.
+/// 64 px downsamples of `agent/icons/*.png`. Embedded rather than read from
+/// `{app}\agent\icons` so the app still has an icon with no agent tree.
 const ICON_NORMAL: &[u8] = include_bytes!("../icons/tray/normal.png");
 const ICON_DISCONNECTED: &[u8] = include_bytes!("../icons/tray/disconnected.png");
 const ICON_ERROR: &[u8] = include_bytes!("../icons/tray/error.png");
 
-/// Monitor granularity. The two cadences below are multiples of it, so one
-/// thread drives both the status poll and the error flash.
+/// Monitor granularity; the cadences below are multiples of it, so one thread
+/// drives both the status poll and the error flash.
 const TICK: Duration = Duration::from_millis(200);
-/// Status re-read cadence (`owlette_tray.monitor_status` sleeps 1 s).
+/// Status re-read cadence.
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// Half-period of the error flash (`_start_flash` waits 0.8 s per swap).
+/// Half-period of the error flash.
 const FLASH_PERIOD: Duration = Duration::from_millis(800);
 /// How long a degraded state must persist before it is worth a toast.
 const NOTIFY_DELAY: Duration = Duration::from_secs(5);
@@ -92,8 +73,17 @@ const NOTIFY_DELAY: Duration = Duration::from_secs(5);
 const NOTIFY_GRACE: Duration = Duration::from_secs(10);
 /// How long a cached status document stays usable after a failed read.
 const STATUS_CACHE_TTL: Duration = Duration::from_secs(60);
-/// Pause between issuing the elevated stop and quitting, so the operator sees a
-/// clean transition rather than the icon vanishing first (`exit_action`, :557).
+/// How often the icon and tooltip are re-asserted even when nothing changed.
+/// Nothing tells us that the shell re-registered the icon behind our back, so
+/// this is the ceiling on how long a stale registration can stay on screen.
+const REASSERT_INTERVAL: Duration = Duration::from_secs(60);
+/// Consecutive refused writes before the retry drops to [`POLL_INTERVAL`].
+const REFUSAL_BACKOFF_AFTER: u32 = 10;
+/// How long the build-time status read may take before the tray is built from a
+/// placeholder instead.
+const SEED_TIMEOUT: Duration = Duration::from_millis(500);
+/// Pause between the elevated stop and quitting, so the operator sees a clean
+/// transition rather than the icon vanishing first.
 const EXIT_SETTLE: Duration = Duration::from_secs(2);
 
 /// Overall health, in the three buckets the icon can show.
@@ -117,25 +107,22 @@ impl StatusCode {
   }
 }
 
-/// Everything the tray displays, as one comparable value: recomputing it each
-/// second and diffing is what keeps the menu from being rebuilt 60 times a
-/// minute (the python tray rebuilt unconditionally).
+/// Everything the tray displays, as one comparable value: diffing it each second
+/// is what keeps the menu from being rebuilt 60 times a minute.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TrayView {
   code: StatusCode,
-  /// `service: running` / `service: stopped` / `service: error`.
+  /// `service: running` / `stopped` / `error`.
   service: String,
-  /// `status: connected to TEC` / `status: disconnected from TEC` /
-  /// `status: auth_error` / …
+  /// `status: connected to TEC` / `disconnected from TEC` / `auth_error` / …
   status: String,
-  /// Human-readable health-probe message, when there is one.
+  /// Health-probe message, when there is one.
   health: Option<String>,
   start_on_login: bool,
 }
 
-/// The live menu, kept so the common case is a text update rather than a
-/// rebuild. The whole menu is rebuilt only when the health row appears or
-/// disappears, because muda has no way to hide an item in place.
+/// Live menu, kept so the common case is a text update. Rebuilt only when the
+/// health row appears or disappears — muda cannot hide an item in place.
 struct TrayMenu {
   menu: Menu<Wry>,
   service: MenuItem<Wry>,
@@ -144,23 +131,202 @@ struct TrayMenu {
   start_on_login: CheckMenuItem<Wry>,
 }
 
-/// Managed state: the menu handles plus the monitor thread's stop flag.
+/// Managed state: the menu handles plus the monitor thread's flags.
 pub struct TrayState {
   menu: Mutex<TrayMenu>,
   stop: Arc<AtomicBool>,
+  repaint: Arc<AtomicBool>,
 }
 
-/// Build the tray icon and start the status monitor.
+/// What one tick's painting did. `Idle` and `Wrote` must stay distinct: reading
+/// "nothing needed writing" as "the write landed" made a flashing error state
+/// declare the shell recovered on every other half-period, and log a recovery
+/// plus a fresh warning 2.5 times a second for as long as the shell stayed down.
+#[derive(Debug)]
+enum PaintOutcome {
+  /// Already on screen.
+  Idle,
+  /// At least one write landed, and none were refused.
+  Wrote,
+  /// At least one write was refused; a partial tick counts as refused, so the
+  /// half that did not land is retried.
+  Refused(String),
+}
+
+/// Which icon a tick shows: the error state alternates with the normal icon to
+/// flash, the other two are solid.
+fn frame_for(code: StatusCode, flash_dim: bool) -> StatusCode {
+  if code == StatusCode::Error && flash_dim {
+    StatusCode::Normal
+  } else {
+    code
+  }
+}
+
+/// What the notification area is actually showing, as opposed to what the
+/// monitor last computed, and how hard we are still trying to change it.
 ///
-/// Called from `setup`, so a failure here is reported to the caller: a tray app
-/// with no tray icon has no way back to its window.
+/// Windows refuses every icon and tooltip write while the icon is not
+/// registered, and the service launches this app about a second into boot —
+/// before explorer.exe exists. `tray-icon` tolerates the failed add and
+/// re-registers on `TaskbarCreated` from its own cache, i.e. from the
+/// build-time bitmap, without replaying the writes it refused in between. So a
+/// write only counts once it has succeeded: recording the attempt is what
+/// latched the icon dim for the rest of the session after a boot.
+struct PaintState {
+  painted_icon: Option<StatusCode>,
+  painted_tooltip: Option<String>,
+  last_reassert: Instant,
+  /// Consecutive refusals, reset by any write that lands.
+  refusals: u32,
+  last_attempt: Option<Instant>,
+}
+
+impl PaintState {
+  fn new(now: Instant) -> Self {
+    Self {
+      painted_icon: None,
+      painted_tooltip: None,
+      last_reassert: now,
+      refusals: 0,
+      last_attempt: None,
+    }
+  }
+
+  /// One tick: paint the frame this state and flash phase call for, and log one
+  /// line per refusal streak — the retry runs five times a second.
+  fn tick<W: TrayWriter>(
+    &mut self,
+    writer: &mut W,
+    code: StatusCode,
+    flash_dim: bool,
+    tooltip: Option<&str>,
+    now: Instant,
+  ) -> PaintOutcome {
+    if !self.retry_due(now) {
+      return PaintOutcome::Idle;
+    }
+    self.last_attempt = Some(now);
+
+    let outcome = self.paint(writer, frame_for(code, flash_dim), tooltip);
+    match &outcome {
+      PaintOutcome::Refused(error) => {
+        if self.refusals == 0 {
+          log::warn!("the notification area refused a tray update: {error}");
+        }
+        self.refusals = self.refusals.saturating_add(1);
+      }
+      PaintOutcome::Wrote => {
+        if self.refusals > 0 {
+          log::info!("the notification area is taking tray updates again");
+        }
+        self.refusals = 0;
+      }
+      PaintOutcome::Idle => {}
+    }
+    outcome
+  }
+
+  /// Write whatever is not already on screen, remembering only what the shell
+  /// took.
+  fn paint<W: TrayWriter>(
+    &mut self,
+    writer: &mut W,
+    code: StatusCode,
+    tooltip: Option<&str>,
+  ) -> PaintOutcome {
+    let mut wrote = false;
+    let mut refusal = None;
+
+    if self.needs_icon(code) {
+      let result = writer.write_icon(code);
+      self.record_icon(code, result.is_ok());
+      match result {
+        Ok(()) => wrote = true,
+        Err(error) => refusal = refusal.or(Some(error)),
+      }
+    }
+
+    if let Some(text) = tooltip {
+      if self.needs_tooltip(text) {
+        let result = writer.write_tooltip(text);
+        self.record_tooltip(text, result.is_ok());
+        match result {
+          Ok(()) => wrote = true,
+          Err(error) => refusal = refusal.or(Some(error)),
+        }
+      }
+    }
+
+    match (refusal, wrote) {
+      (Some(error), _) => PaintOutcome::Refused(error),
+      (None, true) => PaintOutcome::Wrote,
+      (None, false) => PaintOutcome::Idle,
+    }
+  }
+
+  /// A `NIM_MODIFY` can never land if the `NIM_ADD` never did — a kiosk that
+  /// replaced explorer.exe never gets a notification area — so a streak that
+  /// long stops costing a PNG decode and a main-thread round trip five times a
+  /// second. The first refusals keep the tick cadence, so nothing is slower to
+  /// recover from an ordinary boot.
+  fn retry_due(&self, now: Instant) -> bool {
+    if self.refusals < REFUSAL_BACKOFF_AFTER {
+      return true;
+    }
+    self
+      .last_attempt
+      .map_or(true, |at| now.duration_since(at) >= POLL_INTERVAL)
+  }
+
+  fn needs_icon(&self, code: StatusCode) -> bool {
+    self.painted_icon != Some(code)
+  }
+
+  fn needs_tooltip(&self, tooltip: &str) -> bool {
+    self.painted_tooltip.as_deref() != Some(tooltip)
+  }
+
+  /// Only a write the shell took is remembered; a refusal leaves the last known
+  /// value alone, so the next tick asks again.
+  fn record_icon(&mut self, code: StatusCode, accepted: bool) {
+    if accepted {
+      self.painted_icon = Some(code);
+    }
+  }
+
+  fn record_tooltip(&mut self, tooltip: &str, accepted: bool) {
+    if accepted {
+      self.painted_tooltip = Some(tooltip.to_string());
+    }
+  }
+
+  /// Forget the screen, so the next tick paints both again.
+  fn invalidate(&mut self) {
+    self.painted_icon = None;
+    self.painted_tooltip = None;
+  }
+
+  /// True once per [`REASSERT_INTERVAL`].
+  fn reassert_due(&mut self, now: Instant) -> bool {
+    if now.duration_since(self.last_reassert) < REASSERT_INTERVAL {
+      return false;
+    }
+    self.last_reassert = now;
+    true
+  }
+}
+
+/// Build the tray icon and start the status monitor. Failure is fatal to the
+/// caller: a tray app with no tray icon has no way back to its window.
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
   let root = paths::data_root();
+  let seed = seed_status(&root);
   let view = TrayView {
-    code: StatusCode::Warning,
-    service: "service: checking...".to_string(),
-    status: "status: checking...".to_string(),
-    health: None,
+    code: seed.code,
+    service: seed.service,
+    status: seed.status,
+    health: seed.health,
     start_on_login: startup_link::is_enabled(),
   };
 
@@ -169,17 +335,16 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     .icon(icon_for(view.code))
     .tooltip(tooltip(&root, &view))
     .menu(&menu.menu)
-    // Left click opens the window; the menu is the right-click surface. Windows
-    // defaults to showing the menu on either button, which would leave the app
-    // with no one-click way back to its window.
+    // Windows defaults to the menu on either button; left click must open the
+    // window or there is no one-click way back to it.
     .show_menu_on_left_click(false)
     .build(app)?;
 
   tray.on_menu_event(|app, event| {
     let app = app.clone();
     let id = event.id().0.clone();
-    // Menu events arrive on the main thread and the handlers below block on the
-    // SCM, on a UAC prompt and on the tray setters (which marshal back here).
+    // Handlers block on the SCM, on UAC and on the tray setters (which marshal
+    // back to this, the main, thread).
     spawn_action("menu", move || handle_menu_event(&app, &id));
   });
 
@@ -196,21 +361,80 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
   });
 
   let stop = Arc::new(AtomicBool::new(false));
+  let repaint = Arc::new(AtomicBool::new(false));
   app.manage(TrayState {
     menu: Mutex::new(menu),
     stop: Arc::clone(&stop),
+    repaint: Arc::clone(&repaint),
   });
 
   let handle = app.clone();
   thread::Builder::new()
     .name("owlette-tray".into())
-    .spawn(move || monitor(handle, stop))?;
+    .spawn(move || monitor(handle, stop, repaint))?;
 
   Ok(())
 }
 
-/// Ask the monitor thread to stop. Called from `RunEvent::Exit`, before the app
-/// handle it holds is torn down.
+/// Status to build the tray from: a real read where the machine answers in
+/// time, because this is the icon `tray-icon` re-registers from if the
+/// notification area is not up yet, and a hardcoded "checking..." could outlive
+/// the check by a whole session.
+///
+/// Read on a thread of its own: the SCM call is unbounded, and on the setup
+/// path a wedged SCM would keep the whole app — tray, watchers, event loop —
+/// from ever coming up, where before it could only stall the monitor thread.
+/// Nothing joins the thread, so a wedged call leaks one thread rather than
+/// holding up the launch.
+fn seed_status(root: &Path) -> Status {
+  let (sender, receiver) = mpsc::channel();
+  let path = root.to_path_buf();
+  let spawned = thread::Builder::new()
+    .name("owlette-tray-seed".into())
+    .spawn(move || {
+      let running = service_ctl::status(&path.join(SERVICE_STATUS_REL))
+        .map(|status| status.running)
+        .unwrap_or(false);
+      let _ = sender.send(determine_status(&read_status_doc(&path), running));
+    });
+
+  if let Err(error) = spawned {
+    log::warn!("could not spawn the tray seed read: {error}");
+    return checking_status();
+  }
+
+  receiver.recv_timeout(SEED_TIMEOUT).unwrap_or_else(|_| {
+    log::warn!(
+      "the tray seed read did not answer in {} ms; building the tray from a placeholder",
+      SEED_TIMEOUT.as_millis()
+    );
+    checking_status()
+  })
+}
+
+/// The placeholder seed, for when the machine will not say. The monitor's first
+/// tick replaces it a second later.
+fn checking_status() -> Status {
+  Status {
+    code: StatusCode::Warning,
+    service: "service: checking...".to_string(),
+    status: "status: checking...".to_string(),
+    health: None,
+  }
+}
+
+/// Ask the monitor to repaint on its next tick. Belt and braces: the service
+/// relaunches us with `--tray` only when `tmp/tray.pid` is absent, which a live
+/// app always wrote, so this rarely fires in the field. Recovery rests on the
+/// monitor's retry and re-assert, not on this.
+pub fn request_repaint(app: &AppHandle) {
+  if let Some(state) = app.try_state::<TrayState>() {
+    state.repaint.store(true, Ordering::Relaxed);
+  }
+}
+
+/// Stop the monitor thread. Called from `RunEvent::Exit`, before the app handle
+/// it holds is torn down.
 pub fn shutdown(app: &AppHandle) {
   if let Some(state) = app.try_state::<TrayState>() {
     state.stop.store(true, Ordering::Relaxed);
@@ -242,9 +466,7 @@ pub fn hide_main_window(app: &AppHandle) {
   pid_file::remove(&paths::data_root(), GUI_PID_REL);
 }
 
-// ─── monitor ────────────────────────────────────────────────────────────────
-
-fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
+fn monitor(app: AppHandle, stop: Arc<AtomicBool>, repaint: Arc<AtomicBool>) {
   let root = paths::data_root();
   let started = Instant::now();
 
@@ -255,27 +477,31 @@ fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
   let mut flash_dim = false;
   let mut degraded_since: Option<Instant> = None;
   let mut degraded_notified = false;
+  let mut paint = PaintState::new(started);
+  let mut wanted_tooltip: Option<String> = None;
 
   while !stop.load(Ordering::Relaxed) {
     let now = Instant::now();
 
+    let asked = repaint.swap(false, Ordering::Relaxed);
+    let reassert = paint.reassert_due(now);
+    if asked || reassert {
+      paint.invalidate();
+    }
+
     if last_poll.map_or(true, |at| now.duration_since(at) >= POLL_INTERVAL) {
       last_poll = Some(now);
 
-      // Asked every poll rather than only when the document is missing: it is
-      // the one input that cannot be out of date, and the text below is not
-      // allowed to contradict it.
+      // Every poll, not only when the document is missing: it is the one input
+      // that cannot be out of date, and the text below may not contradict it.
       let scm_running = service_ctl::status(&root.join(SERVICE_STATUS_REL))
         .map(|status| status.running)
         .unwrap_or(false);
 
       let live = read_status_doc(&root);
-      // Two evaluations of the same rules over two documents, because the two
-      // halves of the tray answer to different masters. What the operator reads
-      // must be live: the tooltip and the status rows are the same claim the
-      // window footer makes and have to agree with it. What the operator sees
-      // — the icon's error flash, and the toasts — keeps the smoothing, whose
-      // whole purpose is to not flap on a read that caught a rename.
+      // Same rules, two documents: text must be live (it has to agree with the
+      // window footer); the icon/toast signal keeps the smoothing so it does
+      // not flap on a read that caught a rename.
       let text = determine_status(&live, scm_running);
       let signal = determine_status(&smoothed(&live, &mut cached_status), scm_running);
 
@@ -290,22 +516,19 @@ fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
       if current.as_ref() != Some(&view) {
         let previous = current.replace(view.clone());
         if previous.map(|view| view.code) != Some(view.code) {
-          // Restart the flash cycle from a known phase on every code change, so
-          // a transition into error shows the alert frame immediately.
+          // Reset the flash phase on every code change so a transition into
+          // error shows the alert frame immediately.
           flash_dim = false;
           last_flash = now;
-          set_icon(&app, view.code);
         }
-        apply(&app, &root, &view);
+        apply_menu(&app, &view);
+        wanted_tooltip = Some(tooltip(&root, &view));
       }
 
-      // Degraded-state debounce, ported from `monitor_status` and then
-      // narrowed (2026-08-14): only the ERROR tier toasts. A Warning — cloud
-      // unreachable while the service runs, which is what every routine
-      // restart looks like for a few seconds — shows in the icon and tooltip
-      // but never notifies; three queued toasts per restart taught us why.
-      // Recovery toasts only close a real Error episode, and only once the
-      // state is genuinely Normal again (not merely upgraded to Warning).
+      // Only the Error tier toasts (narrowed 2026-08-14): a Warning is what
+      // every routine restart looks like for a few seconds, and it produced
+      // three queued toasts per restart. Recovery toasts close a real Error
+      // episode only once the state is genuinely Normal, not merely Warning.
       match view.code {
         StatusCode::Normal => {
           if degraded_notified && now.duration_since(started) > NOTIFY_GRACE {
@@ -319,8 +542,7 @@ fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
           degraded_notified = false;
         }
         StatusCode::Warning => {
-          // Icon-only tier: Warning time never accrues toward an Error toast,
-          // and an open Error episode stays open until genuinely Normal.
+          // Icon-only tier: Warning time never accrues toward an Error toast.
           degraded_since = None;
         }
         StatusCode::Error => {
@@ -343,17 +565,22 @@ fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
       if now.duration_since(last_flash) >= FLASH_PERIOD {
         last_flash = now;
         flash_dim = !flash_dim;
-        set_icon(
-          &app,
-          if flash_dim {
-            StatusCode::Normal
-          } else {
-            StatusCode::Error
-          },
-        );
       }
     } else if flash_dim {
       flash_dim = false;
+    }
+
+    // One paint decision per tick, flash frames included, so a frame the shell
+    // refuses is retried on the next tick instead of skipped to the next
+    // half-period.
+    if let Some(view) = &current {
+      paint.tick(
+        &mut ShellWriter(&app),
+        view.code,
+        flash_dim,
+        wanted_tooltip.as_deref(),
+        now,
+      );
     }
 
     thread::sleep(TICK);
@@ -362,8 +589,10 @@ fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
   log::debug!("tray monitor stopped");
 }
 
-/// Push a view onto the tray: menu text (or a rebuild), then the tooltip.
-fn apply(app: &AppHandle, root: &Path, view: &TrayView) {
+/// Push a view onto the tray menu: item text, or a rebuild when the health row
+/// appears or disappears. The icon and tooltip go through [`PaintState::tick`] —
+/// they are the two writes the shell can refuse.
+fn apply_menu(app: &AppHandle, view: &TrayView) {
   let Some(tray) = app.tray_by_id(TRAY_ID) else {
     return;
   };
@@ -393,29 +622,53 @@ fn apply(app: &AppHandle, root: &Path, view: &TrayView) {
       }
     }
     Err(error) => log::error!("tray menu lock poisoned: {error}"),
+  };
+}
+
+/// The two writes the notification area can refuse, behind a trait so the tests
+/// drive the real paint logic rather than a copy of it.
+trait TrayWriter {
+  fn write_icon(&mut self, code: StatusCode) -> Result<(), String>;
+  fn write_tooltip(&mut self, text: &str) -> Result<(), String>;
+}
+
+/// The real thing: tauri's tray setters, which marshal to the main thread.
+struct ShellWriter<'a>(&'a AppHandle);
+
+impl TrayWriter for ShellWriter<'_> {
+  fn write_icon(&mut self, code: StatusCode) -> Result<(), String> {
+    set_icon(self.0, code)
   }
 
-  if let Err(error) = tray.set_tooltip(Some(tooltip(root, view))) {
-    log::warn!("could not set the tray tooltip: {error}");
+  fn write_tooltip(&mut self, text: &str) -> Result<(), String> {
+    set_tooltip(self.0, text)
   }
 }
 
-fn set_icon(app: &AppHandle, code: StatusCode) {
+fn set_icon(app: &AppHandle, code: StatusCode) -> Result<(), String> {
   let Some(tray) = app.tray_by_id(TRAY_ID) else {
-    return;
+    return Err("no tray icon to paint".to_string());
   };
-  if let Err(error) = tray.set_icon(Some(icon_for(code))) {
-    log::warn!("could not set the tray icon: {error}");
-  }
+  tray
+    .set_icon(Some(icon_for(code)))
+    .map_err(|error| format!("could not set the tray icon: {error}"))
+}
+
+fn set_tooltip(app: &AppHandle, text: &str) -> Result<(), String> {
+  let Some(tray) = app.tray_by_id(TRAY_ID) else {
+    return Err("no tray icon to paint".to_string());
+  };
+  tray
+    .set_tooltip(Some(text))
+    .map_err(|error| format!("could not set the tray tooltip: {error}"))
 }
 
 fn icon_for(code: StatusCode) -> Image<'static> {
-  // The bytes are compiled in and were decoded during the build of this file's
-  // tests, so a failure here is a packaging bug, not a runtime condition.
+  // Bytes are compiled in and decoded by this file's tests: a failure here is a
+  // packaging bug, not a runtime condition.
   Image::from_bytes(code.icon_bytes()).expect("embedded tray icon should decode")
 }
 
-// ─── status ─────────────────────────────────────────────────────────────────
 
 /// Outcome of one status evaluation.
 struct Status {
@@ -426,25 +679,23 @@ struct Status {
 }
 
 /// What `tmp/service_status.json` had to say, and whether it is worth believing.
-///
-/// The three failure shapes were collapsed into one `None` before, which is how
-/// a service that had stopped publishing came to read as "starting" forever.
+/// The three failure shapes must stay distinct: collapsing them into one `None`
+/// is how a service that had stopped publishing read as "starting" forever.
 #[derive(Clone, Debug, PartialEq)]
 enum StatusDoc {
-  /// A document written within the freshness window.
+  /// Written within the freshness window.
   Fresh(Value),
-  /// The file exists but has not been rewritten for over 120 s. The service
-  /// refreshes it on a 30 s throttle, so nothing is publishing.
+  /// Exists but not rewritten for over 120 s; the service refreshes on a 30 s
+  /// throttle, so nothing is publishing.
   Stale,
   /// No file at all — the service has not written one yet this run.
   Missing,
-  /// The file could not be parsed. Almost always a read that caught the
-  /// service renaming over it, and gone by the next tick.
+  /// Unparseable. Almost always a read that caught the service renaming over
+  /// it, and gone by the next tick.
   Unreadable,
 }
 
-/// Read `tmp/service_status.json` outside the JSON mutex, mirroring
-/// `owlette_tray.read_service_status`.
+/// Read `tmp/service_status.json` outside the JSON mutex.
 fn read_status_doc(root: &Path) -> StatusDoc {
   let path = root.join(SERVICE_STATUS_REL);
   let info = service_ctl::status_file_info(&path, SystemTime::now());
@@ -466,12 +717,8 @@ fn read_status_doc(root: &Path) -> StatusDoc {
 }
 
 /// The same document, with a torn read papered over by the last good one.
-///
-/// This is the only place [`STATUS_CACHE_TTL`] is still allowed to matter, and
-/// only the icon and the toasts may use the result: smoothing a sub-second
-/// re-read is worth it to keep the icon from flashing, but the same smoothing
-/// applied to the tooltip is what let it claim a connected service while the
-/// window footer — reading the SCM directly — said the service was not running.
+/// Only the icon and toasts may use the result — smoothing the tooltip is what
+/// let it claim a connected service while the footer said it was not running.
 fn smoothed(doc: &StatusDoc, cache: &mut Option<(Value, Instant)>) -> StatusDoc {
   match doc {
     StatusDoc::Fresh(value) => {
@@ -485,8 +732,8 @@ fn smoothed(doc: &StatusDoc, cache: &mut Option<(Value, Instant)>) -> StatusDoc 
         StatusDoc::Unreadable
       }
     },
-    // A missing or stale file is a verdict, not a failed read; there is nothing
-    // to smooth and holding on to the old document would only delay it.
+    // Missing or stale is a verdict, not a failed read; holding the old
+    // document would only delay it.
     _ => {
       *cache = None;
       doc.clone()
@@ -496,25 +743,16 @@ fn smoothed(doc: &StatusDoc, cache: &mut Option<(Value, Instant)>) -> StatusDoc 
 
 /// Map the SCM state and a status document onto the icon state and menu lines.
 ///
-/// Ported from `owlette_tray.determine_status` (:296-350) and then corrected on
-/// one point of policy: the SCM is consulted *first*, on every evaluation, not
-/// only when the document is missing. The old order let the document speak for
-/// a service it could not see, so a service that was terminated without writing
-/// its shutdown status kept the tray saying "service: running / status:
-/// connected" for the whole two-minute freshness window while the window footer
-/// said "service not running on <host>". They now answer the same question the
-/// same way — `serviceHealth.deriveFooterState` checks `isServiceDown` before
-/// anything else, and so does this.
-///
-/// After that the original precedence stands with one amendment: a failed
-/// health probe outranks everything *except a live cloud connection* — the
-/// health fields are a snapshot (the boot-time probe, or the last outage)
-/// while `firebase.connected` is the live fact, and an agent that predates
-/// the connect-clears-health fix can publish both at once. A stopped service
-/// outranks the cloud state, and firebase being switched off counts as an
-/// error because nothing is being monitored.
+/// Precedence, in order — do not reorder:
+/// 1. SCM says stopped wins over anything the document claims (a service killed
+///    without writing its shutdown status kept the tray saying "connected" for
+///    the whole two-minute freshness window). Matches `deriveFooterState`,
+///    which checks `isServiceDown` first.
+/// 2. A failed health probe outranks everything *except* a live cloud
+///    connection: health fields are a snapshot, `firebase.connected` is the
+///    live fact, and pre-connect-clears-health agents publish both at once.
+/// 3. firebase switched off is an error — nothing is being monitored.
 fn determine_status(doc: &StatusDoc, service_running: bool) -> Status {
-  // The SCM's verdict outranks the file's, in both directions.
   if !service_running {
     return Status {
       code: StatusCode::Error,
@@ -526,9 +764,8 @@ fn determine_status(doc: &StatusDoc, service_running: bool) -> Status {
 
   let data = match doc {
     StatusDoc::Fresh(data) => data,
-    // Running by the SCM, but nothing has been published for over two minutes:
-    // the same "running but wedged" the footer reports rather than a service
-    // that is merely slow to start.
+    // Running per the SCM but nothing published for two minutes: wedged, not
+    // slow to start — same verdict the footer reports.
     StatusDoc::Stale => {
       return Status {
         code: StatusCode::Error,
@@ -559,8 +796,7 @@ fn determine_status(doc: &StatusDoc, service_running: bool) -> Status {
     .and_then(|health| health.get("status"))
     .and_then(Value::as_str);
   if let Some(health_status) = health_status {
-    // A live connection disproves whatever the snapshot recorded — see the
-    // precedence note above. Only flash the error while it can still be true.
+    // A live connection disproves the snapshot; only flash while it can be true.
     if !matches!(health_status, "ok" | "unknown") && !connected {
       let error_code = health
         .and_then(|health| health.get("error_code"))
@@ -592,10 +828,8 @@ fn determine_status(doc: &StatusDoc, service_running: bool) -> Status {
     .and_then(|firebase| firebase.get("site_id"))
     .and_then(Value::as_str)
     .unwrap_or("");
-  // The site's display name, when the service has been able to resolve it.
-  // Same document, same write, so the two can never describe different sites —
-  // unlike the window, which has config.json as a second opinion and has to
-  // reconcile them (`serviceHealth.siteNameOf`).
+  // Same document as site_id, so the two can never describe different sites —
+  // unlike the window, which reconciles config.json as a second opinion.
   let site_name = firebase
     .and_then(|firebase| firebase.get("site_name"))
     .and_then(Value::as_str)
@@ -603,10 +837,8 @@ fn determine_status(doc: &StatusDoc, service_running: bool) -> Status {
     .unwrap_or(site_id);
 
   let paired = enabled && !site_id.is_empty();
-  // "connected to TEC" rather than a bare "connected": this row and the tooltip
-  // are the same claim the window footer makes ("TEC-A4D is connected to TEC"),
-  // and an operator comparing the two should read the same sentence. An
-  // unpaired machine names no site because there is none to name.
+  // "connected to TEC", not a bare "connected" — same sentence the window
+  // footer builds, so comparing the two reads as one claim.
   let firebase_msg = if !paired {
     "disabled".to_string()
   } else if connected {
@@ -635,8 +867,7 @@ fn determine_status(doc: &StatusDoc, service_running: bool) -> Status {
   }
 }
 
-/// Title and body for a degraded-state toast, mirroring
-/// `owlette_tray.send_status_notification` and `_HEALTH_ERROR_MESSAGES`.
+/// Title and body for a degraded-state toast.
 fn degraded_notification(view: &TrayView) -> (&'static str, String) {
   if view.code == StatusCode::Warning {
     return (
@@ -680,7 +911,6 @@ fn notify(app: &AppHandle, title: &str, body: String) {
   }
 }
 
-// ─── menu ───────────────────────────────────────────────────────────────────
 
 fn build_menu(app: &AppHandle, view: &TrayView) -> tauri::Result<TrayMenu> {
   let root = paths::data_root();
@@ -752,12 +982,9 @@ fn tooltip(root: &Path, view: &TrayView) -> String {
   )
 }
 
-/// Version of the agent this app is installed alongside.
-///
-/// The tray header is the operator's answer to "what is deployed on this box",
-/// which is the agent's version, not this crate's — they are released together
-/// but only the agent's is baked into the fleet's records. Falls back to the
-/// crate version when the agent tree is missing (a standalone dev run).
+/// Version of the agent this app sits alongside — that, not this crate's, is
+/// what the fleet records. Falls back to the crate version on a standalone dev
+/// run with no agent tree.
 fn agent_version(root: &Path) -> String {
   fs::read_to_string(root.join(AGENT_VERSION_REL))
     .map(|text| text.trim().to_string())
@@ -778,7 +1005,6 @@ fn truncate(text: &str, limit: usize) -> String {
   format!("{head}...")
 }
 
-// ─── actions ────────────────────────────────────────────────────────────────
 
 fn spawn_action<F>(label: &'static str, action: F)
 where
@@ -798,19 +1024,16 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
     ID_RESTART => restart_service(app),
     ID_START_ON_LOGIN => toggle_start_on_login(app),
     ID_EXIT => exit_owlette(app),
-    // The four header rows are disabled, so they never raise an event; anything
-    // else is a menu item someone added without a handler.
+    // Header rows are disabled and never fire; anything else is an item added
+    // without a handler.
     other => log::debug!("unhandled tray menu id: {other}"),
   }
 }
 
-/// Restart the service without a UAC prompt.
-///
-/// A running service is asked to exit 42 through `tmp/restart.flag`, which NSSM
-/// turns into an automatic restart. A *stopped* service cannot read the flag —
-/// there is no loop to read it — so it is started directly instead, which is the
-/// one path that can raise an elevation prompt (`owlette_tray.restart_service`,
-/// :443-511).
+/// Restart the service without a UAC prompt: a running agent is asked to exit
+/// 42 via `tmp/restart.flag`, which owlette-host turns into a relaunch. A
+/// stopped service has no loop to read the flag, so it is started directly —
+/// the one path here that can raise an elevation prompt.
 fn restart_service(app: &AppHandle) {
   let root = paths::data_root();
   let running = service_ctl::status(&root.join(SERVICE_STATUS_REL))
@@ -845,7 +1068,7 @@ fn restart_service(app: &AppHandle) {
 
   match written {
     Ok(()) => {
-      log::info!("restart flag written — the service will restart via NSSM");
+      log::info!("restart flag written — owlette-host will relaunch the agent");
       notify(
         app,
         "owlette — restarting",
@@ -872,8 +1095,8 @@ fn toggle_start_on_login(app: &AppHandle) {
     notify(app, "owlette — start on login", error);
   }
 
-  // muda toggles the tick itself on click, so resync it against what is actually
-  // on disk — otherwise a failed write leaves the menu lying.
+  // muda toggles the tick itself on click; resync against disk or a failed
+  // write leaves the menu lying.
   if let Some(state) = app.try_state::<TrayState>() {
     if let Ok(menu) = state.menu.lock() {
       let _ = menu.start_on_login.set_checked(startup_link::is_enabled());
@@ -881,13 +1104,11 @@ fn toggle_start_on_login(app: &AppHandle) {
   }
 }
 
-/// Quit owlette: stop supervising the machine, then quit the app.
-///
-/// Stopping the service is the point of this item — NSSM restarts the service on
-/// any process exit, so the only way to actually stop owlette is a controlled
-/// SCM stop, which needs rights this process usually lacks. We quit either way,
-/// matching `owlette_tray.exit_action`: if the operator declines the prompt the
-/// service stays up and relaunches the tray within its cooldown.
+/// Quit owlette: stop supervising the machine, then quit the app. owlette-host
+/// relaunches the agent on any unexpected exit, so the only real stop is a
+/// controlled SCM stop, which needs rights this process usually lacks. We quit
+/// either way — if the operator declines the prompt, the service relaunches the
+/// tray.
 fn exit_owlette(app: &AppHandle) {
   hide_main_window(app);
 
@@ -900,7 +1121,6 @@ fn exit_owlette(app: &AppHandle) {
   app.exit(0);
 }
 
-// ─── shutdown helper ────────────────────────────────────────────────────────
 
 /// Drop both pid markers. Called on `RunEvent::Exit`.
 pub fn clear_pid_markers() {
@@ -914,13 +1134,357 @@ mod tests {
   use super::*;
   use serde_json::json;
 
-  /// The SCM says the service is up, which is the precondition for the document
-  /// being consulted at all.
+  /// SCM says up — the precondition for the document being consulted at all.
   const RUNNING: bool = true;
   const STOPPED: bool = false;
 
   fn fresh(value: Value) -> StatusDoc {
     StatusDoc::Fresh(value)
+  }
+
+  /// Stand-in for the notification area, which refuses writes until the icon is
+  /// registered — the whole boot window, on a machine where the service starts
+  /// this app before explorer.exe.
+  struct FakeShell {
+    refusals: usize,
+    /// Refuse tooltips whatever `refusals` says: a tick where one write lands
+    /// and the other does not is what makes the outcome's precedence matter.
+    tooltips_refused: bool,
+    icons: Vec<StatusCode>,
+    tooltips: Vec<String>,
+    icon_on_screen: Option<StatusCode>,
+    tooltip_on_screen: Option<String>,
+  }
+
+  impl FakeShell {
+    fn new(refusals: usize) -> Self {
+      Self {
+        refusals,
+        tooltips_refused: false,
+        icons: Vec::new(),
+        tooltips: Vec::new(),
+        icon_on_screen: None,
+        tooltip_on_screen: None,
+      }
+    }
+
+    /// The `TaskbarCreated` moment.
+    fn accept(&mut self) {
+      self.refusals = 0;
+      self.tooltips_refused = false;
+    }
+
+    /// explorer.exe dying under a running tray.
+    fn refuse_everything(&mut self) {
+      self.refusals = usize::MAX;
+    }
+
+    fn refuses(&mut self) -> bool {
+      if self.refusals == 0 {
+        return false;
+      }
+      self.refusals -= 1;
+      true
+    }
+  }
+
+  impl TrayWriter for FakeShell {
+    fn write_icon(&mut self, code: StatusCode) -> Result<(), String> {
+      self.icons.push(code);
+      if self.refuses() {
+        return Err("the notification area is not registered".to_string());
+      }
+      self.icon_on_screen = Some(code);
+      Ok(())
+    }
+
+    fn write_tooltip(&mut self, text: &str) -> Result<(), String> {
+      self.tooltips.push(text.to_string());
+      if self.tooltips_refused || self.refuses() {
+        return Err("the notification area is not registered".to_string());
+      }
+      self.tooltip_on_screen = Some(text.to_string());
+      Ok(())
+    }
+  }
+
+  /// One monitor tick, through the real paint path: a solid frame, no tooltip.
+  fn tick(paint: &mut PaintState, shell: &mut FakeShell, code: StatusCode) -> PaintOutcome {
+    paint.tick(shell, code, false, None, Instant::now())
+  }
+
+  #[test]
+  fn only_the_error_state_flashes() {
+    assert_eq!(frame_for(StatusCode::Error, false), StatusCode::Error);
+    assert_eq!(frame_for(StatusCode::Error, true), StatusCode::Normal);
+    assert_eq!(frame_for(StatusCode::Normal, true), StatusCode::Normal);
+    assert_eq!(
+      frame_for(StatusCode::Warning, true),
+      StatusCode::Warning,
+      "a dim phase must never turn a disconnected tray green"
+    );
+  }
+
+  #[test]
+  fn a_refused_icon_is_retried_until_the_shell_takes_it() {
+    let mut paint = PaintState::new(Instant::now());
+    let mut shell = FakeShell::new(5);
+
+    for _ in 0..8 {
+      tick(&mut paint, &mut shell, StatusCode::Normal);
+    }
+
+    assert_eq!(shell.icon_on_screen, Some(StatusCode::Normal));
+    assert_eq!(
+      shell.icons.len(),
+      6,
+      "five refusals then the write that landed — and nothing after it"
+    );
+  }
+
+  #[test]
+  fn a_status_that_settles_while_the_shell_is_gone_still_reaches_the_screen() {
+    // The field incident: at boot the service starts this app about a second
+    // in, before explorer.exe, so every write is refused. The agent connects
+    // ~13 s later and the code never changes again. Painting only on a code
+    // change left the build-time dim icon on screen for the whole session.
+    let mut paint = PaintState::new(Instant::now());
+    let mut shell = FakeShell::new(usize::MAX);
+
+    for code in [StatusCode::Warning, StatusCode::Error, StatusCode::Normal] {
+      tick(&mut paint, &mut shell, code);
+    }
+    assert_eq!(
+      shell.icon_on_screen, None,
+      "nothing lands while the shell refuses"
+    );
+
+    shell.accept();
+    tick(&mut paint, &mut shell, StatusCode::Normal);
+
+    assert_eq!(
+      shell.icon_on_screen,
+      Some(StatusCode::Normal),
+      "the next tick must repaint without a status change to prompt it"
+    );
+  }
+
+  #[test]
+  fn a_tick_with_nothing_to_write_is_not_a_recovery() {
+    // Steady error under a dead shell: the flash half already on screen needs
+    // no write, and reading that as "the shell is back" logged a recovery and a
+    // fresh warning every 800 ms for as long as the machine stayed that way.
+    let mut paint = PaintState::new(Instant::now());
+    let mut shell = FakeShell::new(0);
+
+    assert!(matches!(
+      tick(&mut paint, &mut shell, StatusCode::Error),
+      PaintOutcome::Wrote
+    ));
+
+    shell.refuse_everything();
+    let dim = paint.tick(&mut shell, StatusCode::Error, true, None, Instant::now());
+    assert!(matches!(dim, PaintOutcome::Refused(_)));
+
+    let alert = paint.tick(&mut shell, StatusCode::Error, false, None, Instant::now());
+    assert!(
+      matches!(alert, PaintOutcome::Idle),
+      "a frame already on screen is not a write that landed"
+    );
+  }
+
+  #[test]
+  fn a_tick_that_only_half_landed_is_still_a_refusal() {
+    // Reading the icon's success as recovery would reset the streak and leave
+    // the tooltip stale.
+    let mut paint = PaintState::new(Instant::now());
+    let mut shell = FakeShell::new(0);
+    shell.tooltips_refused = true;
+
+    let outcome = paint.tick(
+      &mut shell,
+      StatusCode::Normal,
+      false,
+      Some("owlette"),
+      Instant::now(),
+    );
+
+    assert!(matches!(outcome, PaintOutcome::Refused(_)));
+    assert_eq!(
+      shell.icon_on_screen,
+      Some(StatusCode::Normal),
+      "the write that landed is kept"
+    );
+    assert_eq!(shell.tooltip_on_screen, None);
+
+    paint.tick(
+      &mut shell,
+      StatusCode::Normal,
+      false,
+      Some("owlette"),
+      Instant::now(),
+    );
+    assert_eq!(shell.icons.len(), 1, "only the refused half is retried");
+    assert_eq!(shell.tooltips.len(), 2);
+  }
+
+  #[test]
+  fn the_error_flash_paints_through_the_same_bookkeeping() {
+    let mut paint = PaintState::new(Instant::now());
+    let mut shell = FakeShell::new(1);
+    let frame = |paint: &mut PaintState, shell: &mut FakeShell, dim: bool| {
+      paint.tick(shell, StatusCode::Error, dim, None, Instant::now());
+    };
+
+    // A refused alert frame is retried on the next tick, not skipped to the
+    // next half-period.
+    frame(&mut paint, &mut shell, false);
+    frame(&mut paint, &mut shell, false);
+    assert_eq!(shell.icon_on_screen, Some(StatusCode::Error));
+
+    frame(&mut paint, &mut shell, true);
+    frame(&mut paint, &mut shell, true);
+    frame(&mut paint, &mut shell, false);
+
+    assert_eq!(
+      shell.icons,
+      vec![
+        StatusCode::Error,
+        StatusCode::Error,
+        StatusCode::Normal,
+        StatusCode::Error
+      ],
+      "one write per frame, and none for a frame already on screen"
+    );
+  }
+
+  #[test]
+  fn a_stale_registration_is_repainted_within_a_minute() {
+    // An explorer restart re-registers the icon from tray-icon's cache without
+    // telling us, so the only cure is to re-assert on a timer.
+    let start = Instant::now();
+    let mut paint = PaintState::new(start);
+    let mut shell = FakeShell::new(0);
+
+    tick(&mut paint, &mut shell, StatusCode::Normal);
+    assert_eq!(shell.icons.len(), 1);
+
+    assert!(!paint.reassert_due(start + REASSERT_INTERVAL - Duration::from_secs(1)));
+    assert!(matches!(
+      tick(&mut paint, &mut shell, StatusCode::Normal),
+      PaintOutcome::Idle
+    ));
+    assert_eq!(
+      shell.icons.len(),
+      1,
+      "a painted icon is not rewritten every tick"
+    );
+
+    assert!(paint.reassert_due(start + REASSERT_INTERVAL));
+    paint.invalidate();
+    tick(&mut paint, &mut shell, StatusCode::Normal);
+    assert_eq!(shell.icons.len(), 2, "one forced write a minute");
+    assert!(!paint.reassert_due(start + REASSERT_INTERVAL + Duration::from_secs(1)));
+  }
+
+  #[test]
+  fn a_hopeless_retry_backs_off_to_the_poll_cadence() {
+    // A kiosk that replaced explorer.exe never gets a notification area, and
+    // full-speed retries there are a PNG decode and a main-thread round trip
+    // five times a second for the life of the process.
+    let start = Instant::now();
+    let mut paint = PaintState::new(start);
+    let mut shell = FakeShell::new(usize::MAX);
+    let mut now = start;
+
+    for _ in 0..REFUSAL_BACKOFF_AFTER {
+      now += TICK;
+      assert!(matches!(
+        paint.tick(&mut shell, StatusCode::Normal, false, None, now),
+        PaintOutcome::Refused(_)
+      ));
+    }
+    let full_speed = REFUSAL_BACKOFF_AFTER as usize;
+    assert_eq!(
+      shell.icons.len(),
+      full_speed,
+      "the first refusals keep the tick cadence"
+    );
+
+    now += TICK;
+    paint.tick(&mut shell, StatusCode::Normal, false, None, now);
+    assert_eq!(shell.icons.len(), full_speed, "then the retry slows down");
+
+    now += POLL_INTERVAL;
+    paint.tick(&mut shell, StatusCode::Normal, false, None, now);
+    assert_eq!(shell.icons.len(), full_speed + 1, "once a second, not five");
+
+    // A write that lands resets the streak, so the next outage is caught at
+    // full speed again.
+    shell.accept();
+    now += POLL_INTERVAL;
+    assert!(matches!(
+      paint.tick(&mut shell, StatusCode::Normal, false, None, now),
+      PaintOutcome::Wrote
+    ));
+
+    shell.refuse_everything();
+    paint.invalidate();
+    now += TICK;
+    paint.tick(&mut shell, StatusCode::Normal, false, None, now);
+    assert_eq!(shell.icons.len(), full_speed + 3);
+  }
+
+  #[test]
+  fn a_refused_tooltip_is_not_remembered_as_painted() {
+    let mut paint = PaintState::new(Instant::now());
+    let mut shell = FakeShell::new(2);
+    let starting = "owlette v3.0.1\nstatus: starting";
+
+    let refused = paint.tick(
+      &mut shell,
+      StatusCode::Warning,
+      false,
+      Some(starting),
+      Instant::now(),
+    );
+    assert!(matches!(refused, PaintOutcome::Refused(_)));
+    assert_eq!(shell.tooltip_on_screen, None);
+
+    shell.accept();
+    paint.tick(
+      &mut shell,
+      StatusCode::Warning,
+      false,
+      Some(starting),
+      Instant::now(),
+    );
+    assert_eq!(shell.tooltip_on_screen.as_deref(), Some(starting));
+    assert_eq!(
+      shell.tooltips.len(),
+      2,
+      "the refused tooltip was asked again"
+    );
+
+    let idle = paint.tick(
+      &mut shell,
+      StatusCode::Warning,
+      false,
+      Some(starting),
+      Instant::now(),
+    );
+    assert!(matches!(idle, PaintOutcome::Idle));
+    assert_eq!(shell.tooltips.len(), 2);
+  }
+
+  #[test]
+  fn the_placeholder_seed_says_it_is_still_looking() {
+    // What a machine whose SCM did not answer in time builds its tray from.
+    let seed = checking_status();
+    assert_eq!(seed.code, StatusCode::Warning);
+    assert_eq!(seed.service, "service: checking...");
+    assert_eq!(seed.status, "status: checking...");
+    assert!(seed.health.is_none());
   }
 
   #[test]
@@ -944,10 +1508,8 @@ mod tests {
 
   #[test]
   fn a_stopped_service_is_reported_stopped_however_healthy_the_document_looks() {
-    // The 2026-08-13 regression: the agent was terminated without writing its
-    // shutdown status, so a perfectly healthy document sat there for the whole
-    // two-minute freshness window. The footer read the SCM and said "service
-    // not running on TEC-A4D"; the tooltip read the file and said the opposite.
+    // 2026-08-13: agent killed without writing shutdown status left a healthy
+    // document for the whole freshness window; tooltip and footer disagreed.
     let healthy = json!({
       "service": { "running": true },
       "firebase": { "enabled": true, "connected": true, "site_id": "hq" },
@@ -964,8 +1526,8 @@ mod tests {
 
   #[test]
   fn a_stopped_service_outranks_even_a_failed_health_probe() {
-    // deriveFooterState checks isServiceDown before it looks at health, and the
-    // two surfaces have to answer the same question the same way.
+    // deriveFooterState checks isServiceDown before health; both surfaces must
+    // answer the same way.
     let data = json!({
       "service": { "running": true },
       "firebase": { "enabled": true, "connected": true, "site_id": "hq" },
@@ -983,9 +1545,8 @@ mod tests {
 
   #[test]
   fn the_text_is_live_even_while_the_icon_is_still_smoothed() {
-    // The policy split, stated as a test: the cached document may keep the icon
-    // steady across a torn read, and must never put words in the tooltip about
-    // a service the SCM says is stopped.
+    // The policy split as a test: the cache may steady the icon across a torn
+    // read, never the tooltip of a service the SCM says is stopped.
     let mut cache = None;
     let healthy = json!({
       "service": { "running": true },
@@ -993,7 +1554,6 @@ mod tests {
       "health": { "status": "ok" }
     });
 
-    // A good read while everything is up primes the cache.
     let primed = smoothed(&fresh(healthy), &mut cache);
     assert_eq!(
       determine_status(&primed, RUNNING).status,
@@ -1004,8 +1564,8 @@ mod tests {
       "a good read should be remembered for the icon"
     );
 
-    // The service is stopped and the next read is torn. The icon path still has
-    // its cached document — and both halves must now say stopped anyway.
+    // Service stopped, next read torn: the icon path keeps its cached document
+    // but both halves must still say stopped.
     let live = StatusDoc::Unreadable;
     let icon_doc = smoothed(&live, &mut cache);
     assert!(
@@ -1020,11 +1580,9 @@ mod tests {
 
   #[test]
   fn a_live_connection_outranks_a_stale_health_error() {
-    // TEC-B4A, 2026-08-17: the boot-time probe recorded network_error seconds
-    // before DHCP finished, the agent connected eight seconds later and stayed
-    // connected — and the icon flashed red for the rest of the uptime while
-    // the window footer said "connected to TEC". Connected is the live fact;
-    // the health fields are a memory.
+    // TEC-B4A 2026-08-17: boot probe recorded network_error before DHCP
+    // finished; the agent connected 8 s later and the icon flashed red for the
+    // rest of uptime. Connected is the live fact; health is a memory.
     let data = json!({
       "service": { "running": true },
       "firebase": { "enabled": true, "connected": true, "site_id": "hq" },
@@ -1044,8 +1602,7 @@ mod tests {
 
   #[test]
   fn a_health_error_still_flashes_while_disconnected() {
-    // The amendment above must not soften the real alarm: not connected and
-    // a failed probe is exactly the state the error flash exists for.
+    // Not connected + failed probe is exactly what the error flash exists for.
     let data = json!({
       "service": { "running": true },
       "firebase": { "enabled": true, "connected": false, "site_id": "hq" },
@@ -1065,10 +1622,7 @@ mod tests {
 
   #[test]
   fn a_service_that_stopped_publishing_is_not_reported_as_starting() {
-    // "starting" is for a service with no file yet. A file that has gone stale
-    // means the service is wedged, which is what the footer calls out, and
-    // saying "starting" about it for the rest of the machine's uptime is the
-    // smoothing this fix removes.
+    // "starting" is only for no file yet; a stale file means wedged.
     let stale = determine_status(&StatusDoc::Stale, RUNNING);
     assert_eq!(stale.code, StatusCode::Error);
     assert_eq!(stale.service, "service: running");
@@ -1077,8 +1631,7 @@ mod tests {
 
   #[test]
   fn a_stale_document_is_never_smoothed_over() {
-    // Staleness is a verdict, not a failed read — holding the last good
-    // document would only delay it.
+    // Staleness is a verdict, not a failed read.
     let mut cache = None;
     let healthy = json!({ "service": { "running": true } });
     smoothed(&fresh(healthy), &mut cache);
@@ -1098,16 +1651,14 @@ mod tests {
     let status = determine_status(&fresh(data), RUNNING);
     assert_eq!(status.code, StatusCode::Normal);
     assert_eq!(status.service, "service: running");
-    // No name published: the id still says which site, and never nothing.
+    // No name published: fall back to the id, never to nothing.
     assert_eq!(status.status, "status: connected to hq");
     assert!(status.health.is_none());
   }
 
   #[test]
   fn the_site_is_named_the_way_the_operator_names_it() {
-    // The same sentence the window footer builds — "TEC-A4D is connected to
-    // TEC" — so an operator comparing the tooltip with the footer reads one
-    // claim, not two.
+    // Same sentence the window footer builds: "TEC-A4D is connected to TEC".
     let data = json!({
       "service": { "running": true },
       "firebase": {
@@ -1171,8 +1722,7 @@ mod tests {
 
   #[test]
   fn a_reconnecting_toast_survives_the_site_being_named() {
-    // The toast text is chosen from the status row, so anything appended to it
-    // has to leave the mapping intact.
+    // Toast text is chosen from the status row; appending must not break it.
     let view = TrayView {
       code: StatusCode::Warning,
       service: "service: running".to_string(),
@@ -1197,9 +1747,7 @@ mod tests {
 
   #[test]
   fn a_failed_health_probe_shapes_the_error_rows() {
-    // Precedence itself is specified by a_live_connection_outranks_a_stale_
-    // health_error and a_health_error_still_flashes_while_disconnected; this
-    // one holds the shape of the rows the error state renders.
+    // Precedence is covered elsewhere; this pins the row shape.
     let data = json!({
       "service": { "running": true },
       "firebase": { "enabled": true, "connected": false, "site_id": "hq" },
@@ -1248,8 +1796,8 @@ mod tests {
 
   #[test]
   fn the_three_ways_a_status_read_can_fail_stay_distinguishable() {
-    // Collapsing these into one "absent" is what made a service that had
-    // stopped publishing indistinguishable from one that had not started yet.
+    // Collapsing these into one "absent" made a service that stopped publishing
+    // indistinguishable from one that had not started yet.
     let dir = std::env::temp_dir().join(format!("owlette-tray-status-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("tmp")).expect("scratch");
@@ -1266,7 +1814,7 @@ mod tests {
     fs::write(dir.join(SERVICE_STATUS_REL), "{\"service\":").expect("tear");
     assert_eq!(read_status_doc(&dir), StatusDoc::Unreadable);
 
-    // ...and a torn read still rides on the cached document for the icon.
+    // A torn read still rides on the cached document for the icon.
     let mut cache = None;
     smoothed(
       &fresh(json!({ "service": { "running": true } })),

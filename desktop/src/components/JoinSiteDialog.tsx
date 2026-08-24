@@ -17,49 +17,64 @@ import {
   type PairPhrase,
 } from '@/lib/agentCli'
 import { copyText } from '@/lib/clipboard'
+import { environmentToken, hostForServer, hostOf } from '@/lib/environment'
 
 interface JoinSiteDialogProps {
   open: boolean
+  /**
+   * Which server to pair against, when the installer asked for this dialog.
+   * Omitted (the tray/menu path) = the environment the config is already bound
+   * to.
+   */
+  server?: 'dev' | 'prod'
   /** Closes the dialog. Any run still in flight is cancelled first. */
   onClose: () => void
   /**
-   * Called once pairing succeeds, with the id of the site this machine joined.
-   *
-   * An id, not a label: the pairing response is the only thing this flow
-   * learns, and the site's display name is not known on this machine until the
-   * service has connected to the new site and published it
-   * ({@link import('@/lib/serviceHealth').siteNameOf}). Treat it as a signal
-   * rather than as copy — nothing here should put it on screen.
+   * Called on success with the joined site's id — an id, not a label: the
+   * display name is unknown here until the service connects and publishes it.
+   * Treat it as a signal, never as copy.
    */
   onJoined: (siteId: string) => void
+  /**
+   * Whether the service is currently reaching owlette. Read only after pairing,
+   * to settle the "restarting" line onto a real outcome — an operator must never
+   * be left watching a progress sentence that can no longer change.
+   */
+  serviceConnected?: boolean
 }
 
 type Phase = 'starting' | 'waiting' | 'joined' | 'failed'
 
 /**
- * Device-code pairing, driven from the agent's own helper.
- *
- * The phrase is requested by `configure_site.py --json-progress`, which streams
- * it back the moment the server issues it, then keeps polling until someone
- * approves it from any device. Cancelling kills the helper; the code is left to
- * expire server-side, which is exactly what the legacy GUI's Cancel did
- * (`owlette_gui._join_cancel`).
- *
- * Nothing about tokens happens here. The helper writes them into
- * `.tokens.enc` and restarts the service; this window only watches.
+ * How long to wait for the restarted service to report a connection before
+ * telling the operator to intervene. Generous: a cold Firebase init on a slow
+ * machine is seconds, and the service re-reads its config every other 5 s loop.
  */
-export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps) {
+const SERVICE_SETTLE_TIMEOUT_MS = 45_000
+
+/**
+ * Device-code pairing, driven by `configure_site.py --json-progress`: it
+ * streams the phrase as soon as the server issues it, then polls until someone
+ * approves. Cancel kills the helper and lets the code expire server-side, as
+ * the legacy GUI's Cancel did.
+ *
+ * No token handling here — the helper writes `.tokens.enc` and restarts the
+ * service; this window only watches.
+ */
+export function JoinSiteDialog({ open, server, serviceConnected, onClose, onJoined }: JoinSiteDialogProps) {
   const [phase, setPhase] = useState<Phase>('starting')
   const [phrase, setPhrase] = useState<PairPhrase | null>(null)
   const [status, setStatus] = useState('requesting a pairing phrase')
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  /** True between "paired" and the service coming back; drives the settle effect. */
+  const [awaitingService, setAwaitingService] = useState(false)
 
   const run = useRef<AgentRun | null>(null)
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Held in a ref so an inline callback from the parent cannot re-run the effect
-  // and start a second pairing attempt.
+  // In a ref so an inline parent callback can't re-run the effect and start a
+  // second pairing attempt.
   const joined = useRef(onJoined)
   joined.current = onJoined
 
@@ -67,8 +82,7 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
     if (!open) return
 
     let disposed = false
-    // Whether a terminal event already decided how this run ended. The exit
-    // handler below only invents a failure when nothing did.
+    // Set by a terminal event; the exit handler only invents a failure if unset.
     let settled = false
 
     setPhase('starting')
@@ -76,8 +90,10 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
     setStatus('requesting a pairing phrase')
     setError(null)
     setCopied(false)
+    setAwaitingService(false)
 
     void startAgentRun('join', {
+      server,
       onEvent: (event) => {
         if (disposed) return
         switch (event.event) {
@@ -91,10 +107,15 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
           case 'authorized':
             settled = true
             setPhase('joined')
+            setAwaitingService(!!event.value.serviceRestarted)
             setStatus(
               event.value.serviceRestarted
                 ? 'paired — the service is restarting'
-                : 'paired — restart the service from the tray menu to finish',
+                : // No restart needed: the running service re-reads the firebase
+                  // config every second main-loop iteration and re-initialises
+                  // its client on the false → true transition, so the machine
+                  // shows up within ~10s on its own.
+                  'paired — this machine will appear on your dashboard shortly',
             )
             joined.current(event.value.siteId)
             return
@@ -114,8 +135,7 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
         return started.completed
       })
       .then((outcome) => {
-        // A helper that dies without an error event still has to close the
-        // window's "waiting" state, or it spins forever.
+        // A helper dying without an error event still has to close "waiting".
         if (disposed || settled) return
         setPhase('failed')
         setError(outcome.stderr.trim() || 'the pairing helper stopped unexpectedly')
@@ -132,7 +152,9 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
       void run.current?.cancel()
       run.current = null
     }
-  }, [open])
+    // `server` restarts the run: a different cloud is a different phrase, so
+    // reusing the one already in flight would pair against the wrong one.
+  }, [open, server])
 
   useEffect(
     () => () => {
@@ -140,6 +162,29 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
     },
     [],
   )
+
+  /**
+   * Settle the post-pair line. `serviceRestarted` is true at the instant the
+   * helper stopped and started the service, and then goes stale — it left the
+   * operator watching "restarting" forever with nothing able to change it.
+   * Resolve it onto what actually happened, and give up after a bounded wait
+   * rather than never.
+   */
+  useEffect(() => {
+    if (!awaitingService) return
+
+    if (serviceConnected) {
+      setAwaitingService(false)
+      setStatus('paired — the service is running')
+      return
+    }
+
+    const timer = setTimeout(() => {
+      setAwaitingService(false)
+      setStatus('paired — the service has not come back yet. restart it from the tray menu.')
+    }, SERVICE_SETTLE_TIMEOUT_MS)
+    return () => clearTimeout(timer)
+  }, [awaitingService, serviceConnected])
 
   const handleCopy = useCallback(() => {
     if (!phrase) return
@@ -159,13 +204,51 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
     })
   }, [phrase])
 
+  // Read the host off the URLs the server minted rather than off the `server`
+  // prop: `web/app/api/agent/auth/device-code/route.ts` builds them from the
+  // request's own Host header, so they name the deployment that actually
+  // answered — if that is not the one we asked for, the operator sees it.
+  // Before the phrase lands (`pairingUrl` defaults to '') the requested server
+  // is the best available answer, and with neither we name no host at all.
+  const host = hostOf(phrase?.pairingUrl) || hostOf(phrase?.verificationUri) || hostForServer(server)
+  const environment = environmentToken(host)
+
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent className="sm:max-w-md" data-testid="join-site-dialog">
         <DialogHeader>
-          <DialogTitle>join a site</DialogTitle>
+          <div className="flex items-center gap-2">
+            <DialogTitle>join a site</DialogTitle>
+            {environment && (
+              <span
+                data-testid="join-environment"
+                className="rounded border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 font-mono text-[10px] font-medium whitespace-nowrap text-amber-400"
+              >
+                {environment}
+              </span>
+            )}
+          </div>
           <DialogDescription>
-            approve this machine at owlette.app/add — from here or from any other device.
+            {/* Once paired, the approve instruction is a stale next step — it
+                sends the operator back to a page they no longer need. Say where
+                the machine went instead. */}
+            {phase === 'joined' ? (
+              host ? (
+                <>
+                  it will appear on your dashboard at <span className="font-mono">{host}</span>{' '}
+                  shortly.
+                </>
+              ) : (
+                'it will appear on your dashboard shortly.'
+              )
+            ) : host ? (
+              <>
+                approve this machine at <span className="font-mono">{host}/add</span> — from here or
+                from any other device.
+              </>
+            ) : (
+              'approve this machine from here or from any other device.'
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -211,7 +294,7 @@ export function JoinSiteDialog({ open, onClose, onJoined }: JoinSiteDialogProps)
           {phase === 'waiting' && (
             <Button onClick={handleOpen} disabled={!phrase?.pairingUrl && !phrase?.verificationUri}>
               <ExternalLink className="size-4" />
-              open owlette.app/add
+              {host ? `open ${host}/add` : 'open pairing page'}
             </Button>
           )}
         </DialogFooter>

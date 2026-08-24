@@ -1,21 +1,16 @@
 'use client';
 
 /**
- * Site-scoped page state: the visible site list plus the currently selected
- * site, in one place.
+ * Site-scoped page state: the visible site list plus the current selection.
  *
- * Every site-scoped surface needs the same three things — which sites can I
- * see, which one am I looking at, and what do I render when the answer is
- * "none". That logic had been hand-rolled five times (dashboard, deployments,
- * logs, roosts, talons) and the copies disagreed: two derived the selection
- * during render, three synced it through an effect, and three treated "no site
- * selected" as indistinguishable from "still loading" — which is what made a
- * brand-new account sit on a spinner forever on /deployments, /logs and
- * /roosts instead of being told it had no sites.
+ * This was hand-rolled five times (dashboard, deployments, logs, roosts,
+ * talons) and the copies disagreed — three treated "no site selected" as
+ * indistinguishable from "still loading", which left brand-new accounts on a
+ * permanent spinner at /deployments, /logs and /roosts instead of being told
+ * they had no sites.
  *
- * `hasNoSites` exists to make that distinction explicit at the call site, so a
- * page cannot accidentally collapse the two states again. Prefer it over
- * testing `!currentSiteId`, which is also true during the initial load.
+ * `hasNoSites` makes that distinction explicit; prefer it over `!currentSiteId`,
+ * which is also true mid-load.
  */
 
 import { useCallback, useMemo, useState } from 'react';
@@ -41,9 +36,8 @@ export interface UseCurrentSiteResult {
   /** Select a site and persist it as the caller's last site. */
   selectSite: (siteId: string) => void;
   /**
-   * Select a site without persisting it. Used right after creation, where
-   * the site is already the natural focus but the user has not chosen it as
-   * their default.
+   * Select without persisting — used right after creation, where the site is
+   * the natural focus but not yet the user's chosen default.
    */
   pickSite: (siteId: string) => void;
   createSite: ReturnType<typeof useSites>['createSite'];
@@ -65,12 +59,12 @@ export function useCurrentSite(): UseCurrentSiteResult {
     checkSiteIdAvailability,
   } = useSites(user?.uid, userSites, isSuperadmin);
 
-  // Empty string means "no explicit pick yet — fall back to lastSiteId, then
-  // localStorage, then the first accessible site".
+  // '' means "no explicit pick yet": fall back to lastSiteId, then
+  // localStorage, then the first accessible site.
   const [userPickedSiteId, setUserPickedSiteId] = useState<string>('');
 
-  // Derived during render rather than synced through an effect, so a changing
-  // site list cannot cascade re-renders (`react-hooks/set-state-in-effect`).
+  // Derived during render, not synced through an effect, so a changing site
+  // list can't cascade re-renders (`react-hooks/set-state-in-effect`).
   const currentSiteId = useMemo(() => {
     if (userPickedSiteId && sites.some((s) => s.id === userPickedSiteId)) {
       return userPickedSiteId;

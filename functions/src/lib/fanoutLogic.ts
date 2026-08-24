@@ -1,18 +1,10 @@
 /**
- * Pure logic for roost distribution fan-out (wave 2b.3).
+ * Pure logic for roost distribution fan-out — split from the firestore trigger so the canary
+ * decisions are unit-testable without an emulator.
  *
- * Split out from the firestore-trigger handler so the interesting
- * decisions (who is in the canary? did canary pass? did it fail hard
- * enough to abort?) can be unit-tested without firestore-emulator setup.
- *
- * Design principle: staged rollout, never all-at-once. The cloudflare
- * 2025-11-18 incident is a standing reminder — a bad config pushed to
- * 100% of a fleet is a fleet-wide outage.
+ * Staged rollout, never all-at-once: a bad config pushed to 100% of a fleet is a fleet-wide
+ * outage (cloudflare, 2025-11-18).
  */
-
-/* --------------------------------------------------------------------- */
-/*  Tuning constants                                                     */
-/* --------------------------------------------------------------------- */
 
 /** Canary is 10% of the fleet, rounded up, with a floor of 1 machine. */
 export const CANARY_FRACTION = 0.1;
@@ -20,28 +12,14 @@ export const CANARY_FRACTION = 0.1;
 /** Minimum canary size; a fleet of 3 still gets 1 canary. */
 export const CANARY_MIN = 1;
 
-/**
- * Cap on canary size so a 10k-machine fleet doesn't ship 1k machines
- * as the canary (that IS the blast radius we want to avoid).
- */
+/** Cap so a 10k fleet doesn't canary 1k machines — that IS the blast radius we're avoiding. */
 export const CANARY_MAX = 50;
 
-/**
- * Canary pass threshold. If ≥90% of canary reported success, proceed.
- * Any failure at all is a signal to investigate, but single flakes
- * shouldn't abort a fleet-wide rollout.
- */
+/** Proceed at ≥90% canary success — single flakes shouldn't abort a fleet-wide rollout. */
 export const CANARY_SUCCESS_THRESHOLD = 0.9;
 
-/**
- * Canary abort threshold. If >25% of canary failed, abort rollout —
- * something is structurally wrong (bad version, missing chunks, etc.).
- */
+/** >25% canary failure = something structurally wrong (bad version, missing chunks); abort. */
 export const CANARY_ABORT_FAILURE_RATE = 0.25;
-
-/* --------------------------------------------------------------------- */
-/*  Types                                                                */
-/* --------------------------------------------------------------------- */
 
 export type RolloutStage = 'canary' | 'fleet' | 'complete' | 'aborted';
 
@@ -58,39 +36,22 @@ export interface TargetState {
 }
 
 export interface RolloutEvaluation {
-  /** total in this wave */
   total: number;
-  /** targets currently reporting succeeded */
   succeeded: number;
-  /** targets currently reporting failed */
   failed: number;
-  /** targets still pending/in_progress */
+  /** still pending or in_progress */
   pending: number;
-  /**
-   * No target in this wave is still in flight. An **empty** wave is
-   * vacuously settled — see the note in {@link evaluateWave}.
-   */
+  /** Nothing in flight. An empty wave is vacuously settled — see {@link evaluateWave}. */
   settled: boolean;
-  /** success rate among settled targets (0..1, NaN if nothing settled) */
+  /** 0..1 among settled targets, NaN if nothing settled */
   successRate: number;
-  /** failure rate among all targets (not just settled) — used for abort gate */
+  /** 0..1 among ALL targets, not just settled — the abort gate reads this */
   failureRate: number;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Canary selection                                                     */
-/* --------------------------------------------------------------------- */
-
 /**
- * Deterministically pick the canary cohort for a rollout.
- *
- * Selection is a stable hash of `machineId + versionId`. The same
- * machine wakes up in the canary for the same version deterministically,
- * so re-runs of the trigger (e.g. retries) don't flap between canary
- * cohorts mid-rollout.
- *
- * Inputs are sorted before slicing so the output is stable regardless
- * of firestore iteration order.
+ * Pick the canary cohort by stable hash of `machineId + versionId`, so trigger retries don't flap
+ * the cohort mid-rollout. Sorted before slicing, so firestore iteration order can't change it.
  */
 export function selectCanary(
   machineIds: readonly string[],
@@ -102,10 +63,7 @@ export function selectCanary(
 
   const canarySize = canarySizeFor(machineIds.length);
 
-  // stable-score each machine, then slice off the N lowest scores.
-  // using a commutative hash (`+`) of machineId and versionId gives us
-  // the same score regardless of which side is hashed first, and ties
-  // are broken by machineId lexicographic order.
+  // Score each machine, take the N lowest; ties break on machineId lexicographic order.
   const scored = machineIds.map((id) => ({
     id,
     score: stableHash(`${id}::${versionId}`),
@@ -133,29 +91,18 @@ export function canarySizeFor(fleetSize: number): number {
   if (fleetSize <= 0) return 0;
   const ceiling = Math.ceil(fleetSize * CANARY_FRACTION);
   const bounded = Math.max(CANARY_MIN, Math.min(CANARY_MAX, ceiling));
-  // edge case: fleet is smaller than the minimum canary — every machine
-  // is the canary and the fleet wave is empty. we still return the
-  // fleet size (not CANARY_MIN) so we never try to canary more machines
-  // than exist.
+  // Fleet smaller than CANARY_MIN: everyone is the canary and the fleet wave is empty. Clamp to
+  // fleetSize so we never canary more machines than exist.
   return Math.min(bounded, fleetSize);
 }
 
-/* --------------------------------------------------------------------- */
-/*  Rollout stage evaluation                                             */
-/* --------------------------------------------------------------------- */
-
 /**
- * Summarise the state of a rollout wave. Callers feed the current
- * reported target statuses; this function returns the pure computation
- * of "are we done, and how did it go?"
+ * Summarise a rollout wave: are we done, and how did it go?
  *
- * An empty wave settles vacuously (`settled: true`, `pending: 0`). This
- * matters for the single-machine case: `canarySizeFor(1) === 1`, so the
- * lone machine IS the canary and the fleet wave is empty. Treating an
- * empty wave as permanently unsettled parked every 1-machine rollout at
- * `stage: "fleet"` forever. The abort and promote gates keep their own
- * `total > 0` guards, so "settled" never on its own aborts a rollout or
- * promotes an empty canary — only `fleet → complete` reads it as done.
+ * An empty wave settles vacuously. Required for the single-machine case — `canarySizeFor(1) === 1`
+ * so the fleet wave is empty, and treating it as unsettled parked every 1-machine rollout at
+ * `stage: "fleet"` forever. The abort and promote gates keep their own `total > 0` guards, so only
+ * `fleet → complete` reads `settled` as done.
  */
 export function evaluateWave(targets: readonly TargetState[]): RolloutEvaluation {
   const total = targets.length;
@@ -178,12 +125,8 @@ export function evaluateWave(targets: readonly TargetState[]): RolloutEvaluation
 
 /** Should the canary abort the fleet rollout? */
 export function canaryShouldAbort(eval_: RolloutEvaluation): boolean {
-  // abort decision does NOT wait for settlement: if enough canary members
-  // have ALREADY failed that even a perfect outcome for the rest couldn't
-  // satisfy the abort gate, we should bail immediately. this is what the
-  // `failureRate > CANARY_ABORT_FAILURE_RATE` check computes — it measures
-  // failures against `total`, so a 30% failure rate at 50% settlement
-  // already locks in >25% failure regardless of the remaining targets.
+  // Does NOT wait for settlement: failureRate measures against `total`, so 30% failed at 50%
+  // settlement already locks in >25% no matter how the rest land. Bail immediately.
   return eval_.total > 0 && eval_.failureRate > CANARY_ABORT_FAILURE_RATE;
 }
 
@@ -194,16 +137,13 @@ export function canaryShouldPromote(eval_: RolloutEvaluation): boolean {
   return eval_.successRate >= CANARY_SUCCESS_THRESHOLD;
 }
 
-/**
- * Decide the next stage given the current stage + evaluation.
- * Returns the stage transition + a human-readable reason.
- */
+/** Next stage from the current stage + evaluation, with a human-readable reason. */
 export function nextStage(
   currentStage: RolloutStage,
   eval_: RolloutEvaluation,
 ): { stage: RolloutStage; reason: string } | null {
   if (currentStage === 'complete' || currentStage === 'aborted') {
-    return null; // terminal — no further transitions
+    return null; // terminal
   }
 
   if (canaryShouldAbort(eval_)) {
@@ -233,21 +173,12 @@ export function nextStage(
   return null; // no transition — still in flight
 }
 
-/* --------------------------------------------------------------------- */
-/*  Stable hash (FNV-1a 32-bit)                                          */
-/* --------------------------------------------------------------------- */
-
-/**
- * FNV-1a 32-bit — deterministic, well-distributed for short strings,
- * no crypto overhead. Canary selection doesn't need cryptographic
- * strength; it needs stable + uniform.
- */
+/** FNV-1a 32-bit. Canary selection needs stable + uniform, not cryptographic strength. */
 function stableHash(input: string): number {
   let hash = 0x811c9dc5;
   for (let i = 0; i < input.length; i++) {
     hash ^= input.charCodeAt(i);
     hash = Math.imul(hash, 0x01000193);
   }
-  // force unsigned 32-bit
-  return hash >>> 0;
+  return hash >>> 0; // unsigned 32-bit
 }

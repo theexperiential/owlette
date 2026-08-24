@@ -1,15 +1,10 @@
 'use client';
 
 /**
- * useDisplayState Hook
- *
- * Subscribes to the live display profile and the admin-assigned layout for a
- * single machine and exposes both via a single hook so callers can compare the
- * two (drift detection).
- *
- * Firestore paths:
- *   - Live profile:    sites/{siteId}/machines/{machineId}/hardware/display
- *   - Assigned layout: config/{siteId}/machines/{machineId} (field: displays.assigned)
+ * Live display profile + admin-assigned layout for one machine, exposed together so
+ * callers can diff them (drift detection).
+ *   live:     sites/{siteId}/machines/{machineId}/hardware/display
+ *   assigned: config/{siteId}/machines/{machineId} (field: displays.assigned)
  */
 
 import { useEffect, useState } from 'react';
@@ -87,17 +82,18 @@ const DEFAULT_AUTO_RESTORE: DisplayAutoRestoreState = {
 };
 
 /**
- * Normalize a `capturedAt` value into epoch milliseconds.
- *
- * Firestore returns `serverTimestamp()` writes as Timestamp objects on read,
- * but serialized snapshots (SSR, hydration, test fixtures) can surface the
- * underlying `{ seconds, nanoseconds }` shape. Plain-number shapes are also
- * supported for forward compat with any future writer that stores `Date.now()`.
- * Anything unrecognized collapses to 0 so downstream formatters (which treat 0
- * as "never") behave predictably.
+ * `capturedAt` → epoch ms. Accepts Firestore Timestamps, the serialized
+ * `{ seconds, nanoseconds }` shape (SSR/hydration/fixtures), plain numbers,
+ * and ISO-8601 strings — 3.0.x agents' full-config pushes flipped
+ * serverTimestamp fields to strings in fleet docs, and those values persist.
+ * Unrecognized input collapses to 0, which formatters render as "never".
  */
 function normalizeTimestamp(value: unknown): number {
   if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
   if (value && typeof value === 'object') {
     const asObj = value as { toMillis?: () => number; seconds?: unknown };
     if (typeof asObj.toMillis === 'function') {
@@ -119,12 +115,9 @@ interface UseDisplayStateResult {
   assigned: AssignedLayout | null;
   autoRestore: DisplayAutoRestoreState;
   /**
-   * Wave 6.1 master kill switch on the agent (config field
-   * `displays.remoteApplyEnabled`). `true` enables the remote apply path;
-   * any other value (including missing) treats it as off. The dashboard
-   * uses this to decide whether to surface the "test" apply self-check
-   * button (visible only when the switch is off so operators can verify
-   * the helper IPC before flipping it on).
+   * Agent kill switch (`displays.remoteApplyEnabled`); only literal `true` enables
+   * remote apply. The "test" self-check button shows only while it is off, so
+   * operators can verify the helper IPC before flipping it on.
    */
   remoteApplyEnabled: boolean;
   loading: boolean;
@@ -133,29 +126,22 @@ interface UseDisplayStateResult {
 
 export interface UseDisplayStateOptions {
   /**
-   * When false, skip both Firestore subscriptions and return an inert result
-   * ({profile: null, assigned: null, loading: false, error: null}). Useful for
-   * dashboards that render many machine cards where only expanded cards should
-   * open listeners. Defaults to true. Transitions from true -> false correctly
-   * tear down the live subscriptions via the effect's cleanup.
+   * False skips both subscriptions and returns an inert result — lets a dashboard of
+   * many cards open listeners only for expanded ones. Defaults true; true -> false
+   * tears down via the effect cleanup.
    */
   enabled?: boolean;
   /**
-   * When false, skip the assigned-layout subscription (config doc) but keep
-   * the live-profile subscription. Use this when the consumer only needs the
-   * live monitor data (e.g. the dashboard card's collapsed monitor summary)
-   * and reads drift state from the heartbeat-published `displayDriftCount`
-   * instead. Defaults to true so existing call sites that need both keep
-   * working unchanged.
+   * False keeps the live-profile sub but skips the assigned-layout (config) sub, for
+   * consumers that read drift from the heartbeat-published `displayDriftCount`.
+   * Defaults true.
    */
   subscribeAssigned?: boolean;
 }
 
 /**
- * Internal snapshot of everything the hook is tracking, tagged with the
- * target it belongs to. Tagging the state lets the subscription callbacks
- * ignore late snapshots from a previous target without the effect having to
- * reset state synchronously (which would trigger cascading renders).
+ * Hook state, tagged with its target so subscription callbacks can drop late snapshots
+ * from a previous target instead of the effect resetting state synchronously (cascading renders).
  */
 interface InternalState {
   siteId: string;
@@ -170,12 +156,10 @@ interface InternalState {
 }
 
 /**
- * Parse the `displays.autoRestore` subobject from the config doc into the
- * typed shape. Tolerates missing/partial data — agent writes only the fields
- * it owns (timestamps + counters), the dashboard writes `enabled`/`enabledBy`/
- * `enabledAt`, and the doc may carry neither on a fresh machine. Timestamp
- * fields go through `normalizeTimestamp` because they may be Firestore
- * Timestamps (server writes) or epoch numbers / iso8601 (agent REST writes).
+ * Parse `displays.autoRestore`. Partial data is normal: the agent writes only timestamps
+ * and counters, the dashboard writes enabled/enabledBy/enabledAt, and a fresh machine has
+ * neither. Timestamps run through `normalizeTimestamp` — server writes are Firestore
+ * Timestamps, agent REST writes are epoch numbers or iso8601.
  */
 function parseAutoRestore(raw: unknown): DisplayAutoRestoreState {
   if (!raw || typeof raw !== 'object') return DEFAULT_AUTO_RESTORE;
@@ -206,12 +190,7 @@ function parseAutoRestore(raw: unknown): DisplayAutoRestoreState {
   };
 }
 
-/**
- * Fields compared between a live monitor and its assigned counterpart.
- * Each entry maps a drift-label to an extractor; strict equality on the
- * extracted primitive determines drift. Keeping this as a table (rather than
- * a wall of conditionals) keeps the semantics obvious and the function pure.
- */
+/** drift-label → extractor; strict equality on the extracted primitive means no drift. */
 const DRIFT_FIELDS: ReadonlyArray<{
   label: string;
   extract: (m: MonitorInfo) => unknown;
@@ -227,19 +206,11 @@ const DRIFT_FIELDS: ReadonlyArray<{
 ];
 
 /**
- * Translate every monitor's position so the primary lands at (0, 0).
- *
- * Windows pins the primary monitor to the origin of the virtual desktop —
- * any layout we persist or preview must obey that invariant, otherwise the
- * OS will silently re-anchor on apply and the stored coordinates drift from
- * what the operator saw. We enforce it at two boundaries: draft seed (so
- * pre-existing bad data self-heals the first time a user enters edit mode)
- * and capture (so we never write non-canonical data to Firestore). A pure
- * helper means both call sites — plus the in-edit normalization in
- * `useDisplayDraft.updateMonitor` — share one implementation.
- *
- * No-op when there is no primary, or when the primary is already at (0, 0).
- * Returns a new array; input is not mutated.
+ * Translate monitor positions so the primary sits at (0, 0). Windows pins the primary to
+ * the virtual-desktop origin, so a non-canonical layout gets silently re-anchored on apply
+ * and the stored coordinates diverge from what the operator saw. Enforced at draft seed
+ * (heals bad stored data) and at capture (never write non-canonical to Firestore).
+ * No-op without a primary or when already at (0, 0); returns a new array.
  */
 export function normalizePrimaryToOrigin(monitors: MonitorInfo[]): MonitorInfo[] {
   const primary = monitors.find((m) => m.primary);
@@ -254,19 +225,12 @@ export function normalizePrimaryToOrigin(monitors: MonitorInfo[]): MonitorInfo[]
 }
 
 /**
- * Result of comparing a live display snapshot against an assigned layout.
- *
- * `byLiveId` and `byAssignedId` are the same per-field drift signal keyed
- * two different ways — live-id for the live tab's table and canvas
- * (identified by the agent's adapter-LUID/target-id pair), assigned-id for
- * the stored tab (assigned monitors carry their own ids that may differ
- * after a reconnect even when the physical panel is identical). Callers
- * pick the one that matches what they're rendering.
- *
- * `addedHashes` and `removedHashes` carry the "layout changed" signal the
- * per-field drift maps can't express: a monitor with no match on the other
- * side never makes it into either map. Without these, disconnecting a
- * monitor registered as zero drift even though the topology clearly changed.
+ * Live-vs-assigned comparison result.
+ * `byLiveId` / `byAssignedId` are the same per-field drift keyed two ways: live ids come
+ * from the agent's adapter-LUID/target-id pair, assigned ids are stored and can differ
+ * after a reconnect even for the same physical panel.
+ * `addedHashes` / `removedHashes` carry topology change, which the drift maps cannot —
+ * an unmatched monitor lands in neither, so a disconnect used to read as zero drift.
  */
 export interface DisplayDriftReport {
   byLiveId: Map<string, string[]>;
@@ -275,27 +239,17 @@ export interface DisplayDriftReport {
   removedHashes: Set<string>;
 }
 
-/**
- * Total number of changes worth surfacing to the operator — per-field
- * drifts plus added/removed monitors. Counting drifts from `byLiveId` only
- * (not byAssignedId) avoids double-counting since the two maps describe
- * the same physical deltas under different keys.
- */
+/** Per-field drifts + added/removed monitors. Counts `byLiveId` only — the two maps
+ * describe the same deltas, so summing both would double-count. */
 export function totalDriftCount(report: DisplayDriftReport): number {
   return report.byLiveId.size + report.addedHashes.size + report.removedHashes.size;
 }
 
 /**
- * Compare live monitors against an assigned layout and return the full
- * drift report: per-monitor field drifts (keyed both by live id and by
- * assigned id) plus the sets of added / removed edidHashes.
- *
- * Matching is keyed on `edidHash` (physical identity) so connector
- * reshuffles don't register as drift. Monitors present in `live` but
- * missing from `assigned` (or vice versa) land in `addedHashes` /
- * `removedHashes` — callers should factor those into any drift count or
- * badge so a disconnected or newly-plugged monitor doesn't silently show
- * as "no changes".
+ * Full drift report: per-monitor field drifts keyed by live id and assigned id, plus
+ * added/removed edidHashes. Matching is on `edidHash` (physical identity) so connector
+ * reshuffles aren't drift; unmatched monitors only appear in the added/removed sets, so
+ * callers must include those in any count or badge.
  */
 export function computeDisplayDrift(
   live: MonitorInfo[],
@@ -309,8 +263,7 @@ export function computeDisplayDrift(
   };
 
   if (!live || !assigned) return empty;
-  // With no assigned layout stored, there's nothing to drift against —
-  // matches the previous contract's "no assigned = no drift" behavior.
+  // No assigned layout stored = nothing to drift against.
   if (assigned.length === 0) return empty;
 
   const byLiveId = new Map<string, string[]>();
@@ -364,9 +317,8 @@ export function useDisplayState(
   const subscribeAssigned = options?.subscribeAssigned ?? true;
   const demo = useDemoContext();
 
-  // State is tagged with the target it belongs to so the async snapshot
-  // callbacks can discard results for a prior (siteId, machineId) without the
-  // effect having to call setState synchronously on mount/target-change.
+  // Tagged with its target so async snapshot callbacks can discard results for a prior
+  // (siteId, machineId) without a synchronous setState on target change.
   const [state, setState] = useState<InternalState>(() => ({
     siteId: '',
     machineId: '',
@@ -381,21 +333,16 @@ export function useDisplayState(
 
   useEffect(() => {
     if (!db || !siteId || !machineId || !enabled || demo) {
-      // Nothing to subscribe to. The render path below handles these cases
-      // (including demo mode, which short-circuits with synthesized state)
-      // without needing us to mutate state here. When `enabled` flips from
-      // true -> false, the cleanup returned by the previous effect run tears
-      // down the live subscriptions before this no-op body executes.
+      // Nothing to subscribe to; the render path handles these cases (demo included)
+      // without mutating state. On enabled true -> false the previous run's cleanup has
+      // already torn the subs down.
       return;
     }
 
     const profileRef = doc(db, 'sites', siteId, 'machines', machineId, 'hardware', 'display');
 
-    // Monotonic snapshot counters guard against late async canonicalisation
-    // resolving after a newer snapshot has already updated state. SHA-1 of
-    // a handful of monitors is sub-millisecond in practice, but tearing
-    // down the effect or receiving a burst of snapshots could otherwise let
-    // an older result overwrite a newer one.
+    // Monotonic counters stop a late async canonicalisation from overwriting state
+    // written by a newer snapshot.
     let profileSeq = 0;
     let assignedSeq = 0;
     let cancelled = false;
@@ -412,10 +359,8 @@ export function useDisplayState(
               const canonical = await canonicalizeMonitors(raw.monitors || []);
               next = { ...raw, monitors: canonical };
             } catch (e) {
-              // Web Crypto unavailable / malformed monitor field — fall back
-              // to the raw (uncanonicalised) monitors so the panel still
-              // renders. Without this, a digest failure would leave
-              // profileLoaded false forever and the panel stuck on "loading".
+              // Web Crypto missing / malformed field: fall back to raw monitors, else
+              // profileLoaded never flips and the panel is stuck on "loading".
               console.error('canonicalizeMonitors (profile) failed:', e);
               next = raw;
             }
@@ -438,9 +383,8 @@ export function useDisplayState(
         })();
       },
       (err) => {
-        // Bump the seq so a still-in-flight success-path canonicalisation
-        // from the previous snapshot can't slip past us and overwrite the
-        // error state. Same `cancelled` guard for teardown.
+        // Bump seq so an in-flight canonicalisation from the previous snapshot can't
+        // overwrite this error state.
         const seq = ++profileSeq;
         console.error('Error subscribing to display profile:', err);
         if (cancelled || seq !== profileSeq) return;
@@ -461,12 +405,9 @@ export function useDisplayState(
       }
     );
 
-    // Assigned-layout sub is opt-out: callers that only need the live profile
-    // (e.g. the dashboard card's collapsed monitor summary) skip it via
-    // `subscribeAssigned: false` and read drift state from the heartbeat-
-    // published `metrics.displayDriftCount` instead. When skipped, the render
-    // path below treats `assignedLoaded` as implicitly satisfied so consumers'
-    // loading checks don't hang waiting on a sub that will never arrive.
+    // Opt-out sub: `subscribeAssigned: false` callers read drift from the heartbeat's
+    // `metrics.displayDriftCount`. When skipped, the render path treats `assignedLoaded`
+    // as satisfied so loading checks don't hang on a sub that never arrives.
     let unsubscribeAssigned: (() => void) | undefined;
     if (subscribeAssigned) {
       const configRef = doc(db, 'config', siteId, 'machines', machineId);
@@ -488,10 +429,8 @@ export function useDisplayState(
               capturedBy = typeof candidate.capturedBy === 'string' ? candidate.capturedBy : undefined;
             }
             nextAutoRestore = parseAutoRestore(data?.displays?.autoRestore);
-            // Wave 6.1 master kill switch — only literal `true` enables the
-            // remote apply path. Anything else (false / missing / non-bool)
-            // collapses to off so a fresh agent doc can't accidentally opt
-            // in by having the field default to a truthy non-boolean.
+            // Fail closed: only literal `true` enables remote apply, so a truthy
+            // non-boolean on a fresh agent doc can't opt in by accident.
             nextRemoteApplyEnabled = data?.displays?.remoteApplyEnabled === true;
           }
           void (async () => {
@@ -505,8 +444,7 @@ export function useDisplayState(
                   ...(capturedBy !== undefined ? { capturedBy } : {}),
                 };
               } catch (e) {
-                // Same fallback rationale as the live-profile path: render
-                // raw monitors rather than getting stuck loading.
+                // Same fallback as the live-profile path: raw monitors beat stuck loading.
                 console.error('canonicalizeMonitors (assigned) failed:', e);
                 next = {
                   monitors: rawMonitors,
@@ -533,9 +471,8 @@ export function useDisplayState(
           })();
         },
         (err) => {
-          // Bump seq to invalidate any in-flight success-path canonicalisation
-          // from the previous snapshot — without this, a late success could
-          // resolve after this error setState and revert us to a stale ok state.
+          // Bump seq: a late success from the previous snapshot would otherwise resolve
+          // after this error setState and revert to a stale ok state.
           const seq = ++assignedSeq;
           console.error('Error subscribing to assigned display layout:', err);
           if (cancelled || seq !== assignedSeq) return;
@@ -564,15 +501,11 @@ export function useDisplayState(
     };
   }, [siteId, machineId, enabled, subscribeAssigned, demo]);
 
-  // Derive the return value during render so the effect never has to
-  // synchronously reset state.
+  // Derived during render so the effect never has to synchronously reset state.
 
-  // Demo route — return synthesized topology directly. Skip the live
-  // Firestore path entirely; the demo site/machine docs don't exist and
-  // would surface a permission error in the panel's loading state.
-  // Demo machines start with `remoteApplyEnabled: true` so the panel
-  // surfaces the "restore" workflow rather than the one-time "enable
-  // restore" gate — visitors should land on the meaningful demo state.
+  // Demo: synthesized topology, no Firestore — the demo docs don't exist and would
+  // surface a permission error. `remoteApplyEnabled: true` so visitors land on the
+  // restore workflow instead of the one-time enable gate.
   if (demo) {
     if (!enabled || !machineId) {
       return { profile: null, assigned: null, autoRestore: DEFAULT_AUTO_RESTORE, remoteApplyEnabled: true, loading: false, error: null };
@@ -600,9 +533,7 @@ export function useDisplayState(
   }
 
   if (!enabled) {
-    // Caller has opted out of live subscriptions (e.g. a collapsed card on a
-    // dashboard with many machines). Return an inert result; any prior
-    // subscriptions are torn down by the effect's cleanup.
+    // Opted out of live subscriptions; prior subs are torn down by the effect cleanup.
     return {
       profile: null,
       assigned: null,
@@ -624,9 +555,8 @@ export function useDisplayState(
     };
   }
 
-  // Props changed but subscriptions haven't produced their first snapshot yet
-  // for the new target — report loading with empty data so callers never see
-  // stale values from the previous machine.
+  // New target, no first snapshot yet: report loading with empty data so callers never
+  // see the previous machine's values.
   if (state.siteId !== siteId || state.machineId !== machineId) {
     return {
       profile: null,
@@ -640,17 +570,14 @@ export function useDisplayState(
 
   return {
     profile: state.profile,
-    // Opt-out callers never see an assigned layout; the effect skips the sub.
+    // Opt-out callers never see an assigned layout; the effect skips that sub.
     assigned: subscribeAssigned ? state.assigned : null,
-    // autoRestore lives on the same config doc as `assigned`, so when the
-    // assigned sub is opted out we have no live source for it — fall back to
-    // the safe default so consumers can still read flags without null-checks.
+    // autoRestore shares the config doc with `assigned`, so opt-out callers have no live
+    // source — safe default keeps consumers null-check free.
     autoRestore: subscribeAssigned ? state.autoRestore : DEFAULT_AUTO_RESTORE,
-    // remoteApplyEnabled lives on the same config doc — opt-out callers see
-    // the safe default (off) so the apply / test buttons stay hidden.
+    // Same config doc: opt-out callers get off, so apply/test buttons stay hidden.
     remoteApplyEnabled: subscribeAssigned ? state.remoteApplyEnabled : false,
-    // When subscribeAssigned is false, treat assignedLoaded as implicitly
-    // satisfied so `loading` flips as soon as the profile sub lands.
+    // subscribeAssigned false ⇒ assignedLoaded is implicitly satisfied.
     loading: !state.profileLoaded || (subscribeAssigned && !state.assignedLoaded),
     error: state.error,
   };

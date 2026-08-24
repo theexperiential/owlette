@@ -1,12 +1,7 @@
 /**
- * GET /api/whoami
- *     → Caller identity snapshot — userId, active API-key context (if any),
- *       scopes, environment, and a best-effort rateLimit + quota summary.
- *
- * Authenticates via any path resolveAuth() supports (session, id-token,
- * api key in `Authorization: Bearer owk_...`, x-api-key, or api_key query).
- *
- * roost public api wave 3.9.
+ * GET /api/whoami — caller identity: userId, API-key context, scopes,
+ * environment, and a best-effort rateLimit + quota summary. Accepts any auth
+ * path resolveAuth() supports. roost public api wave 3.9.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -57,7 +52,7 @@ export async function GET(request: NextRequest) {
     const userData = userSnap.exists ? userSnap.data() ?? null : null;
     const role = typeof userData?.role === 'string' ? userData.role : null;
 
-    // Key-specific fields only when an API key authed the request.
+    // only populated when an API key authed the request
     let keyInfo: {
       keyId: string | null;
       name: string | null;
@@ -71,7 +66,6 @@ export async function GET(request: NextRequest) {
 
     if (auth.keyContext) {
       const kc = auth.keyContext;
-      // Enrich from the user subcollection — cheap single doc read.
       let name: string | null = null;
       let keyPrefix: string | null = null;
       let lastUsedAt: number | null = null;
@@ -89,7 +83,7 @@ export async function GET(request: NextRequest) {
           lastUsedAt = timestampToMs(d.lastUsedAt);
         }
       } catch {
-        /* tolerate — whoami should never fail for metadata enrichment. */
+        /* whoami must not fail over metadata enrichment */
       }
 
       keyInfo = {
@@ -104,18 +98,15 @@ export async function GET(request: NextRequest) {
       };
     }
 
-    // rateLimit: we don't track per-key remaining counts in a readable store
-    // (upstash/redis sliding-window is write-only from this service's view).
-    // Return the advertised plan ceiling only — task 3.10 standardises the
-    // per-response header surface.
+    // Plan ceiling only: the upstash sliding window is write-only from here, so
+    // there is no readable per-key remaining count. Live counters: RateLimit-* headers.
     const rateLimit = {
       tier: 'api',
       limitPerMinute: 600,
       note: 'use RateLimit-* response headers on actual API calls for live counters',
     };
 
-    // quota: resolve the caller's "primary" site. Prefer the first
-    // API-key site scope; fall back to the user's assigned sites list.
+    // primary site: first API-key site scope, else the user's first assigned site
     const primarySiteId = pickPrimarySiteId(auth, userData);
     let quota: Record<string, unknown> | null = null;
     if (primarySiteId) {
@@ -168,8 +159,7 @@ async function loadQuotaSummary(siteId: string): Promise<Record<string, unknown>
       (n, d) => n + ((d.data() as { bytes?: number }).bytes ?? 0),
       0,
     );
-    // Resolved the same way as GET /api/sites/{siteId}/quota so the two
-    // quota surfaces can't disagree about a site's cap.
+    // same resolution as GET /api/sites/{siteId}/quota so the two can't disagree
     const limitBytes = typeof data.planLimitBytes === 'number'
       ? data.planLimitBytes
       : SITE_STORAGE_BYTES;

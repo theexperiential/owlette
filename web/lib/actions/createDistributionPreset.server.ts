@@ -1,25 +1,11 @@
 /**
- * createDistributionPreset action core
+ * Writes `config/{siteId}/project_distribution_presets/{presetId}`.
  *
- * security-boundary-migration wave 3.7. mirrors the schedule/reboot preset
- * pattern (wave 3.6) — only the firestore path differs.
+ * Custom presets ONLY — id is slug+timestamp so same-named presets can't
+ * collide. Built-in overrides use a deterministic `builtin-*` id and go through
+ * updateDistributionPreset instead.
  *
- * firestore path: `config/{siteId}/project_distribution_presets/{presetId}`
- *
- * preset id is generated from the preset name (slug + timestamp) so two
- * presets with the same name don't collide. built-in presets are written
- * with a deterministic `builtin-*` id by the update action when an admin
- * overrides a built-in default; create is for *custom* presets only.
- *
- * field shape mirrors `useProjectDistributionPresets.ts` exactly:
- *   - name (required)
- *   - description, project_url, extract_path (optional strings)
- *   - verify_files (optional string[])
- *   - order (number)
- *   - isBuiltIn (boolean — caller passes false for customs; built-in
- *     overrides go through updateDistributionPreset with a `builtin-*` id)
- *   - createdBy (auto-stamped from actor)
- *   - createdAt (server timestamp)
+ * Field shape must stay identical to `useProjectDistributionPresets.ts`.
  */
 
 import { FieldValue } from 'firebase-admin/firestore';
@@ -61,11 +47,7 @@ function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
-/**
- * Strip undefined values from an object. Firestore rejects undefined field
- * values; optional preset fields (project_url, extract_path, verify_files,
- * description) come through as undefined when the caller leaves them blank.
- */
+/** Firestore rejects undefined; blank optional preset fields arrive as such. */
 function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
@@ -78,7 +60,6 @@ export async function createDistributionPreset(
   ctx: CreateDistributionPresetContext,
   input: CreateDistributionPresetInput,
 ): Promise<CreateDistributionPresetResult> {
-  // ── validation ──────────────────────────────────────────────────────────
   if (typeof input.name !== 'string' || input.name.trim().length === 0) {
     throw new DistributionPresetValidationError('name', 'name is required and must be a non-empty string');
   }
@@ -111,7 +92,6 @@ export async function createDistributionPreset(
     );
   }
 
-  // ── firestore write ─────────────────────────────────────────────────────
   const presetId = `projdist-${slug}-${Date.now()}`;
   const db = getAdminDb();
   const presetRef = db

@@ -1,12 +1,8 @@
-//! Restart policy and child-process mechanics.
+//! Restart policy and child-process mechanics. The policy half is pure and
+//! unit-tested; the mechanics half is the thin `std::process` layer that
+//! launches the agent and waits on it.
 //!
-//! The policy half is pure and unit-tested; the mechanics half is the thin
-//! layer of `std::process` that launches the agent and waits on it.
-//!
-//! ## The exit-code contract
-//!
-//! `owlette_service.py` chooses its exit code deliberately and the host must
-//! honour every one of them:
+//! Exit-code contract with `owlette_service.py` — the host honours every code:
 //!
 //! | code | meaning | host response |
 //! |------|---------|---------------|
@@ -15,9 +11,9 @@
 //! | 0    | clean exit | stop the service — NSSM's `AppExit 0 Exit` |
 //! | else | crash | relaunch, with crash-loop backoff |
 //!
-//! An immediate relaunch for 42/43 is the point: those are Owlette restarting
-//! itself, the dashboard is told the restart was intentional, and a delay there
-//! is dead air on a machine that is supposed to be supervising a show.
+//! 42/43 relaunch with no delay on purpose: Owlette is restarting itself, the
+//! dashboard already knows it was intentional, and a delay is dead air on a
+//! machine that is supposed to be supervising a show.
 
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -33,10 +29,9 @@ pub const EXIT_RESTART_FLAG: i32 = 42;
 /// ...and with this when the self-restart watchdog fired.
 pub const EXIT_WATCHDOG_RESTART: i32 = 43;
 
-/// Delay before relaunching after a crash. NSSM's `AppRestartDelay` was 5000 ms
-/// and this is the same number: long enough that a tight failure (a missing
-/// DLL, a syntax error) cannot spin the CPU, short enough that a real crash is
-/// invisible on the dashboard.
+/// Delay before relaunching after a crash — NSSM's `AppRestartDelay` was the
+/// same 5000 ms: too long for a tight failure (missing DLL, syntax error) to
+/// spin the CPU, too short for a real crash to show on the dashboard.
 pub const BASE_RESTART_DELAY: Duration = Duration::from_secs(5);
 
 /// Delay once the child is in a crash loop.
@@ -45,31 +40,29 @@ pub const CRASH_LOOP_DELAY: Duration = Duration::from_secs(60);
 /// How many exits of one kind inside [`RESTART_WINDOW`] count as a loop.
 pub const RESTART_LOOP_THRESHOLD: usize = 5;
 
-/// The sliding window a loop is measured over. Replaces NSSM's `AppThrottle`
-/// (10 s), which only ever looked at the single most recent run and so could
-/// not tell "crashed once on boot" from "crashing every eight seconds forever".
+/// Sliding window a loop is measured over. NSSM's `AppThrottle` (10 s) looked
+/// only at the most recent run, so it could not tell "crashed once on boot"
+/// from "crashing every eight seconds forever".
 pub const RESTART_WINDOW: Duration = Duration::from_secs(5 * 60);
 
 /// How often the child is polled, both while running and while stopping.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-/// How long the child is given to exit on its own after the service is told to
-/// stop, before the host terminates it.
+/// How long the child may exit on its own after a stop, before the host kills it.
 ///
-/// The agent's SCM stop watcher polls the service state every 250 ms and runs
-/// `graceful_shutdown()` — flush `online: false`, log `agent_stopped`, record a
-/// clean external stop — the moment the host reports STOP_PENDING. That takes
-/// well under a second in the field. Twenty seconds is four times NSSM's entire
-/// stop budget (three 1500 ms attempts, then terminate at ~4.5 s), which is the
-/// budget the 2026-08-13 silent-stop incident overran.
+/// The agent's SCM stop watcher polls every 250 ms and runs `graceful_shutdown()`
+/// (flush `online: false`, log `agent_stopped`, record a clean external stop) as
+/// soon as the host reports STOP_PENDING — well under a second in the field. 20 s
+/// is four times NSSM's entire stop budget, which the 2026-08-13 silent-stop
+/// incident overran.
 pub const CHILD_STOP_GRACE: Duration = Duration::from_secs(20);
 
 /// How long the host waits for a terminated child to actually go away.
 pub const CHILD_KILL_WAIT: Duration = Duration::from_secs(5);
 
-/// `CREATE_NO_WINDOW`. NSSM's `AppNoConsole 1`: the agent is a console program
-/// with all three standard handles redirected, and it must never flash a window
-/// on a machine whose whole job is to display something else.
+/// `CREATE_NO_WINDOW`, NSSM's `AppNoConsole 1`: the agent is a console program
+/// with all three handles redirected and must never flash a window on a machine
+/// whose whole job is displaying something else.
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// What a child's exit means.
@@ -94,8 +87,7 @@ pub fn classify(code: i32) -> ChildOutcome {
 }
 
 /// How long to wait before relaunching, or `None` when the service should stop.
-///
-/// `recent` is how many exits of this kind (including this one) fall inside
+/// `recent` counts exits of this kind, including this one, inside
 /// [`RESTART_WINDOW`].
 pub fn restart_delay(outcome: ChildOutcome, recent: usize) -> Option<Duration> {
   match outcome {
@@ -115,9 +107,9 @@ pub fn crash_backoff(recent: usize) -> Duration {
   }
 }
 
-/// Backoff after an Owlette-initiated restart: none, until it starts to look
-/// like a storm, and then only the ordinary delay. A self-restart is not a
-/// fault and must not be penalised like one — but it does not get to spin.
+/// Backoff after an Owlette-initiated restart: none until it starts to look like
+/// a storm, then only the ordinary delay. A self-restart is not a fault and must
+/// not be penalised like one — but it does not get to spin.
 pub fn self_restart_backoff(recent: usize) -> Duration {
   if recent >= RESTART_LOOP_THRESHOLD {
     BASE_RESTART_DELAY
@@ -260,8 +252,8 @@ mod tests {
     let mut window = RestartWindow::new(Duration::from_secs(300));
     let start = Instant::now();
 
-    // Five crashes inside five minutes: the fifth trips the threshold, and the
-    // count it returns is what the backoff is decided from.
+    // Five crashes inside five minutes: the fifth trips the threshold, and its
+    // returned count is what the backoff is decided from.
     let mut count = 0;
     for (index, offset) in [0u64, 10, 20, 30, 40].iter().enumerate() {
       count = window.record(start + Duration::from_secs(*offset));

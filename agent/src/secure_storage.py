@@ -29,7 +29,6 @@ import shared_utils
 
 logger = logging.getLogger(__name__)
 
-# Token storage file location
 TOKEN_FILE_NAME = ".tokens.enc"  # Hidden file in config directory
 
 
@@ -49,7 +48,7 @@ class SecureStorage:
             config_dir: Directory for token file (default: C:\\ProgramData\\Owlette)
         """
         if config_dir is None:
-            # Use ProgramData directory - accessible by both regular users and SYSTEM
+            # ProgramData: reachable by both regular users and SYSTEM.
             program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
             config_dir = Path(program_data) / "Owlette"
 
@@ -63,13 +62,11 @@ class SecureStorage:
         try:
             import platform
 
-            # Get Windows MachineGuid - stable across reboots and user contexts
-            # This is preferred over uuid.getnode() which can return different
-            # MAC addresses after a reboot due to network adapter enumeration changes
+            # MachineGuid is stable across reboots and user contexts, unlike
+            # uuid.getnode(), whose MAC changes with adapter enumeration order.
             machine_id = self._get_machine_guid()
             hostname = platform.node()
 
-            # Derive encryption key from machine identifiers
             key_material = f"{machine_id}:{hostname}:owlette-agent".encode()
             key_hash = hashlib.sha256(key_material).digest()
             key = base64.urlsafe_b64encode(key_hash)
@@ -105,7 +102,7 @@ class SecureStorage:
         except Exception as e:
             logger.warning(f"Failed to read MachineGuid from registry: {e}")
 
-        # Fallback to MAC address (less reliable but works on non-Windows)
+        # Non-Windows fallback; less stable.
         import uuid
         logger.warning("Falling back to uuid.getnode() for encryption key")
         return str(uuid.getnode())
@@ -122,7 +119,6 @@ class SecureStorage:
             if not encrypted_data:
                 return {}
 
-            # Decrypt and parse JSON
             decrypted_data = self._fernet.decrypt(encrypted_data)
             return json.loads(decrypted_data.decode('utf-8'))
 
@@ -133,31 +129,27 @@ class SecureStorage:
     def _save_data(self, data: dict) -> bool:
         """Encrypt and save token data to file."""
         try:
-            # Ensure config directory exists
             self.config_dir.mkdir(parents=True, exist_ok=True)
             logger.debug(f"Saving token data to {self.token_file}")
 
-            # Clear hidden attribute if file exists (so we can overwrite it)
+            # Hidden files cannot be overwritten in place.
             if os.name == 'nt' and self.token_file.exists():
                 import ctypes
                 FILE_ATTRIBUTE_NORMAL = 0x80
                 ctypes.windll.kernel32.SetFileAttributesW(str(self.token_file), FILE_ATTRIBUTE_NORMAL)
 
-            # Encrypt data
             json_data = json.dumps(data).encode('utf-8')
             encrypted_data = self._fernet.encrypt(json_data)
             logger.debug(f"Data encrypted, size: {len(encrypted_data)} bytes")
 
-            # Write to file
             with open(self.token_file, 'wb') as f:
                 f.write(encrypted_data)
 
-            # Set file as hidden
             if os.name == 'nt':
                 import ctypes
                 FILE_ATTRIBUTE_HIDDEN = 0x02
                 FILE_ATTRIBUTE_ARCHIVE = 0x20
-                # Use hidden + archive (keeps file writable for next time)
+                # +archive keeps the file writable next time.
                 ctypes.windll.kernel32.SetFileAttributesW(str(self.token_file), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE)
 
             logger.debug("Token data saved successfully")
@@ -351,7 +343,6 @@ class SecureStorage:
         return has_token and has_site
 
 
-# Singleton instance for easy access
 _storage_instance = None
 
 

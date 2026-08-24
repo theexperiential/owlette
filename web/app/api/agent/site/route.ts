@@ -5,50 +5,28 @@ import { apiError } from '@/lib/apiErrorResponse';
 import { problemForbidden, problemNotFound, problemUnauthorized } from '@/lib/apiErrors';
 
 /**
- * GET /api/agent/site
+ * GET /api/agent/site — display name of the site an agent is paired to, so the
+ * desktop app can say "TEC-A4D is connected to TEC". Read once per connect by
+ * `firebase_client._fetch_site_metadata` and cached agent-side.
  *
- * Resolves the *display name* of the site an agent is paired to, so the
- * desktop app can say "TEC-A4D is connected to TEC" instead of showing the
- * raw site id. Read once per connect by `firebase_client._fetch_site_metadata`
- * and cached agent-side — there is no polling loop here to protect.
+ * Auth: `Authorization: Bearer <agent-firebase-id-token>`. Exists because
+ * firestore.rules grants an agent its machine subtree only
+ * (`agentCanAccessMachine`), so a direct read of `sites/{siteId}` 403s.
  *
- * Request headers:
- * - Authorization: Bearer <agent-firebase-id-token>
+ * 200 `{ name: string | null }` — null when the site has no name, so the caller
+ * falls back to the id rather than rendering "null". 401 missing/invalid bearer,
+ * 403 non-agent token or no `site_id` claim, 404 site gone.
  *
- * Response (200):
- * - name: string | null — null when the site exists but has no name set, so
- *   the caller falls back to the site id rather than rendering "null".
+ * NAME ONLY, never the whole document: the site doc also carries `timezone`,
+ * which the agent reads into `site_timezone` and which — once non-None — flips
+ * schedule evaluation for every process from machine-local to site time. That
+ * fleet-wide change is DEFERRED, so do not add `timezone` or return the raw doc
+ * unless that change is what's being shipped.
  *
- * Errors (RFC 7807 problem+json): 401 missing/invalid bearer, 403 non-agent
- * token or a token with no `site_id` claim, 404 the claimed site is gone.
- *
- * ── why this endpoint exists at all ──────────────────────────────────────
- * Agents cannot read `sites/{siteId}` directly. `firestore.rules` grants an
- * agent access to its machine subtree only (`agentCanAccessMachine`), so the
- * agent's REST read of the site document 403s. Widening that rule would work,
- * and is deliberately NOT the fix — see below.
- *
- * ── why NAME ONLY, and never the whole document ──────────────────────────
- * The site document also carries `timezone`, which the agent reads into
- * `site_timezone` and which — the moment it is non-None — flips schedule
- * evaluation for every process on the machine from machine-local time to
- * site time (`shared_utils.is_within_schedule(..., _cached_site_timezone)`).
- * That is a deliberate, fleet-wide behavior change that has been DEFERRED; it
- * is a decision, not something that should arrive as a side effect of adding
- * a cosmetic label to the footer. So this route projects exactly one field.
- * Adding `timezone` (or returning the raw doc) here silently activates
- * site-timezone scheduling on every paired machine — don't, unless that
- * change is the thing being shipped.
- *
- * ── authorization ────────────────────────────────────────────────────────
- * The site is taken from the token's own `site_id` claim, minted by
- * `/api/agent/auth/device-code/poll` alongside `role: 'agent'` and
- * `machine_id`. It is never accepted from the query string or body, so an
- * agent token can only ever resolve the name of its own site and there is no
- * id to validate or mismatch-check. `machine_id` is not consulted: the name
- * is site-scoped, identical for every machine in the site.
- *
- * No cache headers: the agent caches the answer for the life of a connection.
+ * The site comes from the token's own `site_id` claim (minted by
+ * /api/agent/auth/device-code/poll), never from query or body, so a token can
+ * only resolve its own site. `machine_id` is irrelevant — the name is
+ * site-scoped. No cache headers; the agent caches for the connection's life.
  */
 export const GET = withRateLimit(
   async (request: NextRequest) => {

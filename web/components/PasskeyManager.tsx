@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Fingerprint, Pencil, Trash2, Plus, Check, X, Smartphone, Monitor } from 'lucide-react';
+import { AlertTriangle, Fingerprint, Pencil, Trash2, Plus, Check, X, Smartphone, Monitor } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
@@ -14,16 +14,45 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { usePasskeys } from '@/hooks/usePasskeys';
+import { isMfaChallengeRequired, usePasskeys } from '@/hooks/usePasskeys';
 import { LoadingWord } from '@/components/LoadingWord';
 import { toast } from '@/lib/toast';
 
 interface PasskeyManagerProps {
   userId: string;
   compact?: boolean;
+  /**
+   * Fired after register/delete so a parent showing the whole factor inventory
+   * can re-read it — `usePasskeys` refreshes only its own rows, so the parent's
+   * counts would otherwise go stale. Optional: /setup-2fa doesn't pass it.
+   */
+  onChange?: () => void;
+  /**
+   * Fired when the enrollment gate refuses registration (403
+   * `mfa_challenge_required`), not the authenticator. The parent owns recovery
+   * because the challenge covers every factor. Optional — the message is
+   * toasted regardless, so nothing is swallowed.
+   */
+  onChallengeRequired?: () => void;
+  /**
+   * The account holds exactly one second factor overall. Passed in rather than
+   * inferred from `passkeys.length` — only a parent sees the TOTP leg.
+   *
+   * Changes the remove-dialog copy and NOTHING else. Removing the last factor
+   * is approved: the account re-arms `requiresMfaSetup`. Never make this
+   * disable the button — a user must always be able to remove a credential
+   * they no longer hold.
+   */
+  isLastFactor?: boolean;
 }
 
-export function PasskeyManager({ userId, compact = false }: PasskeyManagerProps) {
+export function PasskeyManager({
+  userId,
+  compact = false,
+  onChange,
+  onChallengeRequired,
+  isLastFactor = false,
+}: PasskeyManagerProps) {
   const {
     passkeys,
     loading,
@@ -58,11 +87,15 @@ export function PasskeyManager({ userId, compact = false }: PasskeyManagerProps)
       toast.success('passkey registered successfully');
       setShowNameInput(false);
       setNewPasskeyName('');
+      onChange?.();
     } catch (err) {
       if (err instanceof Error && err.name === 'NotAllowedError') {
         toast.error('passkey registration was cancelled');
       } else {
         toast.error(err instanceof Error ? err.message : 'failed to register passkey');
+        if (isMfaChallengeRequired(err)) {
+          onChallengeRequired?.();
+        }
       }
     } finally {
       setRegistering(false);
@@ -87,6 +120,7 @@ export function PasskeyManager({ userId, compact = false }: PasskeyManagerProps)
       await deletePasskey(deleteTarget.id);
       toast.success('passkey removed');
       setDeleteTarget(null);
+      onChange?.();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'failed to delete passkey');
     } finally {
@@ -265,7 +299,6 @@ export function PasskeyManager({ userId, compact = false }: PasskeyManagerProps)
         </CardContent>
       </Card>
 
-      {/* Delete confirmation dialog */}
       <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent className="border-border bg-secondary text-white sm:max-w-sm">
           <DialogHeader>
@@ -275,6 +308,16 @@ export function PasskeyManager({ userId, compact = false }: PasskeyManagerProps)
               you won&apos;t be able to sign in with this passkey anymore.
             </DialogDescription>
           </DialogHeader>
+          {/* Warn, never block — removal is always allowed. */}
+          {isLastFactor && passkeys.length === 1 && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+              <p className="text-xs text-amber-200">
+                this is your last second factor — you&apos;ll be asked to set one up again
+                next time you sign in.
+              </p>
+            </div>
+          )}
           <DialogFooter className="gap-2 sm:gap-0">
             <Button
               variant="ghost"

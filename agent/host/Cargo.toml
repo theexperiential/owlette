@@ -2,7 +2,7 @@
 name = "owlette-host"
 version = "3.0.0"
 description = "Windows service host for the owlette agent"
-authors = ["The Experiential Company"]
+authors = ["Tridant Inc."]
 license = "FSL-1.1-Apache-2.0"
 repository = "https://github.com/theexperiential/owlette"
 edition = "2021"

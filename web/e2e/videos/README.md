@@ -23,7 +23,7 @@ npm run videos -- --grep "dashboard" # one scene (grep matches the test title)
 npm run videos:debug                 # headed + inspector, to tune selectors/pacing
 ```
 
-Prereqs are identical to the E2E suite (JDK 21, firebase-tools 13, chromium installed).
+Prereqs are identical to the E2E suite (JDK 21, firebase-tools 15, chromium installed).
 Output: `web/e2e/.output/videos/<scene>.webm`.
 
 ## How a scene works

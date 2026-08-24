@@ -1,7 +1,6 @@
 /**
- * Seed helpers — create deterministic test data in the Firestore + Auth
- * emulators. Called by global-setup; also usable from individual specs
- * when a test needs to tweak the baseline.
+ * Deterministic test data for the Firestore + Auth emulators. Called by
+ * global-setup; specs may also call these to extend the baseline.
  */
 
 import { FieldValue } from 'firebase-admin/firestore';
@@ -19,10 +18,9 @@ export interface TestUser {
 }
 
 /**
- * The canonical test-user fleet. Mirrors the convention in scripts/test-rules.mjs.
- * - member-uid is on site-A only
- * - admin-uid is on site-A only (site-admin, not platform superadmin)
- * - super-uid has empty sites[] but gets god-mode via canAccessSite fall-through
+ * Canonical test-user fleet; mirrors scripts/test-rules.mjs. admin-uid is a
+ * site-admin on site-A, not a platform superadmin. super-uid has empty sites[]
+ * and reaches everything via the canAccessSite fall-through.
  */
 export const TEST_USERS: Record<TestRole, TestUser> = {
   member: {
@@ -52,18 +50,15 @@ export const TEST_USERS: Record<TestRole, TestUser> = {
 };
 
 /**
- * Seed a single user — creates the Firebase Auth account (if missing) and
- * the Firestore users/{uid} doc.
- *
- * MFA is explicitly pre-satisfied (mfaEnrolled=false, requiresMfaSetup=false)
- * so the redirect gates in dashboard/page.tsx + login/page.tsx don't trip
- * the E2E flow.
+ * Create the Auth account (if missing) and the Firestore users/{uid} doc.
+ * MFA is pre-satisfied so the redirect gates in dashboard/ and login/ don't
+ * trip the E2E flow.
  */
 export async function seedUser(user: TestUser): Promise<void> {
   const auth = getAdminAuth();
   const db = getAdminDb();
 
-  // Create Auth user (idempotent — if already exists, update)
+  // Idempotent: update if the uid/email already exists.
   try {
     await auth.createUser({
       uid: user.uid,
@@ -86,7 +81,6 @@ export async function seedUser(user: TestUser): Promise<void> {
     }
   }
 
-  // Seed the Firestore users/{uid} doc with MFA bypassed.
   await db.collection('users').doc(user.uid).set({
     email: user.email,
     role: user.role,
@@ -94,9 +88,13 @@ export async function seedUser(user: TestUser): Promise<void> {
     displayName: user.displayName ?? '',
     createdAt: new Date(),
     // MFA bypass — avoids the /setup-2fa and /verify-2fa redirect gates.
+    // `mfaFactors` is what the app reads (lib/mfaFactors.server.ts derives
+    // mfaEnrolled from it); seed it explicitly or the fixture looks like an
+    // account whose inventory was never computed. Legacy `passkeyEnrolled` is
+    // deliberately not seeded — nothing reads it any more.
     mfaEnrolled: false,
     requiresMfaSetup: false,
-    passkeyEnrolled: false,
+    mfaFactors: { totp: false, passkeys: 0 },
     preferences: {
       temperatureUnit: 'C',
       timezone: 'UTC',
@@ -136,11 +134,7 @@ export async function seedSite(site: TestSite): Promise<void> {
   });
 }
 
-/**
- * Seed the entire canonical baseline: three users + two sites. Called by
- * global-setup. Individual specs can extend this by calling seedMachine,
- * seedDeployment, etc. in their own setup.
- */
+/** The canonical baseline: three users + two sites. Called by global-setup. */
 export async function seedBaseline(): Promise<void> {
   // Sites first — some rules guards reference site docs via get().
   await Promise.all(TEST_SITES.map(seedSite));
@@ -150,32 +144,18 @@ export async function seedBaseline(): Promise<void> {
 export interface SeedMachineOptions {
   /** Custom display name (defaults to machineId). */
   displayName?: string;
-  /**
-   * Seconds-to-backdate the `lastHeartbeat` field. Defaults to 0 (now),
-   * which renders the machine as online. Pass >300 to simulate a stale
-   * heartbeat (offline via the 300s threshold in useMachines).
-   */
+  /** Seconds to backdate `lastHeartbeat`. >300 reads as offline (useMachines). */
   heartbeatOffsetSec?: number;
-  /**
-   * Optional override for the number of monitors in the seeded display
-   * profile. Defaults to 2 (primary + secondary). Zero = no display
-   * subdoc written (machine card shows "no display data reported").
-   */
+  /** Monitors in the display profile. Default 2; 0 writes no display subdoc. */
   monitorCount?: number;
   /**
-   * Simulate an in-flight reboot. When set, writes `rebooting: true` +
-   * `rebootScheduledAt` (offset seconds into the future) so the
-   * MachineStatusPill renders its clickable countdown variant for
-   * site-admins and the text-only variant for non-admins. Defaults to
-   * undefined (no active reboot).
+   * Seconds until an in-flight reboot fires. Writes `rebooting` +
+   * `rebootScheduledAt` so MachineStatusPill renders its countdown variant.
    */
   rebootingInSec?: number;
   /**
-   * Seed a "reboot pending" state — the amber banner on the machine card
-   * with approve/dismiss buttons, which the agent writes after a process
-   * crashes. Only the card view renders this banner. Pass `true` for a
-   * sensible default (`active: true`, generic reason) or an object for
-   * full control over the payload.
+   * The amber "reboot pending" banner (card view only), which the agent writes
+   * after a process crash. `true` for defaults, or an object to override.
    */
   rebootPending?:
     | boolean
@@ -186,20 +166,10 @@ export interface SeedMachineOptions {
 }
 
 /**
- * Seed a machine under `sites/{siteId}/machines/{machineId}` with enough
- * state for the dashboard to render its card AND for the DisplayLayoutPanel
- * to mount with a real display profile when the user clicks the display
- * chart.
- *
- * Writes:
- *   - `sites/{siteId}/machines/{machineId}` — status doc (lastHeartbeat,
- *     online, minimal metrics scaffolding).
- *   - `sites/{siteId}/machines/{machineId}/hardware/display` — the
- *     DisplayProfile that `useDisplayState` subscribes to, with N monitors.
- *
- * The Admin SDK bypasses firestore.rules, so this works regardless of the
- * caller's auth state. Safe to call multiple times — each call overwrites
- * the prior doc.
+ * Seed a machine with enough state for the dashboard card AND for
+ * DisplayLayoutPanel to mount a real profile. Writes the status doc plus
+ * `hardware/display` (what `useDisplayState` subscribes to). The Admin SDK
+ * bypasses firestore.rules, so auth state is irrelevant. Overwrites on re-run.
  */
 export async function seedMachine(
   siteId: string,
@@ -211,10 +181,8 @@ export async function seedMachine(
   const heartbeat = nowSec - (opts.heartbeatOffsetSec ?? 0);
   const monitorCount = opts.monitorCount ?? 2;
 
-  // Optional reboot state — mirrors the fields the agent writes during an
-  // in-flight reboot. Using a future `rebootScheduledAt` (Unix seconds) lights
-  // up the countdown path in MachineStatusPill; setting `rebooting: true`
-  // keeps the pill in "active" mode even if the clock moves past the target.
+  // Mirrors what the agent writes mid-reboot. `rebootScheduledAt` is Unix
+  // seconds; `rebooting: true` keeps the pill active past the target time.
   const rebootingExtras =
     typeof opts.rebootingInSec === 'number'
       ? {
@@ -223,10 +191,6 @@ export async function seedMachine(
         }
       : {};
 
-  // Optional reboot-pending banner — the agent writes this shape after a
-  // process crash triggers the "needs reboot" pathway. Accept either `true`
-  // for a sensible default payload or an object to override processName /
-  // reason.
   const rebootPendingExtras = opts.rebootPending
     ? {
         rebootPending: {
@@ -244,10 +208,8 @@ export async function seedMachine(
       }
     : {};
 
-  // Status doc — the dashboard's useMachines listener materializes this into
-  // the machine card. `online` + a fresh `lastHeartbeat` render the green
-  // status pill; empty `metrics` keeps the card minimal (no sparkline data
-  // required for the display-panel test).
+  // Status doc for useMachines. Empty `metrics` keeps the card minimal — the
+  // display-panel test needs no sparkline data.
   await db
     .collection('sites')
     .doc(siteId)
@@ -258,10 +220,8 @@ export async function seedMachine(
       lastHeartbeat: heartbeat,
       agent_version: '2.9.0',
       machine_timezone_iana: 'UTC',
-      // Wave 6.4 capability handshake — without this, the dashboard's
-      // recall button stays disabled with an "agent too old" tooltip,
-      // which would break every recall-related e2e spec. The agent
-      // writes this on every heartbeat in production.
+      // Without the capability handshake the recall button stays disabled on an
+      // "agent too old" tooltip, breaking every recall spec.
       capabilities: { displayRemoteApply: 1 },
       metrics: {
         schemaVersion: 2,
@@ -271,10 +231,9 @@ export async function seedMachine(
       ...rebootPendingExtras,
     });
 
-  // Display profile — subscribed by useDisplayState. Two dummy monitors at
-  // offset positions so the DisplayCanvas has something non-trivial to
-  // render. `edidHash` is the identity key used for drift matching; we
-  // pick stable synthetic values so re-runs are deterministic.
+  // Offset positions so DisplayCanvas has something non-trivial to render.
+  // `edidHash` is the drift-matching identity key — synthetic but stable, so
+  // re-runs are deterministic.
   if (monitorCount > 0) {
     const monitors = Array.from({ length: monitorCount }, (_, i) => ({
       id: `MONITOR\\TEST${i}`,
@@ -323,8 +282,7 @@ export interface SeedRoostOptions {
 }
 
 /**
- * Seed a roost doc at `sites/{siteId}/roosts/{roostId}`. Writes only the
- * roost-level fields — version pointers stay null until `seedVersion` /
+ * Roost doc only — version pointers stay null until `seedVersion` /
  * `seedRoostWithVersionHistory` populate them. Idempotent via merge.
  */
 export async function seedRoost(
@@ -377,9 +335,8 @@ export interface SeedVersionOptions {
 }
 
 /**
- * Seed a version doc at `sites/{siteId}/roosts/{roostId}/versions/{versionId}`.
- * Does NOT update the roost doc's currentVersionId — use
- * `seedRoostWithVersionHistory` for the full happy-path setup. Idempotent.
+ * Version doc only. Does NOT touch the roost's currentVersionId — use
+ * `seedRoostWithVersionHistory` for the full happy path. Idempotent.
  */
 export async function seedVersion(
   siteId: string,
@@ -432,9 +389,8 @@ export interface SeedRoostWithVersionHistoryOptions {
 }
 
 /**
- * Convenience factory: seed a roost plus N versions, then point the roost's
- * currentVersionId / previousVersionId / versionCounter at the head. Mirrors
- * the post-publish state of a roost that has been pushed `versionCount` times.
+ * Roost + N versions, with the roost's pointers aimed at the head — the state
+ * of a roost pushed `versionCount` times.
  */
 export async function seedRoostWithVersionHistory(
   siteId: string,
@@ -456,8 +412,7 @@ export async function seedRoostWithVersionHistory(
 
   const versionIdFor = (n: number) => `vrs_${roostId}_v${n}`;
 
-  // Ascending order so parentVersionId chains are stable + createdAt
-  // timestamps reflect publish order (head = newest).
+  // Ascending so parentVersionId chains and createdAt order match publish order.
   const baseTime = Date.now() - opts.versionCount * 1000;
   for (let n = 1; n <= opts.versionCount; n++) {
     await seedVersion(siteId, roostId, {
@@ -495,9 +450,8 @@ export async function seedRoostWithVersionHistory(
 }
 
 /**
- * Seed `siteChunks/{digest}` docs so server-side chunk-presence checks during
- * version finalisation see the referenced hashes as already-uploaded. Each
- * doc carries the minimum surface a `hasChunk()` lookup needs.
+ * `siteChunks/{digest}` docs so version finalisation's chunk-presence check
+ * sees the hashes as already uploaded. Minimum surface a `hasChunk()` needs.
  */
 export async function seedChunks(siteId: string, digests: string[]): Promise<void> {
   if (digests.length === 0) return;

@@ -19,9 +19,6 @@ except ImportError:
     pytest.skip("watchdog modules not importable", allow_module_level=True)
 
 
-# =============================================================================
-# _should_restart — pure decision function
-# =============================================================================
 class TestShouldRestart:
     """The decision function must be deterministic. Callers pass all time inputs
     so tests don't depend on real clocks or sleep.
@@ -157,9 +154,6 @@ class TestShouldRestart:
         assert time_called['n'] == 0, "pure function should not call time.time()"
 
 
-# =============================================================================
-# _merge_watchdog_config — default merge logic
-# =============================================================================
 class TestMergeConfig:
     def test_none_returns_defaults(self):
         merged = _merge_watchdog_config(None)
@@ -197,15 +191,11 @@ class TestMergeConfig:
         assert merged2['thresholds']['failure_seconds'] == WATCHDOG_DEFAULTS['thresholds']['failure_seconds']
 
 
-# =============================================================================
-# _emergency_kill_active — env var + sentinel file
-# =============================================================================
 class TestEmergencyKill:
     def test_neither_signal_returns_false(self, monkeypatch, tmp_path):
         monkeypatch.delenv("OWLETTE_DISABLE_WATCHDOG_RESTART", raising=False)
         # Point the sentinel at a file that doesn't exist
         from connection_manager import _EMERGENCY_SENTINEL_PATH
-        # Save and override
         monkeypatch.setattr('connection_manager._EMERGENCY_SENTINEL_PATH',
                             str(tmp_path / 'nope'))
         assert _emergency_kill_active() is False
@@ -226,9 +216,6 @@ class TestEmergencyKill:
         assert _emergency_kill_active() is True
 
 
-# =============================================================================
-# watchdog_state — budget and history persistence
-# =============================================================================
 
 @pytest.fixture
 def temp_state(monkeypatch, tmp_path):
@@ -269,7 +256,6 @@ class TestConsumeBudget:
         assert len(state['restarts']) == 1  # just our new entry
 
     def test_corrupt_json_recovers_to_empty(self, temp_state):
-        # Write garbage
         with open(temp_state['budget'], 'w') as f:
             f.write("{not valid json")
         # Should treat as empty and allow
@@ -296,7 +282,6 @@ class TestConsumeBudget:
         assert len(state['restarts']) == 1
 
     def test_missing_file_treated_as_empty(self, temp_state):
-        # Ensure file really doesn't exist
         assert not os.path.exists(temp_state['budget'])
         assert watchdog_state.consume_budget(self.DEFAULT_BUDGET) is True
 
@@ -312,7 +297,6 @@ class TestHistory:
     def test_mark_submitted_hides_entry_from_pending(self, temp_state):
         watchdog_state.append_history({'restart_id': 'abc-1'})
         watchdog_state.append_history({'restart_id': 'abc-2'})
-        # Submit first
         assert watchdog_state.mark_submitted('abc-1', log_id='log-1') is True
         pending = watchdog_state.read_pending_history()
         assert len(pending) == 1

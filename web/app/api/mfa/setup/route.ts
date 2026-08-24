@@ -1,15 +1,12 @@
 /**
- * MFA Setup API
+ * POST /api/mfa/setup — `{userId, email}` → `{secret, qrCodeUrl}`.
  *
- * Generates TOTP secret and QR code for 2FA setup
- * The secret is temporarily stored server-side until verification
+ * The secret lands in `mfa_pending` only; /api/mfa/verify-setup does the real
+ * enrollment write.
  *
- * POST /api/mfa/setup
- * Request: { userId: string, email: string }
- * Response: { secret: string, qrCodeUrl: string }
- *
- * SECURITY: The secret returned here is for display only.
- * The actual storage happens in /api/mfa/verify-setup after verification.
+ * Gated: adding a second factor needs an MFA-verified session, so a stolen
+ * session can't enroll its own (see lib/mfaEnrollmentGate.server.ts). Gating at
+ * step one fails with an actionable code instead of after a QR scan.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -19,13 +16,13 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, assertActiveUser, requireSessionUser } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { checkMfaEnrollmentGate } from '@/lib/mfaEnrollmentGate.server';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     const body = await request.json();
     const { userId, email } = body;
 
-    // Validate inputs
     if (!userId || typeof userId !== 'string') {
       return NextResponse.json(
         { error: 'Invalid user ID' },
@@ -43,7 +40,38 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     await requireSessionUser(request, userId);
     await assertActiveUser(userId);
 
-    // Generate TOTP secret
+    // Open while the account has no factor (mandatory-setup path).
+    const gate = await checkMfaEnrollmentGate(userId);
+    if (gate.denied) {
+      return gate.denied;
+    }
+
+    const db = getAdminDb();
+
+    // Idempotent by design. setup-2fa fires this from an effect, so remounts
+    // POST again; minting per call let the LAST `mfa_pending` write win while
+    // the user scanned the FIRST QR, and verify-setup then rejected a correct
+    // code (flaked the setup-2fa e2e ~50%). Expired pendings still fall through.
+    const pendingRef = db.collection('mfa_pending').doc(userId);
+    const pending = await pendingRef.get();
+    const pendingData = pending.exists ? pending.data() : undefined;
+    const pendingExpiresAt =
+      pendingData?.expiresAt?.toDate?.() ??
+      (pendingData?.expiresAt ? new Date(pendingData.expiresAt) : undefined);
+    const reusableSecret =
+      typeof pendingData?.secret === 'string' &&
+      pendingExpiresAt instanceof Date &&
+      pendingExpiresAt > new Date()
+        ? pendingData.secret
+        : null;
+
+    if (reusableSecret) {
+      return NextResponse.json({
+        secret: reusableSecret,
+        qrCodeUrl: await generateQRCode(email, reusableSecret),
+      });
+    }
+
     let secret: string;
     try {
       secret = generateTOTPSecret();
@@ -52,7 +80,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       throw e;
     }
 
-    // Generate QR code
     let qrCodeUrl: string;
     try {
       qrCodeUrl = await generateQRCode(email, secret);
@@ -61,10 +88,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       throw e;
     }
 
-    // Store pending setup in Firestore (temporary, expires in 10 minutes)
     try {
-      const db = getAdminDb();
-      await db.collection('mfa_pending').doc(userId).set({
+      await pendingRef.set({
         secret,
         email,
         createdAt: FieldValue.serverTimestamp(),

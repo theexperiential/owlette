@@ -1,32 +1,18 @@
 /**
  * DELETE /api/sites/{siteId}/members/{uid}
  *
- * Remove a user from a site by removing siteId from `users/{uid}.sites[]`
- * via `arrayRemove`. Refuses to remove the site owner — the user-DELETE
- * flow with `?successorUid=<uid>` is the path for ownership transfer.
+ * Removes siteId from `users/{uid}.sites[]` via `arrayRemove`. Refuses the site
+ * owner — ownership transfer is user-DELETE with `?successorUid=<uid>`.
  *
- * Talons the departing member authored: the removal touches nothing under
- * `sites/{siteId}`, so their talons survive it — but a talon with a hoot
- * output re-resolves its AUTHOR's site access on every run, so it starts
- * failing silently the moment they lose access. Two affordances, neither of
- * which changes the existing contract:
+ * Authored talons survive the removal (they are site-owned), but a talon with a
+ * hoot output re-resolves its AUTHOR's site access every run, so it starts
+ * failing silently. Hence `talonCount` always in the response, and
+ * `?talonSuccessorUid=<uid>` to move them BEFORE the membership write.
+ * Reassignment is never implicit — silently rewriting authorship on someone
+ * else's automations is worse than an orphan the operator was told about.
  *
- *   - `talonCount` is always in the response, so a client that removes a
- *     member blind still learns what it just broke;
- *   - `?talonSuccessorUid=<uid>` moves those talons to a successor *before*
- *     the membership write, so the automation never has a moment where its
- *     author has no access.
- *
- * Reassignment deliberately does not happen implicitly: silently rewriting
- * authorship on someone else's automations is worse than an orphan an
- * operator was told about.
- *
- * True-idempotent: removing a user who isn't a member returns 200 with
- * `wasMember: false` (the arrayRemove is a no-op).
- *
+ * Idempotent: a non-member returns 200 with `wasMember: false`.
  * Auth: `requireSiteAuthAndScope(req, siteId, 'admin')`.
- *
- * api-sprint wave 3 track 3B (users-api / site-members).
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -136,22 +122,17 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
           : [];
         const wasMember = sites.includes(siteId);
 
-        // Read before the write: once `sites[]` no longer carries this site the
-        // count is still correct (talons are site-owned), but reading first
-        // keeps the number the caller is told about the one that was true when
-        // the decision was made.
+        // Read before the write so the reported count is the one that was true
+        // when the decision was made.
         const talonCount = await countTalonsAuthoredBy(db, siteId, uid);
 
-        // Reassign first. A failure here aborts the removal — better a member
-        // who is still on the site than automations pointing at someone who
-        // isn't.
+        // Reassign first; a failure aborts the removal. Better a member still
+        // on the site than automations pointing at someone who isn't.
         let reassignedTalonIds: string[] = [];
         if (talonSuccessorUid && talonCount > 0) {
-          // The wrapper authorized SITE_MEMBER_MANAGE, not TALON_MANAGE. Today
-          // the same role grants both, but rewriting talon authorship is a
-          // talon mutation and must be gated as one — otherwise a future
-          // matrix split would let member-management quietly become talon
-          // management.
+          // The wrapper authorized SITE_MEMBER_MANAGE, not TALON_MANAGE. Same
+          // role grants both today, but gate the talon mutation as a talon
+          // mutation or a future matrix split silently widens this endpoint.
           if (!hasCapability(ctx.actor, Capability.TALON_MANAGE, siteId)) {
             return problem({
               type: ProblemType.Forbidden,
@@ -216,8 +197,7 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
       },
     );
   } catch (err) {
-    // A rejected successor (deleted, not a member, under-privileged) has to
-    // read as a bad request against this endpoint, not a 500.
+    // A rejected successor is a bad request against this endpoint, not a 500.
     if (err instanceof TalonStoreError) {
       return talonStoreProblem(err, request.nextUrl.pathname);
     }

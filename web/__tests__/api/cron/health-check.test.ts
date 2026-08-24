@@ -2,7 +2,7 @@
 
 import { NextRequest } from 'next/server';
 
-// --- Mocks (declared before importing the route) -----------------------------
+// Mocks (declared before importing the route)
 
 const machineRefSet = jest.fn().mockResolvedValue(undefined);
 const siteRefSet = jest.fn().mockResolvedValue(undefined);
@@ -67,9 +67,8 @@ jest.mock('@/lib/webhookSender.server', () => ({
   fireWebhooks: (...args: unknown[]) => fireWebhooksMock(...args),
 }));
 
-// The matcher is exercised in `__tests__/lib/talons/matcher.test.ts`; here only
-// the tap's placement matters, and mocking it keeps the run engine (and the
-// `talons` subcollection it would query) out of this suite's firestore double.
+// The matcher has its own suite; only the tap's placement matters here, and mocking it
+// keeps the run engine (and its `talons` query) out of this suite's firestore double.
 jest.mock('@/lib/talons/matcher.server', () => ({
   tapTalonMatcher: (...args: unknown[]) => tapTalonMatcherMock(...args),
 }));
@@ -77,7 +76,7 @@ jest.mock('@/lib/talons/matcher.server', () => ({
 import { GET, classifyMachineHealth, stalePlannedDowntime } from '@/app/api/cron/health-check/route';
 import type { MachineHealthSnapshot } from '@/app/api/cron/health-check/route';
 
-// --- Helpers -----------------------------------------------------------------
+// Helpers
 
 const MIN = 60 * 1000;
 const NOW = 1_700_000_000_000; // fixed reference for the pure-function tests
@@ -108,7 +107,7 @@ function request(secret?: string) {
   });
 }
 
-// --- Pure decision logic (Fix A + B) -----------------------------------------
+// Pure decision logic (Fix A + B)
 
 describe('classifyMachineHealth', () => {
   it('ignores machines the agent reports offline', () => {
@@ -213,7 +212,7 @@ describe('classifyMachineHealth', () => {
   });
 });
 
-// --- Stale-latch clearing (Fix A, server-side authoritative clear) -----------
+// Stale-latch clearing (Fix A, server-side authoritative clear)
 
 describe('stalePlannedDowntime', () => {
   it('clears a shutdown latch once the window has elapsed past grace', () => {
@@ -272,7 +271,7 @@ describe('stalePlannedDowntime', () => {
   });
 });
 
-// --- GET handler wiring (seconds->ms extraction + side effects) --------------
+// GET handler wiring (seconds->ms extraction + side effects)
 
 describe('GET /api/cron/health-check', () => {
   const originalSecret = process.env.CRON_SECRET;
@@ -367,9 +366,9 @@ describe('GET /api/cron/health-check', () => {
   });
 
   it('taps the talon matcher once per not-responding machine (talons 2.3)', async () => {
-    // This cron is the ONLY dispatcher of `machine_offline` — a machine that is
-    // offline cannot report that it is — so a talon subscribed to it can only
-    // ever fire from here, and only for the machines that actually triggered.
+    // This cron is the ONLY dispatcher of `machine_offline` — an offline machine cannot
+    // report that it is — so a subscribed talon can only ever fire from here, and only
+    // for the machines that actually triggered.
     setSite({
       name: 'node-pa',
       health: {

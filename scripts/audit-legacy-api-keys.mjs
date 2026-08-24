@@ -1,35 +1,22 @@
 #!/usr/bin/env node
 /**
- * Legacy API Key Audit Script
+ * Legacy API key audit — READ-ONLY, no writes and no `--apply` flag; it emits a
+ * CSV plus a console summary for you to act on manually (notify, revoke, or
+ * backfill scopes in the dashboard).
  *
- * Enumerates API keys in Firestore and flags those that will be REJECTED
- * by the new apiAuth (Wave 1C, web v2.12.0):
- *   - keys with `scopes` missing or empty array → rejected (legacy bypass
- *     path was removed; only an explicit env-flagged allowlist resolves
- *     them, and even then `requireScope()` rejects on any scoped call)
- *   - keys with `revokedAt` set → already rejected (no action)
- *   - keys with `expiresAt` in the past → already rejected (no action)
- *   - keys with `retiresAt` in the past → already rejected (no action)
+ * Flags keys the post-2.12.0 apiAuth REJECTS:
+ *   - `scopes` missing/empty → rejected (the legacy bypass is gone; only an
+ *     env-flagged allowlist resolves them, and `requireScope()` still rejects)
+ *   - `revokedAt` / past `expiresAt` / past `retiresAt` → already rejected
  *
- * This script is READ-ONLY. It performs no Firestore writes. There is no
- * `--apply` flag because there is nothing to apply — output is a CSV
- * (and a console summary) that you review and act on manually
- * (notify customers, revoke, or backfill scopes via the dashboard).
- *
- * Two collections are inspected:
- *   - `users/{uid}/api_keys/{keyId}` — the per-user subcollection
- *   - `api_keys/{keyHash}` — the top-level hash→key lookup table
- *
- * Subcollection is the canonical source for ownership + metadata; the
- * lookup table is what apiAuth.server.ts reads on each request. Both
- * should agree. The script reports mismatches.
+ * Inspects both `users/{uid}/api_keys/{keyId}` (canonical ownership+metadata)
+ * and `api_keys/{keyHash}` (what apiAuth.server.ts reads per request), and
+ * reports mismatches between them.
  *
  * Usage:
  *   node scripts/audit-legacy-api-keys.mjs --env=dev
- *   node scripts/audit-legacy-api-keys.mjs --env=prod
  *   node scripts/audit-legacy-api-keys.mjs --env=prod --output=dev/scratch/key-audit.csv
- *
- * Credentials follow the same pattern as scripts/migrate-roles.mjs.
+ * Credentials follow scripts/migrate-roles.mjs.
  */
 
 import { createRequire } from 'module';
@@ -45,7 +32,7 @@ const ROOT = join(__dirname, '..');
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 const admin = require('firebase-admin');
 
-// ---- CLI parsing ------------------------------------------------------------
+// CLI parsing
 
 const args = process.argv.slice(2);
 
@@ -64,7 +51,7 @@ if (env !== 'dev' && env !== 'prod') {
   process.exit(1);
 }
 
-// ---- .env loading -----------------------------------------------------------
+// .env loading
 
 function loadEnvFile(path) {
   if (!existsSync(path)) return;
@@ -90,7 +77,7 @@ loadEnvFile(join(ROOT, 'web', '.env.local'));
 loadEnvFile(join(ROOT, '.claude', '.env.local'));
 loadEnvFile(join(ROOT, 'scripts', '.env.local'));
 
-// ---- Credentials ------------------------------------------------------------
+// Credentials
 
 const suffix = env === 'prod' ? '_PROD' : '_DEV';
 const projectId =
@@ -117,7 +104,7 @@ if (usingFallback) {
   console.warn(`   Verify this matches the intended ${env} project before continuing.\n`);
 }
 
-// ---- Helpers ----------------------------------------------------------------
+// Helpers
 
 function toMillis(value) {
   if (!value) return null;
@@ -152,7 +139,7 @@ function classify(keyData, now) {
   if (expiresAt && expiresAt <= now) return 'already_expired';
 
   if (!hasScopes) {
-    // This is the legacy-key-rejected-by-2.12.0 case.
+    // The legacy-key-rejected-by-2.12.0 case.
     return 'will_be_rejected';
   }
   return 'ok_scoped';
@@ -184,7 +171,7 @@ function csvEscape(value) {
   return s;
 }
 
-// ---- Main -------------------------------------------------------------------
+// Main
 
 async function main() {
   console.log(`\nAPI key audit — env=${env}, project=${projectId}\n`);
@@ -196,16 +183,14 @@ async function main() {
   const db = admin.firestore();
   const now = Date.now();
 
-  // Inventory subcollection (users/{uid}/api_keys/{keyId}). This collection-
-  // group query reads every per-user key with its full document data.
+  // Collection-group query over users/{uid}/api_keys — every per-user key
+  // with its full document data.
   console.log('Querying users/{uid}/api_keys ...');
   const subSnap = await db.collectionGroup('api_keys').get();
 
-  // Read top-level lookup table (api_keys/{keyHash}). Note: in newer schemas
-  // the user-owned keys live ONLY under users/{uid}/api_keys and the
-  // top-level collection is a hash → uid+keyId index. We index it by
-  // (userId, keyId) so the audit can cross-check that both ends agree on
-  // metadata. If your schema is different the warn at the bottom will fire.
+  // Top-level api_keys/{keyHash} is a hash → uid+keyId index in newer schemas.
+  // Indexed by (userId, keyId) so the audit can cross-check both ends; a
+  // different schema trips the warn at the bottom.
   console.log('Querying top-level api_keys lookup table ...');
   const lookupSnap = await db.collection('api_keys').get();
   const lookupByUidKeyId = new Map();
@@ -216,9 +201,7 @@ async function main() {
     }
   }
 
-  // Fetch the small set of user emails for the rows we'll report. We do
-  // this in a second pass to keep the main scan O(keys) rather than
-  // O(keys * 1-Firestore-roundtrip).
+  // Second pass so the main scan stays O(keys) rather than O(keys * roundtrip).
   const userIds = new Set();
   for (const doc of subSnap.docs) {
     const path = doc.ref.path; // users/{uid}/api_keys/{keyId}
@@ -227,7 +210,7 @@ async function main() {
   }
   console.log(`Resolving ${userIds.size} owner email(s) ...`);
   const emailByUid = new Map();
-  // chunk into reads of 30 (Firestore batchGet equivalent via Promise.all)
+  // Chunks of 30 — Firestore batchGet equivalent.
   const uidList = [...userIds];
   const CHUNK = 30;
   for (let i = 0; i < uidList.length; i += CHUNK) {

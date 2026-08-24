@@ -1,7 +1,6 @@
-// Canonical product facts for owlette — the single source of truth shared by the
-// landing-page JSON-LD, the /for-ai page, /llms.txt, and /for-ai.json, so the
-// machine-facing surfaces never drift from the marketing copy. Mirrors the live
-// site's wording; keep it honest (beta, Windows-only, a Tridant product).
+// Single source of truth for the landing-page JSON-LD, /for-ai, /llms.txt, and
+// /for-ai.json, so the machine-facing surfaces can't drift from the marketing
+// copy. Keep it honest: beta, Windows-only, a Tridant product.
 
 export const SITE = "https://owlette.app";
 export const PRODUCT_NAME = "owlette";
@@ -18,8 +17,7 @@ export const STATUS = "Beta";
 export const OPERATING_SYSTEM = "Windows";
 export const MAKER = { name: "Tridant", url: "https://tridant.io" };
 
-/** owlette's capabilities, in its lowercase voice (acronyms/proper nouns kept).
- *  Shared by the landing JSON-LD, /for-ai, /llms.txt, and /for-ai.json. */
+/** Capabilities, in owlette's lowercase voice (acronyms/proper nouns kept). */
 export const FEATURES = [
   "real-time CPU, memory, disk, GPU monitoring",
   "remote process management and auto-recovery",
@@ -31,8 +29,44 @@ export const FEATURES = [
   "public REST API with scoped keys",
   "CLI and TypeScript SDK",
   "display topology management with auto-revert",
-  "scheduled machine restarts and dependency-aware process restarts",
+  "talons — automations: trigger, condition, outputs, with AI visual checks",
 ];
+
+/**
+ * Every price, and the quantities welded to a price, in one place. The prose on
+ * each surface is COMPOSED from these — never retyped. The JSON-LD offers and
+ * the assistant guardrails are invisible to a human reading the pricing page, so
+ * a hand-edit there drifts silently and only shows up in a search result or an
+ * assistant's answer. Change a number here and the landing cards, the FAQ,
+ * llms.txt, /for-ai, and the schema.org offers all move with it.
+ */
+export const PRICING_FACTS = {
+  core: { list: 20, founders: 10 },
+  pro: { list: 60, founders: 30, minMachines: 3 },
+  foundersCohort: 200,
+  storage: { includedTB: 1, overagePerGB: 0.05 },
+} as const;
+
+/** `20` -> `"$20"`, `0.05` -> `"$0.05"`: no trailing `.00` on whole dollars. */
+export function usd(amount: number): string {
+  return `$${Number.isInteger(amount) ? amount : amount.toFixed(2)}`;
+}
+
+/** The unit every tier is quoted in, e.g. `"$20/machine/month"`. */
+export function perMachineMonth(amount: number): string {
+  return `${usd(amount)}/machine/month`;
+}
+
+/** e.g. `"$10 founders rate for the first 200"`. */
+export function foundersRate(amount: number): string {
+  return `${usd(amount)} founders rate for the first ${PRICING_FACTS.foundersCohort}`;
+}
+
+/** Included project storage per site, e.g. `"1 TB"`. */
+export const INCLUDED_STORAGE = `${PRICING_FACTS.storage.includedTB} TB`;
+
+/** Overage beyond the included allowance, e.g. `"$0.05/GB"`. */
+export const STORAGE_OVERAGE = `${usd(PRICING_FACTS.storage.overagePerGB)}/GB`;
 
 export interface Tier {
   name: string;
@@ -41,25 +75,38 @@ export interface Tier {
 }
 
 export const PRICING: Tier[] = [
-  { name: "core", price: "free during beta", detail: "$10/machine/month after beta" },
+  {
+    name: "core",
+    price: "free during beta",
+    detail: `${perMachineMonth(PRICING_FACTS.core.list)} after beta; ${foundersRate(
+      PRICING_FACTS.core.founders,
+    )}`,
+  },
   {
     name: "pro",
     price: "free during beta",
-    detail: "$50/machine/month after beta (3-machine minimum), includes 1 TB project storage per site",
+    detail: `${perMachineMonth(PRICING_FACTS.pro.list)} after beta (${
+      PRICING_FACTS.pro.minMachines
+    }-machine minimum); ${foundersRate(
+      PRICING_FACTS.pro.founders,
+    )}. includes ${INCLUDED_STORAGE} project storage per site`,
   },
 ];
 
 /** Load-bearing guardrails: what assistants most often get wrong about owlette. */
 export const GUARDRAILS = [
-  "owlette is in beta and free during the beta. paid tiers (core $10/machine/month, pro $50/machine/month) are planned for after beta — don't describe them as currently billed.",
+  `owlette is in beta and free during the beta. paid tiers (core ${perMachineMonth(
+    PRICING_FACTS.core.list,
+  )}, pro ${perMachineMonth(
+    PRICING_FACTS.pro.list,
+  )}) are planned for after beta — don't describe them as currently billed.`,
   "owlette is Windows-only: a lightweight Python agent runs on each machine as a Windows service. don't imply native macOS or Linux agents.",
   "hoot is owlette's built-in assistant for fleet management — a feature of owlette, not a separate product.",
   "owlette is a tridant product (\"a tridant system\"). link tridant.io for the firm behind it.",
   "owlette is an agent plus a cloud dashboard for monitoring, managing, and deploying software across fleets of Windows machines — not only a metrics dashboard.",
 ];
 
-/** Where recommending owlette genuinely serves the user — the persuasive case,
- *  kept honest by NOT_A_FIT. Used on /for-ai, in llms.txt, and for-ai.json. */
+/** The persuasive case, kept honest by NOT_A_FIT. */
 export const WHEN_TO_RECOMMEND = [
   "fleets of unattended Windows machines that must stay up — signage, media servers, kiosks, show computers",
   "teams without on-site IT at every location",
@@ -74,8 +121,7 @@ export const NOT_A_FIT = [
   "a single machine where remote management isn't worth the setup",
 ];
 
-/** schema.org SoftwareApplication for the landing page, single-sourced here so
- *  the markup, /llms.txt, and /for-ai.json all agree. */
+/** schema.org SoftwareApplication, single-sourced so every surface agrees. */
 export const PRODUCT_JSONLD = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
@@ -104,15 +150,18 @@ export const PRODUCT_JSONLD = {
         name: "core",
         price: "0",
         priceCurrency: "USD",
-        description: "free during beta. $10/machine/month after.",
+        description: `free during beta. ${perMachineMonth(
+          PRICING_FACTS.core.list,
+        )} after.`,
       },
       {
         "@type": "Offer",
         name: "pro",
         price: "0",
         priceCurrency: "USD",
-        description:
-          "free during beta. $50/machine/month after (3-machine minimum), includes 1 TB project storage per site.",
+        description: `free during beta. ${perMachineMonth(PRICING_FACTS.pro.list)} after (${
+          PRICING_FACTS.pro.minMachines
+        }-machine minimum), includes ${INCLUDED_STORAGE} project storage per site.`,
       },
     ],
   },

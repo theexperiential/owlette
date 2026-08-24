@@ -1,22 +1,12 @@
 /**
- * updateDistributionPreset action core
+ * Writes `config/{siteId}/project_distribution_presets/{presetId}`
+ * (security-boundary-migration wave 3.7; same pattern as the schedule presets in
+ * 3.6, different path).
  *
- * security-boundary-migration wave 3.7. mirrors the schedule/reboot preset
- * pattern (wave 3.6) — only the firestore path differs.
- *
- * firestore path: `config/{siteId}/project_distribution_presets/{presetId}`
- *
- * Two write paths, mirroring the original `useProjectDistributionPresets`
- * hook:
- *
- *   1. Built-in override (`presetId.startsWith('builtin-')`) — `set()` with
- *      `merge: true` so the override doc is created on first edit. Forces
- *      `isBuiltIn: true` regardless of caller input so the merge can't
- *      accidentally promote a built-in to a custom.
- *   2. Custom edit — `update()` (fails if doc doesn't exist, which is the
- *      desired safety: edits should not silently create a new preset).
- *
- * Both paths stamp `updatedAt` with a server timestamp.
+ * Two paths: a `builtin-` id merges via set() so the override doc appears on
+ * first edit, forcing `isBuiltIn: true` so a merge can't promote it; anything
+ * else uses update(), which fails on a missing doc so an edit can't silently
+ * create a preset. Both stamp `updatedAt`.
  */
 
 import { FieldValue } from 'firebase-admin/firestore';
@@ -70,7 +60,7 @@ export async function updateDistributionPreset(
     );
   }
 
-  // ── validation (only validate provided fields — partial update) ─────────
+  // partial update: only validate the fields present
   if (input.name !== undefined) {
     if (typeof input.name !== 'string' || input.name.trim().length === 0) {
       throw new DistributionPresetValidationError('name', 'name must be a non-empty string');
@@ -131,8 +121,7 @@ export async function updateDistributionPreset(
     });
 
   if (ctx.presetId.startsWith('builtin-')) {
-    // Built-in override: setDoc with merge so it creates the override doc on
-    // first edit. Force isBuiltIn=true so a malformed merge can't promote.
+    // merge creates the override doc on first edit; isBuiltIn forced so it can't promote
     await presetRef.set(
       {
         ...cleanUpdates,
@@ -145,15 +134,14 @@ export async function updateDistributionPreset(
     return;
   }
 
-  // Custom edit: update() fails if the doc is missing — desired safety so
-  // we don't silently create new presets via PATCH.
+  // update() fails on a missing doc, so PATCH can't create a preset
   try {
     await presetRef.update({
       ...cleanUpdates,
       updatedAt: FieldValue.serverTimestamp(),
     });
   } catch (err) {
-    // firebase-admin throws { code: 5, ... } for NOT_FOUND on update().
+    // firebase-admin reports NOT_FOUND on update() as code 5
     const code = (err as { code?: number | string } | null)?.code;
     if (code === 5 || code === 'not-found') {
       throw new DistributionPresetNotFoundError(ctx.presetId);

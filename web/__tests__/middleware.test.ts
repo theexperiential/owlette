@@ -29,8 +29,8 @@ function makeRequest(pathname: string): NextRequest {
 describe('proxy — x-security-version header', () => {
   beforeEach(() => {
     mockValidateSession.mockResolvedValue(null);
-    // Default to "no session" so the page-route test below redirects
-    // to /login rather than landing in the protected-path branch.
+    // Default "no session" so the page-route test redirects to /login instead of
+    // entering the protected-path branch.
     mockEvaluateSessionMfa.mockResolvedValue({
       outcome: 'unauthenticated',
       userId: null,
@@ -68,17 +68,15 @@ describe('proxy — x-security-version header', () => {
 
   it('does not attach the header on non-api routes (page routes)', async () => {
     const response = await proxy(makeRequest('/dashboard'));
-    // Page routes either redirect (unauthenticated) or pass through; in
-    // both cases the header is not relevant and must not be stamped.
+    // Page routes redirect or pass through; the header must not be stamped.
     expect(response.headers.get(SECURITY_VERSION_HEADER)).toBeNull();
   });
 
   it('still redirects legacy /api/folders before stamping the header', async () => {
     const response = await proxy(makeRequest('/api/folders/abc'));
     expect(response.status).toBe(308);
-    // Redirect responses bypass the header — that's fine, the client
-    // follows the 308 and reads the header from the resolved /api/roosts
-    // response.
+    // Redirects bypass the header; the client follows the 308 and reads it from
+    // the resolved /api/roosts response.
     expect(response.headers.get('location')).toContain('/api/roosts/abc');
   });
 });
@@ -196,11 +194,10 @@ describe('proxy — MFA gate', () => {
     expect(response.headers.get('location')).toContain('/dashboard');
   });
 
-  // ----------- Item 8 additional coverage -----------
 
   it('preserves the redirect param when bouncing MFA-pending users off /dashboard', async () => {
-    // The challenge redirect should carry the originally-requested
-    // protected path so the user lands back on it after verification.
+    // The challenge redirect carries the requested path so verification returns
+    // the user to it.
     mockEvaluateSessionMfa.mockResolvedValue({
       outcome: 'challenge',
       userId: 'user-1',
@@ -213,10 +210,9 @@ describe('proxy — MFA gate', () => {
   });
 
   it('fail-soft: when evaluateSessionMfa returns unauthenticated due to a downstream error, protected paths redirect to /login (not 500)', async () => {
-    // Pre-Wave-2 sessions hit a one-time Firestore round-trip in
-    // evaluateSessionMfa. Per its contract, if that read fails it returns
-    // the unauthenticated outcome rather than throwing, so the proxy
-    // continues to redirect (never 500s).
+    // Legacy sessions take a one-time Firestore round-trip in evaluateSessionMfa;
+    // a failed read returns the unauthenticated outcome rather than throwing, so
+    // the proxy redirects instead of 500ing.
     mockEvaluateSessionMfa.mockResolvedValue({
       outcome: 'unauthenticated',
       userId: null,
@@ -228,10 +224,8 @@ describe('proxy — MFA gate', () => {
   });
 
   it('redirect-after-verify lands back on the original protected path on success', async () => {
-    // After a successful TOTP submit, the user lands back on
-    // /verify-2fa?redirect=<original>. If the session evaluates to `pass`
-    // at that point, they should bounce to the original path, not the
-    // default /dashboard.
+    // After a TOTP submit the user is back on /verify-2fa?redirect=<original>; a
+    // `pass` session must bounce to that path, not the default /dashboard.
     mockEvaluateSessionMfa.mockResolvedValue({
       outcome: 'pass',
       userId: 'user-1',
@@ -244,9 +238,114 @@ describe('proxy — MFA gate', () => {
   });
 });
 
-/* -------------------------------------------------------------------- */
-/*  Item 22: CSP header includes a per-request nonce                    */
-/* -------------------------------------------------------------------- */
+// Wave 3: mandatory-enrollment gate (`requiresMfaSetup`)
+
+describe('proxy — mandatory 2FA setup gate', () => {
+  beforeEach(() => {
+    mockValidateSession.mockResolvedValue(null);
+    mockEvaluateSessionMfa.mockReset();
+  });
+
+  /** Zero-factor accounts resolve to `pass` + `requiresSetup: true` — the normal
+   *  shape of this state, not an edge case. */
+  function setupRequiredSession(outcome: 'pass' | 'challenge' = 'pass') {
+    mockEvaluateSessionMfa.mockResolvedValue({
+      outcome,
+      userId: 'user-1',
+      requiresSetup: true,
+    });
+  }
+
+  it('redirects a requires-setup session off a protected path to /setup-2fa', async () => {
+    setupRequiredSession();
+    const response = await proxy(makeRequest('/dashboard'));
+    expect(response.status).toBe(307);
+    const loc = response.headers.get('location') ?? '';
+    expect(loc).toContain('/setup-2fa');
+    expect(loc).toContain('redirect=%2Fdashboard');
+  });
+
+  it('gates the protected routes the dashboard-only nag never covered', async () => {
+    // Why the gate moved into the proxy: /roosts, /talons and /settings were
+    // reachable by a zero-factor account that never opened /dashboard.
+    setupRequiredSession();
+    for (const path of ['/roosts', '/talons', '/settings/api-keys', '/admin']) {
+      const response = await proxy(makeRequest(path));
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toContain('/setup-2fa');
+    }
+  });
+
+  it('does NOT redirect a requires-setup session that is already on /setup-2fa', async () => {
+    // /setup-2fa is inside PROTECTED_PATHS; without the exemption this loops.
+    setupRequiredSession();
+    const response = await proxy(makeRequest('/setup-2fa'));
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('sends a requires-setup session to /setup-2fa rather than /verify-2fa when both apply', async () => {
+    // Transient state (stale `mfaRequired`, or a fail-closed challenge from a
+    // Firestore blip): with no factor to present the challenge page is a dead
+    // end, so setup wins.
+    setupRequiredSession('challenge');
+    const response = await proxy(makeRequest('/dashboard'));
+    expect(response.status).toBe(307);
+    const loc = response.headers.get('location') ?? '';
+    expect(loc).toContain('/setup-2fa');
+    expect(loc).not.toContain('/verify-2fa');
+  });
+
+  it('renders /setup-2fa (not the challenge) for a requires-setup session with a pending challenge', async () => {
+    setupRequiredSession('challenge');
+    const response = await proxy(makeRequest('/setup-2fa'));
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('leaves /api/* untouched — the enrollment gate lives in the routes', async () => {
+    // API-side protection is `lib/mfaEnrollmentGate.server.ts`; the proxy must not
+    // gate /api or non-browser clients break.
+    setupRequiredSession();
+    const response = await proxy(makeRequest('/api/sites'));
+    expect(response.headers.get('location')).toBeNull();
+    expect(response.headers.get(SECURITY_VERSION_HEADER)).toBe(
+      String(CURRENT_SECURITY_VERSION),
+    );
+  });
+
+  it('leaves an enrolled, verified session untouched', async () => {
+    mockEvaluateSessionMfa.mockResolvedValue({
+      outcome: 'pass',
+      userId: 'user-1',
+      requiresSetup: false,
+    });
+    const response = await proxy(makeRequest('/dashboard'));
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('still challenges an enrolled-but-unverified session (setup gate does not swallow it)', async () => {
+    mockEvaluateSessionMfa.mockResolvedValue({
+      outcome: 'challenge',
+      userId: 'user-1',
+      requiresSetup: false,
+    });
+    const response = await proxy(makeRequest('/dashboard'));
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toContain('/verify-2fa');
+  });
+
+  it('sends an unauthenticated request to /login, never to /setup-2fa', async () => {
+    mockEvaluateSessionMfa.mockResolvedValue({
+      outcome: 'unauthenticated',
+      userId: null,
+      requiresSetup: false,
+    });
+    const response = await proxy(makeRequest('/dashboard'));
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toContain('/login');
+  });
+});
+
+// Item 22: CSP header includes a per-request nonce
 
 describe('proxy — CSP header', () => {
   beforeEach(() => {
@@ -264,11 +363,10 @@ describe('proxy — CSP header', () => {
   });
 
   it('script-src nonce is present and unique per request', async () => {
-    // Note: style-src/style-src-elem deliberately use 'unsafe-inline' rather
-    // than a nonce — Next 16 emits inline <style> blocks during client
-    // hydration/navigation that the request-header nonce doesn't cover, and
-    // browsers ignore 'unsafe-inline' when a nonce is also present. Script
-    // injection remains nonce + strict-dynamic locked.
+    // style-src uses 'unsafe-inline', not a nonce: Next 16 emits inline <style>
+    // during hydration/navigation that the request nonce can't cover, and browsers
+    // ignore 'unsafe-inline' when a nonce is present. Scripts stay nonce +
+    // strict-dynamic locked.
     const response = await proxy(makeRequest('/dashboard'));
     const csp = response.headers.get('Content-Security-Policy') ?? '';
     const matches = csp.match(/'nonce-([A-Za-z0-9+/=]+)'/g) ?? [];

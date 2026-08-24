@@ -1,23 +1,13 @@
 /**
- * k6 load test: GET /api/cortex/conversations?siteId=...
+ * k6 load test: GET /api/cortex/conversations?siteId=…
  *
- * Lists chat conversations the caller can read. The handler:
- *   1. resolves the caller's effective site set (membership + ownership +
- *      api-key scope intersection)
- *   2. runs a Firestore composite query on `chat_conversations` filtered to
- *      that set with cursor pagination
+ * The handler resolves the caller's effective site set (membership + ownership
+ * ∩ api-key scope) then runs a composite `chat_conversations` query with cursor
+ * pagination — Firestore-heavy on cold caches, so the SLO (p99 < 300 ms) is a
+ * touch looser than the other lists to absorb multi-site fan-out.
  *
- * Firestore-heavy on cold caches — the SLO is a touch looser than the other
- * lists to absorb a fan-out across multi-site users.
- *
- * SLO: p99 < 300 ms.
- *
- * Scenarios:
- *   `smoke`     — 1 VU, 10 s
- *   `sustained` — ramping 10 → 50 VUs over 5 min
- *   `spike`     — 200 VUs for 30 s
- *
- * No mutations — re-runnable without cleanup.
+ * Scenarios: `smoke` (1 VU/10 s), `sustained` (10→50 VUs/5 min), `spike`
+ * (200 VUs/30 s). No mutations — re-runnable without cleanup.
  */
 import http from 'k6/http';
 import { check, sleep } from 'k6';
@@ -56,8 +46,7 @@ export const options = {
 };
 
 export default function () {
-  // siteId is also used as a hint for the conversation filter; the route
-  // resolves the actual readable set from the api-key scopes.
+  // siteId is only a hint; the route resolves the readable set from key scopes.
   const url = `${BASE_URL}/api/cortex/conversations?page_size=25&siteId=${encodeURIComponent(SITE_ID)}`;
   const res = http.get(url, {
     headers: headers(),

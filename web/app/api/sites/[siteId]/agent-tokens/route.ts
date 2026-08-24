@@ -10,11 +10,7 @@ type RouteParams = {
 
 export const dynamic = 'force-dynamic';
 
-/**
- * GET /api/sites/{siteId}/agent-tokens
- *
- * List all agent refresh tokens for a site.
- */
+/** GET /api/sites/{siteId}/agent-tokens — list a site's agent refresh tokens. */
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'GLOBAL_SETTINGS_WRITE',
   siteIdParam: 'path',
@@ -28,10 +24,8 @@ export const GET = authorizedSiteHandler<RouteParams>({
       .where('siteId', '==', siteId)
       .get();
 
-    // The collection accumulates rotated-away (superseded) and expired
-    // docs — one dead doc per hourly refresh for 2.12.0+ agents. Return
-    // only live credentials and report how many dead docs exist so the
-    // admin can prune them. See lib/agentTokens.ts for the definitions.
+    // 2.12.0+ agents leave one dead doc per hourly refresh, so return only live
+    // credentials plus a count of prunable ones. Definitions: lib/agentTokens.ts.
     const now = Date.now();
     let prunableCount = 0;
     const tokens: Array<{
@@ -53,9 +47,8 @@ export const GET = authorizedSiteHandler<RouteParams>({
         continue;
       }
       if (!isTokenLive(data, now)) {
-        // Superseded but still within its 5-minute grace window — its
-        // successor is already the live row, so skip this transient
-        // duplicate (not shown, not counted as prunable).
+        // Superseded inside its 5-minute grace window: the successor is already
+        // the live row, so this transient duplicate is neither shown nor counted.
         continue;
       }
       tokens.push({

@@ -1,51 +1,22 @@
-// @auth-bypass: self-delete is "actor IS target" — `authorizedSiteHandler`
-// requires site access (not applicable: user may have no sites) and
-// `authorizedPlatformHandler` requires superadmin (not applicable: any
-// authenticated user may delete themselves). Auth + capability + audit are
-// enforced inline below; see the file header for the full design.
+// @auth-bypass: self-delete is "actor IS target" — `authorizedSiteHandler` needs
+// site access (the user may have none) and `authorizedPlatformHandler` needs
+// superadmin. Auth + capability + audit are enforced inline below.
 /**
- * DELETE /api/users/me — server-side account self-deletion cascade
- *                        (security-boundary-migration wave 3.10).
+ * DELETE /api/users/me — server-side account self-deletion cascade.
  *
- * Replaces the legacy client-side `writeBatch` cascade in
- * `web/contexts/AuthContext.tsx`'s `deleteAccount`. The server cascade is
- * authoritative: the client will no longer enumerate sites / machines /
- * deployments / logs from the browser. Re-authentication and Firebase Auth
- * account deletion remain client-side because credentials don't cross the
- * security boundary.
+ * Authoritative replacement for the client-side `writeBatch` cascade in
+ * AuthContext.deleteAccount. Re-authentication and Firebase Auth account
+ * deletion stay client-side: credentials must not cross the security boundary.
  *
- * ## Auth model
- * The actor IS the target — a user deleting THEMSELVES. Site access doesn't
- * apply (the user may have zero sites, or sites they're a member of but
- * don't own). The standard `authorizedSiteHandler` is therefore not used.
- * Instead this route requires `requireSession` (cookie-only — no API keys,
- * because a key holder shouldn't be able to delete the user's account
- * remotely; that's reserved for the explicit `DELETE /api/users/{uid}`
- * superadmin route).
+ * Auth: session cookie or freshly-issued id token only, never an API key — a key
+ * holder must not be able to delete the account remotely (that is the superadmin
+ * `DELETE /api/users/{uid}`). Capability USER_SELF_DELETE is gated inline because
+ * the shared handler wrappers don't support the "actor IS target" shape.
  *
- * Capability: `USER_SELF_DELETE` — granted to every role tier in the role
- * matrix. The capability gate is enforced inline (rather than via the
- * shared handler wrapper) because the wrapper variants don't support the
- * "actor IS target" shape.
- *
- * ## Audit
- * One audit entry per call, written to the platform audit log
- * (`global/audit_log/{entryId}`) with:
- *   - `actor.type=user`, `actor.userId={userId}`, `actor.role={role}`
- *   - `capability=USER_SELF_DELETE`
- *   - `target.kind=user`, `target.id={userId}`
- *   - `metadata` includes the per-path delete counts so post-mortem
- *     analysis can verify what was removed.
- *
- * ## Query params
- * - `dryRun=1` — runs the scans but performs no deletes; the response
- *   carries the count of docs that WOULD be deleted.
- *
- * ## Idempotency
- * The action core records progress under
- * `users/{userId}/account_deletion/operation`. A re-issued DELETE with the
- * same `Idempotency-Key` (or, when no header is set, with the same
- * synthesised operation id) is a no-op that returns the recorded outcome.
+ * Audit: one entry in `global/audit_log/{entryId}` carrying per-path delete
+ * counts. `?dryRun=1` scans without deleting. Idempotent — progress lives at
+ * `users/{userId}/account_deletion/operation`, so a retry with the same
+ * Idempotency-Key (or synthesised operation id) returns the recorded outcome.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -82,14 +53,12 @@ interface ActorRecord {
 }
 
 /**
- * Resolve the calling user's session into a UserActor. Refuses API-key
- * auth: self-delete is a "you, in person" action and must come from a
- * cookie session or a freshly-issued ID token.
+ * Resolve the caller into a UserActor. API-key auth is refused: self-delete is a
+ * "you, in person" action.
  */
 async function resolveSelfActor(request: NextRequest): Promise<ActorRecord> {
-  // Reject API keys explicitly — `requireSessionOrIdToken` already does
-  // this implicitly (it ignores `owk_*` bearer tokens), but a clearer
-  // 401 here helps callers diagnose misconfigured CLIs.
+  // requireSessionOrIdToken already ignores `owk_*` bearers; an explicit 401 here
+  // helps callers diagnose a misconfigured CLI.
   const apiHeader =
     request.headers.get('x-api-key') ||
     request.nextUrl.searchParams.get('api_key');
@@ -99,9 +68,7 @@ async function resolveSelfActor(request: NextRequest): Promise<ActorRecord> {
 
   const userId = await requireSessionOrIdToken(request);
 
-  // Load role from the user doc. If the doc has been hard-deleted by a
-  // superadmin in the meantime, treat the role as 'member' (least
-  // privilege) — the cascade will short-circuit on the missing doc.
+  // User doc hard-deleted meanwhile → least privilege; the cascade short-circuits.
   const db = getAdminDb();
   const userDoc = await db.collection('users').doc(userId).get();
   const data = userDoc.exists ? userDoc.data() : null;
@@ -128,12 +95,7 @@ interface PlatformAuditEntry {
   enforcementBypassed?: boolean;
 }
 
-/**
- * Inline platform audit writer. Mirrors the shape used by
- * `authorizedPlatformHandler` (which keeps its writer private). When the
- * shared writer is exported in a future cleanup (wave 1.3 follow-up), this
- * helper collapses to a single import.
- */
+/** Inline platform audit writer, mirroring authorizedPlatformHandler's private one. */
 async function writeSelfDeleteAudit(
   entry: PlatformAuditEntry,
   blocking: boolean,
@@ -177,14 +139,10 @@ async function writeSelfDeleteAudit(
 }
 
 /**
- * Build a stable operation id for the action core's progress doc.
- *
- *   - When the caller sends `Idempotency-Key`, derive the op id from it
- *     (sha256 of header value) so a retry maps to the same progress doc.
- *   - Otherwise, fall back to a per-user fixed id so concurrent retries
- *     during a network blip still collapse onto the same record. (We
- *     don't generate a fresh random id per request — that would defeat
- *     the resumability guarantee the action core depends on.)
+ * Stable operation id for the action core's progress doc: derived from
+ * `Idempotency-Key` when sent, else a per-user fixed id so concurrent retries
+ * during a blip collapse onto one record. A fresh random id per request would
+ * defeat the action core's resumability guarantee.
  */
 function deriveOperationId(request: NextRequest, userId: string): string {
   const header = request.headers.get('idempotency-key');
@@ -197,7 +155,7 @@ function deriveOperationId(request: NextRequest, userId: string): string {
 export async function DELETE(request: NextRequest) {
   const correlationId = generateCorrelationId();
 
-  // ── 1. Resolve auth ────────────────────────────────────────────────────
+  // 1. Resolve auth
   let actorRecord: ActorRecord;
   try {
     actorRecord = await resolveSelfActor(request);
@@ -216,7 +174,7 @@ export async function DELETE(request: NextRequest) {
   }
   const { actor, userId, role } = actorRecord;
 
-  // ── 2. Capability gate (kill-switch aware) ─────────────────────────────
+  // 2. Capability gate (kill-switch aware)
   let config: { capability_enforcement: boolean };
   try {
     config = await securityConfig.read();
@@ -253,14 +211,14 @@ export async function DELETE(request: NextRequest) {
     }
   }
 
-  // ── 3. Parse query params ──────────────────────────────────────────────
+  // 3. Parse query params
   const dryRunParam = request.nextUrl.searchParams.get('dryRun');
   const dryRun =
     dryRunParam === '1' || dryRunParam === 'true' || dryRunParam === 'yes';
 
   const operationId = deriveOperationId(request, userId);
 
-  // ── 4. Run the cascade ─────────────────────────────────────────────────
+  // 4. Run the cascade
   let result;
   try {
     result = await deleteOwnAccount({
@@ -290,9 +248,8 @@ export async function DELETE(request: NextRequest) {
     return problemFromError(err, 'users/me:DELETE');
   }
 
-  // 4a. Refuse if any site needs a successor — the user is owner AND
-  //     other members exist. The user must transfer ownership before
-  //     self-delete. Audit as a deny so the refusal is logged.
+  // 4a. Owner of a site with other members must transfer ownership first.
+  //     Audited as a deny so the refusal is logged.
   if (result.kind === 'needs_successor') {
     void writeSelfDeleteAudit(
       {
@@ -324,10 +281,8 @@ export async function DELETE(request: NextRequest) {
     });
   }
 
-  // ── 5. Allow audit (blocking) ──────────────────────────────────────────
-  // Audit row carries per-path delete counts so post-mortem analysis can
-  // verify what was actually removed. Recorded BEFORE the response so a
-  // failed write surfaces as 503 — privileged actions never run untracked.
+  // 5. Allow audit, blocking and BEFORE the response: a failed write must surface
+  //    as 503 — privileged actions never run untracked. Counts ride in metadata.
   try {
     await writeSelfDeleteAudit(
       {
@@ -368,7 +323,7 @@ export async function DELETE(request: NextRequest) {
     });
   }
 
-  // ── 6. Response ────────────────────────────────────────────────────────
+  // 6. Response
   return NextResponse.json({
     userId: result.userId,
     operationId: result.operationId,
@@ -380,9 +335,8 @@ export async function DELETE(request: NextRequest) {
     siteClassification: result.siteClassification,
     deletedCounts: result.deletedCounts,
     authRevoked: result.authRevoked,
-    // For dry-runs, return the full would-delete path list so the caller
-    // can preview. For live runs, return only the head (the action core
-    // truncates the persisted slice the same way).
+    // Dry-runs return every would-delete path; live runs return only the head
+    // (the action core truncates the persisted slice the same way).
     deletedPaths: result.dryRun
       ? result.deletedPaths
       : result.deletedPaths.slice(0, 200),

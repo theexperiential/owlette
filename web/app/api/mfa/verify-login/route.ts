@@ -1,17 +1,10 @@
 /**
- * MFA Verify Login API
+ * POST /api/mfa/verify-login — verifies a TOTP or backup code at login.
+ * Request:  { userId, code, isBackupCode?, trustDevice? }
+ * Response: { success, backupCodeUsed, deviceTrusted }
  *
- * Verifies TOTP code during login (server-side)
- * Decrypts the stored secret, verifies the code, never exposes secret to client
- *
- * POST /api/mfa/verify-login
- * Request: { userId: string, code: string, isBackupCode?: boolean, trustDevice?: boolean }
- * Response: { success: boolean, backupCodeUsed: boolean, deviceTrusted: boolean }
- *
- * SECURITY:
- * - Secret is decrypted only server-side
- * - Secret is never sent to the client
- * - Backup codes are removed after use
+ * The TOTP secret is decrypted server-side only and never leaves this process;
+ * a used backup code is deleted.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -34,7 +27,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const body = await request.json();
     const { userId, code, isBackupCode = false, trustDevice = false } = body;
 
-    // Validate inputs
     if (!userId || typeof userId !== 'string') {
       return NextResponse.json(
         { error: 'Invalid user ID' },
@@ -62,7 +54,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const db = getAdminDb();
     const userRef = db.collection('users').doc(userId);
 
-    // Check if MFA is enrolled
     if (!userData.mfaEnrolled) {
       return NextResponse.json(
         { error: 'MFA not enrolled for this user' },
@@ -74,7 +65,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     let backupCodeUsed = false;
 
     if (isBackupCode) {
-      // Verify backup code
       const normalizedCode = code.toUpperCase().trim();
 
       const consumed = await db.runTransaction(async (tx) => {
@@ -115,7 +105,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       isValid = true;
       backupCodeUsed = true;
     } else {
-      // Verify TOTP code
       const encryptedSecret = userData.mfaSecret;
 
       if (!encryptedSecret) {
@@ -125,10 +114,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         );
       }
 
-      // Check if secret is encrypted (contains colons from our format)
+      // A colon marks our encrypted format; anything else is legacy plaintext.
       let secret: string;
       if (encryptedSecret.includes(':')) {
-        // Encrypted format - decrypt it
         if (!isEncryptionConfigured()) {
           console.error('[MFA Verify Login] MFA_ENCRYPTION_KEY not configured');
           return NextResponse.json(
@@ -138,7 +126,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         }
         secret = decrypt(encryptedSecret);
       } else {
-        // Legacy unencrypted format - use as-is
         // TODO: Migrate old secrets to encrypted format
         secret = encryptedSecret;
       }
@@ -153,22 +140,17 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Successful TOTP / backup-code verification flips the session-cookie
-    // MFA gate so the proxy will allow protected paths through. This is
-    // the authoritative server-side state — prior to Wave 2, this flag
-    // lived in client sessionStorage and could be set without any
-    // server-side check.
+    // The session cookie is the authoritative MFA gate the proxy reads; this
+    // flag used to live in client sessionStorage and was settable without any
+    // server check.
     await markSessionMfaVerified();
 
-    // "Trust this device for 30 days": when the user opted in, mint an opaque
-    // device-trust token, persist only its SHA-256 hash under this uid, and set
-    // the raw token in an HTTPOnly cookie on the success response. A future
-    // createSession() reads that cookie and is born mfaVerified without
-    // re-challenging. This is keyed off the same trustDevice flag for BOTH the
-    // TOTP and backup-code paths (mint happens once, here at the shared success
-    // point, strictly after the isValid gate). A persistence failure must NOT
-    // fail the 2FA verification itself — the user is verified regardless; only
-    // the trust convenience is skipped, so we log and continue with no cookie.
+    // "Trust this device for 30 days": mint an opaque token, store only its
+    // SHA-256 hash, return the raw token in an HTTPOnly cookie that a later
+    // createSession() reads to be born mfaVerified. Minted once here — the
+    // shared success point, strictly after the isValid gate — for both the TOTP
+    // and backup-code paths. A persistence failure must NOT fail verification:
+    // log and continue with no cookie.
     let rawTrustToken: string | null = null;
     if (trustDevice === true) {
       try {

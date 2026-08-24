@@ -1,7 +1,6 @@
 /**
- * Environment-aware logging utility
- * - Development: Logs everything with detailed context
- * - Production: Only logs warnings and errors to minimize console noise
+ * Environment-aware logger: everything in development, warnings and errors only
+ * in production (errors also go to Sentry).
  */
 
 import * as Sentry from '@sentry/nextjs';
@@ -20,39 +19,26 @@ class Logger {
     this.isDevelopment = process.env.NODE_ENV === 'development';
   }
 
-  /**
-   * Debug logs - only in development
-   * Use for detailed debugging information
-   */
+  /** Development only. */
   debug(message: string, options?: LogOptions): void {
     if (!this.isDevelopment) return;
 
     this.log('debug', message, options);
   }
 
-  /**
-   * Info logs - only in development
-   * Use for general informational messages
-   */
+  /** Development only. */
   info(message: string, options?: LogOptions): void {
     if (!this.isDevelopment) return;
 
     this.log('info', message, options);
   }
 
-  /**
-   * Warning logs - always logged
-   * Use for recoverable errors or concerning situations
-   */
+  /** Always logged. */
   warn(message: string, options?: LogOptions): void {
     this.log('warn', message, options);
   }
 
-  /**
-   * Error logs - always logged
-   * Use for errors and exceptions
-   * In production, could be sent to error tracking service
-   */
+  /** Always logged; forwarded to Sentry outside development. */
   error(message: string, options?: LogOptions): void {
     this.log('error', message, options);
 
@@ -65,9 +51,6 @@ class Logger {
     }
   }
 
-  /**
-   * Internal log method
-   */
   private log(level: LogLevel, message: string, options?: LogOptions): void {
     const timestamp = new Date().toISOString();
     const context = options?.context ? `[${options.context}]` : '';
@@ -91,9 +74,6 @@ class Logger {
     }
   }
 
-  /**
-   * Firestore operation logger - specialized for Firebase operations
-   */
   firestore = {
     read: (collection: string, docId?: string) => {
       this.debug(`Firestore READ: ${collection}${docId ? `/${docId}` : ''}`, {
@@ -115,9 +95,6 @@ class Logger {
     },
   };
 
-  /**
-   * Authentication logger - specialized for auth operations
-   */
   auth = {
     login: (provider: string) => {
       this.info(`User login attempt with ${provider}`, {
@@ -139,9 +116,6 @@ class Logger {
     },
   };
 
-  /**
-   * Performance logger - for tracking performance metrics
-   */
   performance = {
     start: (operation: string): number => {
       if (!this.isDevelopment) return 0;
@@ -160,8 +134,6 @@ class Logger {
   };
 }
 
-// Export singleton instance
 export const logger = new Logger();
 
-// Export default for convenient importing
 export default logger;

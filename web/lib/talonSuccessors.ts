@@ -1,26 +1,16 @@
 /**
- * Who may inherit a talon.
+ * Who may inherit a talon — the client mirror of
+ * `hasCapability(successor, TALON_MANAGE, siteId)`, so the picker never offers
+ * someone the reassign API will refuse. The server stays authoritative:
+ * `reassignTalons` re-resolves every successor, because a browser list is a
+ * suggestion, not a permission.
  *
- * This is the client-side mirror of the server's rule, so the picker never
- * offers a successor the reassign API is going to refuse. The server remains
- * authoritative — `reassignTalons` re-resolves the successor against
- * `users/{uid}` and the capability matrix on every call, because a list
- * rendered in a browser is a suggestion, not a permission.
+ * Soft-deleted accounts are out (they are the failure mode this prevents);
+ * members are out (TALON_MANAGE is an admin capability); admins qualify on
+ * their assigned sites; superadmins everywhere.
  *
- * The rule itself is `hasCapability(successor, TALON_MANAGE, siteId)` restated
- * over the shape the users table already has loaded:
- *
- *   - soft-deleted accounts are out — they are exactly the failure mode this
- *     feature exists to prevent, so handing them a talon would be circular;
- *   - members are out — TALON_MANAGE is an admin capability, so a member could
- *     not have authored the talon in the first place;
- *   - an admin qualifies on the sites they are assigned to;
- *   - a superadmin qualifies everywhere (TALON_MANAGE is site-scoped, and
- *     `hasCapability` short-circuits site scoping for superadmins).
- *
- * Omit `siteId` for the fleet-wide case (account deletion): the per-site check
- * still happens server-side, once per site, and a candidate who fails on one
- * site is reported rather than hidden.
+ * Omit `siteId` for the fleet-wide case (account deletion) — the per-site check
+ * still runs server-side, and a candidate failing one site is reported, not hidden.
  */
 
 export interface TalonSuccessorUser {

@@ -1,30 +1,20 @@
 /**
  * @jest-environment node
  *
- * Audit-mutation coverage gate.
+ * Audit-mutation coverage gate: every mutating `app/api/**` route must produce
+ * an audit entry. Static source scan (pure `fs` reads — no imports, no
+ * execution) over every `route.ts` exporting POST/PUT/PATCH/DELETE.
  *
- * `lib/auditLogClient.ts` promises that every mutating route produces an audit
- * entry. This test is the enforcement of that promise: a static source scan
- * (pure `fs` reads — no route imports, no execution) over every
- * `app/api/**` `route.ts` that exports POST / PUT / PATCH / DELETE.
+ * Audited = the route's own source, or a module it imports one level out from
+ * `lib/actions/`, `lib/talons/` or a co-located `app/api/**` helper, calls
+ * `authorizedSiteHandler`, `authorizedPlatformHandler`, or `emitMutation`.
  *
- * A route counts as **audited** when its own source — or the source of a
- * module it imports one level out from `lib/actions/`, `lib/talons/`, or a
- * co-located `app/api/**` helper — calls one of:
+ * Granularity is the FILE, not the method — those markers are file-level, so a
+ * file mixing an audited POST with an unaudited DELETE is indistinguishable
+ * statically. Hence the hand-curated lists below.
  *
- *   - `authorizedSiteHandler(...)`     — writes a blocking allow/deny audit row
- *   - `authorizedPlatformHandler(...)` — same, on the platform audit path
- *   - `emitMutation(...)`              — the mutation-taxonomy audit event
- *
- * Granularity is the route **file**, not the individual method: those markers
- * are file-level constructs, so a file mixing an audited POST with an
- * unaudited DELETE cannot be told apart statically. That is a known limit of a
- * source scan, and the reason the lists below are curated by hand.
- *
- * The test fails when a mutating route is neither audited, exempt, nor a
- * declared known gap (a new unaudited route is a regression), and when an
- * entry in either list is stale (gone, no longer mutating, or now audited).
- * Both lists may only shrink truthfully.
+ * Fails on an unclassified mutating route (a regression) and on a stale list
+ * entry (gone / no longer mutating / now audited). Both lists may only shrink.
  */
 
 import fs from 'fs';
@@ -33,16 +23,10 @@ import path from 'path';
 const WEB_ROOT = path.resolve(__dirname, '..', '..');
 const API_ROOT = path.join(WEB_ROOT, 'app', 'api');
 
-/* -------------------------------------------------------------------------- */
-/*  the two curated lists                                                     */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Mutating routes that legitimately produce no marker-detected mutation audit
- * — either because there is no privileged actor / no persistent state change
- * to attribute, or because the route writes its audit row through another
- * mechanism. Entries are route directories relative to `app/api/`, alphabetized,
- * each with its justification.
+ * Mutating routes that legitimately emit no detected audit — no privileged
+ * actor / no persisted state change, or audited by another mechanism. Route
+ * directories relative to `app/api/`, alphabetized, each justified.
  */
 export const EXEMPT_ROUTES: readonly string[] = [
   // agent-originated alert telemetry (agent bearer token); sends email/webhook, no operator mutation.
@@ -89,6 +73,11 @@ export const EXEMPT_ROUTES: readonly string[] = [
   'passkeys/authenticate/verify',
   // WebAuthn registration ceremony: ephemeral challenge issuance; the credential is persisted by register/verify.
   'passkeys/register/options',
+  // WebAuthn step-up ceremony on /verify-2fa: ephemeral challenge issuance, no credential state.
+  'passkeys/step-up/options',
+  // WebAuthn step-up on /verify-2fa: same class as `mfa/verify-login`. Mints no session or custom
+  // token; persists only the credential's clone-detection counter.
+  'passkeys/step-up/verify',
   // read-only: re-mints a short-lived signed GET url for an already-published version body.
   'roosts/[roostId]/version-url',
   // read-only: lists the provider's available models for a supplied/stored key, writes nothing.
@@ -97,8 +86,8 @@ export const EXEMPT_ROUTES: readonly string[] = [
   'sites/[siteId]/machines/[machineId]/screenshots/finalize',
   // agent-side screenshot pipeline (machine scope): mints a signed PUT url, writes nothing.
   'sites/[siteId]/machines/[machineId]/screenshots/upload-url',
-  // internal-secret ingress called by the onTalonLogEventCreated cloud function; runs
-  // already-authored talons, which audit their own disables from the engine. No operator actor.
+  // internal-secret ingress from onTalonLogEventCreated; runs already-authored talons, which audit
+  // their own disables. No operator actor.
   'talons/internal/match',
   // superadmin template preview send; email only, no persisted state.
   'test-email',
@@ -113,11 +102,9 @@ export const EXEMPT_ROUTES: readonly string[] = [
 ];
 
 /**
- * Mutating routes that are NOT audited today and that later waves will
- * remediate. Entries are route directories relative to `app/api/`, alphabetized,
- * each with the mutation that currently goes unrecorded. This list may only
- * shrink: once a route is audited its entry must be deleted, and the test fails
- * until it is.
+ * Mutating routes not audited today, pending remediation. Alphabetized, each
+ * naming the unrecorded mutation. May only shrink — once a route is audited its
+ * entry must go, and this test fails until it does.
  */
 export const KNOWN_GAPS: readonly string[] = [
   // operator (session) binds a pairing machine to a site and mints its agent credentials.
@@ -134,23 +121,14 @@ export const KNOWN_GAPS: readonly string[] = [
   'hoot/provision-key',
   // cancels an in-flight turn (writes the stream doc terminal state).
   'hoot/stop',
-  // stores a pending TOTP secret against the account; `mfa/disable` is audited, enrollment is not.
+  // stores a pending TOTP secret; enrollment completion (`mfa/verify-setup`) and removal
+  // (`mfa/disable`) are audited.
   'mfa/setup',
-  // enables MFA on the account and persists the encrypted secret + backup codes.
-  'mfa/verify-setup',
-  // renames (PATCH) or deletes (DELETE) an account passkey credential.
-  'passkeys/[credentialId]',
-  // persists a new WebAuthn credential on the account.
-  'passkeys/register/verify',
   // stores or removes the caller's encrypted user-level LLM api key.
   'settings/llm-key',
   // operator (session) mints an agent registration code for a site.
   'setup/generate-token',
 ];
-
-/* -------------------------------------------------------------------------- */
-/*  scanner                                                                   */
-/* -------------------------------------------------------------------------- */
 
 const MUTATING_METHODS = ['DELETE', 'PATCH', 'POST', 'PUT'] as const;
 
@@ -162,12 +140,11 @@ const AUDIT_MARKERS: readonly RegExp[] = [
 ];
 
 /**
- * Directories whose modules are followed one level out from a route file.
- * `app/api` is included for co-located private helpers — the process control
- * verbs (`.../processes/{processId}/start` etc.) delegate their whole handler,
+ * Followed one level out from a route file. `app/api` is in the list for
+ * co-located helpers — the process-control verbs delegate their whole handler,
  * audit included, to a sibling `_helpers.ts`.
  *
- * Deliberately NOT the whole of `lib/`: `lib/auditLogClient.ts` *defines*
+ * Deliberately NOT all of `lib/`: `lib/auditLogClient.ts` *defines*
  * `emitMutation`, so following every `@/lib/...` import would mark any route
  * that merely imports `emitApiKeyUsed` as audited.
  */
@@ -179,9 +156,9 @@ const AUDITABLE_MODULE_DIRS = [
 
 function walkRouteFiles(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    // `__`-prefixed directories are transient test fixtures, not routes —
-    // authorizedHandler.eslint.test.ts materializes app/api/__eslint_fixture_*/
-    // route.ts files mid-run, and scanning them is a parallel-suite race.
+    // `__`-prefixed dirs are transient fixtures: authorizedHandler.eslint.test.ts
+    // materializes app/api/__eslint_fixture_*/route.ts mid-run, so scanning them
+    // races the parallel suite.
     if (entry.name.startsWith('__')) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) walkRouteFiles(full, out);
@@ -190,11 +167,7 @@ function walkRouteFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/**
- * Drop comments so a marker named only in prose never counts as a call site —
- * several `lib/*.server.ts` modules discuss `authorizedSiteHandler` in their
- * header docs.
- */
+/** Drop comments — several `lib/*.server.ts` headers mention `authorizedSiteHandler` in prose. */
 function stripComments(source: string): string {
   return source
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
@@ -223,7 +196,7 @@ function hasAuditMarker(source: string): boolean {
   return AUDIT_MARKERS.some((marker) => marker.test(source));
 }
 
-/** Every module specifier a file imports (static `from '…'` + dynamic `import('…')`). */
+/** Every module specifier a file imports (static + dynamic). */
 function moduleSpecifiers(source: string): string[] {
   const specifiers: string[] = [];
   const re = /(?:\bfrom\s*|\bimport\s*\(\s*)['"]([^'"]+)['"]/g;
@@ -232,10 +205,7 @@ function moduleSpecifiers(source: string): string[] {
   return specifiers;
 }
 
-/**
- * Resolve one level of `@/…` and relative imports, keeping only those that
- * land on a real file inside an auditable module directory.
- */
+/** Resolve one level of `@/…`/relative imports landing inside an auditable dir. */
 function resolveAuditableImport(fromFile: string, specifier: string): string | null {
   let base: string;
   if (specifier.startsWith('@/')) base = path.join(WEB_ROOT, specifier.slice(2));
@@ -290,10 +260,6 @@ function staleEntries(list: readonly string[]): string[] {
     return route.audited; // remediated — entry must go
   });
 }
-
-/* -------------------------------------------------------------------------- */
-/*  tests                                                                     */
-/* -------------------------------------------------------------------------- */
 
 describe('audit coverage of mutating api routes', () => {
   it('scans the whole api tree', () => {

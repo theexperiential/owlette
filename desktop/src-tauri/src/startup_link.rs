@@ -1,16 +1,14 @@
 //! `{userstartup}\Owlette.lnk` — storage for the tray's "start on login".
 //!
-//! The legacy tray toggled the *service* start type instead
-//! (`owlette_tray.on_select` runs `sc config OwletteService start= …`), which
-//! costs a UAC prompt and conflates "supervise this machine" with "show me a
-//! tray icon". The desktop app owns the shortcut the installer creates
-//! (`owlette_installer.iss`, `[Icons]`) instead: no elevation, and turning it
-//! off leaves the service running.
+//! The legacy tray toggled the *service* start type instead (`sc config
+//! OwletteService start= …`), which costs a UAC prompt and conflates
+//! "supervise this machine" with "show me a tray icon". Owning the installer's
+//! shortcut (`owlette_installer.iss`, `[Icons]`) needs no elevation, and
+//! turning it off leaves the service running.
 //!
-//! Enabling always rewrites the shortcut so an upgraded machine stops
-//! auto-starting the python tray — the installer's version points at
-//! `pythonw.exe owlette_tray.py`, and ours points at this executable with
-//! `--tray`.
+//! Enabling always REWRITES the shortcut: the installer's version points at
+//! `pythonw.exe owlette_tray.py`, so an upgraded machine would otherwise keep
+//! auto-starting the python tray instead of this exe with `--tray`.
 
 use std::path::{Path, PathBuf};
 
@@ -26,36 +24,33 @@ use windows::Win32::UI::Shell::{
   FOLDERID_Startup, IShellLinkW, SHGetKnownFolderPath, ShellLink, KF_FLAG_DEFAULT,
 };
 
-/// File name of the shortcut, byte-identical to the installer's `[Icons]` entry
-/// (`Name: "{userstartup}\Owlette"`) so the two never coexist.
+/// File name of the shortcut, byte-identical to the installer's `[Icons]`
+/// entry (`Name: "{userstartup}\Owlette"`) so the two never coexist.
 ///
-/// The name is load-bearing beyond the file system: Windows draws a toast's
-/// attribution line from the *name* of a shortcut registering the sending
-/// app id, so every shortcut that carries [`APP_USER_MODEL_ID`] has to be
-/// called "Owlette" or the notification is attributed to something else.
+/// Load-bearing beyond the filesystem: Windows draws a toast's attribution line
+/// from the NAME of the shortcut registering the sending app id, so any
+/// shortcut carrying [`APP_USER_MODEL_ID`] must be called "Owlette".
 pub const LINK_NAME: &str = "Owlette.lnk";
 
 /// What [`LINK_NAME`] was called through 2.x and the first 3.0.0 builds.
 ///
-/// Removed whenever this module writes or clears the shortcut, so a machine
-/// that upgrades without running the installer — every dev box — does not end up
-/// auto-starting twice, and so "start on login: off" really is off. The
-/// installer removes it too (`[InstallDelete]`); this covers the other path.
+/// Removed whenever this module writes or clears the shortcut so a machine that
+/// upgrades without running the installer (every dev box) doesn't auto-start
+/// twice, and so "off" really is off. The installer handles it via
+/// `[InstallDelete]`; this covers the other path.
 const LEGACY_LINK_NAME: &str = "Owlette Tray.lnk";
 
 /// Argument the shortcut passes, which starts the app hidden in the tray.
 pub const TRAY_ARG: &str = "--tray";
 
-/// Application identity stamped onto the shortcut.
+/// Application identity stamped onto the shortcut. Keep equal to
+/// `tauri.conf.json`'s `identifier`.
 ///
-/// Windows refuses to display a toast from a non-packaged desktop app unless
-/// some shortcut under the Start menu carries a matching
-/// `System.AppUserModel.ID` — and the notification plugin sends ours under the
-/// bundle identifier from `tauri.conf.json`. The Startup folder lives inside the
-/// Start menu tree, so writing it here gives the tray's degraded-state toasts a
-/// registered identity without waiting for the installer.
-///
-/// Keep this equal to `tauri.conf.json`'s `identifier`.
+/// Windows won't display a toast from a non-packaged desktop app unless some
+/// shortcut under the Start menu carries a matching `System.AppUserModel.ID`,
+/// and the notification plugin sends under the bundle identifier. The Startup
+/// folder is inside the Start menu tree, so writing it here registers the
+/// identity without waiting for the installer.
 const APP_USER_MODEL_ID: &str = "app.owlette.desktop";
 
 /// Absolute path of the shortcut in the current user's Startup folder.
@@ -70,11 +65,10 @@ fn legacy_link_path() -> Result<PathBuf, String> {
 
 /// True when owlette is set to start with this user's session.
 ///
-/// Presence is the whole test: a shortcut left by the installer still points at
-/// the python tray, and reporting it as "on" is correct — something owlette
-/// launches at login. [`enable`] then replaces it with ours. The pre-rename name
-/// counts for the same reason: it still launches owlette at login, so reporting
-/// "off" while it sits there would be a lie the toggle then could not fix.
+/// Presence is the whole test. An installer-left shortcut still points at the
+/// python tray, but something owlette DOES launch at login, so "on" is correct
+/// and [`enable`] then replaces it. The pre-rename name counts for the same
+/// reason: reporting "off" while it sits there is a lie the toggle can't fix.
 pub fn is_enabled() -> bool {
   match (link_path(), legacy_link_path()) {
     (Ok(path), Ok(legacy)) => path.is_file() || legacy.is_file(),
@@ -148,10 +142,8 @@ fn write_link(path: &Path) -> Result<(), String> {
   Ok(())
 }
 
-/// Remove the startup shortcut. A missing shortcut is already the target state.
-///
-/// The pre-rename name goes too, or "off" would leave the old shortcut still
-/// launching owlette at login.
+/// Remove the startup shortcut; missing is already the target state. The
+/// pre-rename name goes too, or "off" would leave it launching owlette at login.
 pub fn disable() -> Result<(), String> {
   let path = link_path()?;
   let removed = match std::fs::remove_file(&path) {
@@ -163,9 +155,8 @@ pub fn disable() -> Result<(), String> {
   removed
 }
 
-/// Best effort: the legacy shortcut not going away is worth a log line, never a
-/// failed toggle — the current name is what [`is_enabled`] and the installer act
-/// on, and it has already been dealt with by the time this runs.
+/// Best effort: a stuck legacy shortcut is worth a log line, never a failed
+/// toggle — [`is_enabled`] and the installer act on the current name.
 fn remove_legacy_link() {
   let Ok(path) = legacy_link_path() else {
     return;
@@ -193,10 +184,9 @@ fn startup_dir() -> Result<PathBuf, String> {
   }
 }
 
-/// Initialises COM for the calling thread and uninitialises it on drop.
-///
-/// The tray runs every menu action on its own short-lived thread, so this owns
-/// the apartment outright rather than assuming the caller set one up.
+/// Initialises COM for the calling thread, uninitialises on drop. The tray runs
+/// each menu action on its own short-lived thread, so this owns the apartment
+/// rather than assuming the caller set one up.
 struct ComGuard;
 
 impl ComGuard {
@@ -239,10 +229,8 @@ mod tests {
     );
   }
 
-  /// The toast attribution line is the shortcut's name, so a shortcut carrying
-  /// the app id under any other name attributes owlette's notifications to that
-  /// name instead. Both shortcuts that carry the id are called "Owlette"; this
-  /// pins the one this module owns.
+  /// Toast attribution is the shortcut's NAME, so any other name attributes
+  /// owlette's notifications elsewhere. Pins the one this module owns.
   #[test]
   fn the_shortcut_is_named_for_the_product_not_the_tray() {
     assert_eq!(LINK_NAME, "Owlette.lnk");
@@ -257,9 +245,8 @@ mod tests {
     assert_eq!(is_enabled(), path.is_file() || legacy.is_file());
   }
 
-  /// The shortcut is not just a launcher: its `System.AppUserModel.ID` is what
-  /// lets Windows display the tray's toasts at all, so a silent regression here
-  /// costs the notifications without breaking anything visible.
+  /// The shortcut's `System.AppUserModel.ID` is what lets Windows show the
+  /// tray's toasts at all — a regression here is silent.
   #[test]
   fn the_shortcut_carries_the_tray_argument_and_the_app_id() {
     let path = std::env::temp_dir().join(format!("owlette-link-{}.lnk", std::process::id()));

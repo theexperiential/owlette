@@ -1,19 +1,13 @@
 /**
- * `owlette roost push <dir> --to <roostId> --site <siteId>`.
+ * `owlette roost push <dir> --to <roostId> --site <siteId>` — end-to-end publish:
+ *   1. walk + chunk (sha-256, 4 MiB) — cli/src/lib/chunker.ts
+ *   2. POST /api/chunks/check       { siteId, hashes } → { missing }
+ *   3. POST /api/chunks/upload-urls { siteId, missing } → { urls }
+ *   4. PUT each signed url (bounded parallelism)
+ *   5. POST /api/roosts/{id}/versions; a 412 means the head moved — re-fetch and retry,
+ *      since the server transaction compare-and-swaps `currentVersionId`.
  *
- * End-to-end publish of a directory:
- *
- *   1. walk + chunk (sha-256 4 MiB) — cli/src/lib/chunker.ts
- *   2. POST /api/chunks/check         { siteId, hashes } → { missing }
- *   3. POST /api/chunks/upload-urls   { siteId, missing } → { urls }
- *   4. PUT each signed url (parallel, bounded)
- *   5. POST /api/roosts/{id}/versions with optimistic concurrency — on
- *      412 precondition-failed, re-fetch the current head and retry
- *      (the server's transaction enforces compare-and-swap on
- *      `currentVersionId`).
- *
- * Reads + writes chunks over HTTPS via the signed R2 URLs the server
- * mints — no direct R2 creds on the cli side.
+ * All chunk IO goes through the server-minted signed R2 URLs; the cli holds no R2 creds.
  */
 
 import { createReadStream, promises as fs } from 'fs';
@@ -46,15 +40,12 @@ const SIGNED_URL_REFRESH_SKEW_MS = 60_000;
 export function registerPushCommand(program: Command): void {
   const roost = (program.commands.find((c) => c.name() === 'roost') as Command) ?? program.command('roost');
   if (!program.commands.includes(roost)) {
-    // Only create if not already registered (future-proof against
-    // ordering between registerPushCommand + registerRoostInspect...).
+    // Registration order between registerPushCommand and registerRoostInspect isn't fixed.
     roost.description('manage roosts + versions');
   }
 
-  // Replace any stub `push` subcommand already registered so the real
-  // implementation wins when auth/push/etc. files are loaded in any
-  // order. commander exposes commands[] as readonly — mutate through
-  // an `as Command[]` cast since we need an in-place splice.
+  // Replace a stub `push` so the real implementation wins regardless of file load order.
+  // commander types commands[] readonly, hence the cast for the in-place splice.
   const existing = roost.commands.find((c) => c.name() === 'push');
   if (existing) {
     const list = roost.commands as Command[];
@@ -111,9 +102,8 @@ export function registerPushCommand(program: Command): void {
       }
       if (opts.description !== undefined) {
         const desc = String(opts.description);
-        // Cap client-side so operators who paste long strings get an
-        // early, local failure instead of a server 400 after a full
-        // chunk-upload cycle. The server re-validates the same limit.
+        // Fail locally before a full chunk-upload cycle earns a server 400. The server
+        // re-validates the same limit.
         if (desc.length > MAX_DESCRIPTION_LENGTH) {
           process.stderr.write(
             `owlette: --description is ${desc.length} chars; max is ${MAX_DESCRIPTION_LENGTH}.\n`,
@@ -133,10 +123,6 @@ export function registerPushCommand(program: Command): void {
       await runPush(input);
     });
 }
-
-/* --------------------------------------------------------------------- */
-/*  Orchestrator                                                         */
-/* --------------------------------------------------------------------- */
 
 interface PushInputs {
   apiUrl: string;
@@ -265,10 +251,6 @@ async function runPush(input: PushInputs): Promise<void> {
   }
 }
 
-/* --------------------------------------------------------------------- */
-/*  HTTP helpers                                                         */
-/* --------------------------------------------------------------------- */
-
 async function apiPost<T>(
   apiUrl: string,
   path: string,
@@ -370,8 +352,7 @@ interface UploadChunksInput {
 }
 
 async function uploadChunksInParallel(input: UploadChunksInput): Promise<void> {
-  // Build a map from hash → (filePath, chunkIndex) so we can locate the
-  // source bytes for each chunk when PUT-ing.
+  // hash → (filePath, chunkIndex), to locate source bytes at PUT time.
   interface Source {
     absPath: string;
     offset: number;
@@ -468,9 +449,7 @@ async function putChunk(
   size: number,
   url: string,
 ): Promise<void> {
-  // Read the specific byte range from disk. For small chunks (< 4 MiB)
-  // we buffer; R2's signed PUT expects a single-shot upload (we don't
-  // want multipart here).
+  // Buffer the byte range: R2's signed PUT is single-shot, no multipart.
   const stream = createReadStream(absPath, {
     start: offset,
     end: offset + size - 1,
@@ -490,7 +469,7 @@ async function putChunk(
     throw new Error(`chunk ${hash}: source bytes changed while reading ${absPath}`);
   }
 
-  // One retry — covers transient R2 5xx / connection resets.
+  // One retry, for transient R2 5xx / connection resets.
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -608,8 +587,7 @@ async function publishWithRetry(input: PublishInput): Promise<PublishResult> {
     lastStatus = res.status;
     lastBody = res.data;
 
-    // 412 = head changed mid-flight -> refresh expected head + retry.
-    // Other 412s, such as missing chunks, are real publish failures.
+    // 412 with a moved head: refresh and retry. Other 412s (missing chunks) are real failures.
     if (res.status === 412) {
       const problem = res.data as {
         code?: string;
@@ -634,7 +612,6 @@ async function publishWithRetry(input: PublishInput): Promise<PublishResult> {
       continue;
     }
 
-    // Anything else is unrecoverable.
     break;
   }
 
@@ -698,10 +675,6 @@ async function fetchRoostHead(input: PublishInput): Promise<RoostHead | undefine
     return undefined;
   }
 }
-
-/* --------------------------------------------------------------------- */
-/*  small utilities                                                      */
-/* --------------------------------------------------------------------- */
 
 function log(json: boolean, msg: string): void {
   if (!json) process.stderr.write(msg + '\n');

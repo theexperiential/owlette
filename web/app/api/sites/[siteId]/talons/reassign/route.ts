@@ -1,23 +1,18 @@
 /**
  * POST /api/sites/{siteId}/talons/reassign — move talon authorship.
  *
- * Batch by design: a departure moves every talon one person wrote, and doing
- * that as N calls to the item route would be N audit transactions, N chances
- * to stop half-way, and N round trips. One call, one atomic commit.
+ * Batch by design: a departure moves every talon one person wrote, and N calls
+ * to the item route would be N audit transactions and N chances to stop
+ * half-way. One call, one atomic commit.
  *
- * Body: `{ toUid, fromUid? , talonIds? }` — exactly one selector.
- *   - `fromUid`  every talon on the site currently authored by that uid
- *   - `talonIds` an explicit list
+ * Body `{ toUid, fromUid? | talonIds? }` — exactly one selector.
  *
- * Thin http shim: the selection rules, the successor's eligibility (the same
- * bar the store holds every author to), the commit and the audit all live in
- * `@/lib/talons/store.server`, so no future caller can sidestep them.
+ * Thin shim: selection, successor eligibility, commit, and audit all live in
+ * `@/lib/talons/store.server` so no caller can sidestep them.
+ * Capability: TALON_MANAGE.
  *
- * Capability: TALON_MANAGE — the same capability that authors a talon.
- *
- * Static segment next to `[talonId]`, matching `users/deletions` beside
- * `users/[uid]`: a talon can never be addressed as `reassign` (auto-ids are
- * 20 alphanumeric chars).
+ * Safe as a static segment beside `[talonId]` — auto-ids are 20 alphanumeric
+ * chars, so no talon can be addressed as `reassign`.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';

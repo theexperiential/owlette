@@ -1,24 +1,13 @@
 /**
- * setAlertRules action core (security-boundary-migration wave 3.11).
+ * setAlertRules action core — replaces the whole `rules` array on
+ * `sites/{siteId}/settings/alerts`. Whole-document semantics (the client
+ * fetches, mutates and re-uploads the array); no field-level rule edits.
  *
- * Mirrors the `saveRules` callback in `web/app/admin/alerts/page.tsx:220-233`
- * — replaces the entire `rules` array on `sites/{siteId}/settings/alerts`
- * with the supplied list. Whole-document semantics: the client fetches,
- * mutates, and re-uploads the whole array, so this action core does the
- * same. Field-level rule edits are NOT supported here.
- *
- * Capability mis-classification (flagged in route-audit.md §3.11):
- *   The legacy admin alerts page is admin-only in the UI but writes a
- *   *site-scoped* document (`sites/{siteId}/settings/alerts`). For wave
- *   3.11 we route this through `authorizedPlatformHandler` with
- *   `GLOBAL_SETTINGS_WRITE` (superadmin) per the audit's recommendation,
- *   accepting a `siteId` in the BODY rather than the URL — the only place
- *   in this wave that does so. Wave 1.2 follow-up should either add a
- *   per-site `ALERT_RULES_MANAGE` capability or split this into a
- *   `/api/sites/{siteId}/alerts` route gated by `authorizedSiteHandler`.
- *
- * firestore path: `sites/{siteId}/settings/alerts` (site-scoped — but
- * superadmin-only at this surface).
+ * KNOWN capability mis-classification (route-audit.md §3.11): this writes a
+ * SITE-scoped doc but is gated by `authorizedPlatformHandler` +
+ * `GLOBAL_SETTINGS_WRITE` (superadmin) and takes `siteId` in the BODY, not the
+ * URL — the only place that does. Follow-up: a per-site `ALERT_RULES_MANAGE`
+ * capability, or split into `/api/sites/{siteId}/alerts`.
  */
 
 import type { DocumentReference } from 'firebase-admin/firestore';
@@ -147,8 +136,7 @@ export async function setAlertRules(
   }
   const validatedRules = input.rules.map((r, i) => validateRule(r, i));
 
-  // Detect duplicate ids — stored as an array, but the client treats id as
-  // a stable key for edit/delete operations.
+  // Stored as an array, but the client treats id as a stable edit/delete key.
   const seen = new Set<string>();
   for (const r of validatedRules) {
     if (seen.has(r.id)) {
@@ -164,16 +152,12 @@ export async function setAlertRules(
     .collection('settings')
     .doc('alerts');
 
-  // Snapshot the rule ids already on the doc so the audit row can name what
-  // the caller added/removed. Best-effort by design: this read exists only to
-  // enrich the audit attributes, so a failure degrades to "no diff recorded"
-  // rather than turning a valid config update into a 500.
+  // Snapshot existing ids so the audit row can name what changed. Best-effort:
+  // a failed read degrades to "no diff recorded", never a 500.
   const previousRuleIds = await readExistingRuleIds(alertsRef, ctx.siteId);
 
-  // Whole-document semantics matching the legacy `setDoc(..., { merge: true })`
-  // call in admin/alerts/page.tsx:225. Using merge:true preserves any sibling
-  // fields the legacy doc may carry (rule digest hashes, last-fired markers
-  // written by the alert evaluator). Only `rules` is replaced.
+  // merge:true so sibling fields the evaluator writes (digest hashes,
+  // last-fired markers) survive. Only `rules` is replaced.
   await alertsRef.set({ rules: validatedRules }, { merge: true });
 
   const attributes: Record<string, unknown> = {

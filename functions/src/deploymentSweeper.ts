@@ -1,27 +1,16 @@
 /**
- * Deployment Sweeper Cloud Function
+ * Every 5 minutes, fails deployments stuck in non-terminal states — an agent
+ * that crashes or loses network never reports back, so nothing else would ever
+ * move them. Targets time out at 15min (pending) / 30min (active), then the
+ * deployment status is recalculated; writes only happen on a real change.
  *
- * Runs every 5 minutes to catch deployments stuck in non-terminal states.
- * This handles the case where an agent crashes, loses network, or otherwise
- * fails to report back — the deployment would be stuck forever without this.
- *
- * Rules:
- * - Targets stuck at "pending" for > 15 minutes → marked "failed" (timeout)
- * - Targets at "downloading" or "installing" for > 30 minutes → marked "failed"
- * - Recalculates overall deployment status after updating targets
- * - Only writes if something actually changed
- *
- * Scale guard:
- * - Steady state only scans sites whose site doc has
- *   lastDeploymentActivityAt within the last 30 minutes.
- * - While this bookkeeping rolls out, sites missing that field are included for
- *   a 7-day legacy grace window. When the sweeper finds active deployments, it
- *   refreshes lastDeploymentActivityAt so future sweeps keep scanning that site
- *   until the deployment has been quiet for 30 minutes.
+ * Scale guard: only sites with `lastDeploymentActivityAt` inside the 30-minute
+ * window are scanned. Sites missing the field are swept during a 7-day legacy
+ * grace period, which lets an active deployment seed the marker.
  */
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import {
   calculateDeploymentStatus,
@@ -30,7 +19,7 @@ import {
   type DeploymentTarget,
 } from './lib/deploymentUtils';
 
-const db = admin.firestore();
+const db = getFirestore();
 
 /** How long a target can sit at "pending" before we fail it (ms). */
 const PENDING_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
@@ -41,18 +30,9 @@ const ACTIVE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 /** Sites without deployment activity in this window are skipped. */
 const RECENT_DEPLOYMENT_ACTIVITY_MS = 30 * 60 * 1000; // 30 minutes
 
-/**
- * Seven-day grace window from the performance hardening deploy date
- * (2026-05-18 UTC). During this window, legacy sites missing
- * lastDeploymentActivityAt are still scanned so active deployments can seed
- * the new marker.
- */
+/** End of the legacy full-scan grace window (hardening shipped 2026-05-18). */
 const LEGACY_SITE_SCAN_GRACE_UNTIL_MS = Date.parse('2026-05-25T00:00:00.000Z');
 
-/**
- * Scheduled function that sweeps stale deployments.
- * Runs every 5 minutes via Cloud Scheduler.
- */
 export const sweepStaleDeployments = onSchedule(
   { schedule: 'every 5 minutes', timeoutSeconds: 60 },
   async () => {
@@ -64,7 +44,6 @@ export const sweepStaleDeployments = onSchedule(
     for (const siteDoc of sitesToSweep) {
       const siteId = siteDoc.id;
 
-      // Query non-terminal deployments for this site
       const deploymentsSnap = await db
         .collection('sites')
         .doc(siteId)
@@ -82,7 +61,7 @@ export const sweepStaleDeployments = onSchedule(
       for (const deploymentDoc of deploymentsSnap.docs) {
         const data = deploymentDoc.data();
         const targets: DeploymentTarget[] = data.targets || [];
-        // Handle both numeric (legacy) and Timestamp (new) createdAt
+        // createdAt is numeric on legacy docs, Timestamp on new ones.
         const rawCreatedAt = data.createdAt;
         const createdAtMs: number = typeof rawCreatedAt === 'number'
           ? rawCreatedAt
@@ -91,13 +70,11 @@ export const sweepStaleDeployments = onSchedule(
         let changed = false;
         const tsNow = Timestamp.now();
         const updatedTargets = targets.map((target) => {
-          // Skip targets that are already terminal
           if (TARGET_TERMINAL_STATUSES.has(target.status)) {
             return target;
           }
 
-          // Determine the relevant timestamp for this target
-          // Use createdAt as the baseline (when the deployment was created)
+          // Baselined on the deployment's createdAt, not any per-target stamp.
           const targetAge = now - createdAtMs;
 
           if (target.status === 'pending' && targetAge > PENDING_TIMEOUT_MS) {
@@ -128,7 +105,6 @@ export const sweepStaleDeployments = onSchedule(
 
         if (!changed) continue;
 
-        // Recalculate overall status
         const newStatus = calculateDeploymentStatus(updatedTargets);
         const wasTerminal = DEPLOYMENT_TERMINAL_STATUSES.has(data.status);
 
@@ -138,7 +114,6 @@ export const sweepStaleDeployments = onSchedule(
           updatedAt: FieldValue.serverTimestamp(),
         };
 
-        // Set completedAt if deployment just became terminal
         if (!wasTerminal && DEPLOYMENT_TERMINAL_STATUSES.has(newStatus)) {
           updatePayload.completedAt = FieldValue.serverTimestamp();
         }

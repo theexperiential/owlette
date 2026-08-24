@@ -29,22 +29,17 @@ interface RestartCountdownProps {
 /**
  * The reboot prompt, ported from `agent/src/prompt_restart.py`.
  *
- * The service opens this by relaunching the app with `--restart-prompt` after a
- * process has burned through its relaunch budget: two minutes, a pause the
- * operator can hold, restart-now, and cancel. It is deliberately not
- * dismissable by clicking away or pressing escape — an accidental click must not
- * silently cancel a recovery someone is relying on.
+ * The service relaunches the app with `--restart-prompt` after a process burns through
+ * its relaunch budget: two minutes, a pause the operator can hold, restart-now, cancel.
+ * Deliberately not dismissable by clicking away or pressing escape — an accidental click
+ * must not silently cancel a recovery someone is relying on.
  *
- * Both buttons go through the agent rather than doing the work here:
- *
- * * **restart now** runs `--reboot-now`, which records `owlette_reboot` in
- *   `session_state.json` *before* issuing the shutdown, so the next startup
- *   classifier treats the reboot as planned and stays quiet.
- * * **cancel** runs `--dismiss-reboot`, which clears the machine's cloud
- *   `rebootPending` flag — the same field the dashboard's dismiss command
- *   clears (`owlette_service._handle_dismiss_reboot_pending`). The service's own
- *   in-memory prompt gate is left alone; it expires five minutes after the
- *   prompt was launched (`RESTART_PROMPT_ACTIVE_SECONDS`).
+ * Both buttons go through the agent. **restart now** runs `--reboot-now`, which records
+ * `owlette_reboot` in `session_state.json` BEFORE issuing the shutdown, so the startup
+ * classifier treats the reboot as planned. **cancel** runs `--dismiss-reboot`, clearing
+ * the machine's cloud `rebootPending` flag (the same field the dashboard's dismiss
+ * command clears). The service's in-memory prompt gate is left alone; it expires
+ * RESTART_PROMPT_ACTIVE_SECONDS after the prompt was launched.
  */
 export function RestartCountdown({ open, onClose }: RestartCountdownProps) {
   const [state, setState] = useState<CountdownState>(startCountdown)

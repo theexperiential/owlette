@@ -1,43 +1,21 @@
-"""
-process_commands — public-API process control handlers that register on
-the CommandRouter.
+"""Public-API process-control handlers, registered on the CommandRouter.
 
-This module hosts the `restart_process` handler (R.2 of the landing-redesign
-restart-end-to-end wave). Restart semantics:
+Hosts `restart_process`: resolve the target by `process_name`/`process_id`,
+gracefully terminate (WM_CLOSE → SIGTERM → kill) within `timeout_seconds`,
+re-launch via `service.handle_process_launch()`, then emit one composite
+`process_restarted` audit event.
 
-    1. resolve the target process by `process_name` or `process_id`
-    2. if currently running, gracefully terminate (WM_CLOSE → SIGTERM →
-       hard kill), bounded by `timeout_seconds` (default 5s, matching
-       shared_utils.graceful_terminate's default)
-    3. re-launch using the same stored launch params via
-       `service.handle_process_launch()`
-    4. emit a single composite `process_restarted` audit event
+Runs on `_slow_command_worker` — termination can take `timeout + 3` seconds, so
+it MUST NOT block the main monitoring loop.
 
-handlers run on the `_slow_command_worker` thread per CommandRouter
-contract — graceful termination can take up to `timeout + 3` seconds, so
-this MUST NOT block the main 10-second monitoring loop.
-
-design notes:
-- the legacy if/elif chain in `OwletteService._execute_command` still
-  contains a `restart_process` case for back-compat with older command
-  shapes. CommandRouter is checked first in handle_firebase_command, so
-  this handler takes precedence — the legacy branch only fires if this
-  module fails to load (and a warning is logged in that case).
-- audit pattern: existing handlers emit `process_started` / `process_killed`
-  separately. for restart we prefer one composite `process_restarted`
-  event so dashboards can render the action atomically. (see CHANGELOG /
-  R.2 task notes — single composite was the explicit preference.)
-- relaunch backoff: handle_process_launch consults `self.last_started` to
-  enforce time_to_init pacing. for an explicit operator-driven restart we
-  pop the entry and add the process_id to `_skip_launch_delay` so the
-  relaunch is immediate, matching the existing legacy behavior.
-
-CLAUDE.md compliance:
-- no firebase_admin import (handler talks to firestore via
-  service.firebase_client)
-- no token logging
-- handler returns string result; firebase_client persists it under
-  completed.{cmd_id}.result
+Design notes:
+- `OwletteService._execute_command`'s legacy if/elif still has a
+  `restart_process` case. CommandRouter is checked first, so that branch only
+  fires if this module fails to load (logged as a warning).
+- One composite event rather than separate stopped+started: restart is a single
+  logical operation and dashboards render it atomically.
+- handle_process_launch paces relaunches off `self.last_started`; an operator
+  restart pops the entry and uses `_skip_launch_delay` so it's immediate.
 """
 
 from __future__ import annotations
@@ -52,28 +30,22 @@ from command_router import CommandRouter
 logger = logging.getLogger(__name__)
 
 
-# default graceful-exit window when payload omits `timeout_seconds`.
-# matches shared_utils.graceful_terminate(timeout=5) so behavior is the
-# same as a `stop_process` followed by a `start_process`.
+# Matches shared_utils.graceful_terminate(timeout=5), so an omitted
+# `timeout_seconds` behaves like stop_process followed by start_process.
 DEFAULT_RESTART_TIMEOUT_SECONDS = 5
 
 
 def register_handlers(router: CommandRouter) -> None:
-    """
-    register process-control public handlers on the given CommandRouter.
-    called once at OwletteService init time after the router is created.
-    """
+    """Register process-control handlers. Called once at OwletteService init."""
     router.register("restart_process")(_handle_restart_process)
     logger.info("process_commands: registered handlers — restart_process")
 
 
 def _find_process(cmd_data: dict) -> tuple[Optional[dict], Optional[str]]:
-    """
-    locate the target process in config by process_id (preferred) or
-    process_name. returns (process_dict, identifier_used_for_error_msg).
+    """Locate the target process by process_id (preferred) or process_name.
 
-    matches the resolution order in the legacy `_execute_command` chain:
-    process_id wins over process_name when both are supplied.
+    Returns (process_dict, identifier_for_error_msg). Resolution order matches
+    the legacy `_execute_command` chain.
     """
     process_name = cmd_data.get("process_name")
     process_id = cmd_data.get("process_id") or cmd_data.get("processId")
@@ -91,11 +63,9 @@ def _find_process(cmd_data: dict) -> tuple[Optional[dict], Optional[str]]:
 
 
 def _stop_if_running(service: Any, process: dict, timeout_seconds: int) -> Optional[int]:
-    """
-    if the process has a tracked PID and that PID is alive, gracefully
-    terminate it (WM_CLOSE → terminate → kill, bounded by `timeout_seconds`).
+    """Gracefully terminate the tracked PID if it's alive.
 
-    returns the pid that was terminated, or None if nothing was running.
+    Returns the terminated pid, or None if nothing was running.
     """
     process_list_id = process["id"]
     process_name = process.get("name", process_list_id)
@@ -103,16 +73,15 @@ def _stop_if_running(service: Any, process: dict, timeout_seconds: int) -> Optio
     last_info = service.last_started.get(process_list_id, {}) or {}
     last_pid = last_info.get("pid")
 
-    # import here so unit tests can mock psutil at module-load time without
-    # needing pywin32 on the test runner.
-    from owlette_service import Util  # local import — avoid circular
+    # Local import: avoids a circular import, and lets unit tests mock psutil
+    # without pywin32 on the runner.
+    from owlette_service import Util
 
     if not last_pid or not Util.is_pid_running(last_pid):
-        # off-mode (and other untracked-but-alive) processes are never
-        # adopted by the monitor loop, so last_started holds no live PID for
-        # them. fall back to strict discovery by exe/file_path so a restart
-        # terminates the live instance instead of launching a duplicate on
-        # top of it. strict matching never kills on a bare image name.
+        # The monitor loop never adopts off-mode processes, so last_started has
+        # no live PID for them. Fall back to strict exe/file_path discovery or a
+        # restart launches a duplicate on top of the live instance. Strict
+        # matching never kills on a bare image name.
         exe_path = process.get("exe_path", "")
         file_path = process.get("file_path", "")
         last_pid = (
@@ -122,8 +91,8 @@ def _stop_if_running(service: Any, process: dict, timeout_seconds: int) -> Optio
         if not last_pid or not Util.is_pid_running(last_pid):
             return None
 
-    # mark as KILLED so the crash-detection path in handle_process()
-    # doesn't fire an alert when it sees the PID gone next loop tick.
+    # KILLED, so handle_process()'s crash detection doesn't alert on the
+    # missing PID next tick.
     shared_utils.update_process_status_in_json(
         last_pid,
         "KILLED",
@@ -131,9 +100,9 @@ def _stop_if_running(service: Any, process: dict, timeout_seconds: int) -> Optio
         process_id=process_list_id,
     )
 
-    # exe_path lets graceful_terminate reap the payload behind a cmd.exe
-    # wrapper for .bat/.cmd targets — without it the tracked pid is the
-    # wrapper and the real process survives the "restart".
+    # exe_path lets graceful_terminate reap the payload behind a cmd.exe wrapper
+    # for .bat/.cmd; without it the tracked pid is the wrapper and the real
+    # process survives the "restart".
     terminated = shared_utils.graceful_terminate(
         last_pid, timeout=timeout_seconds, exe_path=process.get("exe_path")
     )
@@ -143,17 +112,16 @@ def _stop_if_running(service: Any, process: dict, timeout_seconds: int) -> Optio
             f"(graceful timeout={timeout_seconds}s)"
         )
     else:
-        # graceful_terminate returns False only when the process was
-        # already gone before the WM_CLOSE — treat as "wasn't running".
+        # False only means it was already gone before the WM_CLOSE.
         logger.info(
             f"restart_process: PID {last_pid} for '{process_name}' was "
             f"already gone before terminate"
         )
         return None
 
-    # mark as killed (not removed!) so the main loop doesn't treat an
-    # absent last_started entry as "untracked → needs launch" and double-
-    # launch on top of our re-launch below. this mirrors stop_process.
+    # Killed, NOT removed: an absent last_started entry reads as "untracked →
+    # needs launch" and double-launches on top of the relaunch below. Mirrors
+    # stop_process.
     service.last_started[process_list_id] = {
         "killed": True,
         "time": datetime.datetime.now(),
@@ -162,18 +130,14 @@ def _stop_if_running(service: Any, process: dict, timeout_seconds: int) -> Optio
 
 
 def _relaunch(service: Any, process: dict) -> Optional[int]:
-    """
-    pop the killed/last_started entry, request immediate launch (skip
-    the time_to_init backoff that handle_process_launch otherwise enforces
-    on rapid relaunches), and call back into the service to launch.
+    """Pop the last_started entry, skip the time_to_init backoff, and launch.
 
-    returns the new PID, or None on failure.
+    Returns the new PID, or None on failure.
     """
     process_list_id = process["id"]
 
-    # explicit operator-driven restart — bypass the backoff that exists
-    # for crash-recovery spacing. matches the legacy restart_process
-    # behavior in _execute_command.
+    # Operator-driven, so bypass the crash-recovery spacing backoff (as the
+    # legacy _execute_command path did).
     service.last_started.pop(process_list_id, None)
     service.relaunch_attempts.pop(process.get("name", ""), None)
     service._skip_launch_delay.add(process_list_id)
@@ -182,18 +146,13 @@ def _relaunch(service: Any, process: dict) -> Optional[int]:
 
 
 def _handle_restart_process(cmd_data: dict, cmd_id: str, service: Any) -> str:
-    """
-    `restart_process` command handler.
+    """`restart_process` command handler.
 
-    cmd_data:
-      process_name:    str — process display name (matches config.processes[].name)
-      process_id:      str — config process id (preferred over name when both given)
-      timeout_seconds: int — optional, default 5. graceful-exit window before
-                             escalating to hard kill. capped at 30s defensively.
+    cmd_data: `process_name` (config.processes[].name), `process_id` (preferred
+    when both given), `timeout_seconds` (default 5, capped at 30).
 
-    returns:
-      human-readable status string. begins with 'Error:' on failure so
-      firebase_client._mark_command_failed is invoked.
+    Returns a human-readable status; a leading 'Error:' is what triggers
+    firebase_client._mark_command_failed.
     """
     target, missing_target = _find_process(cmd_data)
     if target is None:
@@ -202,9 +161,7 @@ def _handle_restart_process(cmd_data: dict, cmd_id: str, service: Any) -> str:
     process_name = target.get("name") or target.get("id", "<unknown>")
     process_list_id = target["id"]
 
-    # validate + clamp timeout — accept ints/floats from payload, reject
-    # negatives, and cap at 30s so a malformed command can't park the
-    # slow-command worker indefinitely.
+    # Cap at 30s so a malformed command can't park the slow-command worker.
     raw_timeout = cmd_data.get("timeout_seconds", DEFAULT_RESTART_TIMEOUT_SECONDS)
     try:
         timeout_seconds = int(raw_timeout)
@@ -215,10 +172,8 @@ def _handle_restart_process(cmd_data: dict, cmd_id: str, service: Any) -> str:
     if timeout_seconds > 30:
         timeout_seconds = 30
 
-    # respect manual-override semantics for scheduled processes: if the
-    # operator restarts a scheduled process outside its window, mark it
-    # as a manual override so the main loop doesn't immediately stop it
-    # again. matches the legacy restart_process behavior.
+    # Restarting a scheduled process outside its window sets a manual override,
+    # or the main loop stops it again immediately.
     mode = target.get(
         "launch_mode",
         "always" if target.get("autolaunch", False) else "off",
@@ -245,7 +200,6 @@ def _handle_restart_process(cmd_data: dict, cmd_id: str, service: Any) -> str:
         new_pid = _relaunch(service, target)
     except Exception as e:
         logger.exception(f"restart_process: launch phase failed for '{process_name}'")
-        # emit a failure audit event so dashboards see the restart attempt
         _emit_audit(
             service,
             action="process_start_failed",
@@ -271,9 +225,6 @@ def _handle_restart_process(cmd_data: dict, cmd_id: str, service: Any) -> str:
         )
         return f"Error: relaunch of {process_name} returned no PID"
 
-    # single composite audit event — restart is one logical operation,
-    # easier for dashboards to render atomically than separate
-    # stopped+started events. see module docstring + R.2 task notes.
     if old_pid is not None:
         details = (
             f"Restarted {process_name}: terminated PID {old_pid} "
@@ -304,10 +255,10 @@ def _emit_audit(
     process_name: str,
     details: str,
 ) -> None:
-    """
-    fire-and-forget audit event emit. swallows errors so a transient
-    firestore failure can't fail the whole restart command — the operator
-    already got a result string back, and the audit log is best-effort.
+    """Fire-and-forget audit emit; swallows errors.
+
+    A transient firestore failure must not fail the restart — the operator
+    already has their result string and the audit log is best-effort.
     """
     fb = getattr(service, "firebase_client", None)
     if fb is None:

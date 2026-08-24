@@ -1,14 +1,13 @@
 /**
- * Tests for the program-level global flags wired in `cli/src/index.ts`:
+ * Program-level global flags from `cli/src/index.ts`:
  *   --api-url <url>   (env: OWLETTE_API_URL)
  *   --profile <name>  (env: OWLETTE_PROFILE)
- *   --json            (per-command flag, no env)
+ *   --json            (per-command, no env)
  *
- * The `--api-url` flag is implemented via a `preAction` hook that
- * promotes the parsed value into `process.env.OWLETTE_API_URL` so
- * `loadConfig` and every command's `resolveAuth` pick it up without
- * per-file wiring. These tests assert that hook actually fires and that
- * the flag overrides any pre-existing env value.
+ * `--api-url` works via a `preAction` hook that promotes the value into
+ * `process.env.OWLETTE_API_URL`, so `loadConfig` and every `resolveAuth` see it
+ * without per-file wiring. These assert the hook fires and beats a pre-existing
+ * env value.
  */
 
 import { buildProgram } from '../src/index';

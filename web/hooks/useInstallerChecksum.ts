@@ -1,14 +1,11 @@
 'use client';
 
 /**
- * useInstallerChecksum — shared checksum state for installer-authoring dialogs
- * (DeploymentDialog + SystemPresetDialog).
+ * Shared checksum state for the installer-authoring dialogs (DeploymentDialog, SystemPresetDialog).
  *
- * Agents refuse `install_software` commands without `sha256_checksum`, so the
- * dashboard pins one at authoring time: whenever the installer URL settles on
- * a new valid https URL, the hook (debounced) POSTs it to `endpoint`, which
- * streams the binary server-side and returns its SHA-256. Manual entry covers
- * URLs the web server cannot reach (e.g. LAN-only hosts).
+ * Agents refuse `install_software` without `sha256_checksum`, so one is pinned at authoring time:
+ * a settled new https URL is POSTed (debounced) to `endpoint`, which streams the binary
+ * server-side. Manual entry covers URLs the web server cannot reach, e.g. LAN-only hosts.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -110,8 +107,7 @@ export function useInstallerChecksum({
       setChecksumStatus('ready');
       lastComputedUrlRef.current = url;
     } else {
-      // Legacy doc saved before checksums existed — the auto-compute effect
-      // recomputes from its URL and the next save self-heals the doc.
+      // Legacy doc from before checksums: auto-compute recomputes and the next save self-heals it.
       setSha256Checksum('');
       setChecksumStatus('idle');
       lastComputedUrlRef.current = '';
@@ -139,9 +135,8 @@ export function useInstallerChecksum({
     setChecksumStatus(SHA256_HEX_RE.test(normalized) ? 'ready' : 'idle');
   }, []);
 
-  // Auto-compute (debounced) whenever the installer URL settles on a new
-  // valid https URL. Skipped in manual mode and when the checksum for this
-  // exact URL is already known (template/preset selection pre-fills it).
+  // Debounced auto-compute on a settled new https URL. Skipped in manual mode and when this exact
+  // URL's checksum is already known (template/preset pre-fill).
   useEffect(() => {
     if (!enabled || manualChecksum) return;
     const url = installerUrl.trim();
@@ -156,7 +151,6 @@ export function useInstallerChecksum({
     return () => clearTimeout(timer);
   }, [installerUrl, enabled, manualChecksum, computeChecksum]);
 
-  // Cancel any in-flight compute on unmount.
   useEffect(() => () => abortRef.current?.abort(), []);
 
   return {

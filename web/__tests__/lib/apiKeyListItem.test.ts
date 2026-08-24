@@ -1,20 +1,12 @@
 /**
- * Regression tests for the API-key list view model.
+ * Regression tests for the API-key list view model. Two defects, one root cause
+ * — the route returned stored values raw:
  *
- * Two defects, one root cause — the route returned stored values raw:
- *
- *  1. "created Invalid Date" in the dashboard. `createdAt` is written with
- *     FieldValue.serverTimestamp() (a Firestore Timestamp) while `lastUsedAt`
- *     is written with Date.now() (a number). Serialised raw, the Timestamp
- *     reaches the browser as {_seconds, _nanoseconds}, and `new Date(that)`
- *     is Invalid Date — which is why "last used" rendered and "created" did
- *     not, and why only keys predating the serverTimestamp() switch showed a
- *     real date.
- *
- *  2. No "expired" anywhere. `expired`/`retired` were declared on the UI type
- *     but never returned, so they were always undefined and an expired key
- *     rendered under a heading that called it active — while the API itself
- *     rejected that key with token_expired.
+ *  1. "created Invalid Date": `createdAt` is a Firestore Timestamp while
+ *     `lastUsedAt` is a number, so createdAt reached the browser as
+ *     {_seconds,_nanoseconds} and `new Date(that)` is Invalid Date.
+ *  2. `expired`/`retired` were declared on the UI type but never returned, so
+ *     a key the API rejects with token_expired rendered as active.
  */
 
 import {
@@ -37,8 +29,7 @@ describe('toEpochMillis', () => {
   });
 
   it('converts a Timestamp that has already been through JSON', () => {
-    // {_seconds,_nanoseconds} — the shape that reached the browser and
-    // produced "Invalid Date". No toMillis() survives serialisation.
+    // No toMillis() survives serialisation — this is the Invalid Date shape.
     expect(toEpochMillis({ _seconds: 1_700_000_000, _nanoseconds: 500_000_000 })).toBe(
       1_700_000_000_500
     );
@@ -63,7 +54,6 @@ describe('toEpochMillis', () => {
   });
 
   it('never yields a value that renders as Invalid Date', () => {
-    // The actual user-visible symptom, asserted directly.
     for (const stored of [NOW, { toMillis: () => NOW }, { _seconds: NOW / 1000 }]) {
       const ms = toEpochMillis(stored);
       expect(ms).not.toBeNull();
@@ -100,8 +90,7 @@ describe('buildApiKeyListItem', () => {
   });
 
   it('treats the exact expiry instant as expired', () => {
-    // The API rejects at <=, so the badge must agree rather than showing
-    // "active" for a key the server refuses.
+    // API rejects at <=, so the badge must agree.
     expect(buildApiKeyListItem('k1', { ...base, expiresAt: NOW }, NOW).expired).toBe(true);
   });
 

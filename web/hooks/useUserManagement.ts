@@ -24,31 +24,18 @@ export interface UserData {
   deletedBy?: string;
 }
 
-/** What `DELETE /api/users/{uid}` reports back about the delete it performed. */
+/** What `DELETE /api/users/{uid}` reports back. */
 export interface DeleteUserResponse {
   uid: string;
   alreadyDeleted: boolean;
   deletedAt: number;
   transferredSites?: string[];
-  /** Talons this user authored, fleet-wide — reported whether or not they moved. */
+  /** Fleet-wide authored talons — reported whether or not they moved. */
   authoredTalonCount?: number;
   reassignedTalonIds?: string[];
   talonReassignFailures?: { siteId: string; detail: string }[];
 }
 
-/**
- * useUserManagement Hook
- *
- * Provides functionality for admin users to manage all users in the system.
- *
- * Features:
- * - Real-time list of all users
- * - Update user roles
- * - Sort and filter users
- *
- * Usage:
- * const { users, loading, error, updateUserRole } = useUserManagement(isSuperadmin);
- */
 const EMPTY_USERS: UserData[] = [];
 
 export function useUserManagement(enabled: boolean) {
@@ -62,14 +49,12 @@ export function useUserManagement(enabled: boolean) {
   const exposedLoading = enabled ? loading : false;
   const exposedError = enabled && !db ? 'Firebase is not configured' : enabled ? error : null;
 
-  // Fetch all users with real-time updates
   useEffect(() => {
     if (!enabled || !db) return;
 
-    // No try/catch: `collection()`/`query()` only throw for invalid path or
-    // query shape (both literals here), and onSnapshot surfaces runtime
-    // listener errors through its error callback. A sync catch-block setState
-    // would violate react-hooks/set-state-in-effect.
+    // No try/catch: the path and query shape are literals, and onSnapshot
+    // reports runtime errors via its error callback. A sync catch-block
+    // setState would violate react-hooks/set-state-in-effect.
     const usersRef = collection(db, 'users');
     const q = query(usersRef, orderBy('createdAt', 'desc'));
 
@@ -100,12 +85,6 @@ export function useUserManagement(enabled: boolean) {
     return () => unsubscribe();
   }, [enabled]);
 
-  /**
-   * Update a user's role
-   *
-   * @param userId - The user's UID
-   * @param newRole - The new role ('user' or 'admin')
-   */
   const updateUserRole = useCallback(
     async (userId: string, newRole: UserRole): Promise<void> => {
       if (!db) {
@@ -131,12 +110,8 @@ export function useUserManagement(enabled: boolean) {
     []
   );
 
-  /**
-   * Get count of users by role under the three-tier permission model.
-   * - superadmins: platform-wide god-mode
-   * - admins: site-scoped elevated tier (can edit site config on their assigned sites)
-   * - members: standard users with site-level access
-   */
+  /** Active-user counts per tier: superadmin (platform-wide), admin
+   * (site-scoped, can edit site config), member (site-level access). */
   const getUserCounts = useCallback(() => {
     const active = exposedUsers.filter((u) => u.deletedAt == null);
     const superadmins = active.filter((u) => u.role === 'superadmin').length;
@@ -152,12 +127,6 @@ export function useUserManagement(enabled: boolean) {
     };
   }, [exposedUsers]);
 
-  /**
-   * Assign a site to a user
-   *
-   * @param userId - The user's UID
-   * @param siteId - The site ID to assign
-   */
   const assignSiteToUser = useCallback(
     async (userId: string, siteId: string): Promise<void> => {
       if (!db) {
@@ -179,12 +148,6 @@ export function useUserManagement(enabled: boolean) {
     []
   );
 
-  /**
-   * Remove a site from a user
-   *
-   * @param userId - The user's UID
-   * @param siteId - The site ID to remove
-   */
   const removeSiteFromUser = useCallback(
     async (userId: string, siteId: string): Promise<void> => {
       if (!db) {
@@ -207,15 +170,12 @@ export function useUserManagement(enabled: boolean) {
   );
 
   /**
-   * Delete a user
-   *
-   * @param userId - The user's UID
-   * @param options.successorUid - who inherits the sites this user owns. The
-   *   API refuses the delete without one when they own any.
-   * @param options.reassignTalons - also hand that successor the talons this
-   *   user authored. Opt-in: a talon with an AI step resolves its AUTHOR's
-   *   site access on every run, so deleting the author stops it — but silently
-   *   rewriting authorship is worse than an orphan the operator was shown.
+   * @param options.successorUid inherits this user's owned sites; the API
+   *   refuses the delete without one when they own any.
+   * @param options.reassignTalons also hands over authored talons. Opt-in
+   *   because an AI-step talon resolves its AUTHOR's site access on every run,
+   *   so deleting the author stops it — but silently rewriting authorship is
+   *   worse than an orphan the operator was shown.
    */
   const deleteUser = useCallback(
     async (

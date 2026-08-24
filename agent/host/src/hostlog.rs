@@ -1,16 +1,13 @@
-//! Two kinds of log, both size-capped, neither of which may ever be the reason
-//! the service falls over.
+//! Two size-capped logs, neither of which may ever take the service down.
 //!
-//! * The child's stdout and stderr go verbatim into
-//!   `logs\service_stdout.log` / `logs\service_stderr.log` — the same two files
-//!   NSSM wrote, because they are the crash forensics of last resort and the
-//!   docs, the runbooks and the support flow all name them.
-//! * The host's own narration goes into `logs\service_host.log`: registration,
-//!   spawns, exits with their codes, backoff decisions, stop escalations.
+//! * Child stdout/stderr go verbatim to `logs\service_stdout.log` /
+//!   `service_stderr.log` — the filenames NSSM used, which the docs, runbooks
+//!   and support flow all name.
+//! * Host narration goes to `logs\service_host.log`: registration, spawns,
+//!   exits and codes, backoff decisions, stop escalations.
 //!
-//! Every write is best-effort. A full disk, a locked file or a revoked
-//! permission gets swallowed: losing a log line is survivable, taking the
-//! machine's supervisor down with it is not.
+//! Every write is best-effort: a full disk, locked file or revoked permission
+//! is swallowed. Losing a log line is survivable; losing the supervisor is not.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -19,14 +16,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Cap for each of the child's two streams, matching NSSM's `AppRotateBytes`
-/// (10 MB). One rotation sibling is kept, so the worst case on disk is 40 MB
-/// across both streams.
+/// Per child stream, matching NSSM's `AppRotateBytes`. One sibling is kept, so
+/// the worst case on disk is 40 MB across both streams.
 pub const MAX_CHILD_LOG_BYTES: u64 = 10 * 1024 * 1024;
 
-/// Cap for the host's own log. It writes a handful of lines per service
-/// lifetime, so this is a bound on a pathological crash loop rather than a
-/// number anyone should reach.
+/// Host log cap — a bound on a pathological crash loop, not a normal ceiling.
 pub const MAX_HOST_LOG_BYTES: u64 = 2 * 1024 * 1024;
 
 /// An append-only file that rotates to a single sibling when it would exceed
@@ -40,11 +34,9 @@ pub struct RotatingLog {
 }
 
 impl RotatingLog {
-  /// Open (or create) the log.
-  ///
-  /// Infallible by design: if the directory cannot be created or the file
-  /// cannot be opened, the log starts closed and every write retries the open.
-  /// A machine that cannot write a log file still has to be supervised.
+  /// Open (or create) the log. Infallible by design: on failure the log starts
+  /// closed and each write retries the open — a machine that cannot write a log
+  /// still has to be supervised.
   pub fn open(path: PathBuf, max_bytes: u64) -> Self {
     let mut log = Self {
       path,
@@ -72,8 +64,7 @@ impl RotatingLog {
       return;
     };
     if file.write_all(bytes).is_err() {
-      // Drop the handle so the next write starts from a clean open rather than
-      // hammering a broken one.
+      // Drop the handle so the next write reopens instead of hammering a broken one.
       self.file = None;
       return;
     }
@@ -81,11 +72,9 @@ impl RotatingLog {
     self.len += bytes.len() as u64;
   }
 
-  /// Release the handle, move the file aside, and let the next write reopen.
-  ///
-  /// If the rename fails the file simply keeps growing and rotation is retried
-  /// on the next write — a log over its cap is a far smaller problem than a
-  /// truncated one, so nothing here ever deletes live content.
+  /// Release the handle, move the file aside, let the next write reopen. A
+  /// failed rename just means the file keeps growing and rotation retries —
+  /// nothing here ever deletes live content.
   fn rotate(&mut self) {
     self.file = None;
     let sibling = rotated_path(&self.path);
@@ -110,9 +99,8 @@ impl RotatingLog {
   }
 }
 
-/// Rotate only when the file already has content and the incoming write would
-/// take it past the cap — so a single oversized line still lands somewhere
-/// rather than triggering an endless rotate-and-retry.
+/// Rotate only when the file has content AND the write would cross the cap, so
+/// a single oversized line lands somewhere instead of rotating forever.
 pub fn should_rotate(current_len: u64, incoming_len: u64, max_bytes: u64) -> bool {
   current_len > 0 && current_len.saturating_add(incoming_len) > max_bytes
 }
@@ -124,17 +112,13 @@ pub fn rotated_path(path: &Path) -> PathBuf {
   PathBuf::from(name)
 }
 
-/// Copy a child's stream into a log until it closes.
+/// Copy a child's stream into a log until it closes. Whole lines only (a
+/// rotation must never land mid-line) and byte-verbatim — no host framing.
 ///
-/// Reads whole lines so a rotation can never land mid-line, and writes the
-/// bytes verbatim: these files are meant to be byte-identical to what the agent
-/// printed, with no host framing added.
-///
-/// The thread is deliberately detached rather than joined. A grandchild that
-/// inherited the pipe can hold it open after the agent itself has exited, and
-/// the supervisor must be free to relaunch immediately; the sink is shared
-/// across child generations (an `Arc<Mutex<_>>`) precisely so a straggler and
-/// the new child can write to the same file safely.
+/// The thread is deliberately DETACHED, not joined: a grandchild can hold the
+/// pipe open after the agent exits and the supervisor must relaunch anyway. The
+/// `Arc<Mutex<_>>` sink is shared across generations so a straggler and the new
+/// child can write the same file safely.
 pub fn pump<R>(reader: R, sink: Arc<Mutex<RotatingLog>>)
 where
   R: Read + Send + 'static,
@@ -163,9 +147,8 @@ fn host_log() -> &'static Mutex<Option<RotatingLog>> {
   HOST_LOG.get_or_init(|| Mutex::new(None))
 }
 
-/// Point the host log at `path`. Safe to call more than once; the first call
-/// wins, which keeps a CLI verb from reopening the file under a running
-/// service.
+/// Point the host log at `path`. First call wins, so a CLI verb cannot reopen
+/// the file under a running service.
 pub fn init(path: PathBuf) {
   let mut slot = match host_log().lock() {
     Ok(slot) => slot,
@@ -188,9 +171,7 @@ fn log(level: &str, message: &str) {
       sink.write(line.as_bytes());
     }
   }
-  // Also to stderr, which is where `install.bat` and an operator running the
-  // verbs by hand read it. Under the SCM there is no console and this is a
-  // no-op.
+  // Also stderr, for `install.bat` and hand-run verbs; a no-op under the SCM.
   let _ = std::io::stderr().write_all(line.as_bytes());
 }
 
@@ -213,12 +194,9 @@ fn unix_now() -> u64 {
     .unwrap_or(0)
 }
 
-/// ISO-8601 UTC, e.g. `2026-08-14T18:22:03Z`.
-///
-/// UTC rather than local time, and spelled out with the `Z`, so a host line can
-/// never be mistaken for one of the agent's local-time python log lines when
-/// the two are read side by side. Hand-rolled (the civil-from-days algorithm)
-/// because a timestamp is not worth a dependency.
+/// ISO-8601 UTC, e.g. `2026-08-14T18:22:03Z`. UTC with an explicit `Z` so a
+/// host line is never mistaken for one of the agent's local-time python lines.
+/// Hand-rolled because a timestamp is not worth a dependency.
 pub fn format_timestamp(unix_secs: u64) -> String {
   let days = (unix_secs / 86_400) as i64;
   let seconds_of_day = unix_secs % 86_400;

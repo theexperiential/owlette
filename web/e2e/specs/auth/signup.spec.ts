@@ -1,17 +1,7 @@
 /**
- * Auth — signup flow
- *
- * Verifies that a brand-new user can complete the email/password registration,
- * and that the resulting Firestore user doc has the expected shape under the
- * three-role permission model:
- *
- *   - role: 'member' (NOT 'user' — that value is retired as of the permission
- *     model split; new users must default to the new vocabulary)
- *   - requiresMfaSetup: true (the mandatory-2FA gate for new signups)
- *   - sites: [] (member starts unassigned; superadmins assign sites manually)
- *
- * Also asserts the post-signup redirect lands on /setup-2fa (the mandatory
- * 2FA setup page), NOT /dashboard.
+ * Auth — signup. Asserts the new user's Firestore doc under the three-role
+ * model: role 'member' (NOT the retired 'user'), requiresMfaSetup true, sites
+ * empty — and that signup redirects to /setup-2fa, not /dashboard.
  */
 
 import { test, expect } from '@playwright/test';
@@ -21,20 +11,16 @@ import { getAdminDb } from '../../helpers/emulator';
 test.use({ storageState: { cookies: [], origins: [] } });
 
 test('new signup writes role: member and redirects to /setup-2fa', async ({ page }) => {
-  // Unique identifier per run so re-runs don't collide against the seeded users.
-  // global-setup resets the emulator between runs, but the test runner may
-  // invoke `test.describe.configure({ mode: 'serial' })` with shared state in
-  // the future — uniqueness keeps us safe either way.
+  // Unique per run so re-runs cannot collide with seeded users, even though
+  // global-setup resets the emulator.
   const stamp = Date.now();
   const email = `new-signup-${stamp}@e2e.test`;
   const password = 'e2e-new-signup-password';
 
   await page.goto('/register');
 
-  // Email FIRST — the form is progressive: only the email field and the terms
-  // checkbox render until email receives focus, at which point the name and
-  // password fields expand in. `fill()` focuses before typing, so filling email
-  // is what opens the rest. Filling any other field first would time out.
+  // Email FIRST: the form is progressive — name and password only mount once
+  // email is focused, so filling any other field first would time out.
   await page.getByLabel(/^email$/i).fill(email);
 
   await page.getByLabel(/first name/i).fill('E2E');
@@ -50,23 +36,19 @@ test('new signup writes role: member and redirects to /setup-2fa', async ({ page
 
   await page.getByRole('button', { name: /create account|sign up|register/i }).first().click();
 
-  // New signups target /setup-2fa (the mandatory MFA gate). Depending on
-  // session-cookie timing, the user may bounce through /login?redirect=/setup-2fa
-  // before landing — both URLs are valid evidence that the MFA gate fired.
-  // We intentionally accept either to avoid flaking on the session-cookie race
-  // between createSessionCookie (POST /api/auth/session) and the next navigation.
+  // Either URL proves the MFA gate fired: session-cookie timing can bounce the
+  // user through /login?redirect=/setup-2fa first. Accepting both avoids
+  // flaking on the createSessionCookie/navigation race.
   await expect(page).toHaveURL(/\/setup-2fa|\/login\?redirect=%2Fsetup-2fa/, {
     timeout: 20_000,
   });
 
-  // Admin SDK read-through: the signup flow wrote the user doc with the new
-  // three-role vocabulary. If role lands as 'user' (old vocabulary) the
-  // permission-model-split migration script would re-flip it, but new code
-  // MUST write 'member' directly per wave 0.1.3. This is the real assertion —
-  // the URL above just pins the MFA gate fired; the doc shape below pins the
-  // role-default contract.
+  // The real assertion: new code MUST write 'member' directly, not rely on the
+  // permission-model-split migration to re-flip a legacy 'user'.
   const db = getAdminDb();
-  const authAdmin = (await import('firebase-admin')).default.auth();
+  // Modular entrypoint: v14 dropped the default `admin` namespace export.
+  const { getAuth } = await import('firebase-admin/auth');
+  const authAdmin = getAuth();
   const userRecord = await authAdmin.getUserByEmail(email);
   const userDoc = await db.collection('users').doc(userRecord.uid).get();
   expect(userDoc.exists).toBe(true);

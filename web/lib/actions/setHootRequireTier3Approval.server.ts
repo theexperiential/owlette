@@ -1,13 +1,11 @@
 /**
- * Action core: toggle the per-site `requireTier3Approval` Hoot policy.
+ * Toggle the per-site Hoot `requireTier3Approval` policy, stored at
+ * `sites/{siteId}/settings/cortex` (the `cortex` doc name is the storage
+ * contract; the UI says "hoot").
  *
- * Writes `sites/{siteId}/settings/cortex.requireTier3Approval`. When `true`
- * (the default), privileged tier-3 tool calls (run_powershell, execute_script,
- * reboot_machine, etc.) pause for explicit in-chat approval before they run,
- * and single-machine admin chats are routed through the server-side LLM path
- * so the AI SDK approval gate can fire. When `false`, local Hoot is allowed
- * and the gate does not apply.
- *
+ * True (default): tier-3 tool calls pause for in-chat approval, and
+ * single-machine admin chats route through the server LLM path so the AI SDK
+ * gate can fire. False: local Hoot is allowed and the gate never applies.
  * Read side: `getHootRequireTier3Approval` in `lib/hoot-utils.server.ts`.
  */
 import { getAdminDb } from '@/lib/firebase-admin';

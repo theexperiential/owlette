@@ -13,6 +13,7 @@ Each runbook is self-contained - read the one that matches your situation.
 | "how do dev and main branches actually relate?" | [dev-to-prod-workflow.md](dev-to-prod-workflow.md) |
 | "I'm turning on Firebase App Check enforcement" | [app-check-rollout.md](app-check-rollout.md) |
 | "I'm enabling talons (the automations cron) for an environment" | [talons.md](talons.md) |
+| "who owns the cron schedules, the load balancer, or anything else not deployed by a push?" | [manual-infrastructure.md](manual-infrastructure.md) |
 | "I'm new to the repo and need a setup path" | [/docs/maintainer-quickstart.md](../maintainer-quickstart.md) |
 
 ## release paths
@@ -72,7 +73,7 @@ encryption, MockService parity, and repository operating rules.
 The runbooks are not exhaustive.
 Specific gaps each acknowledges:
 
-- production-deploy: no `/api/health` endpoint; functions/rules/storage deploys are manual.
+- production-deploy: functions/rules/storage deploys are manual.
 - agent-installer-release: code-signing cert procedure deferred (business decision; about $300-700/year EV); demote-to-older-version may require re-running 3-step finalize.
 - hotfix-rollback: many specific gaps listed inline, including cherry-pick playbook and agent fleet self-update kill switch.
 - dev-to-prod-workflow: tag discipline lapsed; branch protection unknown.

@@ -1,20 +1,15 @@
 'use client';
 
 /**
- * useRoostManifestFiles — lazy-fetch the file list for a roost's current
- * version. Only fires the network request when `enabled=true`, and
- * caches results in a module-level map keyed by versionId so
- * collapse/expand cycles don't refetch.
+ * useRoostManifestFiles — lazy-fetch a roost version's file list. Fires only
+ * when `enabled`, and caches by versionId so collapse/expand doesn't refetch.
  *
- * Calls GET /api/roosts/{roostId}/versions/{versionId}/files — a
- * server-side proxy that fetches the version body from R2 and returns
- * just the file list. Proxying through our API avoids the CORS issue
- * the browser hits when fetching R2 signed URLs directly (R2 doesn't
- * send Access-Control-Allow-Origin on private-bucket signed GETs).
+ * Goes through GET /api/roosts/{roostId}/versions/{versionId}/files rather than
+ * hitting R2 directly: R2 sends no Access-Control-Allow-Origin on
+ * private-bucket signed GETs, so a direct browser fetch is CORS-blocked.
  *
- * The file is named `useRoostManifestFiles` for stability across the
- * rename — the internals all use `version` terminology, matching the
- * routes + the rest of the codebase.
+ * Name kept from before the rename; internals use `version` terminology to
+ * match the routes.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -30,9 +25,8 @@ interface VersionFilesResult {
   error: string | null;
 }
 
-// Cache keyed by versionId (content-addressed — sha256 of the version
-// body, so immutable forever). A given version never changes, so cache
-// entries are safe to reuse across the whole app session.
+// Keyed by versionId, which is content-addressed and therefore immutable — safe
+// to reuse for the whole app session.
 const cache = new Map<string, readonly VersionFile[]>();
 const inflight = new Map<string, Promise<readonly VersionFile[]>>();
 
@@ -47,10 +41,8 @@ async function fetchVersionFiles(
   if (existing) return existing;
 
   const p = (async () => {
-    // Server-side proxy — avoids R2's missing CORS headers on signed URLs.
-    // The endpoint supports pagination via limit + cursor; we page through
-    // until nextPageToken is empty so the caller gets the full list.
-    // max limit is 500 per request.
+    // Page until nextPageToken is empty so the caller gets the full list;
+    // the endpoint caps limit at 500.
     const collected: VersionFile[] = [];
     let cursor = '';
     while (true) {
@@ -78,8 +70,7 @@ async function fetchVersionFiles(
       cursor = body.nextPageToken ?? '';
       if (!cursor) break;
     }
-    // Sort alphabetically by path so the list is deterministic
-    // regardless of upload order. Mirrors how file explorers default.
+    // Deterministic regardless of upload order, matching file-explorer default.
     collected.sort((a, b) => a.path.localeCompare(b.path));
     Object.freeze(collected);
     cache.set(versionId, collected);
@@ -100,8 +91,7 @@ export function useRoostManifestFiles(
   enabled: boolean,
 ): VersionFilesResult {
   const [result, setResult] = useState<VersionFilesResult>(() => {
-    // Sync-seed from cache on mount if the version was already fetched
-    // in a prior expand — avoids a loading flicker on re-expand.
+    // Sync-seed from cache so re-expanding doesn't flicker through loading.
     const seeded = versionId ? cache.get(versionId) : null;
     return {
       files: seeded ?? [],

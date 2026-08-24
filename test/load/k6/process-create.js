@@ -1,31 +1,17 @@
 /**
- * k6 load test: POST /api/sites/{siteId}/machines/{machineId}/processes
- * public API launch load suite.
+ * k6 load test: POST /api/sites/{siteId}/machines/{machineId}/processes.
  *
- * Creates a new process under a machine's config doc. Each iteration:
- *   1. requireMachineAuthAndScope
- *   2. withIdempotency wrapper
- *   3. withProcessLock transaction (process-config-lock CAS)
- *   4. emitMutation audit event
+ * Each iteration walks auth -> idempotency -> the withProcessLock transaction
+ * -> the audit emit. The lock is the slowest hop: it's a Firestore transaction
+ * with the duplicate-name check inside it.
  *
- * The process-config-lock is the slowest hop — it's a Firestore transaction
- * and the duplicate-name check is inside it. Per-VU iterations use a unique
- * `name` (`load-${__VU}-${__ITER}`) so multiple VUs don't collide on the
- * same process record.
+ * SLO: p99 < 400 ms. Scenarios: `smoke` (1 VU, 10 s) and `sustained`
+ * (ramping to 30 VUs over 5 min). No spike scenario, as in
+ * dispatch-machine-command.js.
  *
- * Idempotency-Key uniqueness: same approach as dispatch-machine-command.js —
- * `mutationHeaders(__VU, __ITER)` embeds VU + iter + timestamp.
- *
- * SLO: p99 < 400 ms.
- *
- * Scenarios (no spike — same reasoning as dispatch-machine-command.js):
- *   `smoke`     — 1 VU, 10 s
- *   `sustained` — ramping 10 → 50 VUs over 5 min
- *
- * **WRITES TEST DATA.** Each iteration appends a process to the machine's
- * config doc. Recommend a periodic sweep: after a load run, prune the
- * `processes` array on the load-test machine doc, or point
- * `K6_MACHINE_ID` at a dedicated load-test machine and clear it post-run.
+ * **WRITES TEST DATA** — every iteration appends a process to the machine's
+ * config doc. Point `K6_MACHINE_ID` at a dedicated machine and clear it after
+ * the run, or prune the `processes` array by hand.
  */
 import http from 'k6/http';
 import { check, sleep } from 'k6';
@@ -60,10 +46,8 @@ export const options = {
 export default function () {
   const url = `${BASE_URL}/api/sites/${SITE_ID}/machines/${MACHINE_ID}/processes`;
 
-  // Unique per-VU per-iteration name so the duplicate-name guard inside the
-  // process-config-lock transaction doesn't reject every other request.
-  // The trailing Date.now() makes a re-run of the same VU/iter still unique
-  // across separate load-test runs.
+  // Unique per VU+iteration, or the duplicate-name guard inside the lock
+  // rejects most requests. Date.now() keeps re-runs unique too.
   const name = `load-${__VU}-${__ITER}-${Date.now()}`;
 
   const body = JSON.stringify({

@@ -1,17 +1,10 @@
 /**
- * POST /api/hoot/provision-key
+ * POST /api/hoot/provision-key — provision the LLM API key to a machine's local Hoot.
+ * Writes a Firestore command the service picks up, encrypts with SecureStorage (Fernet)
+ * and stores in config.json.
  *
- * Provisions the LLM API key to a specific machine's local Hoot.
- * Writes a Firestore command that the service picks up, encrypts the key
- * with SecureStorage (Fernet), and stores it in config.json.
- *
- * Request body:
- *   - siteId: string
- *   - machineId: string
- *   - apiKey: string (the raw LLM API key)
- *   - provider: 'anthropic' | 'openai'
- *
- * Auth: requires authenticated user with site access.
+ * Body: `{ siteId, machineId, apiKey (raw LLM key), provider: 'anthropic' | 'openai' }`.
+ * Auth: authenticated user with site access.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -26,11 +19,10 @@ const COMMAND_TIMEOUT_MS = 15_000;
 const POLL_INTERVAL_MS = 1_000;
 
 /**
- * The agent writes a NON-terminal `running` marker to the completed doc at the
- * START of every command (restart safety), plus intermediate progress states.
- * Only these whitelisted statuses actually resolve the command — a `running`
- * entry must NOT be treated as terminal (deleting it destroys restart safety
- * and would return success while provisioning is still in flight).
+ * The agent writes a NON-terminal `running` marker to the completed doc at the START of
+ * every command (restart safety), plus progress states. Only these whitelisted statuses
+ * resolve the command — treating `running` as terminal destroys restart safety and
+ * returns success while provisioning is still in flight.
  */
 const TERMINAL_COMMAND_STATUSES = new Set([
   'completed',
@@ -60,10 +52,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     const db = getAdminDb();
 
-    // Verify user access
     await verifyUserSiteAccess(db, userId, siteId);
 
-    // Write command for the agent to pick up
     const commandId = `provision_cortex_key_${Date.now()}`;
     const pendingRef = db
       .collection('sites')
@@ -107,11 +97,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
           ? (cmdResult as { status?: unknown }).status
           : undefined;
 
-      // Only a terminal status resolves the command. A non-terminal `running`
-      // marker (or any progress state) means provisioning is still underway —
-      // keep polling and leave the entry in place (restart safety).
+      // Only a terminal status resolves the command; a `running` or progress entry means work
+      // is still underway — keep polling and leave the entry in place (restart safety).
       if (typeof status === 'string' && TERMINAL_COMMAND_STATUSES.has(status)) {
-        // Clean up
         const { FieldValue } = await import('firebase-admin/firestore');
         await completedRef.update({ [commandId]: FieldValue.delete() });
 

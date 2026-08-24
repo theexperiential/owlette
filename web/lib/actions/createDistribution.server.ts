@@ -1,21 +1,17 @@
 /**
  * createDistribution action core (security-boundary-migration wave 3.4).
  *
- * Mirrors the deployment create pattern from
- * `web/app/api/sites/[siteId]/deployments/route.ts` (api-sprint wave 1):
- * write the parent doc at `sites/{siteId}/project_distributions/{distId}`
- * with a `targets[]` array, fan out `distribute_project` commands to every
- * target machine via the wave-2.2 fan-out helper, then flip the parent doc
- * to `status: 'in_progress'`.
+ * Mirrors `web/app/api/sites/[siteId]/deployments/route.ts`: write the parent doc at
+ * `sites/{siteId}/project_distributions/{distId}` with a `targets[]` array, fan out
+ * `distribute_project` commands to every target machine, then flip the parent doc to
+ * `status: 'in_progress'`.
  *
- * The action is the single source of truth for create-distribution business
- * logic. The route shim parses the body, runs auth + idempotency, then calls
- * this action; hoot / cron callers reach the same logic via `invokeAsSystem`
- * (wave 3.12).
+ * Single source of truth for create-distribution logic: the route shim parses the body
+ * and runs auth + idempotency then calls this; hoot / cron callers arrive via
+ * `invokeAsSystem`.
  *
- * Validation is internal so the route shim doesn't have to repeat it. Returns
- * a discriminated `{ ok: true, ... } | { ok: false, ... }` so the caller can
- * surface RFC 7807 errors without converting throws.
+ * Validation is internal, and the result is a discriminated `{ ok }` union so callers
+ * can surface RFC 7807 errors without converting throws.
  */
 
 import { FieldValue } from 'firebase-admin/firestore';
@@ -48,10 +44,7 @@ export interface CreateDistributionContext {
   actorIdentifier: string;
   /** opaque correlation id woven through audit + commands. */
   correlationId: string;
-  /**
-   * Optional Firestore override for unit tests. Production callers omit
-   * and `getAdminDb()` is used.
-   */
+  /** Firestore override for unit tests; production omits it and `getAdminDb()` is used. */
   db?: ReturnType<typeof getAdminDb>;
   /** Override `Date.now()` — unit tests pass a fixed clock. */
   now?: () => number;
@@ -204,15 +197,11 @@ function validateInput(input: CreateDistributionInput): ValidatedInput | { error
 }
 
 /**
- * Create a project distribution and fan-out `distribute_project` commands.
+ * Create a project distribution and fan out `distribute_project` commands.
  *
- * Steps (mirrors `createDeployment`):
- *   1. validate body
- *   2. read `sites/{siteId}.distributionQuota` (default 100), reject 413 if over
- *   3. write the distribution doc with `status: 'pending'` + targets[]
- *   4. fan out `distribute_project` commands via wave 2.2 helper
- *   5. flip parent doc to `status: 'in_progress'`
- *   6. emit `distribution_mutated` audit event
+ * Validate → read `sites/{siteId}.distributionQuota` (default 100, 413 if over) → write
+ * the doc as `status: 'pending'` with targets[] → fan out the commands → flip to
+ * `in_progress` → emit `distribution_mutated`.
  */
 export async function createDistribution(
   input: CreateDistributionInput,
@@ -275,11 +264,9 @@ export async function createDistribution(
 
   await distributionRef.set(distributionData);
 
-  // Fan out `distribute_project` commands via the wave-2.2 helper. The
-  // helper handles chunked concurrency, lifecycle stamping, and threading
-  // the correlation id into every command's metadata.
-  // Use underscores in the commandIdPrefix to avoid Firestore field-path
-  // hyphen handling (matches the legacy hook prefix shape).
+  // Fan out via the wave-2.2 helper: chunked concurrency, lifecycle stamping, and the
+  // correlation id threaded into every command's metadata. Underscores in the
+  // commandIdPrefix avoid Firestore field-path hyphen handling.
   const sanitizedDistributionId = distributionId.replace(/-/g, '_');
   const commandIdPrefix = `distribute_${sanitizedDistributionId}`;
 

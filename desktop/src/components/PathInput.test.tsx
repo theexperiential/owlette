@@ -128,11 +128,10 @@ describe('PathInput', () => {
   })
 
   /**
-   * The tooltip is deliberately uncontrolled — Radix decides when it is up, and
-   * the only thing this component decides is whether there is anything to show.
-   * That is what these assert: the *gate*, which is the part that is ours.
-   * Radix's hover timing has no meaning in jsdom (no layout, no real pointer),
-   * so how long it stays up is verified live instead.
+   * The tooltip is deliberately uncontrolled: Radix decides when it is up, this
+   * component only decides whether there is anything to show — the gate is what
+   * these assert. Radix hover timing is meaningless in jsdom (no layout, no real
+   * pointer), so duration is verified live instead.
    */
   it('arms the tooltip when the value does not fit its box', () => {
     stubNoLayout()

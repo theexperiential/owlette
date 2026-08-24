@@ -1,21 +1,13 @@
 /**
  * @jest-environment node
  *
- * Wave 1-3 security hardening rules tests.
+ * Security-hardening rules not already covered by baseline.test.ts /
+ * denials.test.ts: users/{uid} create constraints and update allowlist,
+ * canAccessSite() deletedAt gating, hoot/active-chat + cortex-events +
+ * per-machine logs agent writes.
  *
- * Covers the NEW behaviors that shipped in waves 1-3 of the security
- * hardening pass and weren't already exercised by baseline.test.ts /
- * denials.test.ts:
- *
- *   - users/{uid} CREATE field constraints (role/sites/email/MFA defaults)
- *   - users/{uid} UPDATE allowlist (diff().affectedKeys().hasOnly([...]))
- *   - canAccessSite() deletedAt gating
- *   - hoot/active-chat per-machine agent write
- *   - cortex-events agent create + update/delete denial
- *   - sites/{s}/machines/{m}/logs/{id} per-machine logs agent write
- *
- * RUN: `npm run test:rules` (boots the emulator first). Not picked up by
- * the default jest run because rules tests need the emulator on :8080.
+ * RUN: `npm run test:rules` — needs the emulator on :8080, so the default
+ * jest run skips it.
  */
 
 import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
@@ -55,7 +47,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await clearFirestoreData();
 
-  // Common fixture: two sites, two machines on site A.
+  // Two sites, two machines on site A.
   await seedAsAdmin(async (db) => {
     await setDoc(doc(db, 'sites', SITE_A), {
       owner: 'someone-else',
@@ -76,46 +68,19 @@ beforeEach(async () => {
   });
 });
 
-/* ---------------------------------------------------------------------- */
-/*  Item 1: users/{uid} CREATE field constraints                          */
-/* ---------------------------------------------------------------------- */
-
 describe('users/{uid} create — sensitive field defaults pinned', () => {
   /**
-   * The rules' create clause uses absent-OR-equals pattern. A client
-   * attempting to elevate themselves on first-login (e.g. by writing
-   * `sites: ['some-victim-site']`, `role: 'admin'`, etc.) must be denied.
-   * The "safe minimum" doc — explicit defaults that match the implicit
-   * server defaults — should succeed so this rule doesn't break legitimate
-   * first-login flow.
-   *
-   * Note: rules-unit-testing's authenticatedContext uses Firebase v9
-   * default token shape — token.email is set to `<uid>@<projectId>.iam`.
-   * The asUser harness uses a synthetic email; here we rely on the emulator
-   * auth token's email claim being `<uid>@example.com` when we
-   * authenticatedContext with no overrides. The `email` test below uses an
-   * arbitrary string we know does NOT equal the token email.
+   * The create clause is absent-OR-equals: first-login self-elevation
+   * (`sites: ['victim']`, `role: 'admin'`, …) must be denied, while the
+   * safe-minimum doc still succeeds so legitimate first login works.
    */
   test('rejects sites:[victim-site] on create', async () => {
-    // First-login: no users/{uid} doc exists yet, so we cannot use the
-    // asUser() helper (it pre-seeds the doc). We open an
-    // authenticatedContext directly via the harness env.
-    // Use a fresh uid so the asUser-seeded doc from beforeEach is gone.
     const { initializeTestEnvironment } = await import('@firebase/rules-unit-testing');
-    // Re-using the shared env via asAgent is the wrong shape — instead
-    // we call asUser to bootstrap a different uid, then issue the doc
-    // creation as that uid via the same context. Since asUser already
-    // seeds the doc, we'd need to clear it. Simpler: pre-clear and use
-    // asUser for a different-uid context to call the rule path on SELF_UID.
-    // BUT: rules check request.auth.uid == userId, so we must be SELF.
-    // To work around the helper's auto-seed, just delete the seeded doc
-    // first and then issue the rule-tested create as the same uid.
     void initializeTestEnvironment; // satisfy lint
 
     const db = await asUser(SELF_UID, 'member', []);
 
-    // The asUser helper seeded users/SELF_UID. Wipe it (as admin) so the
-    // create-rule branch is the one we test, not update.
+    // asUser seeds users/SELF_UID; wipe it so we exercise create, not update.
     await seedAsAdmin(async (adminDb) => {
       await deleteDoc(doc(adminDb, 'users', SELF_UID));
     });
@@ -177,22 +142,6 @@ describe('users/{uid} create — sensitive field defaults pinned', () => {
     );
   });
 
-  test('rejects passkeyEnrolled:true on create', async () => {
-    const db = await asUser(SELF_UID, 'member', []);
-    await seedAsAdmin(async (adminDb) => {
-      await deleteDoc(doc(adminDb, 'users', SELF_UID));
-    });
-
-    await assertFails(
-      setDoc(doc(db, 'users', SELF_UID), {
-        uid: SELF_UID,
-        role: 'member',
-        sites: [],
-        passkeyEnrolled: true, // <-- the attack
-      }),
-    );
-  });
-
   test('rejects mismatched email on create (impersonation)', async () => {
     const db = await asUser(SELF_UID, 'member', []);
     await seedAsAdmin(async (adminDb) => {
@@ -215,11 +164,8 @@ describe('users/{uid} create — sensitive field defaults pinned', () => {
       await deleteDoc(doc(adminDb, 'users', SELF_UID));
     });
 
-    // asUser uses authenticatedContext(SELF_UID), which results in a
-    // synthetic Firebase auth token. The token.email is not set by the
-    // emulator unless we override (and we don't). So the rule's
-    // `request.resource.data.email == request.auth.token.email` clause is
-    // satisfied by OMITTING the email key entirely (absent-OR-equals).
+    // The emulator sets no token.email here, so the rule's
+    // `data.email == auth.token.email` clause is satisfied by omitting email.
     await assertSucceeds(
       setDoc(doc(db, 'users', SELF_UID), {
         uid: SELF_UID,
@@ -227,15 +173,10 @@ describe('users/{uid} create — sensitive field defaults pinned', () => {
         sites: [],
         mfaEnrolled: false,
         requiresMfaSetup: true,
-        passkeyEnrolled: false,
       }),
     );
   });
 });
-
-/* ---------------------------------------------------------------------- */
-/*  Item 2: users/{uid} UPDATE allowlist                                  */
-/* ---------------------------------------------------------------------- */
 
 describe('users/{uid} update — diff allowlist', () => {
   const ALLOWLIST = [
@@ -318,10 +259,14 @@ describe('users/{uid} update — diff allowlist', () => {
     );
   });
 
-  test('rejects update to passkeyEnrolled', async () => {
+  // `mfaFactors` is the authoritative second-factor tally, so self-writing it
+  // is the escalation the allowlist must refuse.
+  test('rejects update to mfaFactors', async () => {
     const db = await asUser(SELF_UID, 'member', []);
     await assertFails(
-      updateDoc(doc(db, 'users', SELF_UID), { passkeyEnrolled: true }),
+      updateDoc(doc(db, 'users', SELF_UID), {
+        mfaFactors: { totp: true, passkeys: 3 },
+      }),
     );
   });
 
@@ -334,8 +279,7 @@ describe('users/{uid} update — diff allowlist', () => {
 
   test('rejects mixed update with one disallowed key (allowlist is hasOnly)', async () => {
     const db = await asUser(SELF_UID, 'member', []);
-    // displayName is allowed; role is not. hasOnly([...]) means a single
-    // disallowed key fails the whole write.
+    // hasOnly([...]): one disallowed key fails the whole write.
     await assertFails(
       updateDoc(doc(db, 'users', SELF_UID), {
         displayName: 'Legit Name',
@@ -344,8 +288,7 @@ describe('users/{uid} update — diff allowlist', () => {
     );
   });
 
-  // Document the allowlist constants so a future change to the rules also
-  // requires updating this list.
+  // Pinned so a rules change has to update this list too.
   test('allowlist constant covers exactly 6 fields (matches firestore.rules)', () => {
     expect(ALLOWLIST.sort()).toEqual(
       [
@@ -360,42 +303,26 @@ describe('users/{uid} update — diff allowlist', () => {
   });
 });
 
-/* ---------------------------------------------------------------------- */
-/*  Item 3: canAccessSite() deletedAt gating                              */
-/* ---------------------------------------------------------------------- */
-
 describe('canAccessSite — deletedAt gating', () => {
   test('soft-deleted user cannot read their assigned site', async () => {
-    // Seed the user with sites = [SITE_A] AND a deletedAt timestamp.
-    // The user doc is admin-seeded so we can set the role/sites/deletedAt
-    // directly without going through the rules.
+    // Admin-seeded so role/sites/deletedAt bypass the rules.
     await seedAsAdmin(async (db) => {
       await setDoc(doc(db, 'users', DELETED_UID), {
         uid: DELETED_UID,
         email: `${DELETED_UID}@harness.test`,
         role: 'member',
         sites: [SITE_A],
-        deletedAt: Date.now(), // soft delete timestamp
+        deletedAt: Date.now(),
       });
     });
 
-    // Open an authenticated context for the deleted user. We can't use
-    // asUser because it overwrites the user doc — we want the deletedAt
-    // intact. So we go through the env directly.
     const { initializeTestEnvironment: _init } = await import('@firebase/rules-unit-testing');
     void _init;
-    // Re-derive the env by importing the harness internals; easier path:
-    // use asAgent's underlying mechanism by going through the harness
-    // module's `env` global. asUser pre-seeds — so instead we use a
-    // bespoke flow:
     const harness = await import('./harness');
     const envField = (harness as unknown as { env?: unknown }).env;
     void envField; // not exported; fall back to the public surface
-    // The harness doesn't expose env directly. We can simulate by
-    // *post*-seeding the deletedAt AFTER asUser runs — asUser writes
-    // `{uid, email, role, sites}` but does NOT clear deletedAt if we
-    // seed it after. We must seed deletedAt LAST so asUser's setDoc
-    // doesn't overwrite it.
+    // The harness won't hand out its env, and asUser overwrites the user doc —
+    // so seed deletedAt LAST, after asUser's setDoc.
     const db = await asUser(DELETED_UID, 'member', [SITE_A]);
     await seedAsAdmin(async (adminDb) => {
       await updateDoc(doc(adminDb, 'users', DELETED_UID), {
@@ -403,21 +330,16 @@ describe('canAccessSite — deletedAt gating', () => {
       });
     });
 
-    // Now even though sites[] contains SITE_A, deletedAt is set.
+    // sites[] contains SITE_A, but deletedAt is set.
     await assertFails(getDoc(doc(db, 'sites', SITE_A)));
   });
 
   test('non-deleted user with same sites[] CAN read the site (control)', async () => {
-    // Control case: same setup minus deletedAt should succeed. Confirms
-    // the failure above is specifically caused by the gating field.
+    // Negative control: same setup minus deletedAt must succeed.
     const db = await asUser(DELETED_UID, 'member', [SITE_A]);
     await assertSucceeds(getDoc(doc(db, 'sites', SITE_A)));
   });
 });
-
-/* ---------------------------------------------------------------------- */
-/*  Item 4: hoot/active-chat agent writes                               */
-/* ---------------------------------------------------------------------- */
 
 describe('hoot/{docId} — per-machine agent writes', () => {
   test('agent for machine X can write hoot/active-chat on machine X', async () => {
@@ -464,10 +386,6 @@ describe('hoot/{docId} — per-machine agent writes', () => {
     );
   });
 });
-
-/* ---------------------------------------------------------------------- */
-/*  Item 5: cortex-events agent create + update/delete denial             */
-/* ---------------------------------------------------------------------- */
 
 describe('cortex-events/{eventId} — agent create only, update/delete server-only', () => {
   test('agent CAN create a hoot event in its own site', async () => {
@@ -524,10 +442,6 @@ describe('cortex-events/{eventId} — agent create only, update/delete server-on
     );
   });
 });
-
-/* ---------------------------------------------------------------------- */
-/*  Item 6: sites/{s}/machines/{m}/logs/{id} — per-machine logs           */
-/* ---------------------------------------------------------------------- */
 
 describe('sites/{s}/machines/{m}/logs/{id} — per-machine agent create-only', () => {
   test('agent CAN create a log on its own machine', async () => {

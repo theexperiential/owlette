@@ -1,21 +1,14 @@
 /**
- * GET /api/users/deletions
+ * GET /api/users/deletions — user-deletion events from the platform audit log.
  *
- * List user-deletion events sourced from the platform audit log. Surfaces
- * both self-service deletions (`USER_SELF_DELETE`, written by
- * `/api/users/me`) and superadmin-initiated deletions (`USER_DELETE`, written
- * by `/api/users/{uid}`). Both land in `global/audit_log/entries`, so a single
- * `capability in [...]` query covers them.
+ * Covers both `USER_SELF_DELETE` (written by /api/users/me) and `USER_DELETE`
+ * (written by /api/users/{uid}); both land in `global/audit_log/entries`, so one
+ * `capability in [...]` query serves both.
  *
- * Auth:
- *   - api key with `user=*:read` scope (superadmin-only at minting)
- *   - session / id-token from a superadmin user
- *
- * Query params:
- *   - limit (1..200, default 50)
- *
- * Response:
- *   { deletions: DeletionView[] }  // newest-first
+ * Auth: api key with `user=*:read` (superadmin-only at minting), or a
+ * superadmin session / id-token.
+ * Query: limit (1..200, default 50). Returns { deletions: DeletionView[] },
+ * newest first.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -33,10 +26,9 @@ const DELETION_CAPABILITIES = [
 ];
 
 /**
- * Convert a Firestore Timestamp to an ISO string. Audit entries store
- * `timestamp` via `FieldValue.serverTimestamp()`, which resolves to a
- * Timestamp exposing `.toDate()`. Null-safe — returns null for missing or
- * malformed values.
+ * Firestore Timestamp -> ISO string. Audit entries write `timestamp` via
+ * `FieldValue.serverTimestamp()`, which resolves to a Timestamp with
+ * `.toDate()`. Returns null for missing or malformed values.
  */
 function timestampToIso(value: unknown): string | null {
   if (
@@ -53,10 +45,7 @@ function timestampToIso(value: unknown): string | null {
   return null;
 }
 
-/**
- * Parse the optional `limit` query param. Defaults to 50, clamps to 1..200.
- * Non-numeric or sub-1 values fall back to the default.
- */
+/** `limit` query param: default 50, clamped 1..200; junk falls back to 50. */
 function parseLimit(raw: string | null): number {
   if (raw === null) return DEFAULT_LIMIT;
   const parsed = Number(raw);

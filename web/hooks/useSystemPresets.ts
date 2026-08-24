@@ -1,10 +1,6 @@
 /**
- * useSystemPresets Hook
- *
- * Manages global system presets for software deployment (Owlette Agent, TouchDesigner, etc.)
- * Admin-only write access, all authenticated users can read.
- *
- * Pattern: Mirrors useDeployments.ts structure for consistency (DRY principle)
+ * Global system presets for software deployment (Owlette Agent, TouchDesigner, …).
+ * Admin-only writes; all authenticated users read. Mirrors useDeployments.ts.
  */
 
 import { useState, useEffect } from 'react';
@@ -17,23 +13,23 @@ import {
 
 export interface SystemPreset {
   id: string;
-  name: string;                    // Display name: "TouchDesigner 2025.31550"
-  software_name: string;           // Software identifier: "TouchDesigner"
+  name: string;                    // e.g. "TouchDesigner 2025.31550"
+  software_name: string;           // e.g. "TouchDesigner"
   category: string;                // "Media Server" | "Creative Software" | "System" | "Utilities"
-  description?: string;            // Optional long description
-  icon?: string;                   // Emoji or icon identifier ("🎨", "🦉")
-  installer_name: string;          // Filename: "TouchDesigner.exe"
-  installer_url: string;           // Download URL (empty for Owlette - fetched dynamically)
-  silent_flags: string;            // Installation flags
-  verify_path?: string;            // Optional verification path
-  close_processes?: string[];      // Process exe names to close before install
-  parallel_install?: boolean;      // Install alongside existing versions (hides registry keys)
-  sha256_checksum?: string;        // 64-char hex SHA-256 of the installer (agents refuse installs without one)
-  is_owlette_agent: boolean;       // Special flag: fetches latest from installer_metadata
-  timeout_seconds?: number;        // Optional custom timeout (default 600)
-  order: number;                   // Display order in UI
+  description?: string;
+  icon?: string;                   // emoji
+  installer_name: string;
+  installer_url: string;           // empty for Owlette — fetched dynamically
+  silent_flags: string;
+  verify_path?: string;
+  close_processes?: string[];      // exe names to close before install
+  parallel_install?: boolean;      // install alongside existing versions (hides registry keys)
+  sha256_checksum?: string;        // 64-char hex; agents refuse installs without one
+  is_owlette_agent: boolean;       // fetches latest from installer_metadata
+  timeout_seconds?: number;        // default 600
+  order: number;                   // display order
   createdAt: Timestamp;
-  createdBy: string;               // Admin user ID
+  createdBy: string;               // admin uid
   updatedAt?: Timestamp;
 }
 
@@ -49,41 +45,17 @@ export interface UseSystemPresetsReturn {
   categories: string[];
 }
 
-/**
- * Hook to manage system presets
- *
- * @returns System presets management interface
- *
- * @example
- * const { presets, loading, createPreset } = useSystemPresets();
- *
- * // Create new preset
- * await createPreset({
- *   name: "TouchDesigner 2025.31550",
- *   software_name: "TouchDesigner",
- *   category: "Creative Software",
- *   icon: "🎨",
- *   installer_name: "TouchDesigner.exe",
- *   installer_url: "https://...",
- *   silent_flags: "/VERYSILENT /NORESTART",
- *   is_owlette_agent: false,
- *   order: 2,
- *   createdBy: userId
- * });
- */
 export function useSystemPresets(): UseSystemPresetsReturn {
   const [presets, setPresets] = useState<SystemPreset[]>([]);
   const [loading, setLoading] = useState(!!db);
   const [error, setError] = useState<string | null>(db ? null : 'Firebase not configured');
 
-  // Real-time listener for system presets
   useEffect(() => {
     if (!db) return;
 
-    // No try/catch: `collection()` only throws for invalid path segments (the
-    // literal 'system_presets' here) and onSnapshot routes runtime listener
-    // errors through the separate error callback. A sync catch-block setState
-    // would violate react-hooks/set-state-in-effect.
+    // No try/catch: `collection()` only throws on invalid path segments (a literal here) and
+    // onSnapshot routes runtime errors to its error callback. A sync catch-block setState would
+    // violate react-hooks/set-state-in-effect.
     const presetsRef = collection(db, 'system_presets');
 
     const unsubscribe = onSnapshot(
@@ -94,7 +66,6 @@ export function useSystemPresets(): UseSystemPresetsReturn {
           data.push({ id: doc.id, ...doc.data() } as SystemPreset);
         });
 
-        // Sort by order, then by name
         data.sort((a, b) => {
           if (a.order !== b.order) {
             return a.order - b.order;
@@ -116,9 +87,7 @@ export function useSystemPresets(): UseSystemPresetsReturn {
     return () => unsubscribe();
   }, []);
 
-  /**
-   * Create a new system preset (admin only)
-   */
+  /** admin only */
   const createPreset = async (
     preset: Omit<SystemPreset, 'id' | 'createdAt' | 'updatedAt'>
   ): Promise<string> => {
@@ -137,9 +106,7 @@ export function useSystemPresets(): UseSystemPresetsReturn {
     return body.presetId;
   };
 
-  /**
-   * Update an existing system preset (admin only)
-   */
+  /** admin only */
   const updatePreset = async (
     id: string,
     updates: Partial<SystemPreset>
@@ -156,9 +123,7 @@ export function useSystemPresets(): UseSystemPresetsReturn {
     if (!response.ok) throw new Error(await readApiError(response, 'Failed to update system preset'));
   };
 
-  /**
-   * Delete a system preset (admin only)
-   */
+  /** admin only */
   const deletePreset = async (id: string): Promise<void> => {
     if (!db) {
       throw new Error('Firebase not configured');
@@ -170,23 +135,14 @@ export function useSystemPresets(): UseSystemPresetsReturn {
     if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete system preset'));
   };
 
-  /**
-   * Get preset by ID
-   */
   const getPresetById = (id: string): SystemPreset | undefined => {
     return presets.find(p => p.id === id);
   };
 
-  /**
-   * Get presets by category
-   */
   const getPresetsByCategory = (category: string): SystemPreset[] => {
     return presets.filter(p => p.category === category);
   };
 
-  /**
-   * Get unique categories from all presets
-   */
   const categories = Array.from(new Set(presets.map(p => p.category))).sort();
 
   return {

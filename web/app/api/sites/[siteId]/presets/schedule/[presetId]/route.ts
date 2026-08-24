@@ -1,16 +1,10 @@
 /**
- * GET    /api/sites/{siteId}/presets/schedule/{presetId}
- * PATCH  /api/sites/{siteId}/presets/schedule/{presetId}
- * DELETE /api/sites/{siteId}/presets/schedule/{presetId}
- *
+ * GET / PATCH / DELETE /api/sites/{siteId}/presets/schedule/{presetId}.
  * Capability: PRESET_MANAGE.
  *
- * Built-in presets (id starts with `builtin-`) on PATCH use setDoc({merge}),
- * which both creates the override doc on first edit and updates it on
- * subsequent edits — see `useSchedulePresets.ts:158`. Custom presets
- * require an existing doc and are updated via updateDoc.
- *
- * security-boundary-migration wave 3.6.
+ * PATCH on a `builtin-*` id uses setDoc({merge}) so the first edit creates the
+ * override doc and later ones update it (`useSchedulePresets.ts:158`); custom
+ * presets require an existing doc and go through updateDoc.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';

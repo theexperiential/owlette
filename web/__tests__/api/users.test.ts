@@ -1,14 +1,13 @@
 /** @jest-environment node */
 
 /**
- * Public users-api — http-shape tests for `/api/users/*`
- * (api-sprint wave 3 track 3B).
+ * http-shape tests for `/api/users/*` — list, detail, promote, demote,
+ * assign-sites, remove-sites, soft-delete-cascade.
  *
- * Covers the seven user verbs: list, detail, promote, demote, assign-sites,
- * remove-sites, soft-delete-cascade. Mirrors the call-shape style used by
- * `installer-public.test.ts` — path-keyed `docStore` + `collectionDocs`,
- * mocked `resolveAuth`, real `requirePlatformAuthAndScope`/`requireScope`
- * underneath so scope and superadmin gating is exercised end-to-end.
+ * Same style as `installer-public.test.ts`: path-keyed `docStore` +
+ * `collectionDocs`, mocked `resolveAuth`, but the REAL
+ * `requirePlatformAuthAndScope`/`requireScope` so scope and superadmin gating
+ * is exercised end-to-end.
  */
 
 import { createMockRequest } from './helpers/utils';
@@ -25,9 +24,7 @@ jest.mock('@/lib/auditLogClient', () => ({
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Auth mock                                                                 */
-/* -------------------------------------------------------------------------- */
+// Auth mock
 
 const mockResolveAuth = jest.fn();
 jest.mock('@/lib/apiAuth.server', () => {
@@ -51,9 +48,7 @@ jest.mock('@/lib/securityConfig.server', () => ({
   },
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  firebase-admin/firestore mock for FieldValue                              */
-/* -------------------------------------------------------------------------- */
+// firebase-admin/firestore mock for FieldValue
 
 jest.mock('firebase-admin/firestore', () => ({
   FieldValue: {
@@ -65,9 +60,7 @@ jest.mock('firebase-admin/firestore', () => ({
   Timestamp: { fromDate: (d: Date) => ({ toMillis: () => d.getTime() }) },
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Firestore mock — keyed by collection path                                 */
-/* -------------------------------------------------------------------------- */
+// Firestore mock — keyed by collection path
 
 interface DocStore {
   data: Record<string, unknown> | null;
@@ -326,9 +319,7 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminStorage: () => ({ bucket: () => ({}) }),
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Imports come AFTER mocks                                                  */
-/* -------------------------------------------------------------------------- */
+// Imports come AFTER mocks
 
 import { GET as listGET } from '@/app/api/users/route';
 import { GET as detailGET, DELETE as detailDELETE } from '@/app/api/users/[uid]/route';
@@ -338,9 +329,7 @@ import { POST as assignSitesPOST } from '@/app/api/users/[uid]/assign-sites/rout
 import { POST as removeSitesPOST } from '@/app/api/users/[uid]/remove-sites/route';
 import { GET as userTalonsGET } from '@/app/api/users/[uid]/talons/route';
 
-/* -------------------------------------------------------------------------- */
-/*  Fixtures                                                                  */
-/* -------------------------------------------------------------------------- */
+// Fixtures
 
 function authedAsSuperadminWithKey(
   perm: 'read' | 'write' | 'admin',
@@ -418,9 +407,7 @@ beforeEach(() => {
   for (const k of Object.keys(collectionDocs)) delete collectionDocs[k];
 });
 
-/* ========================================================================== */
-/*  GET /api/users                                                            */
-/* ========================================================================== */
+// GET /api/users
 
 describe('GET /api/users', () => {
   it('lists active users (excludes soft-deleted by default)', async () => {
@@ -535,9 +522,7 @@ describe('GET /api/users', () => {
   });
 });
 
-/* ========================================================================== */
-/*  GET /api/users/{uid}                                                      */
-/* ========================================================================== */
+// GET /api/users/{uid}
 
 describe('GET /api/users/{uid}', () => {
   it('returns user detail incl. sites[]', async () => {
@@ -580,9 +565,7 @@ describe('GET /api/users/{uid}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/users/{uid}/promote                                             */
-/* ========================================================================== */
+// POST /api/users/{uid}/promote
 
 describe('POST /api/users/{uid}/promote', () => {
   it('promotes a member to admin atomically + emits audit', async () => {
@@ -681,9 +664,7 @@ describe('POST /api/users/{uid}/promote', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/users/{uid}/demote                                              */
-/* ========================================================================== */
+// POST /api/users/{uid}/demote
 
 describe('POST /api/users/{uid}/demote', () => {
   it('demotes admin to member', async () => {
@@ -746,10 +727,8 @@ describe('POST /api/users/{uid}/demote', () => {
 
   it('does not count soft-deleted superadmins toward the floor', async () => {
     authedAsSuperadminWithKey('write');
-    // Auth fixture seeded user-superadmin; we add a soft-deleted superadmin
-    // but it shouldn't satisfy the floor → demoting alice should still be ok
-    // because alice is admin, but trying to demote user-superadmin should
-    // still trip the floor.
+    // A soft-deleted superadmin must not satisfy the floor: demoting alice
+    // (admin) is fine, demoting user-superadmin still trips it.
     seedUser('zombie-sa', { role: 'superadmin', deletedAt: 1234 });
 
     const req = createMockRequest(
@@ -780,9 +759,7 @@ describe('POST /api/users/{uid}/demote', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/users/{uid}/assign-sites                                        */
-/* ========================================================================== */
+// POST /api/users/{uid}/assign-sites
 
 describe('POST /api/users/{uid}/assign-sites', () => {
   it('adds siteIds via arrayUnion + emits audit', async () => {
@@ -863,9 +840,7 @@ describe('POST /api/users/{uid}/assign-sites', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/users/{uid}/remove-sites                                        */
-/* ========================================================================== */
+// POST /api/users/{uid}/remove-sites
 
 describe('POST /api/users/{uid}/remove-sites', () => {
   it('removes siteIds via arrayRemove + emits audit', async () => {
@@ -911,9 +886,7 @@ describe('POST /api/users/{uid}/remove-sites', () => {
   });
 });
 
-/* ========================================================================== */
-/*  DELETE /api/users/{uid}                                                   */
-/* ========================================================================== */
+// DELETE /api/users/{uid}
 
 describe('DELETE /api/users/{uid}', () => {
   it('soft-deletes a user with no owned sites + revokes their keys', async () => {
@@ -1063,9 +1036,7 @@ describe('DELETE /api/users/{uid}', () => {
     expect(res.status).toBe(403);
   });
 
-  /* ---------------------------------------------------------------------- */
-  /*  talons the deleted account authored                                    */
-  /* ---------------------------------------------------------------------- */
+  // talons the deleted account authored
 
   describe('authored talons', () => {
     function seedTalon(siteId: string, talonId: string, data: Record<string, unknown>): void {
@@ -1140,9 +1111,7 @@ describe('DELETE /api/users/{uid}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  GET /api/users/{uid}/talons                                              */
-/* ========================================================================== */
+// GET /api/users/{uid}/talons
 
 describe('GET /api/users/{uid}/talons', () => {
   function seedTalon(siteId: string, talonId: string, data: Record<string, unknown>): void {

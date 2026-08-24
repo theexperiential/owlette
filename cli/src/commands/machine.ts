@@ -2,23 +2,16 @@
  * `owlette machine list | get | deployments | reboot | shutdown | screenshot | live-view`.
  *
  * Drives:
- *   GET    /api/sites/{siteId}/machines
- *   GET    /api/sites/{siteId}/machines/{machineId}
- *   GET    /api/sites/{siteId}/machines/{machineId}/deployments
- *   POST   /api/sites/{siteId}/machines/{machineId}/commands  (reboot/shutdown/screenshot)
- *   GET    /api/sites/{siteId}/machines/{machineId}/commands/{commandId}  (screenshot polling)
+ *   GET  /api/sites/{siteId}/machines[/{machineId}[/deployments]]
+ *   POST /api/sites/{siteId}/machines/{machineId}/commands  (reboot/shutdown/screenshot)
+ *   GET  /api/sites/{siteId}/machines/{machineId}/commands/{commandId}  (screenshot poll)
  *
- * Reads (list/get/deployments) render a plain-ascii table / key-value
- * detail and emit structured JSON when `--json` is passed at the program
- * level.
+ * Reads render a plain-ascii table / key-value detail, or JSON with `--json`.
+ * Mutations hit the wave-2A allowlisted commands endpoint with an auto-generated
+ * `Idempotency-Key`. Screenshot is queue → poll → download the signed-url bytes
+ * to `--output <path>` (default `screenshot-<machineId>-<timestamp>.png`).
  *
- * Mutations (reboot/shutdown/screenshot) hit the wave-2A allowlisted
- * commands endpoint with an auto-generated `Idempotency-Key`. Screenshot
- * is a two-step flow — POST to queue, then poll the command-state
- * endpoint until terminal, then download the signed-url bytes to
- * `--output <path>` (default: `screenshot-<machineId>-<timestamp>.png`).
- *
- * `live-view` remains the only c-tier `stubExit()` shim. Reframed as a
+ * `live-view` is the only remaining c-tier `stubExit()` shim — reframed as a
  * WebRTC-native feature and deferred outside the public API MVP.
  */
 
@@ -99,10 +92,6 @@ interface MachineDeploymentsResponse {
   deployments: MachineDeployment[];
 }
 
-/* --------------------------------------------------------------------- */
-/*  command-poll constants — used by `machine screenshot`                */
-/* --------------------------------------------------------------------- */
-
 const SCREENSHOT_POLL_INTERVAL_MS = 1500;
 const SCREENSHOT_POLL_MAX_ATTEMPTS = 40; // 60s wall-clock at 1.5s interval
 
@@ -143,13 +132,10 @@ export function registerMachineCommands(program: Command): void {
     (program.commands.find((c) => c.name() === 'machine') as Command | undefined) ??
     program.command('machine').description('list + inspect machines + remote control');
 
-  // Overwrite any earlier stub description so the help text stays
-  // canonical regardless of registration order.
+  // Overwrite any earlier stub description so help text stays canonical.
   machine.description('list + inspect machines + remote control');
 
-  // Remove any stubs left by earlier file-load ordering. Includes the
-  // mutation verbs (reboot/shutdown/screenshot/live-view) that the
-  // earlier stub registration may have installed.
+  // Drop stubs left by earlier file-load ordering, mutation verbs included.
   for (const verb of [
     'list',
     'get',
@@ -166,8 +152,6 @@ export function registerMachineCommands(program: Command): void {
       if (idx >= 0) list.splice(idx, 1);
     }
   }
-
-  /* -------------------- list -------------------- */
 
   machine
     .command('list')
@@ -220,8 +204,6 @@ export function registerMachineCommands(program: Command): void {
       );
     });
 
-  /* -------------------- get -------------------- */
-
   machine
     .command('get <machineId>')
     .description('print the detail record for one machine (metrics + processes)')
@@ -251,8 +233,6 @@ export function registerMachineCommands(program: Command): void {
 
       process.stdout.write(formatMachineDetail(data));
     });
-
-  /* -------------------- deployments -------------------- */
 
   machine
     .command('deployments <machineId>')
@@ -303,8 +283,6 @@ export function registerMachineCommands(program: Command): void {
       );
     });
 
-  /* -------------------- reboot / shutdown -------------------- */
-
   registerSimpleCommandVerb(machine, {
     verb: 'reboot',
     description: 'queue a reboot command on the machine',
@@ -316,8 +294,6 @@ export function registerMachineCommands(program: Command): void {
     description: 'queue a shutdown command on the machine',
     commandType: 'shutdown_machine',
   });
-
-  /* -------------------- screenshot (queue → poll → download) -------------------- */
 
   machine
     .command('screenshot <machineId>')
@@ -384,8 +360,7 @@ export function registerMachineCommands(program: Command): void {
         return fatal('server returned ok but no commandId — cannot poll for screenshot');
       }
 
-      // Poll status. Print a dot per attempt in human mode so the caller
-      // sees progress; --json mode stays silent until the final emit.
+      // Poll status. A dot per attempt in human mode; --json stays silent.
       const pollUrl = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines/${encodeURIComponent(machineId)}/commands/${encodeURIComponent(commandId)}`;
       let final: CommandStatusEnvelope | null = null;
       for (let attempt = 0; attempt < SCREENSHOT_POLL_MAX_ATTEMPTS; attempt++) {
@@ -449,8 +424,6 @@ export function registerMachineCommands(program: Command): void {
       );
     });
 
-  /* -------------------- live-view (stays a c-tier stub) -------------------- */
-
   machine
     .command('live-view <machineId>')
     .description('open a live thumbnail/video stream from the machine (stub)')
@@ -468,10 +441,6 @@ export function registerMachineCommands(program: Command): void {
       });
     });
 }
-
-/* --------------------------------------------------------------------- */
-/*  reboot / shutdown helper — both share the same shape                 */
-/* --------------------------------------------------------------------- */
 
 function registerSimpleCommandVerb(
   machine: Command,
@@ -547,10 +516,6 @@ function registerSimpleCommandVerb(
     });
 }
 
-/* --------------------------------------------------------------------- */
-/*  formatters                                                           */
-/* --------------------------------------------------------------------- */
-
 function formatRoostSummary(roosts: readonly RoostSummary[] | undefined): string {
   if (!roosts || roosts.length === 0) return '(none)';
   if (roosts.length === 1) {
@@ -602,10 +567,6 @@ function formatMetricValue(v: unknown): string {
   return JSON.stringify(v);
 }
 
-/* --------------------------------------------------------------------- */
-/*  util                                                                 */
-/* --------------------------------------------------------------------- */
-
 function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json: boolean } {
   const { apiUrl, token } = loadConfig({ profile: cmd.optsWithGlobals().profile });
   if (!token) {
@@ -624,9 +585,8 @@ function fatal(msg: string): void {
 }
 
 /**
- * Render an RFC-7807 problem+json error from the wave-2A commands route
- * (or any other server route that uses the canonical envelope). Pulls
- * `code` + `detail` and adds a hint for the stable codes we surface.
+ * Render an RFC-7807 problem+json error: pulls `code` + `detail` and adds a hint
+ * for the stable codes we surface.
  */
 function fatalProblem(
   operation: string,
@@ -661,11 +621,9 @@ function hintForCode(code: string, context?: 'screenshot'): string | null {
 }
 
 /**
- * Parse `--monitor` value as a non-negative integer. The agent treats
- * monitor 0 as the all-monitors virtual display; named values cannot be
- * represented by its current command contract.
- * On error, returns `error:<message>` so the caller can surface it via
- * `fatal()`.
+ * Parse `--monitor` as a non-negative integer — the agent treats 0 as the
+ * all-monitors virtual display and its command contract has no named monitors.
+ * Returns `error:<message>` so the caller can surface it via `fatal()`.
  */
 function parseMonitorOpt(raw: string): string | number {
   const n = Number(raw);

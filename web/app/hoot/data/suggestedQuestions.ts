@@ -16,7 +16,7 @@ export interface SuggestedQuestion {
 }
 
 export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
-  // ── system-health ──────────────────────────────────────────────────────
+  // system-health
   { text: 'when was the last time this machine restarted?', category: 'system-health' },
   { text: 'how much RAM is being used right now?', category: 'system-health' },
   { text: 'give me a full system health report', category: 'system-health' },
@@ -39,7 +39,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'summarize the current state of this machine', category: 'system-health' },
   { text: 'is a restart pending on this machine?', category: 'system-health' },
 
-  // ── gpu-display ────────────────────────────────────────────────────────
+  // gpu-display
   { text: 'which nvidia driver version is installed?', category: 'gpu-display' },
   { text: 'how much VRAM is free right now?', category: 'gpu-display' },
   { text: 'take a screenshot so I can see what\'s on screen', category: 'gpu-display' },
@@ -67,7 +67,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'are the GPU fans spinning at a normal speed?', category: 'gpu-display' },
   { text: 'bump the GPU TDR delay to 10 seconds so long shader compiles don\'t crash', category: 'gpu-display' },
 
-  // ── process-management ─────────────────────────────────────────────────
+  // process-management
   { text: 'what processes is owlette managing right now?', category: 'process-management' },
   { text: 'restart the main process for me', category: 'process-management' },
   { text: 'are all configured processes currently running?', category: 'process-management' },
@@ -91,7 +91,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'kill the main process and start it back up', category: 'process-management' },
   { text: 'pop a toast saying "maintenance starting in 5 minutes — save your work"', category: 'process-management' },
 
-  // ── network-connectivity ───────────────────────────────────────────────
+  // network-connectivity
   { text: 'what does the network config look like?', category: 'network-connectivity' },
   { text: 'what\'s the IP address of this machine?', category: 'network-connectivity' },
   { text: 'can this machine reach the internet?', category: 'network-connectivity' },
@@ -114,7 +114,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'how many network adapters does this machine have?', category: 'network-connectivity' },
   { text: 'flush DNS and reset the TCP/IP stack — it\'s having network issues', category: 'network-connectivity' },
 
-  // ── storage-files ──────────────────────────────────────────────────────
+  // storage-files
   { text: 'how much disk space is left on C:?', category: 'storage-files' },
   { text: 'show me disk usage across all drives', category: 'storage-files' },
   { text: 'which drive is running low on space?', category: 'storage-files' },
@@ -137,7 +137,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'list the contents of the desktop folder', category: 'storage-files' },
   { text: 'clean up temp files and the Windows Update cache — disk is almost full', category: 'storage-files' },
 
-  // ── troubleshooting ────────────────────────────────────────────────────
+  // troubleshooting
   { text: 'are there any recent application crashes in the event log?', category: 'troubleshooting' },
   { text: 'show me the last 20 error-level events from Windows', category: 'troubleshooting' },
   { text: 'why did the agent restart recently?', category: 'troubleshooting' },
@@ -167,7 +167,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'restart the print spooler service', category: 'troubleshooting' },
   { text: 'this machine\'s been slow — check for pending restarts, skim the last hour of critical events, and if nothing\'s urgent, clean up temp files', category: 'troubleshooting' },
 
-  // ── scheduling-automation ──────────────────────────────────────────────
+  // scheduling-automation
   { text: 'set all processes to only run weekdays 9am to 6pm', category: 'scheduling-automation' },
   { text: 'what\'s the current launch schedule for each process?', category: 'scheduling-automation' },
   { text: 'switch all processes to always-on mode', category: 'scheduling-automation' },
@@ -188,7 +188,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'configure weekend-only hours: 10am to 4pm Saturday and Sunday', category: 'scheduling-automation' },
   { text: 'disable the scheduled task "GoogleUpdaterTaskSystem"', category: 'scheduling-automation' },
 
-  // ── security-events ────────────────────────────────────────────────────
+  // security-events
   { text: 'any failed login attempts in the security log?', category: 'security-events' },
   { text: 'show me recent security events', category: 'security-events' },
   { text: 'is the Windows Firewall service running?', category: 'security-events' },
@@ -205,7 +205,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'is this machine locked down for unattended operation?', category: 'security-events' },
   { text: 'check if any unauthorized software was installed', category: 'security-events' },
 
-  // ── performance ────────────────────────────────────────────────────────
+  // performance
   { text: 'which processes are using the most CPU?', category: 'performance' },
   { text: 'run a quick CPU and memory stress test', category: 'performance' },
   { text: 'is anything causing memory pressure?', category: 'performance' },
@@ -227,7 +227,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'how much CPU headroom does this machine have?', category: 'performance' },
   { text: 'is disk I/O causing any bottlenecks?', category: 'performance' },
 
-  // ── installation-config ────────────────────────────────────────────────
+  // installation-config
   { text: 'what version of the owlette agent is installed?', category: 'installation-config' },
   { text: 'show me the agent\'s current config', category: 'installation-config' },
   { text: 'list all installed software on this machine', category: 'installation-config' },
@@ -256,12 +256,8 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'prep this machine for a 24/7 install: high performance power plan, disable sleep, disable notifications, pause Windows Update for 30 days, and flush DNS', category: 'installation-config' },
 ];
 
-/**
- * Pick N random questions ensuring each comes from a different category.
- * Shuffles categories, picks one random question per category, then shuffles the result.
- */
+/** N random questions, each from a different category. */
 export function getRandomSuggestions(count: number = 4): SuggestedQuestion[] {
-  // Group by category
   const byCategory = new Map<QuestionCategory, SuggestedQuestion[]>();
   for (const q of SUGGESTED_QUESTIONS) {
     const list = byCategory.get(q.category);
@@ -272,21 +268,18 @@ export function getRandomSuggestions(count: number = 4): SuggestedQuestion[] {
     }
   }
 
-  // Shuffle category keys
   const categories = [...byCategory.keys()];
   for (let i = categories.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [categories[i], categories[j]] = [categories[j], categories[i]];
   }
 
-  // Pick one random question from each of the first N categories
   const picks: SuggestedQuestion[] = [];
   for (let i = 0; i < Math.min(count, categories.length); i++) {
     const pool = byCategory.get(categories[i])!;
     picks.push(pool[Math.floor(Math.random() * pool.length)]);
   }
 
-  // Shuffle the final picks
   for (let i = picks.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [picks[i], picks[j]] = [picks[j], picks[i]];

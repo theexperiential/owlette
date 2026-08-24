@@ -1,16 +1,10 @@
 'use client';
 
 /**
- * VersionRow — single row inside the expanded roost panel's version
- * history list (roost wave 3.3 + 3.6).
- *
- * Shows the version number, relative timestamp, optional description
- * (with click-to-edit), and a three-dot menu with rollback / copy id /
- * view files / diff actions.
- *
- * Description editing follows the inline-textarea pattern: click the
- * description text → opens an editable Textarea, blur or ⌘+Enter saves
- * via PATCH /api/roosts/{id}/versions/{versionId}, Esc cancels.
+ * One row of the roost panel's version history: number, relative timestamp,
+ * click-to-edit description, and a menu with rollback / copy id / view files /
+ * diff. Description editing is the inline-textarea pattern — blur or ⌘+Enter
+ * PATCHes /api/roosts/{id}/versions/{versionId}, Esc cancels.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -50,10 +44,6 @@ interface VersionRowProps {
   onChanged: () => void;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Relative timestamp ("2h ago", "just now", etc.)                      */
-/* --------------------------------------------------------------------- */
-
 function relativeTime(iso: string | null): string {
   if (!iso) return '—';
   const t = Date.parse(iso);
@@ -74,10 +64,6 @@ function relativeTime(iso: string | null): string {
   return `${yr}y ago`;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Component                                                            */
-/* --------------------------------------------------------------------- */
-
 export function VersionRow({
   version,
   roostId,
@@ -91,8 +77,7 @@ export function VersionRow({
   const [saving, setSaving] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Keep the draft in sync if the version prop changes (e.g. server-side
-  // update lands while the row is mounted but not in edit mode).
+  // Resync the draft when the prop changes under a mounted, non-editing row.
   useEffect(() => {
     if (!editing) setDraft(version.description ?? '');
   }, [version.description, editing]);
@@ -147,7 +132,7 @@ export function VersionRow({
   const saveDescription = async () => {
     const trimmed = draft.trim();
     const next = trimmed.length > 0 ? trimmed : null;
-    // No-op when unchanged so we don't burn a request on every blur.
+    // No-op when unchanged — otherwise every blur costs a request.
     if (next === (version.description ?? null)) {
       setEditing(false);
       return;

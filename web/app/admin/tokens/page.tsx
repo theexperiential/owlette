@@ -50,16 +50,13 @@ export default function TokensPage() {
   const [isRevoking, setIsRevoking] = useState(false);
   const [isPruning, setIsPruning] = useState(false);
 
-  // Filters
   const [search, setSearch] = useState('');
   const [versionFilter, setVersionFilter] = useState<string>(ALL);
   const [duplicatesOnly, setDuplicatesOnly] = useState(false);
 
-  // Monotonic fetch counter: guards against out-of-order responses. If the
-  // admin switches sites (or refetches) while a request is in flight, a slow
-  // older response must NOT overwrite the newer site's data — otherwise the
-  // table would show one site's tokens while the selector and the
-  // revoke/prune actions target another (a way to nuke the wrong site).
+  // Monotonic fetch counter: a slow older response must NOT overwrite a newer
+  // site's data, or the table shows one site's tokens while the selector and the
+  // revoke/prune actions target another — a way to nuke the wrong site.
   const fetchSeqRef = useRef(0);
 
   const fetchTokens = useCallback(async () => {
@@ -92,12 +89,10 @@ export default function TokensPage() {
     }
   }, [selectedSiteId]);
 
-  // Fetch tokens when site changes
   useEffect(() => {
     if (selectedSiteId) {
-      // Clear the previous site's rows/counts up front so a FAILED fetch for
-      // the new site can't leave stale data visible — revoke-all/prune target
-      // the selected site, so showing another site's rows would be dangerous.
+      // Clear the previous site's rows up front so a FAILED fetch can't leave
+      // stale data visible while revoke-all/prune target the newly selected site.
       setTokens([]);
       setPrunableCount(0);
       fetchTokens();
@@ -120,11 +115,9 @@ export default function TokensPage() {
   }, [sites, selectedSiteId, lastSiteId]);
 
   const handleSiteChange = (siteId: string) => {
-    // Clear synchronously with the site change so the SAME render that flips
-    // the selector also empties the table/counts — otherwise there is a frame
-    // where revoke-all / prune (which target selectedSiteId) act while the old
-    // site's rows are still painted. The effect below also clears, but that
-    // runs after paint; this closes the interim frame.
+    // Clear synchronously with the site change so the SAME render that flips the
+    // selector also empties the table — the effect below clears too, but after
+    // paint, leaving a frame where revoke-all / prune act on the old site's rows.
     setSelectedSiteId(siteId);
     setTokens([]);
     setPrunableCount(0);
@@ -154,7 +147,6 @@ export default function TokensPage() {
         description: `Token for ${tokenToRevoke.machineId} has been revoked.`,
       });
 
-      // Refresh token list
       fetchTokens();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -189,7 +181,6 @@ export default function TokensPage() {
         description: `${data.revokedCount} token(s) have been revoked.`,
       });
 
-      // Refresh token list
       fetchTokens();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -274,15 +265,12 @@ export default function TokensPage() {
     return Array.from(set).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
   }, [tokens]);
 
-  // Per-machine token counts. When a machineId has more than one live token it
-  // means either repeated re-pairs OR distinct physical machines cloned to the
-  // same hostname. We deliberately do NOT try to pick which one is "active":
-  // lastUsed is stamped at pairing time (not only on refresh), so a re-paired
-  // or a separate-but-same-hostname token can look freshest while a genuinely
-  // live token looks stale. Declaring a winner would invite an admin to revoke
-  // the wrong (live) token — the exact failure this surface exists to prevent.
-  // Instead we flag every sharing row and let the "last used" column + human
-  // judgment decide.
+  // Per-machine token counts. More than one live token on a machineId means
+  // either repeated re-pairs or distinct machines cloned to the same hostname.
+  // We deliberately do NOT pick a winner: lastUsed is stamped at pairing time,
+  // so a re-paired token can look freshest while the genuinely live one looks
+  // stale — declaring one would invite revoking the live token, the exact
+  // failure this surface exists to prevent. Flag the row; let a human decide.
   const machineCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const t of tokens) {

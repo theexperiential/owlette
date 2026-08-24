@@ -1,13 +1,9 @@
 /**
- * HTTP-shape tests for `owlette installer {list,upload,set-latest,delete}`.
+ * HTTP-shape tests for `owlette installer {list,upload,set-latest,delete}`
+ * (src/commands/installer.ts): urls, methods, headers, body shape, parsing.
  *
- * Drives src/commands/installer.ts. Stubs `global.fetch` per test (the
- * upload verb makes 3 separate calls — POST /api/installer/upload → PUT
- * <signedUrl> → PUT /api/installer/upload (finalize) — and we mock all
- * three in sequence). Asserts urls + methods + headers + body shape +
- * response parsing.
- *
- * Public API installer CLI route handlers.
+ * `global.fetch` is stubbed per test; upload makes 3 sequential calls —
+ * POST /api/installer/upload → PUT <signedUrl> → PUT /api/installer/upload.
  */
 
 import { Command } from 'commander';
@@ -96,10 +92,6 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-/* --------------------------------------------------------------------- */
-/*  list                                                                 */
-/* --------------------------------------------------------------------- */
-
 describe('owlette installer list', () => {
   it('GETs /api/installer with Bearer auth + no query when no flags given', async () => {
     const calls = installFetchStub({ versions: [], nextPageToken: '' });
@@ -157,10 +149,6 @@ describe('owlette installer list', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  latest                                                               */
-/* --------------------------------------------------------------------- */
-
 describe('owlette installer latest', () => {
   it('GETs /api/installer/latest with Bearer auth', async () => {
     const calls = installFetchStub({
@@ -179,16 +167,10 @@ describe('owlette installer latest', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  upload (3-step)                                                      */
-/* --------------------------------------------------------------------- */
-
 describe('owlette installer upload', () => {
-  // Write a real fixture file to a tempdir so the source's `readFileSync`
-  // + `statSync` paths work without mocking. The src file imports those
-  // by name from 'fs', which jest's module mocker can't rewrite at the
-  // namespace level — a tempdir fixture is simpler and exercises the
-  // sha256 / size paths for real.
+  // Real tempdir fixture, not a mock: the source imports readFileSync/statSync
+  // by name from 'fs', which jest can't rewrite at the namespace level. Also
+  // exercises the sha256/size paths for real.
   const FAKE_BYTES = Buffer.from('the quick brown fox\n');
   let tempDir: string;
   let FAKE_FILE: string;
@@ -317,10 +299,6 @@ describe('owlette installer upload', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  set-latest                                                           */
-/* --------------------------------------------------------------------- */
-
 describe('owlette installer set-latest', () => {
   it('POSTs /api/installer/:version/set-latest when --yes is supplied', async () => {
     const calls = installFetchStub({ version: '2.11.0', latest: { version: '2.11.0' } });
@@ -351,10 +329,6 @@ describe('owlette installer set-latest', () => {
     }
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  delete                                                               */
-/* --------------------------------------------------------------------- */
 
 describe('owlette installer delete', () => {
   it('DELETEs /api/installer/:version when --yes is supplied', async () => {

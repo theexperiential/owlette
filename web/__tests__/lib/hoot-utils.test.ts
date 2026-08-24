@@ -1,12 +1,9 @@
 /** @jest-environment node */
 
-/**
- * Tests for hoot-utils.server.ts — the tool execution relay layer.
- *
- * Verifies: executeToolOnAgent, executeExistingCommand, buildExecutableTools.
- */
+/** Tests for hoot-utils.server.ts — the tool execution relay: executeToolOnAgent,
+ *  executeExistingCommand, buildExecutableTools. */
 
-// ─── Mocks ──────────────────────────────────────────────────────────────────
+// Mocks
 
 jest.mock('ai', () => ({
   tool: jest.fn((opts: unknown) => opts),
@@ -62,7 +59,7 @@ jest.mock('@/lib/processConfig.server', () => {
   return { ProcessConfigError };
 });
 
-// ─── Mock Firestore ─────────────────────────────────────────────────────────
+// Mock Firestore
 // Path: sites/{s}/machines/{m}/commands/pending|completed
 
 function createMockDb() {
@@ -159,7 +156,7 @@ beforeEach(() => {
   mockDeleteProcess.mockReset();
 });
 
-// ─── executeToolOnAgent ─────────────────────────────────────────────────────
+// executeToolOnAgent
 
 describe('executeToolOnAgent', () => {
   beforeEach(() => jest.useRealTimers());
@@ -179,7 +176,6 @@ describe('executeToolOnAgent', () => {
 
     const result = await executeToolOnAgent(db, 's1', 'm1', 'get_system_info', {}, 'chat1');
 
-    // Verify the pending write
     expect(pendingDoc.set).toHaveBeenCalledTimes(1);
     const written = pendingDoc.set.mock.calls[0][0];
     const cmdId = Object.keys(written)[0];
@@ -192,7 +188,6 @@ describe('executeToolOnAgent', () => {
       status: 'pending',
     });
 
-    // Verify result
     expect(result).toMatchObject({ hostname: 'test-box' });
   });
 
@@ -374,7 +369,7 @@ describe('executeToolOnAgent', () => {
   }, 15000);
 });
 
-// ─── executeExistingCommand ─────────────────────────────────────────────────
+// executeExistingCommand
 
 describe('executeExistingCommand', () => {
   it('writes legacy command and returns result', async () => {
@@ -390,7 +385,6 @@ describe('executeExistingCommand', () => {
 
     const result = await executeExistingCommand(db, 's1', 'm1', 'restart_process', 'MyApp.exe');
 
-    // Verify command format
     const written = pendingDoc.set.mock.calls[0][0];
     const cmdId = Object.keys(written)[0];
     expect(cmdId).toMatch(/^restart_process_/);
@@ -431,7 +425,7 @@ describe('executeExistingCommand', () => {
   }, 15000);
 });
 
-// ─── buildExecutableTools ───────────────────────────────────────────────────
+// buildExecutableTools
 
 describe('buildExecutableTools', () => {
   it('creates an executable tool for each definition', () => {
@@ -591,12 +585,12 @@ describe('buildExecutableTools', () => {
   }, 15000);
 });
 
-// ─── resolveLlmConfig ───────────────────────────────────────────────────────
+// resolveLlmConfig
 
 /**
- * A db whose `users/{uid}/settings/llm` and `sites/{siteId}` docs are seeded
- * from `store`, and which RECORDS every path it was asked for — the site-key
- * assertions below are about a read that must no longer happen at all.
+ * A db whose `users/{uid}/settings/llm` and `sites/{siteId}` docs are seeded from
+ * `store`, recording every path asked for — the site-key assertions below are about
+ * a read that must no longer happen at all.
  */
 function makeKeyDb(store: Record<string, Record<string, unknown>>) {
   const reads: string[] = [];
@@ -688,7 +682,7 @@ describe('resolveSiteKeyOwner', () => {
   });
 });
 
-// ─── verifyUserSiteAccess ───────────────────────────────────────────────────
+// verifyUserSiteAccess
 
 /**
  * Build a db stub whose `collection(name).doc(id).get()` resolves to the
@@ -806,10 +800,9 @@ describe('verifyUserSiteAccess', () => {
   });
 
   /**
-   * The codes exist for one caller: an unattended talon run, which disables the
-   * talon on a DETERMINISTIC refusal and must not on anything else. A refusal
-   * that arrived without a code would be indistinguishable from a Firestore
-   * outage, so every branch that says no has to say which no it is.
+   * The codes exist for one caller: an unattended talon run, which disables the talon
+   * on a DETERMINISTIC refusal only. A codeless refusal is indistinguishable from a
+   * Firestore outage, so every branch that says no has to say which no it is.
    */
   it.each([
     ['user_not_found', { users: null, sites: { owner: 'someone' } }],
@@ -828,7 +821,7 @@ describe('verifyUserSiteAccess', () => {
   });
 });
 
-// ─── resolveHootMaxTier ───────────────────────────────────────────────────
+// resolveHootMaxTier
 
 describe('resolveHootMaxTier', () => {
   it('returns 3 for site admins', () => {
@@ -852,7 +845,7 @@ describe('resolveHootMaxTier', () => {
   });
 });
 
-// ─── getHootRequireTier3Approval ──────────────────────────────────────────
+// getHootRequireTier3Approval
 
 /** db stub for sites/{siteId}/settings/cortex.get(). Pass 'throw' to simulate a read error. */
 function makeHootSettingsDb(
@@ -901,7 +894,7 @@ describe('getHootRequireTier3Approval', () => {
   });
 });
 
-// ─── capture_screenshot toModelOutput (image projection) ─────────────────────
+// capture_screenshot toModelOutput (image projection)
 
 describe('capture_screenshot toModelOutput', () => {
   function screenshotToModelOutput(siteMode: boolean) {

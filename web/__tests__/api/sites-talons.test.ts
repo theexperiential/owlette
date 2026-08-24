@@ -5,13 +5,10 @@
  *   GET/POST          /api/sites/{siteId}/talons
  *   GET/PATCH/DELETE  /api/sites/{siteId}/talons/{talonId}
  *
- * These routes are thin shims — `@/lib/talons/store.server` owns every rule,
- * and has its own suite — so the store is mocked here and the assertions are
- * about what the http layer is responsible for: the wrapper wiring that
- * enforces TALON_MANAGE, idempotency, the PATCH toggle-vs-replace dispatch,
- * and the TalonStoreError -> problem+json map.
- *
- * talons wave 1.2.
+ * The routes are thin shims — `@/lib/talons/store.server` owns every rule and
+ * has its own suite — so the store is mocked and these assertions cover only
+ * the http layer: TALON_MANAGE wiring, idempotency, the PATCH
+ * toggle-vs-replace dispatch, and the TalonStoreError -> problem+json map.
  */
 
 import { NextResponse } from 'next/server';
@@ -47,11 +44,10 @@ jest.mock('@/lib/firebase-admin', () => ({
 }));
 
 /**
- * Wrapper stand-in. It records the options each route registered onto the
- * returned handler (`__options`) so the tests can assert the capability
- * wiring per method, and defers the allow/deny decision to `mockAuthorize`
- * so a test can simulate the wrapper answering 401/403 before the handler
- * ever runs. The wrapper's own enforcement is unit-tested in
+ * Wrapper stand-in: records each route's registered options onto the handler
+ * (`__options`) so tests can assert per-method capability wiring, and defers
+ * allow/deny to `mockAuthorize` so a test can simulate a 401/403 before the
+ * handler runs. The wrapper's own enforcement lives in
  * `__tests__/lib/authorizedHandler.test.ts`.
  */
 jest.mock('@/lib/authorizedHandler.server', () => ({
@@ -130,9 +126,7 @@ import {
 import { POST as reassignPOST } from '@/app/api/sites/[siteId]/talons/reassign/route';
 import { GET as authoredGET } from '@/app/api/sites/[siteId]/talons/authored/route';
 
-/* -------------------------------------------------------------------------- */
-/*  fixtures                                                                  */
-/* -------------------------------------------------------------------------- */
+// fixtures
 
 const CREATED_AT = new Date('2026-08-01T10:00:00.000Z');
 
@@ -198,9 +192,7 @@ beforeEach(() => {
   seedSiteOwner(SITE);
 });
 
-/* -------------------------------------------------------------------------- */
-/*  wrapper wiring                                                            */
-/* -------------------------------------------------------------------------- */
+// wrapper wiring
 
 describe('talon routes: authorization wiring', () => {
   it('gates every method on TALON_MANAGE against the path siteId', () => {
@@ -262,9 +254,7 @@ describe('talon routes: authorization wiring', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  GET /api/sites/{siteId}/talons                                            */
-/* -------------------------------------------------------------------------- */
+// GET /api/sites/{siteId}/talons
 
 describe('GET /api/sites/{siteId}/talons', () => {
   it('serializes the site talons with iso timestamps', async () => {
@@ -293,9 +283,7 @@ describe('GET /api/sites/{siteId}/talons', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  POST /api/sites/{siteId}/talons                                           */
-/* -------------------------------------------------------------------------- */
+// POST /api/sites/{siteId}/talons
 
 describe('POST /api/sites/{siteId}/talons', () => {
   it('creates the talon and returns 201 with the stored document', async () => {
@@ -437,9 +425,7 @@ describe('POST /api/sites/{siteId}/talons', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  GET /api/sites/{siteId}/talons/{talonId}                                  */
-/* -------------------------------------------------------------------------- */
+// GET /api/sites/{siteId}/talons/{talonId}
 
 describe('GET /api/sites/{siteId}/talons/{talonId}', () => {
   it('returns the talon', async () => {
@@ -475,9 +461,7 @@ describe('GET /api/sites/{siteId}/talons/{talonId}', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  PATCH /api/sites/{siteId}/talons/{talonId}                                */
-/* -------------------------------------------------------------------------- */
+// PATCH /api/sites/{siteId}/talons/{talonId}
 
 describe('PATCH /api/sites/{siteId}/talons/{talonId}', () => {
   it('treats an enabled-only body as a toggle', async () => {
@@ -555,9 +539,7 @@ describe('PATCH /api/sites/{siteId}/talons/{talonId}', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  DELETE /api/sites/{siteId}/talons/{talonId}                               */
-/* -------------------------------------------------------------------------- */
+// DELETE /api/sites/{siteId}/talons/{talonId}
 
 describe('DELETE /api/sites/{siteId}/talons/{talonId}', () => {
   it('deletes and answers 204 with no body', async () => {
@@ -595,9 +577,7 @@ describe('DELETE /api/sites/{siteId}/talons/{talonId}', () => {
 
 });
 
-/* -------------------------------------------------------------------------- */
-/*  POST /api/sites/{siteId}/talons/reassign                                  */
-/* -------------------------------------------------------------------------- */
+// POST /api/sites/{siteId}/talons/reassign
 
 function reassignRequest(body: Record<string, unknown>) {
   return createMockRequest(`http://localhost/api/sites/${SITE}/talons/reassign`, {
@@ -702,9 +682,7 @@ describe('POST /api/sites/{siteId}/talons/reassign', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  GET /api/sites/{siteId}/talons/authored                                   */
-/* -------------------------------------------------------------------------- */
+// GET /api/sites/{siteId}/talons/authored
 
 describe('GET /api/sites/{siteId}/talons/authored', () => {
   it('takes read-class api-key scope, like listing talons', () => {

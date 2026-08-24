@@ -7,6 +7,8 @@ the docs site.
 
 > **scope**: regular production release of web + functions + Firestore rules + storage rules + docs site. For agent installer releases see [agent-installer-release.md](agent-installer-release.md). For emergency fixes see [hotfix-rollback.md](hotfix-rollback.md).
 
+> **manual surfaces and deploy order**: [manual-infrastructure.md](manual-infrastructure.md) is the authority on every surface that is not deployed by pushing a branch — the cron-job.org schedules, the Cloudflare load balancer, Firebase console state — and on the order these steps run in. Firestore indexes and rules deploy **before** the web deploy that depends on them, not after; the numbered steps below are otherwise sequential.
+
 ## prerequisites
 
 - Railway access for both web services:
@@ -187,6 +189,12 @@ the docs site.
 
 8. Deploy Firestore rules and indexes if they changed.
 
+   **Ordering**: this step is grouped here with the other Firebase-side work,
+   but when the release's web code depends on a new index or a relaxed rule,
+   run it *before* step 6 (the merge to `main`). Shipping the code first means
+   live queries hit an index that is still building, or reads that the deployed
+   rules still deny. See [manual-infrastructure.md](manual-infrastructure.md).
+
    Use the production Firebase project and deploy Firestore:
 
     ```sh
@@ -210,8 +218,11 @@ the docs site.
     Use the checklist in the next section. There is no automated post-deploy
     smoke job, so the maintainer running the release owns these checks.
 
-    There is no `/api/health` endpoint. The closest "is prod alive" checks are
-    loading the dashboard and running the smoke scripts.
+    `GET /api/health` (`web/app/api/health/route.ts`) is the fastest "is prod
+    alive" check: unauthenticated, 200 only when this origin can also reach
+    Firestore, 503 when it cannot. It is the Cloudflare load balancer's failover
+    probe, so a 503 here also means the LB is about to fail this origin out of
+    rotation. Then load the dashboard and run the smoke scripts.
 
     Confirm docs deployment if docs changed.
 
@@ -254,7 +265,8 @@ the docs site.
 - [ ] If functions changed, `firebase use prod && firebase deploy --only functions`
   completed successfully.
 - [ ] If Firestore rules or indexes changed, `firebase deploy --only firestore`
-  completed successfully after any required migration.
+  completed successfully after any required migration — and, where the web code
+  depends on them, before the production web deploy rather than after it.
 - [ ] If storage rules changed, `firebase deploy --only storage` completed
   successfully.
 - [ ] If docs changed, the docs deploy workflow completed and published to
@@ -275,7 +287,9 @@ the docs site.
 - [ ] Dashboard loads without server or client errors.
 - [ ] Real-time updates work for a representative production workflow.
 - [ ] Any release-specific changed workflow has been exercised.
-- [ ] No smoke check used `/api/health`; that route does not exist.
+- [ ] `GET https://owlette.app/api/health` returned 200 with `"ok":true` (503 means
+  this origin is up but cannot reach Firestore, and the load balancer will fail
+  it out of rotation).
 - [ ] No smoke check used `/api/cron/health-check` as a free liveness probe; it
   is a write-side cron endpoint requiring `X-Cron-Secret`.
 - [ ] If Instatus checks fail, verify the required component ids and optional
@@ -377,7 +391,8 @@ touches `docs/**` or `mkdocs.yml`.
 
 ## env vars maintained per environment
 
-`/docs/setup/environment-variables.md` is the authoritative environment variable
+`web/content/docs/setup/environment-variables.mdx` (published at
+`/docs/setup/environment-variables`) is the authoritative environment variable
 reference. This section is only a release-time reminder of the categories that
 must be maintained separately per environment.
 
@@ -409,8 +424,11 @@ Required production reminders:
 
 ## known caveats
 
-- There is no `/api/health` endpoint. Use the dashboard and smoke scripts as the
-  closest production liveness checks.
+- `/api/health` exists and is the Cloudflare load balancer's failover probe
+  (`web/app/api/health/route.ts`). It is deliberately a *readiness* check, not a
+  bare liveness ping: 200 means this origin can also reach Firestore, 503 means
+  it is serving HTTP but cannot. It complements, not replaces, the dashboard and
+  smoke checks.
 - `/api/cron/health-check` is not a free liveness probe. It is a cron write-side
   endpoint and requires `X-Cron-Secret`.
 - Cloud Functions deploys are 100% manual. Railway web deploys do not deploy
@@ -447,8 +465,9 @@ Required production reminders:
 - [hotfix-rollback.md](hotfix-rollback.md)
 - [agent-installer-release.md](agent-installer-release.md)
 - [dev-to-prod-workflow.md](dev-to-prod-workflow.md)
-- [web deployment setup](../setup/web-deployment.md)
-- [firestore rules setup](../setup/firestore-rules.md)
-- [environment variables](../setup/environment-variables.md)
+- [manual-infrastructure.md](manual-infrastructure.md)
+- web deployment setup — `web/content/docs/setup/web-deployment.mdx` (published at `/docs/setup/web-deployment`)
+- firestore rules setup — `web/content/docs/setup/firestore-rules.mdx`
+- environment variables — `web/content/docs/setup/environment-variables.mdx`
 - [version management](../internal/version-management.md)
 - [changelog](../changelog.md)

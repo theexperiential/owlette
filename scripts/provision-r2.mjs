@@ -1,18 +1,15 @@
 #!/usr/bin/env node
 /**
- * provision-r2 — create the four roost R2 buckets (wave 0.5).
+ * provision-r2 — create the four roost R2 buckets (wave 0.5). Idempotent; safe to re-run.
+ * Reads CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_R2_API_TOKEN from `.claude/.env.local` or env.
  *
- * Idempotent. Safe to re-run. Reads CLOUDFLARE_ACCOUNT_ID +
- * CLOUDFLARE_R2_API_TOKEN from `.claude/.env.local` (or environment).
- *
- * Does NOT mint the app's S3-compatible access keys — that's a one-time
- * dashboard visit after this script runs. See the hint at the end of
- * the successful-run output.
+ * Does NOT mint the app's S3-compatible access keys — that's a one-time dashboard visit
+ * after this script runs (see the hint printed on success).
  *
  * Usage:
- *   node scripts/provision-r2.mjs                    # provision (default)
- *   node scripts/provision-r2.mjs --dry-run          # show what would happen
- *   node scripts/provision-r2.mjs --verify-only      # just check existing state
+ *   node scripts/provision-r2.mjs                # provision (default)
+ *   node scripts/provision-r2.mjs --dry-run      # show what would happen
+ *   node scripts/provision-r2.mjs --verify-only  # just check existing state
  */
 
 import { readFileSync, existsSync } from 'node:fs';
@@ -31,23 +28,18 @@ const BUCKETS = [
 ];
 
 /**
- * Content buckets receive direct browser uploads (presigned PUT) and could
- * receive direct browser downloads in future (CDN fallback path). Manifests
- * only move server-side (`putManifestBody` in web/lib/r2Client.server.ts) and
- * agent-side (Python), so the manifest buckets stay CORS-less to minimize the
- * origins that can ever be contacted by a rogue browser page.
+ * Content buckets take direct browser uploads (presigned PUT) so they need CORS.
+ * Manifests only move server-side (`putManifestBody` in web/lib/r2Client.server.ts) and
+ * agent-side, so manifest buckets stay CORS-less — fewer origins a rogue page can reach.
  */
 const CORS_ENABLED_BUCKETS = [
   'owlette-prod-content',
   'owlette-dev-content',
 ];
 
-// Next.js dev server falls back to 3001, 3002, etc. when the primary
-// port is taken (e.g. an orphaned session). Allow a small range so
-// accidental port-hopping doesn't surface as a CORS preflight failure
-// on roost uploads (which PUT directly to R2 from the browser).
-// If you add a port, re-run this script to push the updated CORS policy
-// to R2: `node scripts/provision-r2.mjs`.
+// Next dev falls back to 3001, 3002… when the primary port is taken, so allow a small
+// range — otherwise port-hopping shows up as a CORS preflight failure on roost uploads
+// (which PUT to R2 straight from the browser). Re-run this script after adding a port.
 const CORS_ALLOWED_ORIGINS = [
   ...[3000, 3001, 3002, 3003, 3100].flatMap((port) => [
     `http://localhost:${port}`,
@@ -59,10 +51,6 @@ const CORS_ALLOWED_ORIGINS = [
 
 /** R2 jurisdiction — 'default' (automatic) / 'eu' / 'fedramp'. Start default. */
 const JURISDICTION = 'default';
-
-/* --------------------------------------------------------------------- */
-/*  env loading                                                          */
-/* --------------------------------------------------------------------- */
 
 function loadEnv() {
   // existing env wins (CI can override without editing the file)
@@ -90,10 +78,6 @@ function loadEnv() {
   return env;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Cloudflare REST client                                               */
-/* --------------------------------------------------------------------- */
-
 class CfApi {
   constructor(accountId, token) {
     if (!accountId) throw new Error('CLOUDFLARE_ACCOUNT_ID missing');
@@ -117,9 +101,8 @@ class CfApi {
   }
 
   async verifyToken() {
-    // First: is the token itself active? Uses /user/tokens/verify which
-    // works on any token regardless of scope. Separates "bad token" from
-    // "R2-not-enabled-on-account" errors which otherwise both look identical.
+    // First: is the token active? /user/tokens/verify works on any token regardless of
+    // scope, which separates "bad token" from "R2 not enabled on account".
     const tokenCheck = await this.call('GET', `/user/tokens/verify`);
     if (tokenCheck.status !== 200 || !tokenCheck.json?.success) {
       return {
@@ -130,8 +113,8 @@ class CfApi {
         hint: 'create a fresh token with `Workers R2 Storage: Edit` scope.',
       };
     }
-    // Second: does it let us reach R2? Distinguishes R2-disabled-on-account
-    // (10042) from missing-scope from account-id-mismatch.
+    // Second: can it reach R2? Distinguishes R2-disabled (10042) from missing-scope from
+    // account-id mismatch.
     const r2Probe = await this.call(
       'GET',
       `/accounts/${this.accountId}/r2/buckets`,
@@ -175,12 +158,10 @@ class CfApi {
   }
 
   /**
-   * Apply CORS rules to a bucket. R2's CORS endpoint is a full-replace PUT —
-   * no merging, so this function is the source of truth for what origins can
-   * talk to the bucket. Allowed methods are scoped to what the browser
-   * actually needs (HEAD for dedup probe, PUT for chunk upload, GET for
-   * download). Exposing ETag lets multipart-upload code read the upload's
-   * identifier client-side if we ever wire it up (no harm exposing it now).
+   * Apply CORS rules to a bucket. R2's CORS endpoint is a full-replace PUT — no merging,
+   * so this function is the source of truth for which origins can reach the bucket.
+   * Methods are scoped to what the browser needs (HEAD dedup probe, PUT upload, GET
+   * download); ETag is exposed for a future multipart client.
    */
   async putBucketCors(bucketName) {
     const rules = {
@@ -206,10 +187,6 @@ class CfApi {
     return { ok: false, reason: msg };
   }
 }
-
-/* --------------------------------------------------------------------- */
-/*  main                                                                 */
-/* --------------------------------------------------------------------- */
 
 async function main() {
   const args = process.argv.slice(2);
@@ -273,10 +250,8 @@ async function main() {
     }
   }
 
-  // Smoke-check: attempt an anonymous GET to one bucket. Expected: 401/403.
-  // The bucket has no public endpoint by default; we hit the S3 endpoint
-  // shape (accountid.r2.cloudflarestorage.com) unauthenticated and expect
-  // a 401. A 200 would mean the bucket got public-ified somehow.
+  // Smoke-check: anonymous GET against the S3 endpoint shape should 401/403 — a 200 would
+  // mean the bucket got public-ified.
   const probeBucket = BUCKETS[0];
   const probeUrl = `https://${api.accountId}.r2.cloudflarestorage.com/${probeBucket}/.probe-anonymous-access`;
   console.log('→ smoke-checking anonymous access is denied…');
@@ -284,8 +259,7 @@ async function main() {
   if (probe.status === 401 || probe.status === 403) {
     console.log(`  ✓ anonymous GET returned ${probe.status} (correct)`);
   } else if (probe.status === 404) {
-    // 404 is also acceptable — means bucket exists but object doesn't, and the
-    // default-deny still applied (else we'd have gotten a 200 with empty body).
+    // 404 is fine too: bucket exists, object doesn't, default-deny still applied.
     console.log(
       `  ✓ anonymous GET returned 404 (bucket exists, default-private)`,
     );

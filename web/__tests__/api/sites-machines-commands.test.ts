@@ -1,18 +1,14 @@
 /** @jest-environment node */
 
 /**
- * api-sprint wave 2 — track 2A (machine-api MVP).
- *
  * Http-shape coverage for the public machine-command endpoints:
  *
  *   POST /api/sites/{siteId}/machines/{machineId}/commands
  *   GET  /api/sites/{siteId}/machines/{machineId}/commands/{commandId}
  *   POST /api/sites/{siteId}/machines/{machineId}/screenshots/upload-url
  *
- * Each verb is covered for scope-pass + scope-fail + the verb-specific
- * happy / error paths (allowlist enforcement, machine-offline 409,
- * idempotency replay, status-shape on completed captures, signed-url
- * issuance).
+ * Each verb covers scope-pass, scope-fail, and its own happy/error paths: allowlist enforcement,
+ * machine-offline 409, idempotency replay, completed-capture status shape, signed-url issuance.
  */
 
 import { createMockRequest } from './helpers/utils';
@@ -28,9 +24,8 @@ jest.mock('@sentry/nextjs', () => ({
   captureMessage: jest.fn(),
 }));
 
-// Storage mock: `getSignedUrl` returns a tuple [url] per firebase-admin's
-// API. Each call increments a counter so tests can assert read vs write
-// urls were minted with the expected expiry kind.
+// `getSignedUrl` returns a tuple [url] per firebase-admin. A counter lets tests assert read vs
+// write urls were minted with the expected expiry.
 const signedUrlCalls: Array<{ action?: string; expires?: Date; contentType?: string }> = [];
 const fakeFile = {
   getSignedUrl: jest.fn(async (opts: { action?: string; expires?: Date; contentType?: string }) => {
@@ -145,9 +140,7 @@ beforeEach(() => {
   mocks.collectionGet.mockResolvedValue(querySnapshot([]));
 });
 
-/* ========================================================================== */
-/*  POST .../commands — dispatch                                              */
-/* ========================================================================== */
+/* POST .../commands — dispatch */
 describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
   const USER_DOC = { role: 'superadmin', sites: [SITE] };
 
@@ -156,10 +149,8 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
   }
 
   /**
-   * Queue actor load + idempotency-cache lookup (always miss -> null) +
-   * machine doc in that order. `clearAllMocks` does NOT clear
-   * `mockResolvedValueOnce` queues, so we hard-reset and re-prime per test
-   * to avoid bleed-through.
+   * Queues actor load → idempotency miss → machine doc, in order. `clearAllMocks` does NOT clear
+   * `mockResolvedValueOnce` queues, so hard-reset and re-prime per test to stop bleed-through.
    */
   function queueIdemAndMachine(
     machineDoc: Record<string, unknown> | null,
@@ -177,11 +168,7 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
     });
   }
 
-  /**
-   * Actor-load + idempotency-only queue for paths that short-circuit before
-   * the machine lookup (validation failures, idempotency cache hit/miss
-   * replays).
-   */
+  /** For paths short-circuiting before the machine lookup: validation failures, idem replays. */
   function queueIdemOnly(
     cached: Record<string, unknown> | null = null,
   ): void {
@@ -236,7 +223,7 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
     expect(body.data.commandId).toMatch(/^cmd_/);
     expect(body.data.status).toBe('pending');
 
-    // Pending merge call (the only set with merge:true on this path).
+    // The only set with merge:true on this path.
     const mergeCalls = mocks.set.mock.calls.filter(
       (c: unknown[]) => (c[1] as { merge?: boolean })?.merge === true,
     );
@@ -355,8 +342,7 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
   });
 
   it('400 unsupported_command_type when type not in allowlist', async () => {
-    // Validation happens before the machine lookup, so only the idem cache
-    // miss is consumed. queueIdemOnly() asserts no second read happens.
+    // Validation precedes the machine lookup, so only the idem miss is consumed.
     queueIdemOnly();
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
@@ -678,7 +664,7 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
     const body = await res.json();
     expect(body.code).toBe('machine_offline');
 
-    // Crucially: no command was queued + no audit emitted on the offline branch.
+    // The offline branch must queue no command and emit no audit.
     const mergeCalls = mocks.set.mock.calls.filter(
       (c: unknown[]) => (c[1] as { merge?: boolean })?.merge === true,
     );
@@ -801,8 +787,7 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
   });
 
   it('403 — member may NOT reboot_machine (MACHINE_EXEC_COMMAND still required)', async () => {
-    // Capability denial happens in the wrapper before the handler runs, so only
-    // the actor-load read is consumed and no command is queued.
+    // Capability denial happens in the wrapper, so only the actor-load read is consumed.
     mocks.get.mockReset();
     mocks.get.mockResolvedValueOnce(docSnapshot('user-1', { role: 'member', sites: [SITE] }));
     mocks.get.mockImplementation(() => {
@@ -855,18 +840,14 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
   });
 });
 
-/* ========================================================================== */
-/*  GET .../commands/{commandId} — status                                     */
-/* ========================================================================== */
+/* GET .../commands/{commandId} — status */
 describe('GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}', () => {
   const CID = 'cmd_test_status_1';
 
   /**
-   * Queue exactly two `mocks.get` resolutions in (pending, completed) order
-   * + a hard fallback that throws so any third unexpected read is caught
-   * loudly instead of silently consuming a leaked queued value from the
-   * previous test (jest's `clearAllMocks` does NOT clear the
-   * `mockResolvedValueOnce` queue across tests).
+   * Two `mocks.get` resolutions (pending, completed) plus a throwing fallback, so an unexpected
+   * third read fails loudly instead of consuming a queued value leaked from the previous test —
+   * `clearAllMocks` does NOT clear `mockResolvedValueOnce` queues.
    */
   function queueGetSnapshots(
     pending: Record<string, unknown> | null,
@@ -901,9 +882,8 @@ describe('GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}', ()
   });
 
   it('200 running marker on completed doc surfaces as in_progress (not completed)', async () => {
-    // The agent writes {status:'running', startedAt} to the completed doc at
-    // command START (restart safety). This must NOT report the command as
-    // completed with an empty result — it is still executing.
+    // The agent writes {status:'running', startedAt} to the completed doc at command START
+    // (restart safety); that must not read as completed-with-empty-result.
     queueGetSnapshots(null, {
       [CID]: { type: 'mcp_tool_call', status: 'running', startedAt: 1_700_000_000_000 },
     });
@@ -960,7 +940,7 @@ describe('GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}', ()
     expect(body.data.result.screenshot_url).toMatch(/^https:\/\/signed\.example\/read-/);
     expect(body.data.result.expires_at).toBeDefined();
 
-    // Read url issued; expiry should be ~1h out (not 5min like a write url).
+    // Read url expiry is ~1h, not the 5min a write url gets.
     const read = signedUrlCalls.find((c) => c.action === 'read');
     expect(read).toBeDefined();
     const ttlMs = (read!.expires as Date).getTime() - Date.now();
@@ -1007,8 +987,7 @@ describe('GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}', ()
   });
 
   it('200 cancelled terminal status maps to failed and surfaces the error', async () => {
-    // `cancelled` has no dedicated CommandStatus variant — it is terminal and
-    // maps to `failed`, surfacing the agent's cancellation error.
+    // `cancelled` has no CommandStatus variant; it is terminal and maps to `failed`.
     queueGetSnapshots(null, {
       [CID]: { type: 'mcp_tool_call', status: 'cancelled', error: 'cancelled by user' },
     });
@@ -1079,9 +1058,7 @@ describe('GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}', ()
   });
 });
 
-/* ========================================================================== */
-/*  POST .../screenshots/upload-url                                           */
-/* ========================================================================== */
+/* POST .../screenshots/upload-url */
 describe('POST /api/sites/{siteId}/machines/{machineId}/screenshots/upload-url', () => {
   it('200 issues signed write url with 5-min ttl + canonical path', async () => {
     const req = createMockRequest(
@@ -1155,6 +1132,4 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/screenshots/upload-url',
   });
 });
 
-/* ========================================================================== */
-/*  control-plane billing lockout (billing-system wave 0.6)                   */
-/* ========================================================================== */
+/* control-plane billing lockout (billing-system wave 0.6) */

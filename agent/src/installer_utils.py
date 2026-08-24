@@ -14,19 +14,14 @@ from typing import Optional, Callable, Dict, List
 
 
 def hide_registry_keys(software_name: str) -> List[dict]:
-    """
-    Temporarily hide existing uninstall registry keys for a software product.
+    """Temporarily hide a product's uninstall registry keys.
 
-    Some installers (e.g. TouchDesigner) detect existing installations via
-    registry keys and force-uninstall them in silent mode. This function
-    renames those keys so the installer thinks no previous version exists,
-    enabling true side-by-side parallel installation.
+    Some installers (TouchDesigner) detect prior installs via these keys and
+    force-uninstall them in silent mode. Renaming the keys makes the installer
+    see no previous version, enabling side-by-side installation.
 
-    Args:
-        software_name: Display name prefix to match (e.g. "TouchDesigner")
-
-    Returns:
-        List of dicts with 'original' and 'hidden' key names for restoration.
+    ``software_name`` is a DisplayName prefix. Returns
+    ``[{'original', 'hidden'}, ...]`` for restore_registry_keys().
     """
     import winreg
 
@@ -35,7 +30,6 @@ def hide_registry_keys(software_name: str) -> List[dict]:
 
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, uninstall_path) as parent:
-            # Enumerate all subkeys and find matches
             index = 0
             keys_to_hide = []
             while True:
@@ -53,13 +47,12 @@ def hide_registry_keys(software_name: str) -> List[dict]:
                 except (OSError, FileNotFoundError):
                     continue
 
-        # Rename matching keys using reg.exe (winreg has no rename API)
+        # reg.exe, because winreg has no rename API.
         for key_name in keys_to_hide:
             hidden_name = f"_owlette_hidden_{key_name}"
             full_path = f"HKLM\\{uninstall_path}\\{key_name}"
             hidden_path = f"HKLM\\{uninstall_path}\\{hidden_name}"
 
-            # Copy key to hidden name, then delete original
             result = subprocess.run(
                 ['reg', 'copy', full_path, hidden_path, '/s', '/f'],
                 capture_output=True, text=True, timeout=10
@@ -74,7 +67,6 @@ def hide_registry_keys(software_name: str) -> List[dict]:
             )
             if result.returncode != 0:
                 logging.error(f"Failed to delete original registry key {key_name}: {result.stderr}")
-                # Try to clean up the copy
                 subprocess.run(['reg', 'delete', hidden_path, '/f'],
                                capture_output=True, text=True, timeout=10)
                 continue
@@ -94,12 +86,7 @@ def hide_registry_keys(software_name: str) -> List[dict]:
 
 
 def restore_registry_keys(hidden_keys: List[dict]) -> None:
-    """
-    Restore previously hidden registry keys after installation completes.
-
-    Args:
-        hidden_keys: List from hide_registry_keys() with 'original' and 'hidden' names.
-    """
+    """Restore keys hidden by hide_registry_keys() once the install finishes."""
     uninstall_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
 
     for entry in hidden_keys:
@@ -109,7 +96,6 @@ def restore_registry_keys(hidden_keys: List[dict]) -> None:
         hidden_path = f"HKLM\\{uninstall_path}\\{hidden_name}"
 
         try:
-            # Copy hidden key back to original name
             result = subprocess.run(
                 ['reg', 'copy', hidden_path, original_path, '/s', '/f'],
                 capture_output=True, text=True, timeout=10
@@ -118,7 +104,6 @@ def restore_registry_keys(hidden_keys: List[dict]) -> None:
                 logging.error(f"Failed to restore registry key {original_name}: {result.stderr}")
                 continue
 
-            # Delete the hidden copy
             subprocess.run(
                 ['reg', 'delete', hidden_path, '/f'],
                 capture_output=True, text=True, timeout=10
@@ -141,35 +126,25 @@ def download_file(
     connect_timeout: int = 30,
     read_timeout: int = 600
 ) -> tuple[bool, str]:
-    """
-    Download a file from a URL with progress tracking and retry logic.
+    """Download a URL with progress reporting and retries.
 
-    Args:
-        url: URL to download from
-        dest_path: Destination file path
-        progress_callback: Optional callback function that receives progress percentage (0-100)
-        max_retries: Maximum number of retry attempts (default: 3)
-        connect_timeout: Connection timeout in seconds (default: 30)
-        read_timeout: Read timeout in seconds (default: 600 = 10 minutes for large files)
+    ``progress_callback`` receives 0-100. Timeouts are in seconds; ``read_timeout``
+    defaults high because installers are large.
 
-    Returns:
-        Tuple of (success, actual_path):
-        - success: True if download succeeded, False otherwise
-        - actual_path: The actual path where the file was saved (may differ from dest_path if file was in use)
+    Returns ``(success, actual_path)`` — the path can differ from ``dest_path``
+    when the destination was locked by another process.
     """
     logging.debug(f"Starting download from {url}")
 
-    # Create destination directory if it doesn't exist
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
-    # Pre-download cleanup: handle existing files
     if os.path.exists(dest_path):
         logging.debug(f"File already exists at {dest_path}, attempting cleanup...")
         try:
             os.remove(dest_path)
             logging.debug("Existing file removed successfully")
         except PermissionError as e:
-            # File is locked by another process - generate unique filename
+            # Locked by another process — fall back to a unique filename.
             timestamp = int(time.time())
             base_name, ext = os.path.splitext(dest_path)
             dest_path = f"{base_name}_{timestamp}{ext}"
@@ -183,13 +158,13 @@ def download_file(
     for attempt in range(1, max_retries + 1):
         try:
             if attempt > 1:
-                # Exponential backoff: 5s, 10s, 20s...
+                # 5s, 10s, 20s...
                 wait_time = 5 * (2 ** (attempt - 2))
                 logging.info(f"Retry attempt {attempt}/{max_retries} after {wait_time}s delay...")
                 time.sleep(wait_time)
 
-            # Stream the download to avoid loading entire file into memory
-            # Use separate connect and read timeouts - large files need more read time
+            # Stream so a multi-GB installer never lands in memory. Separate
+            # connect/read timeouts: large files need the longer read window.
             response = requests.get(
                 url,
                 stream=True,
@@ -201,7 +176,6 @@ def download_file(
             total_size = int(response.headers.get('content-length', 0))
             downloaded_size = 0
 
-            # Use larger chunk size for better performance on large files
             chunk_size = 64 * 1024  # 64KB chunks
 
             with open(dest_path, 'wb') as f:
@@ -210,12 +184,10 @@ def download_file(
                         f.write(chunk)
                         downloaded_size += len(chunk)
 
-                        # Report progress
                         if total_size > 0 and progress_callback:
                             progress = int((downloaded_size / total_size) * 100)
                             progress_callback(progress)
 
-            # Verify we got a complete file (if content-length was provided)
             if total_size > 0 and downloaded_size < total_size:
                 raise requests.exceptions.RequestException(
                     f"Incomplete download: got {downloaded_size} bytes, expected {total_size}"
@@ -237,14 +209,12 @@ def download_file(
             last_error = f"Unexpected error on attempt {attempt}: {e}"
             logging.warning(last_error)
 
-        # Clean up partial download before retry
         if os.path.exists(dest_path):
             try:
                 os.remove(dest_path)
             except:
                 pass
 
-    # All retries exhausted
     logging.error(f"Download failed after {max_retries} attempts. Last error: {last_error}")
     return False, ""
 
@@ -286,24 +256,13 @@ def execute_installer(
     user_token=None,
     environment=None,
 ) -> tuple[bool, int, str]:
-    """
-    Execute an installer with silent flags.
+    """Execute an installer with silent flags.
 
-    Launches in the user's desktop session via CreateProcessAsUser when
-    user_token is provided.  Falls back to subprocess.Popen (Session 0)
-    when user_token is None.
+    With ``user_token`` runs in the user's desktop session via
+    CreateProcessAsUser; without one falls back to subprocess.Popen in Session 0.
+    ``active_processes`` maps installer name → pid so a run can be cancelled.
 
-    Args:
-        installer_path: Path to the installer executable
-        flags: Silent installation flags (e.g., "/VERYSILENT /DIR=C:\\Program")
-        installer_name: Name of the installer (for tracking cancellable processes)
-        active_processes: Dictionary mapping installer names to PIDs (for cancellation)
-        timeout_seconds: Maximum time to wait for installation
-        user_token: Win32 user token for CreateProcessAsUser (from _refresh_user_token)
-        environment: Environment block for the user session (from CreateEnvironmentBlock)
-
-    Returns:
-        Tuple of (success, exit_code, error_message)
+    Returns ``(success, exit_code, error_message)``.
     """
     try:
         if not os.path.exists(installer_path):
@@ -311,7 +270,7 @@ def execute_installer(
             logging.error(error_msg)
             return False, -1, error_msg
 
-        # Build command as a string — Windows CreateProcess handles arg parsing natively.
+        # A single string — CreateProcess parses args itself.
         command = f'"{installer_path}"'
         if flags:
             command = f'{command} {flags}'
@@ -352,9 +311,8 @@ def _execute_as_user(
 
     si = win32process.STARTUPINFO()
     si.dwFlags = win32process.STARTF_USESHOWWINDOW
-    # SW_SHOWMINNOACTIVE: window starts minimized but NOT hidden.
-    # SW_HIDE causes invisible dialogs that block forever when an installer
-    # spawns an unexpected prompt (e.g. TD's "directory exists" dialog).
+    # Minimized, NOT hidden: SW_HIDE makes an unexpected installer prompt (e.g.
+    # TD's "directory exists" dialog) invisible, and it then blocks forever.
     si.wShowWindow = win32con.SW_SHOWMINNOACTIVE
     si.lpDesktop = "WinSta0\\Default"
 
@@ -375,11 +333,9 @@ def _execute_as_user(
 
     logging.info(f"Installer launched in user session (PID: {pid})")
 
-    # Track for cancellation
     if active_processes is not None and installer_name:
         active_processes[installer_name] = pid
 
-    # Wait for completion or timeout
     timeout_ms = timeout_seconds * 1000
     result = win32event.WaitForSingleObject(h_process, timeout_ms)
 
@@ -460,20 +416,10 @@ def _execute_as_system(
 
 
 def verify_checksum(file_path: str, expected_sha256: str) -> bool:
-    """
-    Verify the SHA256 checksum of a downloaded file.
-
-    Args:
-        file_path: Path to the file to verify
-        expected_sha256: Expected SHA256 hash (case-insensitive)
-
-    Returns:
-        True if checksum matches, False otherwise
-    """
+    """Verify a file's SHA256 against ``expected_sha256`` (case-insensitive)."""
     try:
         sha256_hash = hashlib.sha256()
 
-        # Read file in chunks to handle large files efficiently
         with open(file_path, 'rb') as f:
             for chunk in iter(lambda: f.read(8192), b''):
                 sha256_hash.update(chunk)
@@ -496,15 +442,7 @@ def verify_checksum(file_path: str, expected_sha256: str) -> bool:
 
 
 def verify_installation(path: str) -> bool:
-    """
-    Verify that an installation succeeded by checking if a file exists.
-
-    Args:
-        path: Path to the installed executable or file
-
-    Returns:
-        True if file exists, False otherwise
-    """
+    """Verify an install landed, by checking that ``path`` exists."""
     exists = os.path.exists(path)
     if exists:
         logging.info(f"Installation verified: {path} exists")
@@ -514,15 +452,7 @@ def verify_installation(path: str) -> bool:
 
 
 def get_temp_installer_path(installer_name: str) -> str:
-    """
-    Generate a temporary path for downloading an installer.
-
-    Args:
-        installer_name: Name of the installer (e.g., "TouchDesigner.exe")
-
-    Returns:
-        Full path to temporary installer location
-    """
+    """Full path under the temp dir for downloading ``installer_name``."""
     temp_dir = tempfile.gettempdir()
     owlette_temp = os.path.join(temp_dir, "owlette_installers")
     os.makedirs(owlette_temp, exist_ok=True)
@@ -530,21 +460,14 @@ def get_temp_installer_path(installer_name: str) -> str:
 
 
 def cleanup_installer(installer_path: str, force: bool = False) -> bool:
-    """
-    Remove a temporary installer file after installation.
+    """Remove a temp installer file.
 
-    Args:
-        installer_path: Path to the installer file
-        force: If True, attempt to kill processes using the file before deletion
-
-    Returns:
-        True if cleanup succeeded, False otherwise
+    ``force`` kills processes holding the file open before retrying the delete.
     """
     try:
         if not os.path.exists(installer_path):
             return False
 
-        # Try simple deletion first
         try:
             os.remove(installer_path)
             logging.debug(f"Cleaned up installer: {installer_path}")
@@ -554,23 +477,19 @@ def cleanup_installer(installer_path: str, force: bool = False) -> bool:
                 logging.warning(f"Failed to cleanup installer {installer_path}: {e}")
                 return False
 
-            # Force mode: Find and kill processes using this file
             logging.warning(f"File is locked: {installer_path}, attempting force cleanup...")
 
             try:
                 import psutil
 
-                # Get the installer filename
                 installer_name = os.path.basename(installer_path)
                 killed_processes = []
 
-                # Find all processes with this name or using this file
                 for proc in psutil.process_iter(['pid', 'name', 'exe']):
                     try:
                         proc_name = proc.info['name']
                         proc_exe = proc.info['exe']
 
-                        # Check if process name or exe matches
                         if (proc_name and installer_name.lower() in proc_name.lower()) or \
                            (proc_exe and installer_path.lower() in proc_exe.lower()):
                             logging.warning(f"Killing process using installer: {proc_name} (PID: {proc.info['pid']})")
@@ -580,11 +499,9 @@ def cleanup_installer(installer_path: str, force: bool = False) -> bool:
                         continue
 
                 if killed_processes:
-                    # Wait a moment for processes to die
                     import time
                     time.sleep(1)
 
-                    # Retry deletion
                     os.remove(installer_path)
                     logging.debug(f"Force cleanup succeeded: {installer_path} (killed {len(killed_processes)} process(es))")
                     return True
@@ -605,15 +522,9 @@ def cleanup_installer(installer_path: str, force: bool = False) -> bool:
 
 
 def cancel_installation(installer_name: str, active_processes: Dict[str, int]) -> tuple[bool, str]:
-    """
-    Cancel an active installation by killing the installer process tree.
+    """Cancel an active installation by killing its process tree.
 
-    Args:
-        installer_name: Name of the installer being cancelled
-        active_processes: Dictionary mapping installer names to PIDs
-
-    Returns:
-        Tuple of (success, message)
+    Returns ``(success, message)``.
     """
     try:
         if installer_name not in active_processes:

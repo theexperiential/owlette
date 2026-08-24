@@ -1,76 +1,23 @@
 /**
- * deleteOwnAccount action core (security-boundary-migration wave 3.10 +
- * CRIT-A6 hardening).
+ * Server-side cascade for `DELETE /api/users/me` (security-boundary-migration wave 3.10
+ * + CRIT-A6). Replaces the old client-side writeBatch in AuthContext.deleteAccount.
  *
- * Server-side cascade for `DELETE /api/users/me` — replaces the legacy
- * client-side `writeBatch` cascade in `web/contexts/AuthContext.tsx`'s
- * `deleteAccount`. The cascade now distinguishes between:
+ * Site handling: sole-owner sites are hard-deleted with their machines/deployments/logs;
+ * member-only sites are left intact; owned-but-shared sites refuse with `needs_successor`
+ * — ownership must be transferred first (mirrors the admin cascade's `orphan_sites` guard).
  *
- *   - **Sole-owner sites** (`sites/{siteId}.owner === uid` AND no other
- *     members): hard-deleted, along with every machine / deployment / log.
- *   - **Member sites** (`uid ∈ users/{uid}.sites[]` but
- *     `sites/{siteId}.owner !== uid`): the site doc is left intact. The
- *     user is dropped from membership via `arrayRemove` on their own user
- *     doc (which is then deleted anyway, but the audit row records the
- *     classification).
- *   - **Owned-but-shared sites** (`owner === uid` AND other members
- *     exist): the cascade refuses with `needs_successor`. The user must
- *     transfer ownership via `DELETE /api/users/{uid}?successorUid=...`
- *     (or assign another admin and have them invoke transfer) before they
- *     can self-delete. This mirrors the admin-delete cascade's
- *     `orphan_sites` guard.
+ * Also drained so a self-deleted user leaves no residue: users/{uid}/{passkeys,
+ * trustedDevices,api_keys}, top-level api_keys lookups, mfa_pending/{uid},
+ * agent_refresh_tokens by createdBy, chats by userId, and Storage users/{uid}/*.
+ * The Firebase Auth user is revoked + deleted server-side afterwards; the client's own
+ * post-response deleteUser() raced that and should be dropped.
  *
- * In addition to the per-site cascade, the action drains the following
- * paths so a self-deleted user leaves no residue:
- *
- *   1. `users/{uid}/passkeys/*`            — passkey subcollection
- *   2. `users/{uid}/trustedDevices/*`      — device-trust tokens
- *   3. `users/{uid}/api_keys/*`            — owned api keys
- *   4. `api_keys/{keyHash}` (top-level)    — lookup docs matching the user
- *   5. `mfa_pending/{uid}`                 — pending MFA enrollment doc
- *   6. `agent_refresh_tokens` where
- *      `createdBy == uid`                  — disables the user's agents
- *   7. `chats/{chatId}` where
- *      `userId == uid`                     — Hoot conversation history
- *   8. Firebase Storage `users/{uid}/*`    — avatar / user-scoped assets
- *
- * Finally — after the Firestore cascade — the Firebase Auth user is
- * revoked + deleted server-side. The client used to call
- * `auth.deleteUser()` after the API responded; that race window is now
- * closed (the client should drop the deleteUser call; see the AuthContext
- * comment).
- *
- * Capability: `USER_SELF_DELETE` — granted to every role tier in
- * `web/lib/capabilities.ts`. The route shim enforces the boundary: an
- * authenticated user may delete ONLY themselves.
- *
- * ## Chunking
- * Each subcollection is enumerated and deleted in batches of `BATCH_SIZE`
- * (=100) — well under Firestore's 500-write batch ceiling. Cross-
- * collection deletes (top-level api_keys lookups, agent_refresh_tokens,
- * chats) are split into a fresh `db.batch()` per chunk for the same
- * reason.
- *
- * ## Idempotency
- * A progress doc at `users/{userId}/account_deletion/operation` records
- * the operation id and incremental delete counts. A re-issued call:
- *   - finds the progress doc and replays the recorded outcome, OR
- *   - if a previous run aborted partway through, resumes from where it
- *     left off (the next batch picks up because already-deleted docs are
- *     simply absent from the next scan).
- *
- * ## Dry run
- * `dryRun: true` performs the same scans + classification but mutates
- * nothing. The result carries the same per-path counts a live run would
- * have produced (including the new subcollections), plus the
- * `siteClassification` so callers can preview which sites would be hard-
- * deleted versus dropped from membership.
- *
- * ## Resumability — current limitation
- * If the cascade fails partway through (e.g. firestore quota error mid-
- * batch), the progress doc records the partial state. The next invocation
- * resumes by re-running the scans (collections shrink as docs are
- * deleted), so the cascade is **eventually consistent**.
+ * Capability USER_SELF_DELETE; the route shim enforces self-only deletion.
+ * Everything chunks at BATCH_SIZE (100), under Firestore's 500-write batch ceiling.
+ * Idempotent via users/{userId}/account_deletion/operation: a repeat call replays a
+ * completed outcome, or resumes a partial run (already-deleted docs simply don't show up
+ * in the next scan), so the cascade is eventually consistent.
+ * `dryRun` runs the same scans + classification and reports counts without mutating.
  */
 
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
@@ -94,13 +41,13 @@ export interface DeleteOwnAccountInput {
   dryRun?: boolean;
   /** Stable join key for the progress doc + audit row. */
   operationId: string;
-  /** Inject a Firestore instance — tests pass a mock; production omits. */
+  /** Test seam — production omits. */
   db?: Firestore;
-  /** Inject Firebase Auth admin — tests pass a stub; production omits. */
+  /** Test seam — production omits. */
   auth?: Auth | null;
-  /** Inject Firebase Storage admin — tests pass a stub; production omits. */
+  /** Test seam — production omits. */
   storage?: Storage | null;
-  /** Override `Date.now()` for unit tests. */
+  /** Test seam for `Date.now()`. */
   now?: () => number;
 }
 
@@ -170,10 +117,6 @@ interface CascadeContext {
   userId: string;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  helpers                                                                   */
-/* -------------------------------------------------------------------------- */
-
 function emptyCounts(): SiteScanCounts {
   return { machines: 0, deployments: 0, logs: 0 };
 }
@@ -198,11 +141,7 @@ function emptyDeletedCounts() {
   };
 }
 
-/**
- * Drain a subcollection in chunks of `BATCH_SIZE`. Returns the number of
- * docs visited (which equals the number deleted in a live run, or the
- * count that would be deleted in a dry run).
- */
+/** Drain a subcollection in chunks of BATCH_SIZE. Returns docs visited (= deleted live). */
 async function drainSiteSubcollection(
   db: Firestore,
   siteId: string,
@@ -252,10 +191,7 @@ async function drainSiteSubcollection(
   return total;
 }
 
-/**
- * Drain a flat subcollection under `users/{uid}` (passkeys, trustedDevices,
- * api_keys). Returns the number of docs deleted (or counted in dry-run).
- */
+/** Drain a flat subcollection under `users/{uid}`. Returns docs deleted (counted in dry-run). */
 async function drainUserSubcollection(
   ctx: CascadeContext,
   subName: string,
@@ -306,12 +242,8 @@ async function drainUserSubcollection(
 }
 
 /**
- * Drain api_key subcollection entries AND mirror revocation onto the
- * top-level `api_keys/{keyHash}` lookup docs. Returns
- * `{ apiKeys, apiKeyLookups }` so the caller can populate the per-path
- * counts in the result. Lookup docs are hard-deleted (not just revoked) —
- * the user is going away entirely, so leaving stale lookup rows is
- * pointless and just bloats `api_keys/`.
+ * Drain api_key subcollection docs and sweep the matching top-level `api_keys/{keyHash}`
+ * lookups — hard-deleted rather than revoked, since the user is going away entirely.
  */
 async function drainApiKeys(
   ctx: CascadeContext,
@@ -323,9 +255,8 @@ async function drainApiKeys(
   let apiKeys = 0;
   let apiKeyLookups = 0;
 
-  // Collect keyHashes BEFORE deleting the subcollection docs so we can
-  // sweep the top-level lookup table afterwards. Page through to keep
-  // memory bounded.
+  // Collect keyHashes BEFORE deleting the subcollection docs so the top-level lookup
+  // table can still be swept. Paged to bound memory.
   const keyHashes: string[] = [];
 
   // 1) Enumerate keyHashes (both live + dry-run).
@@ -344,12 +275,10 @@ async function drainApiKeys(
     if (!lastDoc) break;
   }
 
-  // 2) Drain the subcollection (uses the standard helper).
+  // 2) Drain the subcollection.
   apiKeys = await drainUserSubcollection(ctx, 'api_keys');
 
-  // 3) Sweep the top-level lookup table. Some lookup docs may be absent
-  //    (very old keys may have been created before the lookup table
-  //    existed); a 404 on delete is tolerated.
+  // 3) Sweep the lookup table; a missing lookup (key predates the table) is tolerated.
   for (let i = 0; i < keyHashes.length; i += BATCH_SIZE) {
     const slice = keyHashes.slice(i, i + BATCH_SIZE);
     if (ctx.dryRun) {
@@ -382,13 +311,9 @@ async function drainApiKeys(
 }
 
 /**
- * Delete documents matching a query on a top-level collection. Used for
- * agent_refresh_tokens (where `createdBy == uid`) and chats
- * (where `userId == uid`). Returns the number of docs deleted (or counted).
- *
- * For `chats`, we also drain each chat's `messages` subcollection — chats
- * are conversation roots and Firestore does NOT cascade subcollection
- * deletes. The caller passes `drainSubcollection=messages` when needed.
+ * Delete docs matching a query on a top-level collection (agent_refresh_tokens by
+ * `createdBy`, chats by `userId`). Firestore does not cascade subcollections, so callers
+ * pass `drainSubcollection='messages'` for chats. Returns docs deleted (or counted).
  */
 async function drainQueryWhereEqualsUser(
   ctx: CascadeContext,
@@ -425,9 +350,7 @@ async function drainQueryWhereEqualsUser(
             }
             subDeleted += subSnap.size;
             if (subSnap.size < BATCH_SIZE) break;
-            // dry-run pagination terminator: empty docs ref so we don't
-            // infinite-loop on a fake. Re-query is fine since data isn't
-            // mutated.
+            // dry-run pagination terminator: empty docs ref so a mock can't spin forever.
             break;
           }
 
@@ -451,10 +374,7 @@ async function drainQueryWhereEqualsUser(
       }
       deleted += snap.size;
       if (snap.size < BATCH_SIZE) break;
-      // Dry-run: data isn't mutated, so re-querying returns the same page.
-      // Exit after one full page once size < BATCH_SIZE; otherwise the loop
-      // would never terminate. We exit immediately after one page here
-      // — the dry-run preview is informative, not authoritative.
+      // Dry-run doesn't mutate, so a re-query returns the same page — exit after one page.
       break;
     }
 
@@ -471,10 +391,7 @@ async function drainQueryWhereEqualsUser(
   return { deleted, subDeleted };
 }
 
-/**
- * Delete the `mfa_pending/{uid}` doc. Single-doc op; returns 1 if the doc
- * existed (or would-be-deleted in dry-run), else 0.
- */
+/** Delete `mfa_pending/{uid}`. Returns 1 if the doc existed, else 0. */
 async function deleteMfaPending(ctx: CascadeContext): Promise<number> {
   const ref = ctx.db.collection('mfa_pending').doc(ctx.userId);
   const snap = await ref.get().catch(() => null);
@@ -497,11 +414,7 @@ async function deleteMfaPending(ctx: CascadeContext): Promise<number> {
   return 1;
 }
 
-/**
- * Delete all Firebase Storage objects under `users/{uid}/`. Avatars and
- * any other user-scoped assets land here. Returns the number of files
- * deleted (or 0 if storage isn't configured / the bucket is empty).
- */
+/** Delete every Storage object under `users/{uid}/`. Returns files deleted (0 if unconfigured). */
 async function drainUserStorage(ctx: CascadeContext): Promise<number> {
   if (!ctx.storage) return 0;
   try {
@@ -530,10 +443,8 @@ async function drainUserStorage(ctx: CascadeContext): Promise<number> {
 }
 
 /**
- * Revoke + delete the Firebase Auth user record. Returns `true` if the
- * action succeeded OR the user was already absent (treated as success;
- * idempotent). `false` on transient failure — the caller should surface
- * but not block on it, since the Firestore cascade has already completed.
+ * Revoke + delete the Firebase Auth user. True on success or already-absent (idempotent);
+ * false on transient failure — surface it but don't block, the Firestore cascade is done.
  */
 async function revokeAndDeleteAuthUser(ctx: CascadeContext): Promise<boolean> {
   if (!ctx.auth) return false;
@@ -574,14 +485,9 @@ async function revokeAndDeleteAuthUser(ctx: CascadeContext): Promise<boolean> {
 }
 
 /**
- * Classify each siteId in the user's `sites[]` array as sole_owner /
- * member / missing. Sole-owner-but-shared sites are reported back as
- * `ownedSharedSites` so the caller can refuse with `needs_successor`.
- *
- * Returns:
- *   - `classification`: per-site decision used by the live cascade
- *   - `ownedSharedSites`: sites where the user is owner AND other members
- *     exist (must be transferred first)
+ * Classify each siteId in `users/{uid}.sites[]` as sole_owner / member / missing.
+ * Also returns `ownedSharedSites` (owner AND other members exist) so the caller can
+ * refuse with `needs_successor`.
  */
 async function classifySites(
   ctx: CascadeContext,
@@ -606,9 +512,8 @@ async function classifySites(
       classification.push({ siteId, kind: 'member', ownerUid: owner });
       continue;
     }
-    // Owner case: check for other members via `users where sites
-    // array-contains siteId`. A single-page query is sufficient — we only
-    // need to know whether ANY other member exists; we don't enumerate.
+    // Owner case: one page of `users where sites array-contains siteId` suffices — we only
+    // need to know whether ANY other member exists, not enumerate them.
     const otherMembers = await ctx.db
       .collection('users')
       .where('sites', 'array-contains', siteId)
@@ -617,8 +522,7 @@ async function classifySites(
     const hasOther = otherMembers.docs.some((d) => d.id !== ctx.userId);
     if (hasOther) {
       ownedSharedSites.push(siteId);
-      // Still record the classification for the audit trail; the cascade
-      // won't reach the per-site loop in this branch.
+      // Record the classification for the audit trail; this branch never reaches the cascade.
       classification.push({ siteId, kind: 'member', ownerUid: ctx.userId });
     } else {
       classification.push({ siteId, kind: 'sole_owner' });
@@ -627,10 +531,6 @@ async function classifySites(
 
   return { classification, ownedSharedSites };
 }
-
-/* -------------------------------------------------------------------------- */
-/*  action                                                                    */
-/* -------------------------------------------------------------------------- */
 
 export async function deleteOwnAccount(
   input: DeleteOwnAccountInput,
@@ -643,9 +543,7 @@ export async function deleteOwnAccount(
   }
 
   const db = input.db ?? getAdminDb();
-  // Auth + Storage handles are resolved lazily: tests inject explicit
-  // overrides (including `null` to opt out). Production code paths that
-  // don't supply them fall through to the singleton getters.
+  // Auth + Storage resolved lazily; tests inject overrides (including `null` to opt out).
   const auth =
     input.auth === undefined
       ? (() => {
@@ -683,7 +581,7 @@ export async function deleteOwnAccount(
     userId: input.userId,
   };
 
-  // ── 0. Idempotency / replay check ───────────────────────────────────────
+  // 0. Idempotency / replay check
   if (!dryRun) {
     const progressSnap = await progressRef.get().catch(() => null);
     if (progressSnap && progressSnap.exists) {
@@ -735,7 +633,7 @@ export async function deleteOwnAccount(
     }
   }
 
-  // ── 1. Read the user doc to source the sites[] list ────────────────────
+  // 1. Read the user doc for the sites[] list
   const userSnap = await userRef.get();
   if (!userSnap.exists) {
     return {
@@ -759,7 +657,7 @@ export async function deleteOwnAccount(
       )
     : [];
 
-  // ── 2. Classify sites + refuse on owned-shared ─────────────────────────
+  // 2. Classify sites; refuse on owned-shared
   const { classification, ownedSharedSites } = await classifySites(ctx, sites);
   if (ownedSharedSites.length > 0) {
     return {
@@ -770,7 +668,7 @@ export async function deleteOwnAccount(
     };
   }
 
-  // ── 3. Stamp the progress doc as in-flight (live runs only) ────────────
+  // 3. Stamp the progress doc in-flight (live runs only)
   if (!dryRun) {
     try {
       await progressRef.set(
@@ -800,11 +698,8 @@ export async function deleteOwnAccount(
     }
   }
 
-  // ── 4. Per-site cascade ─────────────────────────────────────────────────
-  // Sole-owner sites: drain machines/deployments/logs + delete site doc.
-  // Member sites: leave the site doc; we don't even need an arrayRemove
-  //   because the user doc itself is deleted in step 6. Counted for audit.
-  // Missing sites: skipped.
+  // 4. Per-site cascade: sole-owner sites drain machines/deployments/logs + the site doc;
+  // member sites stay (step 6 deletes the user doc anyway) but are counted for the audit.
   const totals: SiteScanCounts = emptyCounts();
   let sitesDeleted = 0;
   let memberSitesRemoved = 0;
@@ -815,7 +710,6 @@ export async function deleteOwnAccount(
       memberSitesRemoved += 1;
       continue;
     }
-    // sole_owner
     const siteRef = db.collection('sites').doc(entry.siteId);
     for (const sub of SITE_SUBCOLLECTIONS) {
       const n = await drainSiteSubcollection(
@@ -834,11 +728,10 @@ export async function deleteOwnAccount(
     sitesDeleted += 1;
   }
 
-  // ── 5. User-scoped subcollections + cross-collection sweeps ────────────
+  // 5. User-scoped subcollections + cross-collection sweeps
   const passkeys = await drainUserSubcollection(ctx, 'passkeys');
-  // Device-trust records live under the same user root; drain them so a stale
-  // device-trust cookie can't skip MFA for a later account re-created under
-  // the same uid.
+  // Drain device-trust records too, else a stale trust cookie could skip MFA for a later
+  // account re-created under the same uid.
   const trustedDevices = await drainUserSubcollection(ctx, 'trustedDevices');
   const { apiKeys, apiKeyLookups } = await drainApiKeys(ctx);
   const mfaPending = await deleteMfaPending(ctx);
@@ -852,7 +745,7 @@ export async function deleteOwnAccount(
   });
   const storageObjects = await drainUserStorage(ctx);
 
-  // ── 6. Delete the user doc ─────────────────────────────────────────────
+  // 6. Delete the user doc
   let usersDeleted = 0;
   if (!dryRun) {
     await userRef.delete();
@@ -860,7 +753,7 @@ export async function deleteOwnAccount(
   deletedPaths.push(`users/${input.userId}`);
   usersDeleted = 1;
 
-  // ── 7. Revoke + delete Firebase Auth user ──────────────────────────────
+  // 7. Revoke + delete the Firebase Auth user
   let authRevoked = false;
   if (!dryRun) {
     authRevoked = await revokeAndDeleteAuthUser(ctx);
@@ -884,7 +777,7 @@ export async function deleteOwnAccount(
     storageObjects,
   };
 
-  // ── 8. Stamp the progress doc as completed ─────────────────────────────
+  // 8. Stamp the progress doc completed
   if (!dryRun) {
     try {
       await progressRef.set(

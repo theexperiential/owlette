@@ -1,10 +1,7 @@
 #!/usr/bin/env npx tsx
 /**
- * Validates the OpenAPI spec against the actual API route files.
- *
- * - Checks that every documented path maps to a real route file
- * - Warns if public-facing routes exist but aren't documented
- *
+ * Validate the OpenAPI spec against the real route files: every documented path must map to
+ * a route, and undocumented public routes are flagged.
  * Usage: npx tsx scripts/validate-openapi.ts
  */
 
@@ -45,9 +42,8 @@ const INTERNAL_ROUTES = new Set([
   '/api/agent/generate-installer',
   '/api/alerts/trigger',
   '/api/bug-report',
-  // hoot internals. The `/api/cortex/*` twins are the published back-compat
-  // aliases kept by the hoot rename (thin re-export route files) — they are
-  // undocumented for the same reason their canonical paths are.
+  // hoot internals. The `/api/cortex/*` twins are back-compat re-export aliases from the
+  // hoot rename, undocumented for the same reason as their canonical paths.
   '/api/hoot',
   '/api/hoot/autonomous',
   '/api/hoot/cancel-tool',
@@ -62,8 +58,7 @@ const INTERNAL_ROUTES = new Set([
   '/api/cortex/escalation',
   '/api/cortex/provision-key',
   '/api/cortex/stop',
-  // site-admin-only hoot policy toggle (session surface, no api-key scope) plus
-  // its back-compat alias.
+  // Site-admin-only hoot policy toggle (session surface, no api-key scope) + alias.
   '/api/sites/{siteId}/hoot-settings',
   '/api/sites/{siteId}/cortex-settings',
   '/api/cron/display-alerts',
@@ -72,9 +67,8 @@ const INTERNAL_ROUTES = new Set([
   '/api/settings/llm-models',
   '/api/cron/health-check',
   '/api/cron/process-alerts',
-  // internal-secret ingress for the `onTalonLogEventCreated` cloud function —
-  // the only path for talon events the agent writes straight to the log
-  // collection. Same posture as /api/alerts/trigger and /api/hoot/autonomous.
+  // Internal-secret ingress for `onTalonLogEventCreated`; same posture as
+  // /api/alerts/trigger and /api/hoot/autonomous.
   '/api/talons/internal/match',
   '/api/legal/dmca',
   '/api/setup/generate-token',
@@ -93,10 +87,7 @@ function loadSpec(): Record<string, unknown> {
   return yaml.load(readFileSync(SPEC_PATH, 'utf-8')) as Record<string, unknown>;
 }
 
-/**
- * Convert an OpenAPI path like /api/sites/{siteId}/deployments/{deploymentId}
- * to a filesystem path like app/api/sites/[siteId]/deployments/[deploymentId]/route.ts
- */
+/** /api/sites/{siteId}/x/{y} → app/api/sites/[siteId]/x/[y]/route.ts */
 function specPathToRoutePath(specPath: string): string {
   const segments = specPath
     .replace(/^\/api\//, 'app/api/')
@@ -105,9 +96,7 @@ function specPathToRoutePath(specPath: string): string {
   return join(ROOT, ...segments, 'route.ts');
 }
 
-/**
- * Find all route.ts files under app/api/ and convert them to API paths.
- */
+/** All route.ts files under app/api/, as API paths. */
 function discoverRoutes(): string[] {
   return findRouteFiles(API_DIR)
     .map((filePath) => {
@@ -137,10 +126,7 @@ function findRouteFiles(dir: string): string[] {
   return files;
 }
 
-/**
- * Roost (project distribution v2) routes — subject to strict drift gating.
- * Any route file under these prefixes must be documented in openapi.yaml.
- */
+/** Roost prefixes: any route file under these MUST be documented in openapi.yaml. */
 function isRoostRoute(routePath: string): boolean {
   return (
     routePath.startsWith('/api/chunks/') ||
@@ -149,13 +135,9 @@ function isRoostRoute(routePath: string): boolean {
 }
 
 /**
- * Any operation on a path object that carries `x-stub: true` marks the
- * path as documentation-first — the route file is expected NOT to exist
- * yet (public-api wave 1: openapi ships ahead of implementation).
- *
- * If any method on a path is stubbed we treat the whole path as stubbed;
- * mixed live/stub methods on a single path are not supported because Next
- * routes collapse methods into a single `route.ts`.
+ * `x-stub: true` marks a path as documentation-first — its route file is expected NOT to
+ * exist yet. One stubbed method stubs the whole path: Next collapses every method into one
+ * `route.ts`, so mixed live/stub methods can't be represented.
  */
 function pathIsStub(pathItem: unknown): boolean {
   if (!pathItem || typeof pathItem !== 'object') return false;
@@ -192,9 +174,7 @@ function main() {
 
   console.log(`\nValidating ${specPaths.length} documented paths against ${routePaths.length} route files...\n`);
 
-  // Check 1: Every documented path should have a route file, unless the
-  // path (or any operation on it) is marked `x-stub: true` to indicate
-  // docs-before-implementation.
+  // 1: documented path ⇒ route file, unless `x-stub: true`.
   for (const specPath of specPaths) {
     const routeFile = specPathToRoutePath(specPath);
     if (!existsSync(routeFile)) {
@@ -208,11 +188,9 @@ function main() {
     }
   }
 
-  // Check 2: Warn about undocumented public routes. Roost routes
-  // (/api/chunks/*, /api/roosts/*) are strict — missing docs are an
-  // error, not a warning. This is the wave 1.12 drift gate: the roost
-  // contract is the whole point of the spec, so silent drift there must
-  // break CI.
+  // 2: undocumented public routes warn, except roost (/api/chunks/*, /api/roosts/*) where
+  // missing docs are an error — the roost contract is the point of the spec, so silent
+  // drift must break CI.
   const specPathSet = new Set(specPaths);
   for (const routePath of routePaths) {
     if (specPathSet.has(routePath) || INTERNAL_ROUTES.has(routePath)) {
@@ -229,9 +207,8 @@ function main() {
     }
   }
 
-  // Check 3: Documented methods should also exist on the matched route
-  // module. Next.js collapses HTTP methods into one route.ts file, so path
-  // presence alone can miss a stale method in the OpenAPI contract.
+  // 3: documented methods must exist on the route module — Next collapses methods into one
+  // file, so path presence alone hides a stale documented method.
   for (const { path, method } of getOpenApiOperations(spec)) {
     const pathItem = paths[path];
     const routeFile = specPathToRoutePath(path);
@@ -242,9 +219,8 @@ function main() {
     }
   }
 
-  // Check 4: Every source operation should declare its auth model
-  // explicitly. Scalar renders operation-level security most clearly, so
-  // protected endpoints should not rely on the global security fallback.
+  // 4: operations declare auth explicitly — Scalar renders operation-level security most
+  // clearly, so don't lean on the global fallback.
   for (const { path, method, operation } of getOpenApiOperations(spec)) {
     if (!operationHasExplicitSecurity(operation)) {
       console.error(`ERROR: ${method.toUpperCase()} ${path} is missing operation-level security`);
@@ -252,10 +228,8 @@ function main() {
     }
   }
 
-  // Check 5: Validate the actual reference input served by /api/openapi.
-  // The renderer enriches the YAML with examples and consistent auth/scope
-  // notes, and this gate prevents the interactive docs from regressing to
-  // a shape-only shell.
+  // 5: validate what /api/openapi actually serves — the renderer adds examples and
+  // auth/scope notes, and this stops the interactive docs decaying to a shape-only shell.
   for (const { path, method, operation } of renderedOperations) {
     if (!operationHasReferenceExample(operation)) {
       console.error(`ERROR: ${method.toUpperCase()} ${path} is missing rendered examples`);
@@ -267,7 +241,6 @@ function main() {
     }
   }
 
-  // Summary
   console.log('');
   if (errors === 0 && warnings === 0 && stubs === 0) {
     console.log('All documented paths match route files. No undocumented public routes found.');

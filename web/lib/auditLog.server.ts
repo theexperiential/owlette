@@ -1,29 +1,17 @@
 /**
  * audit log writer (security-boundary-migration wave 1.3).
  *
- * Writes structured authorization-decision records to
- * `sites/{siteId}/audit_log/{entryId}`. Every privileged action — whether
- * mediated by a user session, an api key, or a system actor (hoot, jobs)
- * — produces exactly one entry per (correlationId, outcome) pair. The
- * `correlationId` is the join key tying an audit decision to any related
- * state writes the action produced (the same id is stamped onto command
- * docs, deployment docs, etc. so an investigator can pivot from a state
- * mutation to its authorization context and back).
+ * Writes authorization decisions to `sites/{siteId}/audit_log/{entryId}` — exactly one
+ * entry per (correlationId, outcome), for user, api-key and system actors alike. The
+ * `correlationId` is also stamped onto the state docs an action produces (commands,
+ * deployments) so an investigator can pivot between state and authorization context.
  *
- * Two write surfaces:
- *   - `writeAuditEntry(siteId, entry)` — fire-and-forget; the returned
- *     promise is `void` and resolves immediately. Failures are logged but
- *     never thrown. Default for `deny` and `error` outcomes.
- *   - `writeAuditEntryBlocking(siteId, entry)` — returns `Promise<void>`
- *     that callers MUST await. Wave 2.1 (`authorizedHandler`) will use
- *     this for `allow` outcomes so a failed audit fails the request closed
- *     (503) rather than silently letting a privileged action through with
- *     no record. Both surfaces share the same internal write logic.
+ * `writeAuditEntry` is fire-and-forget and never throws — default for deny/error.
+ * `writeAuditEntryBlocking` must be awaited so a failed audit fails the request closed
+ * (503) instead of letting a privileged action through unrecorded (wave 2.1 allows).
  *
- * `enforcementBypassed: true` indicates a kill-switch was active at
- * decision time. We surface this at warn level to server logs in addition
- * to the audit row so ops can see kill-switch usage in real time without
- * needing to query firestore.
+ * `enforcementBypassed: true` means a kill switch was active at decision time; also
+ * logged at warn level so ops see kill-switch usage without querying firestore.
  */
 
 import crypto from 'crypto';
@@ -32,10 +20,6 @@ import type { Capability } from '@/lib/capabilities';
 import { getAdminDb } from '@/lib/firebase-admin';
 import logger from '@/lib/logger';
 import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
-
-/* -------------------------------------------------------------------------- */
-/*  capability + actor types                                                  */
-/* -------------------------------------------------------------------------- */
 
 export type { Capability };
 
@@ -60,10 +44,6 @@ export type SystemActor = {
 };
 
 export type AuditActor = UserActor | SystemActor;
-
-/* -------------------------------------------------------------------------- */
-/*  audit entry shape                                                         */
-/* -------------------------------------------------------------------------- */
 
 export type AuditTargetKind =
   | 'site'
@@ -103,35 +83,22 @@ export interface AuditEntry {
   timestamp: Timestamp;
 }
 
-/**
- * Caller-facing entry shape — `timestamp` is filled by the writer.
- */
+/** Caller-facing entry shape — `timestamp` is filled by the writer. */
 export type AuditEntryInput = Omit<AuditEntry, 'timestamp'>;
 
 const AUDIT_LOG_COLLECTION = 'audit_log';
 
-/* -------------------------------------------------------------------------- */
-/*  correlation id                                                            */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Generate a fresh correlation id. URL-safe, 22 hex chars (88 bits of
- * entropy — collision-resistant well past audit log retention windows).
- * The same id can be embedded into any state docs the action produces so
- * an investigator can pivot from a state row to its audit row.
+ * Fresh correlation id: URL-safe, 22 hex chars (88 bits — collision-resistant well past
+ * audit retention). Embed it in state docs to pivot from a state row to its audit row.
  */
 export function generateCorrelationId(): string {
   return crypto.randomBytes(11).toString('hex');
 }
 
-/* -------------------------------------------------------------------------- */
-/*  writers                                                                   */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Fire-and-forget audit write. Never throws; never blocks. Use for
- * `deny` and `error` outcomes where the caller already knows the response
- * it wants to send and an audit failure should not change that.
+ * Fire-and-forget audit write. Never throws, never blocks — for deny/error outcomes where
+ * the response is already decided and an audit failure shouldn't change it.
  */
 export function writeAuditEntry(siteId: string, entry: AuditEntryInput): void {
   void writeAuditEntryInternal(siteId, entry).catch((err) => {
@@ -150,10 +117,8 @@ export function writeAuditEntry(siteId: string, entry: AuditEntryInput): void {
 }
 
 /**
- * Awaitable audit write. Resolves on successful firestore commit, rejects
- * on failure. Wave 2.1 uses this for `allow` outcomes so a failed audit
- * fails the request closed (503) rather than silently letting a
- * privileged action through with no record.
+ * Awaitable audit write; rejects on failure so `allow` outcomes fail the request closed
+ * (503) rather than letting a privileged action through with no record.
  */
 export async function writeAuditEntryBlocking(
   siteId: string,
@@ -175,8 +140,7 @@ async function writeAuditEntryInternal(
     throw new Error('writeAuditEntry: siteId is required');
   }
 
-  // Surface kill-switch bypass at warn level too — ops shouldn't need to
-  // tail firestore to see when capability/rate-limit enforcement is off.
+  // Warn level too, so ops see enforcement being switched off without tailing firestore.
   if (entry.enforcementBypassed) {
     logger.warn('authorization enforcement bypassed', {
       context: 'auditLog',
@@ -213,10 +177,8 @@ async function writeAuditEntryInternal(
     .collection(AUDIT_LOG_COLLECTION)
     .doc();
 
-  // Use FieldValue.serverTimestamp() at write time so the persisted
-  // timestamp is authoritative server time, not whatever the request
-  // handler thought "now" was. The in-memory AuditEntry type still
-  // claims `Timestamp` because that's what reads will see.
+  // serverTimestamp() at write time so the persisted value is authoritative server time,
+  // not the handler's idea of "now". The in-memory type says `Timestamp` — what reads see.
   const payload: Record<string, unknown> = {
     correlationId: entry.correlationId,
     actor: entry.actor,
@@ -260,9 +222,8 @@ function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
 }
 
 /**
- * Redact actor identity for log lines (audit row keeps the full record).
- * Keeps the type + role/name but trims user ids to a short prefix so logs
- * don't leak full uids on every kill-switch flip.
+ * Redact actor identity for log lines (the audit row keeps the full record): keeps type +
+ * role/name but trims user ids to a prefix, so logs don't leak uids on kill-switch flips.
  */
 function redactActorForLog(actor: AuditActor): Record<string, unknown> {
   if (actor.type === 'user') {
@@ -297,15 +258,9 @@ function emitAuditWriteFailure(siteId: string, entry: AuditEntryInput, err: unkn
   });
 }
 
-/* -------------------------------------------------------------------------- */
-/*  ttl cleanup (placeholder)                                                 */
-/* -------------------------------------------------------------------------- */
-
 /**
- * 90-day ttl cleanup for audit log entries. Stubbed for milestone a — the
- * full implementation lands in wave 5.3 (or a later milestone) once the
- * scheduled-cleanup system actor is wired up. Intentionally a no-op that
- * logs so accidental wiring is loud rather than silent.
+ * 90-day ttl cleanup for audit entries — stubbed until the scheduled-cleanup system actor
+ * is wired up (wave 5.3+). Deliberately a logging no-op so accidental wiring is loud.
  */
 export async function cleanupExpiredAuditEntries(): Promise<void> {
   logger.info('TODO: implement TTL cleanup in wave 5.3 or later', {

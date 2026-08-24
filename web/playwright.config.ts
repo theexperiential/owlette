@@ -1,12 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Playwright E2E test configuration
- *
- * Runs the web app against Firebase emulators (Auth + Firestore + Storage)
- * on non-default ports so it can run alongside `npm run dev` on :3000.
- *
- * See dev/active/playwright-e2e/plan.md for the full strategy.
+ * Runs the web app against Firebase emulators (Auth + Firestore + Storage) on
+ * non-default ports so it coexists with `npm run dev` on :3000.
+ * Strategy: dev/active/playwright-e2e/plan.md.
  */
 
 const PORT = Number(process.env.E2E_PORT) || 3100;
@@ -22,18 +19,16 @@ const REPORT_DIR = process.env.E2E_REPORT_DIR || './e2e/.output/report';
 
 export default defineConfig({
   testDir: './e2e/specs',
-  // Live-dev security boundary probes have their own opt-in config and need
-  // real dev Firebase credentials. Keep the regular E2E suite emulator-only.
-  testIgnore: ['**/security-boundary/**'],
-  // Cluster ephemeral output under e2e/.output/ instead of Playwright's
-  // default web/test-results + web/playwright-report paths, which polluted
-  // the top of web/ with two separate build-output dirs. Both are
-  // gitignored via web/.gitignore.
+  // security-boundary probes need real dev credentials; keep this suite emulator-only
+  // `functions/**` needs the functions emulator, which only `npm run
+  // e2e:functions` starts — the main suite deliberately runs without it.
+  testIgnore: ['**/security-boundary/**', '**/functions/**'],
+  // keeps Playwright's two default output dirs out of the top of web/
   outputDir: OUTPUT_DIR,
-  fullyParallel: false, // Emulator state is shared across tests; serial keeps seeding deterministic.
-  forbidOnly: IS_CI, // Fail CI if a test is .only()'d
+  fullyParallel: false, // shared emulator state; serial keeps seeding deterministic
+  forbidOnly: IS_CI,
   retries: IS_CI ? 2 : 0,
-  workers: 1, // Single worker for now — emulator-seeded state can't be parallel-shared without more plumbing
+  workers: 1, // emulator-seeded state can't be parallel-shared yet
   reporter: IS_CI
     ? [['list'], ['html', { open: 'never', outputFolder: REPORT_DIR }], ['github']]
     : [['list'], ['html', { open: 'never', outputFolder: REPORT_DIR }]],
@@ -41,20 +36,16 @@ export default defineConfig({
   globalSetup: require.resolve('./e2e/global-setup'),
   globalTeardown: require.resolve('./e2e/global-teardown'),
 
-  // expect() default timeout. The use.actionTimeout below is 10s but the per-assertion
-  // expect timeout falls back to Playwright's 5s default unless set here, which produced a
-  // pattern of ~40 failures where hydration races on auth-gated pages tripped the 5s ceiling
-  // even though actions/navigation already had headroom. Aligning the two at 10s removes the
-  // mismatch; passing tests are unaffected (assertions still resolve as soon as they're true).
+  // Must match actionTimeout: left at Playwright's 5s default, hydration races on
+  // auth-gated pages tripped the ceiling in ~40 specs that had action headroom.
   expect: { timeout: 10_000 },
 
   use: {
     baseURL: BASE_URL,
-    // Always capture traces + screenshots on failure for post-mortem.
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
-    // Slightly larger than default; Firebase auth + Firestore roundtrips can take a second on cold emulator.
+    // cold-emulator auth + Firestore roundtrips need more than the default
     actionTimeout: 10_000,
     navigationTimeout: 20_000,
   },
@@ -63,21 +54,13 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      // specs/mobile/** belongs to the mobile-chromium project below. Without
-      // this exclusion they would also run here at desktop width and assert
-      // layouts that only exist under a narrow viewport.
-      //
-      // NOTE: a project-level testIgnore REPLACES the config-level one rather
-      // than merging with it, so the security-boundary exclusion has to be
-      // repeated here — otherwise those live-Firebase specs rejoin this project.
-      testIgnore: ['**/security-boundary/**', '**/mobile/**'],
+      // A project-level testIgnore REPLACES the config-level one rather than
+      // merging, so security-boundary must be repeated here.
+      testIgnore: ['**/security-boundary/**', '**/mobile/**', '**/functions/**'],
     },
     {
-      // Mobile viewport on Chromium by design: the iPhone entries in `devices`
-      // pin `browserName: 'webkit'`, and CI installs Chromium only
-      // (.github/workflows/e2e.yml → `playwright install --with-deps chromium`).
-      // Desktop Chrome plus an explicit 390x844 touch viewport exercises the
-      // same responsive surface on the one engine guaranteed to be present.
+      // Chromium, not an iPhone device entry: those pin webkit and CI installs
+      // chromium only. An explicit 390x844 touch viewport covers the same surface.
       name: 'mobile-chromium',
       use: {
         ...devices['Desktop Chrome'],
@@ -86,37 +69,45 @@ export default defineConfig({
         hasTouch: true,
         deviceScaleFactor: 3,
       },
-      // Scoped so `workers: 1` (global) doesn't pay for a second full pass of
-      // the suite at mobile size. Playwright normalizes paths to forward
-      // slashes before matching, so this holds on Windows too.
+      // Scoped so workers:1 doesn't pay for a second full pass. Playwright
+      // normalizes to forward slashes, so this matches on Windows too.
       testMatch: /mobile\/.*\.spec\.ts/,
+    },
+    {
+      // Cloud Functions trigger integration. Separate project because these
+      // are the only specs that need the `functions` emulator, and enabling it
+      // for the whole suite is not free: onMetricsWrite fires on EVERY machine
+      // doc write, so metrics_history accretes across all ~346 specs and the
+      // emulator slows as the run proceeds. That pushed
+      // time-travel/apply-ack-before-deadline past its 10s action timeout —
+      // a spec that passes in 7-8s alone. Isolating them keeps the main gate
+      // unperturbed and this run down to ~40s.
+      name: 'functions-triggers',
+      use: { ...devices['Desktop Chrome'] },
+      // A project-level testIgnore REPLACES the config-level one (same gotcha
+      // the chromium project documents). Without this override the project
+      // inherits the config's '**/functions/**' ignore and matches nothing,
+      // which playwright reports as a bare "No tests found".
+      testIgnore: ['**/security-boundary/**'],
+      testMatch: /functions\/.*\.spec\.ts/,
     },
   ],
 
-  // Start the Next.js web server for the duration of the test run. Playwright
-  // waits on `url` to return 200 before running tests.
-  //
-  // Env vars threaded in here drive the emulator branches in web/lib/firebase.ts
-  // and web/lib/firebase-admin.ts — without them, the app hits real Firebase.
+  // Env vars here drive the emulator branches in web/lib/firebase.ts and
+  // firebase-admin.ts — without them the app hits real Firebase.
   webServer: {
-    // Why `scripts/e2e-next-server.mjs`, not `next dev`:
-    //   Next 16 + Turbopack refuses to start a second `next dev` in the same
-    //   project directory, even on different ports. The wrapper runs the
-    //   production Next app and serves .next/static directly first; this avoids
-    //   rare long-suite 500s for existing chunk/font files on Windows while
-    //   preserving Next routing and API behavior. The top-level `npm run e2e`
-    //   script handles the production build first.
+    // Not `next dev`: Next 16 + Turbopack refuses a second `next dev` in the same
+    // project dir even on another port. The wrapper serves the production build,
+    // with .next/static served directly to dodge rare Windows long-suite 500s.
     command: `node scripts/e2e-next-server.mjs --port ${PORT} --hostname 127.0.0.1`,
     url: BASE_URL,
-    // Reusing a local server can attach Playwright to an older Next build whose
-    // HTML references chunks that no longer exist after `npm run e2e:build`.
-    // Starting a fresh server per run keeps static assets and build manifests aligned.
+    // a reused server can serve HTML referencing chunks the last e2e:build deleted
     reuseExistingServer: false,
     timeout: 60_000,
     stdout: 'pipe',
     stderr: 'pipe',
     env: {
-      // Client-side: gate the connectXEmulator() calls in web/lib/firebase.ts
+      // client-side: gates connectXEmulator() in web/lib/firebase.ts
       NEXT_PUBLIC_USE_FIREBASE_EMULATOR: 'true',
       NEXT_PUBLIC_FIREBASE_PROJECT_ID: 'demo-playwright-e2e',
       NEXT_PUBLIC_FIREBASE_API_KEY: 'demo-api-key', // emulator accepts anything non-empty
@@ -127,48 +118,38 @@ export default defineConfig({
       NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST: AUTH_EMULATOR_HOST,
       NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST: FIRESTORE_EMULATOR_HOST,
       NEXT_PUBLIC_FIREBASE_STORAGE_EMULATOR_HOST: STORAGE_EMULATOR_HOST,
-      // Server-side: trigger the emulator branch in web/lib/firebase-admin.ts
+      // server-side: emulator branch in web/lib/firebase-admin.ts
       FIREBASE_AUTH_EMULATOR_HOST: AUTH_EMULATOR_HOST,
       FIRESTORE_EMULATOR_HOST,
       FIREBASE_STORAGE_EMULATOR_HOST: STORAGE_EMULATOR_HOST,
       FIREBASE_PROJECT_ID: 'demo-playwright-e2e',
       OWLETTE_NEXT_DIST_DIR: NEXT_DIST_DIR,
-      // Keep iron-session happy. Any 32+ char string works for emulator-only.
+      // iron-session needs 32+ chars
       SESSION_SECRET: 'demo-session-secret-for-emulator-playwright-tests-32chars',
       MFA_ENCRYPTION_KEY: 'demo-mfa-encryption-secret-for-playwright-only',
-      // Silence Sentry in test.
       NEXT_PUBLIC_SENTRY_DSN: '',
-      // Disable Upstash-backed rate limiting. Without this override, the
-      // webServer inherits UPSTASH_REDIS_REST_URL from .env.local and the
-      // auth-session endpoint enforces a 10-per-minute limit per IP — which
-      // rapid E2E runs (global-setup signs in 3 roles back-to-back, then
-      // individual specs re-auth) can blow through, leaving global-setup to
-      // time out on /login redirects. Empty strings short-circuit the
-      // `if (url && token)` init block in web/lib/rateLimit.ts so every
-      // `withRateLimit(...)` wrapper no-ops.
+      // Empty strings short-circuit the init block in web/lib/rateLimit.ts. Without
+      // this the webServer inherits UPSTASH_* from .env.local and global-setup's
+      // three back-to-back sign-ins blow the 10/min per-IP auth-session limit.
       UPSTASH_REDIS_REST_URL: '',
       UPSTASH_REDIS_REST_TOKEN: '',
-      // Disable the in-memory rate limiter too — it caps at 15 requests
-      // per minute per IP, which is easy to blow through with back-to-back
-      // admin-API E2E specs (tokens, installers, webhooks, admin-api-403,
-      // etc.) and produces flaky 429s unrelated to the contract under test.
-      // Only honored when explicitly set; production ignores this var.
+      // In-memory limiter too (15/min per IP): back-to-back admin-API specs hit it
+      // and 429 on contracts unrelated to the test. Production ignores this var.
       E2E_DISABLE_RATE_LIMIT: 'true',
-      // Tells web/lib/r2Client.server.ts:hasChunk() to consult the
-      // Firestore `siteChunks/{digest}` presence rows seeded by
-      // web/e2e/helpers/seed.ts:seedChunks instead of doing a real R2
-      // HeadObject. Production code path is unchanged when this var is
-      // unset. Required for any spec that lets POST /versions go through
-      // the real finalize handler.
+      // Makes r2Client.server.ts:hasChunk() read the seeded Firestore
+      // `siteChunks/{digest}` rows instead of a real R2 HeadObject — required by
+      // any spec that runs POST /versions through the real finalize handler.
       OWLETTE_E2E: '1',
-      // Cloudflare's documented always-pass Turnstile test keys. Using these
-      // rather than a bypass flag means the specs exercise the REAL
-      // verifyTurnstileToken() path — script load, explicit render, token
-      // submit, and a live siteverify round-trip — instead of skipping it.
-      //
-      // The dummy secret answers `hostname: "example.com"` and returns NO
-      // `action` field, hence example.com in the allowlist below and the
-      // `result_with_testing_key` branch in lib/turnstile.server.ts.
+      // RP override honored by webauthn.server.ts only when OWLETTE_E2E==='1':
+      // the production build would otherwise use RP 'owlette.app' + https origins
+      // and no loopback ceremony could complete. 'localhost', not BASE_URL's
+      // 127.0.0.1 — an IP literal is not a valid RP ID (see e2e/helpers/webauthn.ts).
+      WEBAUTHN_RP_ID: 'localhost',
+      WEBAUTHN_ORIGINS: `http://localhost:${PORT}`,
+      // Cloudflare's always-pass test keys, so specs run the REAL
+      // verifyTurnstileToken() path rather than a bypass flag. The dummy secret
+      // answers hostname "example.com" and omits `action` — hence the allowlist
+      // entry and the `result_with_testing_key` branch in lib/turnstile.server.ts.
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
       TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
       TURNSTILE_HOSTNAMES: 'example.com,localhost,127.0.0.1',

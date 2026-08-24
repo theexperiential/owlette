@@ -9,7 +9,10 @@ description: "Get your first machine monitored in under 5 minutes."
 
 1. Go to [owlette.app](https://owlette.app)
 2. Click **Register** and create an account with email/password or Google sign-in
-3. Optionally set up **two-factor authentication** or register a **passkey** for fast biometric login
+3. Set up **two-factor authentication**. It's required, and either option satisfies it on its own:
+   - a **passkey** (Windows Hello, Touch ID, Face ID, a security key, or a password manager like 1Password) signs you in and clears 2FA in one step, with no code to type
+   - an **authenticator app** gives you 6-digit codes — these run on desktop as well as mobile, so you don't need a phone
+4. Save the **backup codes** you're shown at the end — they're how you get back in if you lose the device
 
 ---
 
@@ -41,8 +44,8 @@ The dashboard header has two installer buttons side by side — pick the one tha
 
 1. Run the installer **as Administrator** on your target machine
 2. Follow the setup wizard
-3. A console window displays a **pairing phrase** (3 random words), the authorization URL, and the prompt **"press Enter to open the pairing page in your browser"**
-4. Press Enter only if you want to open the local browser, then select a site and click **"Authorize"**
+3. The owlette window opens on **join a site**, showing a **pairing phrase** (3 random words), the authorization link, and which owlette server it belongs to
+4. Click **open owlette.app/add** in that window to authorize from this machine, then select a site and click **"Authorize"**
 5. Or authorize from a phone or another computer by opening the displayed URL and entering the pairing phrase
 6. The agent receives credentials and connects — done
 

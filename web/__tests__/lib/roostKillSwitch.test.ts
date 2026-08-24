@@ -1,11 +1,8 @@
 /**
  * @jest-environment node
  *
- * tests for web/lib/roostKillSwitch.ts (roost wave 5.4).
- *
- * Must agree with the python-side `agent/src/roost_kill_switch.py` on the
- * fail-open semantics + field name. If those drift, deploys will still go
- * out to some agents and not others — a bad state.
+ * web/lib/roostKillSwitch.ts. Must agree with `agent/src/roost_kill_switch.py` on fail-open
+ * semantics and field name — drift means deploys reach some agents and not others.
  */
 
 import {
@@ -37,15 +34,14 @@ describe('isEnabledFromDoc', () => {
   });
 
   it('non-boolean value → enabled (fail-open on type confusion)', () => {
-    // matches python: a string "false" is NOT treated as disabled.
-    // only the literal boolean false flips the switch.
+    // Matches python: only the literal boolean false flips the switch, not the string "false".
     expect(isEnabledFromDoc({ [ROOST_ENABLED_FIELD]: 'false' })).toBe(true);
     expect(isEnabledFromDoc({ [ROOST_ENABLED_FIELD]: 0 })).toBe(true);
     expect(isEnabledFromDoc({ [ROOST_ENABLED_FIELD]: null })).toBe(true);
   });
 
   it('array doc → enabled (defensive)', () => {
-    // typeof [] === 'object' would leak through without the Array.isArray guard.
+    // typeof [] === 'object' leaks through without the Array.isArray guard.
     expect(isEnabledFromDoc([] as unknown as Record<string, unknown>)).toBe(true);
   });
 });
@@ -98,8 +94,7 @@ describe('gateOrProceed', () => {
 
 describe('contract with python side', () => {
   it('ROOST_ENABLED_FIELD constant is stable', () => {
-    // must match agent/src/roost_kill_switch.py's ROOST_ENABLED_FIELD.
-    // if this ever changes, the python file must change in the SAME commit.
+    // Must match agent/src/roost_kill_switch.py's ROOST_ENABLED_FIELD — change both in ONE commit.
     expect(ROOST_ENABLED_FIELD).toBe('roostEnabled');
   });
 });

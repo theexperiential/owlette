@@ -1,40 +1,31 @@
 /**
- * Time-series downsampling for metrics charts (single source of truth)
+ * Time-series downsampling for metrics charts. Used by useHistoricalMetrics for
+ * both the in-loop memory trim and the final display reduction.
  *
- * Used by useHistoricalMetrics for both its in-loop memory trim and the final
- * display reduction. The core invariant: downsampling must be uniform over
- * TIME, not over array index.
+ * INVARIANT: downsample uniformly over TIME, never over array index.
  *
- * Why that matters: samples stream in oldest-first, and the in-loop trim used
- * to re-downsample the accumulated (oldest) data every time the buffer filled,
- * while newer samples kept arriving at full density. After k trims the oldest
- * region held ~(1/3)^k of its samples. The final index-stepped downsample then
- * preserved that recency bias, and the gap-marker pass — whose threshold is the
- * median interval, dominated by the dense recent half — flanked every sparse
- * old point with nulls. Recharts draws nothing for an isolated point between
- * nulls (lines render with dot={false}), so month/year/all charts appeared to
- * start halfway through the range even though every bucket existed in
- * Firestore.
+ * Index stepping was a real bug. Samples stream oldest-first, so each in-loop
+ * trim re-thinned only the accumulated old data while new samples arrived at
+ * full density — after k trims the oldest region held ~(1/3)^k of its samples.
+ * The gap-marker threshold (median interval, dominated by the dense recent
+ * half) then flanked every sparse old point with nulls, and Recharts draws
+ * nothing for an isolated point between nulls under dot={false}. month/year/all
+ * charts appeared to start halfway through the range.
  *
- * Slot sampling over a fixed [domainStart, domainEnd] has no such bias: each
- * slot keeps its first sample, so a region's survival doesn't depend on how
- * many trims it lived through — re-trimming already-trimmed data is a no-op
- * (at most one sample per slot either way).
+ * Slot sampling over a fixed [domainStart, domainEnd] has no such bias, and
+ * re-trimming trimmed data is a no-op: at most one sample per slot either way.
  */
 
-/** Minimal shape both helpers need. ChartDataPoint satisfies this. */
+/** Minimal shape both helpers need; ChartDataPoint satisfies it. */
 export interface TimedPoint {
   time: number; // milliseconds
 }
 
 /**
- * Reduce `samples` (sorted ascending by time) to at most `targetCount + 1`
- * points, uniformly over the [domainStart, domainEnd] time window: the window
- * is divided into `targetCount` equal slots and the first sample in each slot
- * is kept. The last sample is always included so the line reaches "now".
- *
- * Slots where the machine was offline simply keep nothing — genuine gaps
- * survive for insertGapMarkers to mark.
+ * Reduce time-ascending `samples` to at most `targetCount + 1` points by
+ * keeping the first sample in each of `targetCount` equal slots across
+ * [domainStart, domainEnd]. The last sample is always kept so the line reaches
+ * "now"; empty slots keep nothing, leaving real gaps for insertGapMarkers.
  */
 export function downsampleTimeUniform<T extends TimedPoint>(
   samples: T[],
@@ -71,11 +62,9 @@ export function downsampleTimeUniform<T extends TimedPoint>(
 }
 
 /**
- * Insert gap markers where consecutive samples are too far apart, so Recharts
- * breaks the line instead of interpolating across offline periods. The gap
- * point is produced by `makeGapPoint` (callers supply an all-null point of
- * their chart's shape). Threshold = 3x the median interval between consecutive
- * points (robust to outliers), floored at 5 minutes.
+ * Break the line across offline periods rather than interpolating: insert
+ * `makeGapPoint` (an all-null point of the caller's chart shape) wherever
+ * consecutive samples exceed 3x the median interval, floored at 5 minutes.
  */
 export function insertGapMarkers<T extends TimedPoint>(
   samples: T[],
@@ -95,7 +84,7 @@ export function insertGapMarkers<T extends TimedPoint>(
   const result: T[] = [];
   for (let i = 0; i < samples.length; i++) {
     if (i > 0 && samples[i].time - samples[i - 1].time > gapThreshold) {
-      // Null marker at the start of the gap breaks the line segment.
+      // A null at the gap's start breaks the segment.
       result.push(makeGapPoint(samples[i - 1].time + 1));
     }
     result.push(samples[i]);

@@ -1,38 +1,11 @@
 /**
- * Shared Firestore Mock for API Route Handler Tests
+ * Shared Firestore mocks + data factories for API route-handler tests.
  *
- * Provides mock objects and data factories to eliminate boilerplate
- * duplication across admin API test files.
- *
- * IMPORTANT: jest.mock() calls must be at the top level of each test file
- * (Jest hoists them). This helper provides the shared mock objects that
- * those calls reference — it does NOT call jest.mock() itself.
- *
- * Usage (in each test file):
- *
- *   import { mocks, mockDbFactory, docSnapshot, querySnapshot } from '../helpers/firestore-mock';
- *
- *   // These jest.mock() calls MUST be at the top level (hoisted by Jest)
- *   jest.mock('@/lib/withRateLimit', () => ({ withRateLimit: (h: any) => h }));
- *   jest.mock('@/lib/logger', () => ({
- *     default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
- *     __esModule: true,
- *   }));
- *   jest.mock('@/lib/apiHelpers.server', () => ({
- *     requireAdminOrIdToken: (...a: any[]) => mocks.requireAdmin(...a),
- *     getRouteParam: jest.fn((req: any, idx: number) => {
- *       const s = new URL(req.url).pathname.split('/').filter(Boolean);
- *       return s[idx];
- *     }),
- *   }));
- *   jest.mock('@/lib/firebase-admin', () => ({ getAdminDb: () => mockDbFactory() }));
- *
- *   import { GET, POST } from '@/app/api/...';
+ * This module never calls `jest.mock()` itself — Jest hoists those, so each
+ * test file must declare them at its own top level and point them at the
+ * objects exported here (e.g.
+ * `jest.mock('@/lib/firebase-admin', () => ({ getAdminDb: () => mockDbFactory() }))`).
  */
-
-/* -------------------------------------------------------------------------- */
-/*  Mock objects — shared across all test files                               */
-/* -------------------------------------------------------------------------- */
 
 export const mocks = {
   /** doc().get() */
@@ -65,10 +38,7 @@ export const mocks = {
   requireAdmin: jest.fn().mockResolvedValue({ userId: 'test-admin' }),
 };
 
-/* -------------------------------------------------------------------------- */
-/*  DB factory — returns a recursive collection/doc tree                      */
-/* -------------------------------------------------------------------------- */
-
+/** Recursive collection/doc tree. */
 function buildCollection(path = ''): Record<string, unknown> {
   return {
     doc: (_id?: string) => buildDoc(`${path}/${_id ?? 'auto'}`),
@@ -130,10 +100,6 @@ export function mockDbFactory(): Record<string, unknown> {
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Mock data factories                                                       */
-/* -------------------------------------------------------------------------- */
-
 /** Firestore document snapshot returned by doc().get(). */
 export function docSnapshot(
   id: string,
@@ -158,29 +124,18 @@ export function querySnapshot(
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  site ownership + api-key auth helpers                                     */
-/* -------------------------------------------------------------------------- */
-
 const ALL_PERMISSIONS = ['read', 'write', 'deploy', 'rollback', 'admin'] as const;
 
 /** Default owner uid used by `seedSiteOwner` / `apiKeyAuth`. */
 export const SITE_OWNER = 'user-1';
 
-/**
- * Seed `sites/{siteId}` with an `owner`, for routes that resolve ownership
- * off the site doc. Clears the map first so a scenario can't inherit the
- * previous test's.
- */
+/** Seed `sites/{siteId}.owner`. Clears the map so scenarios can't inherit. */
 export function seedSiteOwner(siteId: string, owner: string = SITE_OWNER): void {
   mocks.siteDocs.clear();
   mocks.siteDocs.set(siteId, { owner });
 }
 
-/**
- * A `ResolvedAuth` carrying an api key with wildcard scopes, so the scope
- * check is never what answers the request.
- */
+/** `ResolvedAuth` with wildcard api-key scopes, so scope never answers the request. */
 export function apiKeyAuth(userId = SITE_OWNER): {
   userId: string;
   keyContext: Record<string, unknown>;

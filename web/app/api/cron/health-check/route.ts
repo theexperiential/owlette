@@ -10,63 +10,41 @@ import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
 
 /**
- * GET /api/cron/health-check
+ * GET /api/cron/health-check — scans machines for stale heartbeats and emails
+ * site admins. Auth: X-Cron-Secret must equal CRON_SECRET. Dedupe:
+ * health.lastCronAlertAt suppresses repeats within ALERT_COOLDOWN_MS.
  *
- * Railway HTTP cron endpoint that scans all machines for stale heartbeats
- * and sends email alerts to site admins when machines appear offline.
- *
- * Authentication: X-Cron-Secret header must match CRON_SECRET env var.
- *
- * Deduplication: Writes health.lastCronAlertAt to Firestore after sending,
- * preventing repeat emails within ALERT_COOLDOWN_MS (default: 1 hour).
- *
- * Railway cron config (set in Railway dashboard):
- *   Schedule:  * /5 * * * *   (every 5 minutes)
- *   URL:       GET https://<your-app>/api/cron/health-check
- *   Header:    X-Cron-Secret: <CRON_SECRET value>
+ * Runs on cron-job.org, NOT Railway — register once per environment:
+ *   * /5 * * * *  GET https://<app>/api/cron/health-check
+ *   Header: X-Cron-Secret: <that environment's CRON_SECRET>
  */
 
-// A machine is considered offline if its heartbeat is older than this. Sized well
-// clear of the agent's 120s idle heartbeat cadence (agent/src/firebase_client.py)
-// so two consecutive missed beats still don't trip it — at 3 minutes a single slow
-// tick was enough to mark a healthy machine stale.
+// Clear of the agent's 120s idle heartbeat cadence so two missed beats don't trip
+// it — at 3 minutes one slow tick marked healthy machines stale.
 const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
 // Don't re-alert for the same machine within this window
 const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 
-// Suppress offline alerts while a machine is inside an announced reboot/shutdown
-// window. Before issuing the OS restart the agent atomically publishes a boolean
-// (`rebooting` / `shuttingDown`) AND the target instant (`rebootScheduledAt` /
-// `shutdownScheduledAt`, Unix seconds), and clears them on the first post-boot
-// heartbeat (or on cancel). We require BOTH the boolean (the agent currently
-// claims downtime) AND the target instant to fall inside a bounded window around
-// "now": up to GRACE *after* the target (cold boot + delayed autostart + auth) and
-// up to GRACE *before* it (tolerate modest agent-clock skew on the agent-computed
-// instant). Bounding both sides means a stuck boolean paired with a far-future
-// (clock-skewed) instant can't suppress a real outage indefinitely; requiring the
-// boolean means a stale instant left behind by a cancel won't suppress either.
+// Suppresses alerts inside an announced reboot/shutdown window. Requires BOTH the
+// agent's boolean (`rebooting`/`shuttingDown`) AND its target instant
+// (`rebootScheduledAt`/`shutdownScheduledAt`, Unix seconds) within ±grace of now.
+// Bounding both sides: a stuck boolean + clock-skewed far-future instant can't
+// suppress a real outage forever, and a stale instant left by a cancel can't either.
 const PLANNED_DOWNTIME_GRACE_MS = 15 * 60 * 1000; // 15 minutes, applied symmetrically
 
-// Debounce: the idle heartbeat cadence is 120s, so a short run of missed beats can
-// push a healthy machine past OFFLINE_THRESHOLD_MS. Require the machine to still be
-// stale on a later scan — at least this long after first observed stale — before
-// emailing, so a transient gap never pages.
+// Debounce: require the machine still stale this long after first observed stale,
+// so a transient gap in the 120s heartbeat cadence never pages.
 const STALE_CONFIRM_MS = OFFLINE_THRESHOLD_MS; // ~one extra cron interval of confirmed staleness
 
-// Site-level settling window. A machine confirmed not-responding is added to the
-// site's pending set rather than emailed immediately; the consolidated alert is
-// only sent once the pending set has stopped GROWING for this long. Sized as the
-// 5-minute cron interval plus margin so a staggered shutdown (machines crossing to
-// offline across several scans) coalesces into ONE email with the full count,
-// instead of a burst of disjoint partial-count batches. The trade-off is a small
-// added latency (~one extra cron interval) before the first offline email.
+// Site-level settling window: a confirmed-offline machine joins the site's pending
+// set and the consolidated alert only fires once that set stops GROWING for this
+// long, so a staggered shutdown coalesces into ONE full-count email. Cron interval
+// plus margin; costs ~one extra interval of latency on the first alert.
 const SETTLE_MS = 7 * 60 * 1000; // 7 minutes (cron interval + margin)
 
-// A machine that gracefully announced shutdown (online:false) with a heartbeat at
-// least this recent is shown as context ("reported shutting down") in the offline
-// email — recent enough to belong to the current outage picture, not a box that
-// was decommissioned or powered down days ago.
+// Graceful shutdowns (online:false) with a heartbeat this recent show as context in
+// the email — recent enough to be this outage, not a box powered down days ago.
 const RECENT_SHUTDOWN_WINDOW_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 function timestampToMillis(value: unknown): number {
@@ -89,10 +67,8 @@ export interface MachineHealthSnapshot {
 }
 
 /**
- * True when the machine is inside an announced reboot/shutdown window. Requires
- * the agent's in-progress boolean AND the target instant within ±GRACE of `now`
- * (see PLANNED_DOWNTIME_GRACE_MS) — so neither a stale instant left behind by a
- * cancel nor a clock-skewed far-future instant can suppress a real outage.
+ * Inside an announced reboot/shutdown window: in-progress boolean AND target
+ * instant within ±PLANNED_DOWNTIME_GRACE_MS of `now`.
  */
 function plannedDowntimeActive(inProgress: boolean, scheduledAtSec: number, now: number): boolean {
   if (inProgress !== true || scheduledAtSec <= 0) return false;
@@ -104,15 +80,11 @@ function plannedDowntimeActive(inProgress: boolean, scheduledAtSec: number, now:
 }
 
 /**
- * Once an announced reboot/shutdown window has fully elapsed (target instant more
- * than GRACE in the past) but the agent's latch is still set, the latch is stale
- * and must be cleared at the source: a completed shutdown can never clear its own
- * latch (the box is powered off), and a failed/never-returning reboot leaves
- * `rebooting` set with no clearer — either would otherwise pulse the status pill
- * indefinitely for every client. Each flag is evaluated independently against its
- * own window, so an in-progress reboot still within grace is left untouched. We
- * anchor on `scheduledAt` (not heartbeat) so a just-set latch whose anchor hasn't
- * landed yet is never cleared prematurely.
+ * Which reboot/shutdown latches are stale (window elapsed past grace, flag still
+ * set). Nobody else can clear them — a completed shutdown is powered off and a
+ * failed reboot never returns — so the status pill would pulse forever. Each flag
+ * is judged against its own window; anchored on `scheduledAt`, not heartbeat, so a
+ * just-set latch is never cleared prematurely.
  */
 export function stalePlannedDowntime(
   m: MachineHealthSnapshot,
@@ -134,10 +106,7 @@ export type HealthDecision =
   | { action: 'debounce' } // stale but not yet confirmed — record staleSince, don't alert yet
   | { action: 'alert'; heartbeatAgeMinutes: number };
 
-/**
- * Pure per-machine offline decision. Kept side-effect-free so it can be unit
- * tested directly (the GET handler maps the decision to Firestore writes/emails).
- */
+/** Pure per-machine offline decision; the GET handler maps it to writes/emails. */
 export function classifyMachineHealth(m: MachineHealthSnapshot, now: number): HealthDecision {
   // Only machines the agent last reported online can transition to "offline".
   if (m.online !== true) return { action: 'ignore', reason: 'offline-flag' };
@@ -145,8 +114,7 @@ export function classifyMachineHealth(m: MachineHealthSnapshot, now: number): He
   const heartbeatAge = now - m.lastHeartbeatMs;
   if (heartbeatAge <= OFFLINE_THRESHOLD_MS) return { action: 'ok' };
 
-  // Planned downtime: the agent announced a reboot/shutdown that is plausibly
-  // happening right now (boolean set + target instant within ±grace). Don't page.
+  // Announced reboot/shutdown plausibly happening right now — don't page.
   if (
     plannedDowntimeActive(m.rebooting, m.rebootScheduledAtSec, now) ||
     plannedDowntimeActive(m.shuttingDown, m.shutdownScheduledAtSec, now)
@@ -167,9 +135,8 @@ export function classifyMachineHealth(m: MachineHealthSnapshot, now: number): He
   return { action: 'alert', heartbeatAgeMinutes: Math.floor(heartbeatAge / 60000) };
 }
 
-// A machine that is confirmed not-responding this scan, carried through the
-// site-level settling aggregation and (once settled) into the alert email. The
-// ref is retained so the per-machine cooldown stamp can be written at send time.
+// Confirmed not-responding this scan. `ref` is retained so the per-machine
+// cooldown stamp can be written at send time.
 interface PendingMachine {
   machineId: string;
   ref: FirebaseFirestore.DocumentReference;
@@ -184,8 +151,8 @@ interface OfflineRow {
   heartbeatAgeMinutes: number;
 }
 
-// The three buckets that together describe a site's full offline picture, so the
-// email's count always reconciles with reality.
+// The three buckets describing a site's full offline picture, so the email's
+// count always reconciles.
 interface OfflineSections {
   notResponding: OfflineRow[]; // confirmed stale with no shutdown announcement — the page trigger
   shuttingDown: OfflineRow[]; // online:false with a recent heartbeat — graceful, context only
@@ -235,11 +202,8 @@ function offlineSectionHtml(label: string, description: string, accent: string, 
 }
 
 /**
- * Build the consolidated offline email for a site. Sections describe the full
- * picture — machines that stopped responding (the page trigger) plus the two
- * context buckets (graceful shutdowns and machines still down from an earlier
- * alert). The subject count (computed by the caller) matches the total number of
- * machines listed here, so the count always reconciles with the body.
+ * Consolidated offline email for a site. The caller's subject count must match the
+ * total listed here (page trigger + both context buckets).
  */
 function buildOfflineEmail(
   siteLabel: string,
@@ -266,10 +230,7 @@ function buildOfflineEmail(
   });
 }
 
-/**
- * Drop machines the recipient has muted from every section. The not-responding
- * set is the page trigger; if the user muted all of it, the caller skips them.
- */
+/** Drop muted machines from every section; caller skips a now-empty page trigger. */
 function filterSectionsForRecipient(sections: OfflineSections, mutedMachines: string[]): OfflineSections {
   if (mutedMachines.length === 0) return sections;
   const muted = new Set(mutedMachines);
@@ -282,11 +243,8 @@ function filterSectionsForRecipient(sections: OfflineSections, mutedMachines: st
 }
 
 /**
- * Merge-write the site-level offline-alert state (health.offlineAlert). Isolated
- * in its own try/catch so a failed site-doc write degrades gracefully (logged)
- * without aborting the run — per-machine writes and every other site still
- * process. `merge:true` deep-merges the nested map, so this only touches the
- * fields supplied here and leaves the rest of health.* untouched.
+ * Merge-write health.offlineAlert. Own try/catch so a failed site write logs and
+ * the run continues; `merge:true` deep-merges, leaving the rest of health.* alone.
  */
 async function writeSiteOfflineState(
   ref: FirebaseFirestore.DocumentReference,
@@ -312,7 +270,6 @@ async function writeSiteOfflineState(
 }
 
 export async function GET(request: NextRequest) {
-  // Validate cron secret
   const cronSecret = request.headers.get('x-cron-secret');
   if (!process.env.CRON_SECRET || cronSecret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -351,9 +308,8 @@ export async function GET(request: NextRequest) {
 
         const lastHeartbeatMs = timestampToMillis(machine.lastHeartbeat);
         const staleSinceMs = timestampToMillis(machine.health?.staleSince);
-        // Prefer the IANA name (the only value Intl accepts); the sibling
-        // machine_timezone holds the Windows registry name and would fall back
-        // to UTC in emailTimestamp.
+        // IANA name only — Intl rejects the sibling Windows registry name, which
+        // would silently fall back to UTC in emailTimestamp.
         const timezone = machine.machine_timezone_iana || machine.machine_timezone || undefined;
 
         const snapshot: MachineHealthSnapshot = {
@@ -367,13 +323,9 @@ export async function GET(request: NextRequest) {
           shutdownScheduledAtSec: unixSecondsOrZero(machine.shutdownScheduledAt),
         };
 
-        // Clear stale reboot/shutdown latches at the source. A completed shutdown
-        // never powers back on to clear its own latch, and a failed reboot never
-        // returns to clear it — once the announced window has elapsed past grace,
-        // null the flags so the status pill is correct for every client, not just
-        // the one whose heartbeat-derived `online` has already gone stale. This is
-        // a one-shot write: after it lands the flags are gone, so later scans skip
-        // it. Runs before the alert decision so it applies regardless of outcome.
+        // Clear stale reboot/shutdown latches at the source so the status pill is
+        // correct for every client. One-shot: later scans skip it. Must run before
+        // the alert decision so it applies regardless of outcome.
         const stale = stalePlannedDowntime(snapshot, now);
         if (stale.clearShutdown || stale.clearReboot) {
           const clearPayload: Record<string, unknown> = {};
@@ -392,9 +344,8 @@ export async function GET(request: NextRequest) {
         const decision = classifyMachineHealth(snapshot, now);
 
         if (decision.action === 'ok') {
-          // Heartbeat recovered — drop any stale marker so the next outage
-          // debounces cleanly from scratch. Removal from the site's pending set
-          // (if it was there) happens in the aggregation below.
+          // Recovered — drop the stale marker so the next outage debounces from
+          // scratch. Pending-set removal happens in the aggregation below.
           if (staleSinceMs > 0) {
             await machineDoc.ref.set(
               { health: { staleSince: FieldValue.delete() } },
@@ -405,9 +356,7 @@ export async function GET(request: NextRequest) {
         }
 
         if (decision.action === 'debounce') {
-          // First scan we've seen this machine stale — record when. We only
-          // alert if it's still stale on a later scan (guards against a
-          // transient gap in the 120s idle heartbeat).
+          // First scan seen stale — record when; only alert if still stale later.
           if (staleSinceMs <= 0) {
             await machineDoc.ref.set(
               { health: { staleSince: FieldValue.serverTimestamp() } },
@@ -418,8 +367,7 @@ export async function GET(request: NextRequest) {
         }
 
         if (decision.action === 'alert') {
-          // Confirmed not-responding. Do NOT email or stamp cooldown yet — feed
-          // it into the site's settling aggregation below.
+          // Do NOT email or stamp cooldown yet — settling aggregation decides.
           notResponding.push({
             machineId: machineDoc.id,
             ref: machineDoc.ref,
@@ -430,14 +378,13 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        // decision.action === 'ignore' — never a page trigger, but a machine can
-        // still belong to the email's context sections so the count is complete.
+        // 'ignore' is never a page trigger but can still fill a context section.
         if (
           machine.online === false &&
           lastHeartbeatMs > 0 &&
           now - lastHeartbeatMs <= RECENT_SHUTDOWN_WINDOW_MS
         ) {
-          // The agent explicitly flushed online:false — a graceful shutdown.
+          // Agent explicitly flushed online:false — graceful shutdown.
           shuttingDown.push({
             machineId: machineDoc.id,
             heartbeatAgeMinutes: heartbeatAgeMinutes(lastHeartbeatMs, now),
@@ -451,10 +398,8 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // --- Site-level settling aggregation -----------------------------------
-      // Persist the pending (not-responding) set on the site doc and only fire
-      // once it has stopped growing for SETTLE_MS, so a staggered shutdown emits
-      // ONE consolidated email instead of a burst of partial-count batches.
+      // Site-level settling: persist the not-responding set and only fire once it
+      // has stopped growing for SETTLE_MS, so a staggered shutdown emits ONE email.
       const priorState = (siteData.health?.offlineAlert ?? {}) as {
         pendingIds?: unknown;
         pendingUpdatedAt?: unknown;
@@ -471,9 +416,7 @@ export async function GET(request: NextRequest) {
       const idRemoved = priorPendingIds.some((id) => !currentSet.has(id));
 
       if (currentIds.length === 0) {
-        // Nothing not-responding right now. Clear any lingering pending state so
-        // a future outage settles from a clean slate. (Recovered/settled machines
-        // both land here.)
+        // Clear lingering pending state so a future outage settles from clean.
         if (priorPendingIds.length > 0) {
           await writeSiteOfflineState(siteDoc.ref, siteId, {
             pendingIds: [],
@@ -483,16 +426,13 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // Reset the settle timer only when a NEW machine joins the set (a growing
-      // outage keeps settling). A missing timestamp forces one more cycle rather
-      // than firing immediately on partial state.
+      // Only a NEW member resets the timer (a growing outage keeps settling). A
+      // missing timestamp forces one more cycle rather than firing on partial state.
       const bump = newIdAdded || priorPendingUpdatedAtMs <= 0;
       const settled = !bump && now - priorPendingUpdatedAtMs >= SETTLE_MS;
 
       if (!settled) {
-        // Still settling — persist the current set (bumping the timer only on
-        // growth; removals keep the existing timer running). Skip the write when
-        // nothing changed to avoid needless churn.
+        // Removals keep the existing timer running; skip the write if unchanged.
         if (bump || idRemoved) {
           await writeSiteOfflineState(siteDoc.ref, siteId, {
             pendingIds: currentIds,
@@ -502,11 +442,8 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // Settled — commit the consolidated alert. Stamp each pending machine's
-      // per-machine cooldown (preserving the ~1h re-alert cadence, now naturally
-      // consolidated per site) and clear the pending set BEFORE sending, so a
-      // send failure can never loop into repeated re-alerts. Each write degrades
-      // independently.
+      // Settled. Stamp per-machine cooldown and clear the pending set BEFORE
+      // sending, so a send failure can never loop into repeated re-alerts.
       for (const m of notResponding) {
         try {
           await m.ref.set(
@@ -569,13 +506,11 @@ export async function GET(request: NextRequest) {
 
       const siteLabel = await getSiteLabel(plan.siteId);
 
-      // Send individual emails so each user gets their own unsubscribe link
+      // One email per user so each gets their own unsubscribe link.
       for (const recipient of recipients) {
         try {
           const sections = filterSectionsForRecipient(plan.sections, recipient.mutedMachines);
-          // The not-responding set is the page trigger; if the user muted every
-          // triggering machine, they've opted out of this page — skip them even
-          // if context rows remain.
+          // Muted every triggering machine = opted out, even if context remains.
           if (sections.notResponding.length === 0) continue;
 
           const total = sections.notResponding.length + sections.shuttingDown.length + sections.stillOffline.length;
@@ -618,11 +553,9 @@ export async function GET(request: NextRequest) {
           }
         ).catch(console.error);
 
-        // Talon tap. Deliberately alongside the WEBHOOK fan-out and not the
-        // email branch above: `machine_offline` talons — which is where an
-        // operator's own escalation lives — must fire even when the site has
-        // no email recipients configured. This is also the only dispatcher for
-        // the event; an offline machine cannot report that it is offline.
+        // Deliberately with the webhook fan-out, not the email branch:
+        // `machine_offline` talons must fire even with no email recipients. This
+        // is the only dispatcher — an offline machine can't report itself offline.
         tapTalonMatcher(db, plan.siteId, {
           kind: 'event',
           eventType: 'machine_offline',

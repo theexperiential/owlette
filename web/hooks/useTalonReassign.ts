@@ -5,17 +5,14 @@ import { useCallback } from 'react';
 /**
  * Departure-time talon lookups + reassignment.
  *
- * A talon keeps running after its author leaves only by accident: any talon
- * with a hoot output re-resolves the AUTHOR's site access on every run, so
- * removing them from the site — or deleting the account — stops it dead at
- * whatever hour it was scheduled for. These calls are what let the removal
- * flows say "this person wrote N talons" *before* the removal, and hand them
- * to somebody who is still here.
+ * Any talon with a hoot output re-resolves its AUTHOR's site access on every
+ * run, so removing them from the site kills it at whatever hour it next fires.
+ * These calls let the removal flows say "this person wrote N talons" before the
+ * removal, and hand them to somebody still here.
  *
- * Everything goes through the API. There is no Firestore listener here on
- * purpose: `sites/{siteId}/talons` is readable by site members, but the
- * successor eligibility check that makes a reassignment safe only exists
- * server-side, so a client write path would be a way around it.
+ * API only, no Firestore listener: members can read
+ * `sites/{siteId}/talons`, but the successor-eligibility check that makes a
+ * reassignment safe exists server-side, and a client write path would skip it.
  */
 
 /** One talon in the departure preview. */
@@ -25,7 +22,7 @@ export interface AuthoredTalon {
   enabled: boolean;
 }
 
-/** The same, plus the site it lives on — the fleet-wide (soft-delete) shape. */
+/** The same plus its site — the fleet-wide soft-delete shape. */
 export interface AuthoredTalonAcrossSites {
   siteId: string;
   talonId: string;

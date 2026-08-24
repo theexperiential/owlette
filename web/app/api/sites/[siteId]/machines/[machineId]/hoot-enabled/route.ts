@@ -1,15 +1,12 @@
 /**
- * PATCH /api/sites/{siteId}/machines/{machineId}/hoot-enabled
+ * PATCH /api/sites/{siteId}/machines/{machineId}/hoot-enabled — body `{ enabled: boolean }`.
  *
- * Toggle the per-machine `cortexEnabled` flag. When `false`, hoot tool
- * calls (manual chat + autonomous investigations) are blocked at the
- * dispatch layer for that machine. The agent stays online for monitoring.
+ * Toggles the per-machine `cortexEnabled` flag. When false, hoot tool calls (manual chat
+ * and autonomous investigations) are blocked at the dispatch layer for that machine; the
+ * agent stays online for monitoring.
  *
- * security-boundary-migration wave 3.2: capability `MACHINE_CONFIG_WRITE`,
- * api-key scope `machine=<id>:write`.
- *
- * Request body:
- *   { "enabled": boolean }
+ * security-boundary-migration wave 3.2: capability `MACHINE_CONFIG_WRITE`, api-key scope
+ * `machine=<id>:write`.
  */
 import { NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';

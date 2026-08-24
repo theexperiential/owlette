@@ -1,8 +1,6 @@
 /**
- * Scene — episode 13, "logs & troubleshooting".
- *
- * Every beat in this episode is SCREEN capture (no B-ROLL). Beat list with
- * rendered VO durations (voiceover/out/13-logs-and-troubleshooting/, ffprobe):
+ * Scene — episode 13, "logs & troubleshooting". Every beat is SCREEN capture.
+ * VO durations from voiceover/out/13-logs-and-troubleshooting/ (ffprobe):
  *   b01 the activity timeline       ~19.8s  → /logs page, seeded reverse-chrono list
  *   b02 reading an entry            ~20.3s  → highlight one row + its level badge
  *   b03 filtering the noise         ~24.1s  → show filters → step through dropdowns
@@ -10,16 +8,9 @@
  *   b05 expand for the full record  ~13.3s  → expand-all toggle, highlight machine id + ts
  *   b06 clear up, and where to go next ~43.5s  → clear logs dialog (do NOT confirm)
  *
- * NOTE from the script: control-process-restarting seeds processes but not
- * logs. This scene seeds a small set of log entries inline (info / warning /
- * error mix, one with a crash screenshot) so the timeline reads as populated
- * before the camera lands on /logs. The shape matches the LogEvent interface
- * in web/app/logs/page.tsx (action, level, machineId, machineName,
- * processName, details, screenshotUrl, timestamp).
- *
- * The "crash screenshot" thumbnail is a tiny inline PNG (1x1 transparent) so
- * the row renders the Camera icon + click-to-enlarge interaction without a
- * network fetch.
+ * control-process-restarting seeds processes but not logs, so this scene seeds
+ * its own entries inline; the shape matches the LogEvent interface in
+ * web/app/logs/page.tsx.
  *
  * Run:  cd web && npm run videos -- --grep "episode 13"
  * Out:  web/e2e/.output/videos/13-logs-and-troubleshooting.mp4
@@ -40,9 +31,8 @@ import {
   moveCursorTo,
 } from './video-helpers';
 
-// 1x1 transparent PNG as a data URI — lets the crash-screenshot row render
-// the Camera indicator + the click-to-enlarge interaction without an external
-// fetch (no risk of a broken image icon on camera).
+// 1x1 transparent PNG: renders the Camera indicator + click-to-enlarge without a
+// network fetch, so no broken-image icon can appear on camera.
 const TRANSPARENT_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 
@@ -55,9 +45,8 @@ test('episode 13 — logs & troubleshooting', async ({ browser }) => {
       .doc(TEST_USERS.admin.uid)
       .set({ lastSiteId: ctx.siteId }, { merge: true });
 
-    // Seed a small population of log entries. The agent / web write these with
-    // Firestore Timestamps; Date objects are auto-converted by the Admin SDK
-    // on write, and Timestamp.toDate() round-trips cleanly on read.
+    // Seed log entries. The Admin SDK converts Date → Timestamp on write and
+    // Timestamp.toDate() round-trips cleanly on read.
     const now = Date.now();
     const ago = (sec: number): Date => new Date(now - sec * 1000);
     const logsRef = getAdminDb().collection('sites').doc(ctx.siteId).collection('logs');
@@ -171,15 +160,14 @@ test('episode 13 — logs & troubleshooting', async ({ browser }) => {
         await centerInView(page, crashRow);
         await highlight(page, crashRow, 2200);
         await narrate(page, 'b02 row anatomy', 12);
-        // Then highlight the deploy-failed row so the "red error" beat lands
-        // with two error rows on screen.
+        // Second error row, so the "red error" beat lands with two on screen.
         const deployFailedRow = page.getByTestId('log-row-log-deploy-failed');
         await centerInView(page, deployFailedRow);
         await highlight(page, deployFailedRow, 1800);
         await narrate(page, 'b02 second error row', 8);
 
-        // [b03] filtering the noise (~24.1s VO).
-        // Open the filters panel, then step through action / machine / level / date.
+        // [b03] filtering the noise (~24.1s VO) — open filters, then step through
+        // action / machine / level / date.
         const filtersBtn = page.getByRole('button', { name: /show filters/i });
         await clickWithCursor(page, filtersBtn);
         await page.waitForTimeout(400);
@@ -200,10 +188,8 @@ test('episode 13 — logs & troubleshooting', async ({ browser }) => {
         await highlight(page, dateFilter, 1400);
         await narrate(page, 'b03 date filter', 4);
 
-        // Demo the search input — click the collapsed "search" button to expand it.
-        // The collapsed-state button's accessible name is "search logs" (aria-label
-        // at web/app/logs/page.tsx:866), not just "search" — visible glyph reads
-        // "search" but a11y matches the aria-label.
+        // Expand the collapsed search button. Its accessible name is "search logs"
+        // (aria-label, web/app/logs/page.tsx:866) though the glyph reads "search".
         const searchBtn = page.getByRole('button', { name: /search logs/i });
         await clickWithCursor(page, searchBtn);
         const searchInput = page.getByTestId('logs-search');
@@ -211,12 +197,10 @@ test('episode 13 — logs & troubleshooting', async ({ browser }) => {
         await highlight(page, searchInput, 1800);
         await narrate(page, 'b03 search box', 7);
 
-        // [b04] the crash screenshot (~19.5s VO).
-        // Expand the crash row to reveal the inline thumbnail. The row's inner
-        // cells (event / details / time) are wrapped in Radix Tooltips that
-        // mount on hover and overlay the CollapsibleTrigger — same intercept
-        // pattern as ep07's MachineContextMenu. moveCursorTo + force-click past
-        // the tooltip portal (shared `clickWithCursor` is off-limits).
+        // [b04] the crash screenshot (~19.5s VO). Row cells are wrapped in Radix
+        // Tooltips that mount on hover and overlay the CollapsibleTrigger (same as
+        // ep07's MachineContextMenu), so `clickWithCursor` is off-limits — use
+        // moveCursorTo + force-click past the tooltip portal.
         await centerInView(page, crashRow);
         await moveCursorTo(page, crashRow);
         await page.waitForTimeout(250);
@@ -235,9 +219,8 @@ test('episode 13 — logs & troubleshooting', async ({ browser }) => {
         await page.keyboard.press('Escape');
         await page.waitForTimeout(400);
 
-        // [b05] expand for the full record (~13.3s VO).
-        // Collapse the already-open crash row first, then hit expand-all.
-        // Same tooltip-overlay workaround as the open above.
+        // [b05] expand for the full record (~13.3s VO). Collapse the open crash row
+        // first — same tooltip-overlay workaround — then hit expand-all.
         await moveCursorTo(page, crashRow);
         await page.waitForTimeout(250);
         await crashRow.click({ force: true });
@@ -253,8 +236,8 @@ test('episode 13 — logs & troubleshooting', async ({ browser }) => {
         await highlight(page, expandedDetails, 1800);
         await narrate(page, 'b05 expand-all detail block', 13);
 
-        // [b06] clear up, and where to go next (~43.5s VO).
-        // Collapse all back before opening the destructive dialog.
+        // [b06] clear up, and where to go next (~43.5s VO). Collapse all before
+        // opening the destructive dialog.
         await clickWithCursor(page, expandAllBtn);
         await page.waitForTimeout(300);
         const clearLogsBtn = page.getByRole('button', { name: /^clear logs$/i });
@@ -263,8 +246,8 @@ test('episode 13 — logs & troubleshooting', async ({ browser }) => {
         const clearDialog = page.getByRole('dialog', { name: /clear event logs/i });
         await expect(clearDialog).toBeVisible();
         await narrate(page, 'b06 clear dialog open', 20);
-        // Highlight the scope copy explaining what gets deleted — sized so the
-        // VO's "narrow by machine or level first" landing point hits the right beat.
+        // Scope copy explaining what gets deleted, timed so the VO's "narrow by
+        // machine or level first" landing point hits the right beat.
         const scopeCopy = clearDialog
           .getByText(/with no date range or view filters set/i)
           .first();

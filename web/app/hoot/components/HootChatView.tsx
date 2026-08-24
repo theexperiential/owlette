@@ -20,6 +20,7 @@ import { ChatInput } from './ChatInput';
 import { MachineSelector, SITE_TARGET_ID } from './MachineSelector';
 import { HootPowerToggle } from './HootPowerToggle';
 import { HootApprovalToggle } from './HootApprovalToggle';
+import { FallingFeather } from '@/components/FallingFeather';
 import { LoadingWord } from '@/components/LoadingWord';
 import { isUntitledChat } from '@/lib/hoot/untitledChat';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -84,18 +85,15 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   const [categorizingAll, setCategorizingAll] = useState(false);
   // Sidebar expand/collapse state persists per-device to Firestore.
   const { sidebarOpen, setSidebarOpen, collapsedGroups, setCollapsedGroups } = useHootSidebarPrefs();
-  // Below `md` the sidebar has no room, so the conversation list moves into a
-  // left-slide sheet. Transient UI state on purpose — unlike `sidebarOpen` it is
-  // NOT persisted to devicePrefs; a sheet that reopened itself on every visit
-  // would bury the chat behind an overlay.
+  // Below `md` the list moves into a left-slide sheet. Transient on purpose —
+  // unlike `sidebarOpen` it is NOT persisted; a sheet that reopened itself every
+  // visit would bury the chat behind an overlay.
   const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
-  // Viewport-aware branching between the desktop aside and the mobile sheet.
-  // `md:hidden` on the sheet is NOT sufficient — Radix portals the overlay +
-  // content into document.body, escaping any wrapper class. Only JS gating keeps
-  // the mobile overlay off the desktop viewport. It also guarantees the
-  // conversation list is mounted on exactly ONE surface at a time, which
-  // `sidebarScrollRef` / `loadMoreSentinelRef` depend on (see below).
-  // Starts `true` so SSR and hydration agree; the effect corrects it on mount.
+  // Viewport branch between the desktop aside and the mobile sheet. `md:hidden`
+  // is NOT enough — Radix portals overlay + content into document.body, escaping
+  // wrapper classes — and JS gating keeps the list mounted on exactly ONE surface,
+  // which the single sidebarScrollRef / loadMoreSentinelRef require. Starts `true`
+  // so SSR and hydration agree; the effect corrects it on mount.
   const [isDesktop, setIsDesktop] = useState(true);
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 768px)');
@@ -103,8 +101,8 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
     sync();
     const onChange = () => {
       sync();
-      // Crossing up into the desktop layout unmounts the sheet; drop the open
-      // flag too so coming back down doesn't reopen it over the chat.
+      // Crossing up to desktop unmounts the sheet; clear the flag so coming back
+      // down doesn't reopen it over the chat.
       if (mq.matches) setMobileConversationsOpen(false);
     };
     mq.addEventListener('change', onChange);
@@ -144,17 +142,12 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   const selectedMachine = !isSiteMode ? machines.find((m) => m.machineId === selectedMachineId) : null;
   const suppressNextChatRouteRef = useRef(false);
   const skipNextLandingResetRef = useRef(false);
-  // The routed chat id we've navigated away from (via handleNewChat /
-  // handleDeleteChat) while the URL still points at it. router.push is async, so
-  // until the pathname commits, initialChatId lags at this stale id while
-  // activeChatId is already the new chat. The load effect must not reload the
-  // stale id — that would steal selection from the just-created chat. A one-shot
-  // boolean is insufficient: the load effect re-runs on *every* render (its
-  // `loadChat` dep is rebuilt each render because the AI SDK's useChat returns a
-  // fresh object), so the flag would be spent on the first of the several renders
-  // in the navigation window and the next reload would slip through. Storing the
-  // id makes the guard hold for the whole window; the effect clears it once the
-  // pathname catches up (initialChatId moves off this id).
+  // Id of the routed chat we've navigated away from while the URL still points at
+  // it. router.push is async, so initialChatId lags at the stale id while
+  // activeChatId is already the new chat, and reloading it would steal selection.
+  // A boolean flag is insufficient: the load effect re-runs on *every* render
+  // (useChat rebuilds `loadChat` each time), so it would be spent before the
+  // pathname commits. Cleared once initialChatId moves off this id.
   const staleRoutedChatIdRef = useRef<string | null>(null);
   const previousChatIdRef = useRef<string | null>(null);
   const previousInitialChatIdRef = useRef<string | undefined>(initialChatId);
@@ -175,16 +168,14 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   const loadChat = chat.loadChat;
 
   useEffect(() => {
-    // Once the pathname commits, initialChatId moves off the stale id (to the new
-    // chat's URL or back to the landing) — the navigation window is over, so retire
-    // the guard and make that chat loadable again on a future navigation.
+    // Pathname committed (initialChatId moved off the stale id) — navigation
+    // window over, so retire the guard.
     if (staleRoutedChatIdRef.current !== null && initialChatId !== staleRoutedChatIdRef.current) {
       staleRoutedChatIdRef.current = null;
     }
     if (!initialChatId || initialChatId === activeChatId) return;
-    // A just-started new chat (or a deletion) navigated away from initialChatId,
-    // but the pathname hasn't committed yet so it still reads the stale id. Don't
-    // reload it — that would steal selection from the just-created chat.
+    // Stale id from an in-flight navigation; reloading it would steal selection
+    // from the just-created chat.
     if (initialChatId === staleRoutedChatIdRef.current) return;
     void loadChat(initialChatId);
   }, [initialChatId, activeChatId, loadChat]);
@@ -204,11 +195,10 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
     }
   }, [activeChatId, initialChatId, router]);
 
-  // Landing transition: when the URL goes from a routed chat back to /hoot
-  // (browser back, or a deletion), start a fresh chat. Skipped when an explicit
-  // handler (handleNewChat / handleDeleteChat) already started one. With the
-  // persistent layout the component is not remounted, so this fires on the
-  // initialChatId prop change rather than on mount.
+  // Landing transition: URL going from a routed chat back to /hoot (browser back,
+  // or a deletion) starts a fresh chat. Skipped when handleNewChat /
+  // handleDeleteChat already started one. The persistent layout never remounts
+  // this component, so it fires on the initialChatId prop change, not on mount.
   useEffect(() => {
     const previousInitialChatId = previousInitialChatIdRef.current;
     previousInitialChatIdRef.current = initialChatId;
@@ -253,15 +243,13 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
   const handleNewChat = useCallback((overrides?: { machineId?: string; machineName?: string }) => {
-    // The sheet is the only way to reach "new conversation" on mobile, so
-    // starting one has to dismiss it and reveal the chat. No-op on desktop,
-    // where the flag is never set.
+    // The sheet is the only route to "new conversation" on mobile, so starting one
+    // must dismiss it. No-op on desktop, where the flag is never set.
     setMobileConversationsOpen(false);
     if (initialChatId) {
-      // Navigate back to the landing URL but keep it there until the chat is
-      // persisted (handleChatPersisted replaces to /hoot/{id}). suppress stops
-      // the URL-sync effect from pushing the unsaved id; skipNextLandingReset
-      // stops the landing effect from starting a *second* new chat.
+      // Back to the landing URL until the chat persists (handleChatPersisted
+      // replaces to /hoot/{id}). suppress stops the URL-sync effect pushing the
+      // unsaved id; skipNextLandingReset stops a *second* new chat.
       suppressNextChatRouteRef.current = true;
       skipNextLandingResetRef.current = true;
       staleRoutedChatIdRef.current = initialChatId;
@@ -273,11 +261,9 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   }, [chat, initialChatId, router]);
 
   const handleConversationClick = useCallback((conversationId: string) => {
-    // Same as handleNewChat: selecting a conversation on mobile means the user
-    // is done with the list, so close the sheet onto the chat they picked.
+    // Mobile: picking a conversation means the user is done with the list.
     setMobileConversationsOpen(false);
-    // Expand the selected conversation's category group if the user had it
-    // collapsed, so the row it lives in is actually visible after selecting.
+    // Expand the selected conversation's group so its row is actually visible.
     const convo = conversationsRef.current.find((c) => c.id === conversationId);
     if (convo && !isUntitledChat(convo.title)) {
       const label = convo.category || 'General';
@@ -321,23 +307,19 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-    // `isDesktop` / `mobileConversationsOpen` are deps even though the effect
-    // never reads them: they decide WHICH surface holds the scroller and the
-    // sentinel, and remounting the list swaps the nodes these refs point at.
-    // Without them the observer would stay bound to a detached node (or never
-    // attach at all when the list first mounts inside the sheet).
+    // `isDesktop` / `mobileConversationsOpen` are deps though unread: they decide
+    // WHICH surface holds the scroller and sentinel, and remounting the list swaps
+    // the nodes these refs point at — without them the observer binds a detached
+    // node (or never attaches when the list first mounts inside the sheet).
   }, [hasMoreConversations, loadingMore, loadMoreConversations, isDesktop, mobileConversationsOpen]);
 
   // Latest conversations, readable from event handlers without re-subscribing.
   const conversationsRef = useRef(chat.conversations);
   conversationsRef.current = chat.conversations;
 
-  // Scroll the active conversation row into view whenever the active chat changes
-  // (selecting a conversation, starting a new one), so the highlighted row is
-  // never left scrolled out of sight. No state writes here — purely a DOM nudge.
-  // Also re-runs when the list moves between the desktop aside and the mobile
-  // sheet, so a freshly-opened sheet lands on the current conversation instead
-  // of at the top of the list.
+  // Nudge the active conversation row into view when the active chat changes, and
+  // when the list moves between the desktop aside and the mobile sheet so a
+  // freshly-opened sheet lands on the current conversation. DOM only, no state.
   useEffect(() => {
     if (!chat.chatId) return;
     const raf = requestAnimationFrame(() => {
@@ -353,17 +335,15 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
     .filter((c) => !c.category && !isUntitledChat(c.title))
     .map((c) => c.id);
 
-  // Drive the collapse-all/expand-all toggle off the *actual* set of visible
-  // group labels so the icon/label and the action never disagree (e.g. one
-  // section expanded while the rest are collapsed).
+  // Drive collapse-all/expand-all off the *actual* visible group labels so the
+  // icon and the action never disagree.
   const visibleGroupLabels = groupConversationsByCategory(
     chat.conversations.filter((c) => !isUntitledChat(c.title)),
   ).map((g) => g.label);
   const allGroupsCollapsed =
     visibleGroupLabels.length > 0 && visibleGroupLabels.every((l) => collapsedGroups.has(l));
 
-  // Which category the active conversation lives in — used to flag a collapsed
-  // section that contains the current chat, so the user knows where it is.
+  // Category of the active conversation — flags a collapsed section holding it.
   const activeConvo = chat.conversations.find((c) => c.id === chat.chatId);
   const activeCategoryLabel = activeConvo && !isUntitledChat(activeConvo.title)
     ? (activeConvo.category || 'General')
@@ -378,8 +358,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatIds: uncategorizedIds, siteId: currentSiteId }),
       });
-      // Apply returned categories to local state (loadMore conversations
-      // aren't watched by the snapshot listener, so we patch them here)
+      // Patch locally: loadMore conversations aren't watched by the snapshot listener.
       if (res.ok) {
         const { results } = await res.json() as { results: Record<string, string> };
         if (results && Object.keys(results).length > 0) {
@@ -393,9 +372,8 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
     }
   };
 
-  // Has this user configured an LLM API key? Their OWN key is the only one a
-  // chat can run on — there is no shared site key to fall back to, so a
-  // leftover `sites/{siteId}/settings/llm` doc must not answer this question.
+  // Has this user configured an LLM API key? Only their OWN key can run a chat —
+  // a leftover `sites/{siteId}/settings/llm` doc must not answer this.
   useEffect(() => {
     if (!user || !db) return;
     async function checkApiKey() {
@@ -419,14 +397,15 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
 
   const showConversationNotFound = Boolean(initialChatId && chat.chatLoadError === 'not_found');
 
-  // The desktop aside animates between `w-64` and `w-0`, so its children carry a
-  // fixed width to stop the content reflowing mid-collapse. In the mobile sheet
-  // the shell owns the width instead, and a fixed 256px child would leave a gap.
+  // The desktop aside animates `w-64` ↔ `w-0`, so children carry a fixed width to
+  // stop content reflowing mid-collapse. In the sheet the shell owns the width and
+  // a fixed 256px child would leave a gap.
   const conversationPanelWidth = isDesktop ? 'w-64 min-w-64' : 'w-full min-w-0';
 
   if (authLoading || sitesLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center">
+        <FallingFeather />
         <div className="text-muted-foreground"><LoadingWord /></div>
       </div>
     );
@@ -436,8 +415,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
 
   return (
     // `h-dvh`, not `h-screen`: on iOS Safari `100vh` is the URL-bar-collapsed
-    // height, so a full-height shell overflows by the height of the visible
-    // browser chrome and pushes the composer below the fold.
+    // height, so the shell overflows and pushes the composer below the fold.
     <div className="h-dvh flex flex-col">
       <PageHeader
         currentPage="hoot"
@@ -619,8 +597,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
                   chat.conversations.filter((c) => !isUntitledChat(c.title))
                 ).map((group) => {
                   const isCollapsed = collapsedGroups.has(group.label);
-                  // Highlight the header of whichever group holds the active
-                  // conversation — collapsed (where the row is hidden) or expanded.
+                  // Highlight the header of the group holding the active chat.
                   const containsActive = group.label === activeCategoryLabel;
                   return (
                     <Collapsible
@@ -857,24 +834,19 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
 }
 
 /**
- * Surface for the conversation list.
+ * Surface for the conversation list: the collapsible aside above `md`, a
+ * left-slide sheet below it (no room for a 256px column beside a usable chat
+ * pane, and history / "new conversation" would otherwise be unreachable on a
+ * phone).
  *
- * Above `md` it is the collapsible aside beside the chat. Below `md` there is no
- * room for a 256px column next to a usable chat pane, so the same children move
- * into a left-slide sheet — without it, conversation history and "new
- * conversation" are simply unreachable on a phone.
+ * Built on the `@radix-ui/react-dialog` primitives, not `components/ui/dialog` —
+ * its `DialogContent` is a centred modal that fights an edge-anchored panel. Esc,
+ * overlay-click-to-close and the focus trap come from Radix.
  *
- * Built straight on the `@radix-ui/react-dialog` primitives — the same building
- * blocks as `components/roost/RoostMobileSheet`, and deliberately not
- * `components/ui/dialog`, whose `DialogContent` is a centred modal that fights an
- * edge-anchored panel. Esc, overlay-click-to-close and the focus trap are
- * inherited from Radix.
- *
- * The branch is driven by a JS media query rather than `md:hidden`, and the two
- * branches are mutually exclusive, for two reasons: Radix portals the overlay +
- * content into document.body where a wrapper class no longer reaches them, and
- * the caller's `sidebarScrollRef` / `loadMoreSentinelRef` are single refs that
- * would end up pointing at whichever copy mounted last if both surfaces rendered.
+ * The branch is a JS media query, not `md:hidden`, and the branches are mutually
+ * exclusive: Radix portals into document.body where wrapper classes don't reach,
+ * and the caller's single sidebarScrollRef / loadMoreSentinelRef would point at
+ * whichever copy mounted last if both surfaces rendered.
  */
 function ConversationPanelShell({
   isDesktop,

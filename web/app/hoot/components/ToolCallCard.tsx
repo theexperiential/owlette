@@ -11,24 +11,16 @@ interface ToolCallCardProps {
   args: Record<string, unknown>;
   result?: unknown;
   isLoading?: boolean;
-  /**
-   * Tier-3 approval (human-in-the-loop). `requested` shows approve/deny
-   * controls; `denied` shows the declined state. Absent for tier-1/2 tools
-   * and for already-executed tier-3 calls.
-   */
+  /** Tier-3 human-in-the-loop gate; absent for tier-1/2 and executed calls. */
   approvalState?: 'requested' | 'denied';
   /** Where the tool will run, e.g. a machine name or "all machines". */
   approvalTargetLabel?: string;
   onApprove?: () => void;
   onDeny?: () => void;
-  /**
-   * Cancel the running tool call. Only provided while the tool is executing
-   * AND at least one agent command has been dispatched for it (a site-wide
-   * fan-out cancels every targeted machine) — server-side tools and
-   * not-yet-dispatched calls have no cancel affordance.
-   */
+  /** Only set while executing with >=1 agent command dispatched (cancels the
+   *  whole fan-out); server-side and undispatched calls get no cancel. */
   onCancel?: () => void;
-  /** True while the cancel request is in flight — disables the button. */
+  /** Cancel request in flight — disables the button. */
   cancelPending?: boolean;
 }
 
@@ -53,8 +45,7 @@ export function ToolCallCard({
   const awaitingApproval = approvalState === 'requested';
   const denied = approvalState === 'denied';
 
-  // Inline preview for screenshot captures: prefer the uploaded Firebase URL,
-  // fall back to inline base64 JPEG if the upload failed but the capture succeeded.
+  // Prefer the uploaded Firebase URL; fall back to inline base64 if upload failed.
   let screenshotSrc: string | null = null;
   if (toolName === 'capture_screenshot' && result != null && typeof result === 'object' && !hasError) {
     const r = result as Record<string, unknown>;
@@ -83,10 +74,8 @@ export function ToolCallCard({
         awaitingApproval ? 'border-amber-500/40 bg-amber-500/5' : 'border-border bg-secondary/50'
       }`}
     >
-      {/* Header row. The expand toggle and the cancel control are siblings on
-          one row — cancel must NOT nest inside the header <button> (nested
-          interactive controls are an axe violation), but it shares the row as
-          an inline segment rather than a stacked row of its own. */}
+      {/* Cancel is a sibling of the expand toggle, never nested inside it —
+          nested interactive controls are an axe violation. */}
       <div className="flex items-stretch">
         <button
           onClick={() => setExpanded(!expanded)}
@@ -134,9 +123,8 @@ export function ToolCallCard({
         )}
       </div>
 
-      {/* Approval banner — privileged tier-3 action needs explicit go-ahead.
-          The payload stays collapsed (expand the card header to inspect the
-          input) so it isn't duplicated here and under the expanded view. */}
+      {/* Approval banner. Payload stays collapsed so it isn't duplicated here
+          and in the expanded view. */}
       {awaitingApproval && (
         <div className="border-t border-amber-500/30 px-3 py-2.5 space-y-2.5">
           <p className="text-xs text-foreground">
@@ -170,7 +158,6 @@ export function ToolCallCard({
         </div>
       )}
 
-      {/* Inline screenshot preview (always visible when available) */}
       {screenshotSrc && (
         <a
           href={screenshotSrc}
@@ -188,10 +175,8 @@ export function ToolCallCard({
         </a>
       )}
 
-      {/* Expanded content */}
       {expanded && (
         <div className="border-t border-border px-3 py-2 space-y-2">
-          {/* Arguments */}
           {Object.keys(args).length > 0 && (
             <div>
               <div className="flex items-center">
@@ -206,10 +191,8 @@ export function ToolCallCard({
             </div>
           )}
 
-          {/* Result */}
           {result != null && (() => {
-            // Strip the inline base64 screenshot blob from the JSON dump —
-            // it's already rendered visually above and is too large to read.
+            // Strip the base64 blob — already rendered above, unreadable as JSON.
             let displayResult: unknown = result;
             if (screenshotSrc && typeof result === 'object') {
               const { base64: _b64, ...rest } = result as Record<string, unknown>;

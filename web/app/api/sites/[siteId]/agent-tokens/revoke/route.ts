@@ -14,9 +14,8 @@ type RouteParams = {
 } & Record<string, string | undefined>;
 
 /**
- * Delete document refs in Firestore batches. A single write batch is capped
- * at 500 ops; sites that accumulated thousands of rotated/dead token docs
- * blow past that, so revoke-all and prune must chunk. 450 leaves headroom.
+ * Chunked deletes — a write batch caps at 500 ops and revoke-all/prune can
+ * exceed that on sites with thousands of dead token docs. 450 leaves headroom.
  */
 async function deleteRefsInChunks(
   db: Firestore,
@@ -34,10 +33,8 @@ async function deleteRefsInChunks(
 }
 
 /**
- * POST /api/sites/{siteId}/agent-tokens/revoke
- *
- * Revoke agent refresh tokens for a site, machine, or individual token id,
- * or prune only the provably-dead (superseded-and-retired / expired) docs.
+ * POST /api/sites/{siteId}/agent-tokens/revoke — revoke agent refresh tokens
+ * by site, machine or token id, or prune only provably-dead docs.
  */
 export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
   capability: 'GLOBAL_SETTINGS_WRITE',
@@ -48,10 +45,9 @@ export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
     const { tokenId, machineId, all, prune, latestOnly } = body;
     const siteId = ctx.siteId;
 
-    // Exactly one primary revoke mode may be set. latestOnly is a MODIFIER of
-    // the machineId mode — reject it standalone or mixed with a bulk mode so a
-    // precise ({ machineId, latestOnly }) request can never fall through to a
-    // broader all/prune delete because of branch ordering.
+    // Exactly one primary mode; latestOnly is a MODIFIER of machineId. Rejecting
+    // it standalone or mixed with a bulk mode stops a precise request falling
+    // through to a broader all/prune delete on branch ordering.
     const modeCount = [tokenId, machineId, all, prune].filter(Boolean).length;
     if (modeCount === 0) {
       return NextResponse.json(
@@ -75,12 +71,8 @@ export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
     const db = adminDb.value;
     let revokedCount = 0;
 
-    /**
-     * Mutation audit for a completed revoke. `agent_refresh_tokens` doc ids
-     * ARE the refresh-token hash, so the token id is deliberately never
-     * recorded — only the mode, the machine it belonged to, and how many
-     * credentials were destroyed.
-     */
+    // `agent_refresh_tokens` doc ids ARE the refresh-token hash, so the audit
+    // records the mode, machine and count — never the token id.
     const auditActor = siteAuditActor(ctx);
     const emitRevoked = (
       mode: 'prune' | 'all' | 'token' | 'machine' | 'machine-latest',
@@ -103,10 +95,8 @@ export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
       });
 
     if (prune) {
-      // Delete only provably-dead docs (superseded past their grace window,
-      // or expired). Live tokens — including every agent's current
-      // credential and any in-grace rotation — are never touched, so this
-      // is safe to run at any time to reclaim the accumulated bloat.
+      // Only provably-dead docs (superseded past grace, or expired). Live
+      // tokens and in-grace rotations are untouched, so this is always safe.
       const tokensSnapshot = await db.collection('agent_refresh_tokens')
         .where('siteId', '==', siteId)
         .get();
@@ -188,12 +178,10 @@ export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
         .get();
 
       if (latestOnly) {
-        // Precise revoke: delete only the single most-recently-used LIVE token
-        // for this machineId — the credential the currently-connected agent is
-        // using. Preserves sibling tokens that share this hostname (distinct
-        // machines cloned to the same name, or older re-pairs), so revoking one
-        // machine can't disconnect another. lastUsed is the primary key
-        // (createdAt only breaks ties) so we never mix timestamp scales.
+        // Delete only the most-recently-used LIVE token — the connected agent's
+        // credential. Siblings sharing this hostname (cloned machines, older
+        // re-pairs) survive, so revoking one machine can't disconnect another.
+        // lastUsed is the key, createdAt only breaks ties — never mix scales.
         const now = Date.now();
         let pick: QueryDocumentSnapshot | null = null;
         let pickLast = -Infinity;

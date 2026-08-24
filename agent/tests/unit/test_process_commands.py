@@ -25,9 +25,6 @@ from process_commands import (
 )
 
 
-# ─── fixtures ────────────────────────────────────────────────────────
-
-
 def _make_service(
     *,
     last_started=None,
@@ -61,9 +58,6 @@ SAMPLE_PROCESS = {
 }
 
 
-# ─── registration ────────────────────────────────────────────────────
-
-
 def test_register_handlers_registers_restart_process():
     router = CommandRouter()
     register_handlers(router)
@@ -76,9 +70,6 @@ def test_register_handlers_raises_on_double_register():
     register_handlers(router)
     with pytest.raises(ValueError, match="already registered"):
         register_handlers(router)
-
-
-# ─── happy path: running process ─────────────────────────────────────
 
 
 def test_restart_running_process_terminates_then_relaunches():
@@ -101,7 +92,6 @@ def test_restart_running_process_terminates_then_relaunches():
 
     assert "restarted" in result.lower()
     assert "1111" in result and "2222" in result
-    # graceful terminate was called with the default timeout
     # exe_path is threaded through so a .bat/.cmd target's payload is reaped
     # with its cmd.exe wrapper (shared_utils.graceful_terminate).
     shared.graceful_terminate.assert_called_once_with(
@@ -109,14 +99,13 @@ def test_restart_running_process_terminates_then_relaunches():
         timeout=DEFAULT_RESTART_TIMEOUT_SECONDS,
         exe_path=SAMPLE_PROCESS["exe_path"],
     )
-    # status was updated to KILLED before terminate
+    # KILLED must be stamped before terminate.
     shared.update_process_status_in_json.assert_any_call(
         1111, "KILLED", svc.firebase_client, process_id="proc-abc"
     )
     svc.handle_process_launch.assert_called_once_with(SAMPLE_PROCESS)
-    # immediate launch requested (skip backoff)
+    # Immediate launch — skips backoff.
     assert "proc-abc" in svc._skip_launch_delay
-    # audit event emitted with composite action
     actions = [c.kwargs.get("action") for c in svc.firebase_client.log_event.call_args_list]
     assert "process_restarted" in actions
 
@@ -162,9 +151,6 @@ def test_restart_clamps_timeout_at_30_seconds():
     )
 
 
-# ─── restart when not running ────────────────────────────────────────
-
-
 def test_restart_when_no_tracked_pid_just_launches():
     """no last_started entry → no terminate call, just launch."""
     svc = _make_service(last_started={}, launch_pid=3333)
@@ -207,9 +193,6 @@ def test_restart_when_tracked_pid_is_dead_just_launches():
     svc.handle_process_launch.assert_called_once_with(SAMPLE_PROCESS)
 
 
-# ─── stuck process: graceful_terminate handles escalation ────────────
-
-
 def test_restart_stuck_process_relies_on_graceful_terminate_escalation():
     """
     when a process doesn't respond to WM_CLOSE within timeout, the escalation
@@ -225,8 +208,8 @@ def test_restart_stuck_process_relies_on_graceful_terminate_escalation():
     with patch("process_commands.shared_utils") as shared, \
          patch("owlette_service.Util") as util:
         shared.read_config.return_value = [SAMPLE_PROCESS]
-        # graceful_terminate's own contract: returns True after escalating
-        # to terminate()/kill() if WM_CLOSE didn't take.
+        # graceful_terminate returns True after escalating to terminate()/kill()
+        # when WM_CLOSE didn't take.
         shared.graceful_terminate.return_value = True
         shared.is_within_schedule.return_value = True
         util.is_pid_running.return_value = True
@@ -241,9 +224,6 @@ def test_restart_stuck_process_relies_on_graceful_terminate_escalation():
     )
     svc.handle_process_launch.assert_called_once_with(SAMPLE_PROCESS)
     assert "1111" in result and "5555" in result
-
-
-# ─── lookup ──────────────────────────────────────────────────────────
 
 
 def test_restart_unknown_process_name_returns_not_found():
@@ -300,9 +280,6 @@ def test_restart_accepts_processid_camelcase():
     assert "restarted" in result.lower()
 
 
-# ─── payload validation ──────────────────────────────────────────────
-
-
 def test_invalid_timeout_seconds_returns_error():
     svc = _make_service()
     with patch("process_commands.shared_utils") as shared:
@@ -326,9 +303,6 @@ def test_negative_timeout_seconds_returns_error():
             "cmd-1", svc,
         )
     assert result.startswith("Error:")
-
-
-# ─── failure paths ───────────────────────────────────────────────────
 
 
 def test_relaunch_returning_none_emits_failure_audit():
@@ -389,15 +363,12 @@ def test_audit_event_failure_does_not_propagate():
         shared.is_within_schedule.return_value = True
         util.is_pid_running.return_value = True
 
-        # should not raise even though log_event blows up
+        # Must not raise even though log_event blows up.
         result = _handle_restart_process(
             {"process_name": "TouchDesigner"}, "cmd-1", svc
         )
 
     assert "restarted" in result.lower()
-
-
-# ─── manual override semantics ───────────────────────────────────────
 
 
 def test_scheduled_process_outside_window_sets_manual_override():
@@ -446,9 +417,6 @@ def test_scheduled_process_inside_window_does_not_set_manual_override():
         )
 
     assert "proc-abc" not in svc.manual_overrides
-
-
-# ─── integration via CommandRouter dispatch ──────────────────────────
 
 
 def test_handler_dispatches_through_router():

@@ -1,15 +1,11 @@
 /**
  * GET /api/hoot/conversations — list conversations the caller can access.
+ * `/api/chat` is a compatibility alias for the same handler.
  *
- * `/api/chat` remains a compatibility alias; `/api/hoot/conversations`
- * is the canonical public API path as of public-api Wave 2.9.
- *
- * Filters to conversations whose `siteId` is in the caller's effective access
- * set. For api-key callers, the access set is also intersected with the
- * `chat=<siteId>:read` (or wildcard) scopes the key carries — a key scoped
- * to one site cannot list conversations on others, even if the user behind
- * the key has access. Session/id-token callers fall through to the canonical
- * site-membership read (`getUserSiteIds`).
+ * Filters on `siteId` against the caller's effective access set. Api-key
+ * callers additionally intersect with the key's `chat=<siteId>:read` scopes, so
+ * a key scoped to one site can't list others even when the user behind it can.
+ * Session/id-token callers use `getUserSiteIds`.
  */
 
 import type { NextRequest } from 'next/server';
@@ -61,9 +57,9 @@ export async function GET(request: NextRequest) {
       request.nextUrl.searchParams.get('cursor') ??
       '';
     const includeDeleted = request.nextUrl.searchParams.get('includeDeleted') === 'true';
-    // Conversations are user-private. Default to "owner is me"; only superadmins
-    // may opt into a cross-user view via `?owner=all`. Without this default, any
-    // site member could enumerate other users' chats on shared sites.
+    // Conversations are user-private, so default to owner-is-me — without it any
+    // site member could enumerate others' chats on a shared site. Only
+    // superadmins may widen it with `?owner=all`.
     const ownerParam = request.nextUrl.searchParams.get('owner');
     let ownerFilter: string | undefined = auth.userId;
     if (ownerParam === 'all') {
@@ -117,19 +113,13 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Resolve the set of site ids whose chat conversations the caller may read.
+ * Site ids whose chat conversations the caller may read.
  *
- * - Session/id-token callers: their site-membership list (`getUserSiteIds`),
- *   plus any sites they own (resolved via a `where('owner','==',uid)` read on
- *   the `sites` collection). Superadmins fall back to "every site referenced
- *   by their key/membership" — we deliberately do not return a wildcard set
- *   here because the underlying list helper enforces a site-id filter to keep
- *   query plans sane.
- * - Api-key callers with scoped keys: intersection of their site-membership
- *   list with the `chat` scopes on the key. A wildcard chat scope (`chat=*`)
- *   widens the intersection back to the full membership list.
- * - Api-key callers with legacy keys (`scopes` empty/absent): treated like
- *   session callers — full membership list, no scope intersection.
+ * - Session/id-token: membership list plus owned sites. No wildcard even for
+ *   superadmins — the list helper needs a site-id filter for sane query plans.
+ * - Scoped api keys: membership ∩ the key's `chat` scopes; `chat=*` widens back
+ *   to the full membership list.
+ * - Legacy keys (no `scopes`): treated as session callers, no intersection.
  */
 async function resolveReadableSiteIds(
   userId: string,
@@ -159,9 +149,8 @@ async function readOwnedSiteIds(userId: string): Promise<string[]> {
     const snap = await db.collection('sites').where('owner', '==', userId).get();
     return snap.docs.map((d) => d.id);
   } catch {
-    // Owner-lookup failures degrade gracefully: the caller still sees their
-    // membership list. The list filter is a defence-in-depth narrowing — it
-    // never grants access beyond the underlying scope/membership check.
+    // Degrade to the membership list. This filter is defence-in-depth narrowing;
+    // it never grants access beyond the scope/membership check.
     return [];
   }
 }

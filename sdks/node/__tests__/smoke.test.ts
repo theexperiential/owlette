@@ -1,8 +1,6 @@
 /**
- * Integration smoke test — hits a real dev api.
- *
- * Gated by `ROOST_SDK_SMOKE=1`. Unset → all assertions skipped so the
- * hermetic jest run stays fully offline.
+ * Integration smoke test — hits a real dev api. Gated by `ROOST_SDK_SMOKE=1`
+ * so the default jest run stays offline.
  *
  * Env vars when enabled:
  *   ROOST_SDK_SMOKE_API_URL    e.g. https://dev.owlette.app
@@ -110,10 +108,7 @@ maybeDescribe('sdk smoke (ROOST_SDK_SMOKE=1)', () => {
 
   it('processes(site, machine) factory binds the tuple', async () => {
     const owlette = new Owlette({ token: SMOKE_TOKEN!, apiUrl: SMOKE_API_URL! });
-    // We can't actually list against an arbitrary machineId here, so just
-    // verify the factory returns a usable object. A real read smoke would
-    // need a known machine id from the smoke env config — leave that to
-    // the operator running the smoke suite.
+    // No known machine id in the smoke env — only assert the factory shape.
     const handle = owlette.processes(SMOKE_SITE!, '__smoke_unused_machine__');
     expect(typeof handle.list).toBe('function');
   });

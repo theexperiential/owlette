@@ -1,22 +1,8 @@
 /**
- * api-sprint W5.4 — users-api e2e (track 3B / users half).
- *
- * Hits the platform-scoped user-management endpoints with a `user=*:admin` +
- * `user=*:write` superadmin api key. Site management within those endpoints
- * lives in `site-members.spec.ts`.
- *
- * Verbs covered (≥1 happy-path each):
- *   - GET    /api/users
- *   - GET    /api/users/{uid}
- *   - POST   /api/users/{uid}/promote
- *   - POST   /api/users/{uid}/demote
- *   - POST   /api/users/{uid}/assign-sites
- *   - POST   /api/users/{uid}/remove-sites
- *   - DELETE /api/users/{uid}
- *
- * Negative paths:
- *   - 409 last_superadmin when demoting the only superadmin
- *   - 409 orphan_sites when DELETE-ing a user who owns sites without successorUid
+ * users-api e2e: every verb of the platform-scoped user-management endpoints
+ * (list, get, promote, demote, assign-sites, remove-sites, delete) driven by a
+ * `user=*:admin` + `user=*:write` superadmin key, plus the 409 last_superadmin
+ * and 409 orphan_sites paths. Site membership lives in `site-members.spec.ts`.
  */
 import crypto from 'crypto';
 import { test, expect } from '@playwright/test';
@@ -24,7 +10,7 @@ import { mintApiKey, revokeApiKey, authHeaders, type MintedApiKey } from '../../
 import { getAdminDb } from '../../helpers/emulator';
 
 const SUFFIX = crypto.randomBytes(4).toString('hex');
-// Test users — created fresh per spec so concurrent runs don't collide.
+// Created fresh per spec so concurrent runs cannot collide.
 const TARGET_UID = `e2e-target-${SUFFIX}`;
 const SUCCESSOR_UID = `e2e-successor-${SUFFIX}`;
 const ORPHAN_OWNER_UID = `e2e-orphan-${SUFFIX}`;
@@ -43,7 +29,7 @@ async function seedUser(uid: string, role: string, sites: string[] = []): Promis
     createdAt: new Date(),
     mfaEnrolled: false,
     requiresMfaSetup: false,
-    passkeyEnrolled: false,
+    mfaFactors: { totp: false, passkeys: 0 },
   });
 }
 
@@ -87,7 +73,7 @@ test.afterAll(async () => {
 });
 
 test.beforeEach(async () => {
-  // Re-create the target user fresh each test so previous mutations don't bleed.
+  // Fresh target per test so earlier mutations cannot bleed through.
   await Promise.all([
     seedUser(TARGET_UID, 'member'),
     seedUser(SUCCESSOR_UID, 'admin'),
@@ -102,7 +88,7 @@ test('GET /api/users — lists platform users', async ({ request }) => {
   expect(res.status()).toBe(200);
   const body = await res.json();
   expect(Array.isArray(body.users)).toBe(true);
-  // Should at minimum include the canonical seeded users (member-uid, admin-uid, super-uid).
+  // At minimum the canonical seeded users.
   const uids = body.users.map((u: { uid: string }) => u.uid);
   expect(uids.length).toBeGreaterThanOrEqual(3);
 });
@@ -134,7 +120,7 @@ test('POST /api/users/{uid}/promote — flips role to admin', async ({ request }
 });
 
 test('POST /api/users/{uid}/demote — flips superadmin → member', async ({ request }) => {
-  // Seed a second superadmin so the floor isn't tripped by demoting our test target.
+  // Second superadmin so demoting the target does not trip the floor.
   const extraSuper = `e2e-extra-super-${SUFFIX}`;
   await seedUser(extraSuper, 'superadmin');
   await seedUser(TARGET_UID, 'superadmin');
@@ -153,9 +139,8 @@ test('POST /api/users/{uid}/demote — flips superadmin → member', async ({ re
 });
 
 test('POST /api/users/{uid}/demote — 409 last_superadmin when demoting the only superadmin', async ({ request }) => {
-  // Promote the target to superadmin, then ensure the canonical super-uid is
-  // soft-deleted so target is the only active superadmin and can exercise the
-  // last-superadmin guard with its own still-active credentials.
+  // Target becomes the ONLY active superadmin (canonical super-uid soft-deleted)
+  // so it can trip the last-superadmin guard with live credentials.
   await seedUser(TARGET_UID, 'superadmin');
   const targetSuperKey = await mintApiKey({
     ownerUid: TARGET_UID,
@@ -177,7 +162,7 @@ test('POST /api/users/{uid}/demote — 409 last_superadmin when demoting the onl
     expect(body.code).toBe('last_superadmin');
   } finally {
     await revokeApiKey(targetSuperKey);
-    // Restore canonical superadmin so other specs in the suite keep working.
+    // Restore the canonical superadmin for the rest of the suite.
     await db
       .collection('users')
       .doc('super-uid')
@@ -200,7 +185,6 @@ test('POST /api/users/{uid}/assign-sites — adds siteIds via arrayUnion', async
 });
 
 test('POST /api/users/{uid}/remove-sites — removes siteIds via arrayRemove', async ({ request }) => {
-  // First assign so removal has an effect.
   await request.post(`/api/users/${TARGET_UID}/assign-sites`, {
     headers: authHeaders(superKey),
     data: { siteIds: [ASSIGN_SITE_ID] },
@@ -218,7 +202,6 @@ test('POST /api/users/{uid}/remove-sites — removes siteIds via arrayRemove', a
 });
 
 test('DELETE /api/users/{uid} — 409 orphan_sites when user owns sites without successorUid', async ({ request }) => {
-  // Seed a user who owns a site, then try to delete without a successor.
   await seedUser(ORPHAN_OWNER_UID, 'admin');
   await seedSite(ORPHAN_SITE_ID, ORPHAN_OWNER_UID);
 

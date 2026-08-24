@@ -1,24 +1,13 @@
 /**
  * `owlette user list | get | promote | demote | assign-sites | remove-sites | delete`.
  *
- * Drives the public platform-user routes:
+ * Drives the public `/api/users` routes.
  *
- *   GET    /api/users
- *   GET    /api/users/{uid}
- *   POST   /api/users/{uid}/promote          { role }
- *   POST   /api/users/{uid}/demote
- *   POST   /api/users/{uid}/assign-sites     { siteIds: string[] }
- *   POST   /api/users/{uid}/remove-sites     { siteIds: string[] }
- *   DELETE /api/users/{uid}?successorUid=…
+ * Every mutation carries an auto-generated `Idempotency-Key`, so a network retry
+ * replays the cached response instead of re-running the cascade.
  *
- * Every mutation carries an auto-generated `Idempotency-Key` so a network
- * retry returns the cached response rather than re-running the cascade.
- *
- * Two server-side conflict codes get special handling because they're the
- * common operator-error path:
- *   - demote → 409 `last_superadmin` (only one superadmin remains)
- *   - delete → 409 `orphan_sites`    (target owns sites; pass `--successor`)
- * Both surface the code + the actionable detail clearly on stderr.
+ * Two 409 codes get bespoke stderr handling as the common operator errors:
+ * `last_superadmin` (demote) and `orphan_sites` (delete; pass `--successor`).
  */
 
 import { Command } from 'commander';
@@ -60,12 +49,10 @@ export function registerUserCommands(program: Command): void {
     (program.commands.find((c) => c.name() === 'user') as Command | undefined) ??
     program.command('user').description('platform user management (superadmin)');
 
-  // Overwrite any earlier description so help text stays canonical
-  // regardless of registration order.
+  // Overwrite any earlier description so help text is registration-order safe.
   user.description('platform user management (superadmin)');
 
-  // Drop any earlier sub-command registrations so a re-register doesn't
-  // double-list verbs.
+  // Drop earlier sub-command registrations so a re-register doesn't double-list.
   for (const verb of [
     'list',
     'get',
@@ -83,7 +70,7 @@ export function registerUserCommands(program: Command): void {
     }
   }
 
-  /* -------------------- list -------------------- */
+  // list
 
   user
     .command('list')
@@ -159,7 +146,7 @@ export function registerUserCommands(program: Command): void {
       }
     });
 
-  /* -------------------- get -------------------- */
+  // get
 
   user
     .command('get <uid>')
@@ -190,7 +177,7 @@ export function registerUserCommands(program: Command): void {
       process.stdout.write(formatUserDetail(data));
     });
 
-  /* -------------------- promote -------------------- */
+  // promote
 
   user
     .command('promote <uid>')
@@ -261,7 +248,7 @@ export function registerUserCommands(program: Command): void {
       );
     });
 
-  /* -------------------- demote -------------------- */
+  // demote
 
   user
     .command('demote <uid>')
@@ -335,7 +322,7 @@ export function registerUserCommands(program: Command): void {
       );
     });
 
-  /* -------------------- assign-sites -------------------- */
+  // assign-sites
 
   user
     .command('assign-sites <uid>')
@@ -412,7 +399,7 @@ export function registerUserCommands(program: Command): void {
       );
     });
 
-  /* -------------------- remove-sites -------------------- */
+  // remove-sites
 
   user
     .command('remove-sites <uid>')
@@ -486,7 +473,7 @@ export function registerUserCommands(program: Command): void {
       );
     });
 
-  /* -------------------- delete -------------------- */
+  // delete
 
   user
     .command('delete <uid>')
@@ -602,9 +589,7 @@ export function registerUserCommands(program: Command): void {
     });
 }
 
-/* --------------------------------------------------------------------- */
-/*  formatters                                                           */
-/* --------------------------------------------------------------------- */
+// formatters
 
 function formatUserDetail(u: UserDetail): string {
   const out: string[] = [];
@@ -625,9 +610,7 @@ function formatUserDetail(u: UserDetail): string {
   return out.join('\n') + '\n';
 }
 
-/* --------------------------------------------------------------------- */
-/*  util                                                                 */
-/* --------------------------------------------------------------------- */
+// util
 
 function parseCsv(raw: unknown): string[] {
   if (typeof raw !== 'string') return [];

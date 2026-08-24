@@ -66,9 +66,9 @@ export function DeveloperSection() {
             every dashboard action, scriptable.
           </h2>
           <p className="section-subheadline text-balance max-w-3xl mx-auto">
-            the same API that powers the dashboard — scoped keys, idempotency,
-            webhooks, OpenAPI. install the CLI on a runner, import the SDK
-            into your backend, or just curl it.
+            restart a process, push a deploy, or check machine health from
+            wherever your automation already runs — install the CLI on a
+            runner, import the SDK into your backend, or just curl it.
           </p>
         </div>
 

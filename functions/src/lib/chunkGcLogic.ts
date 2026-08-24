@@ -1,26 +1,12 @@
 /**
- * Pure logic for roost chunk garbage collection (wave 2b.4).
+ * Pure planning for roost chunk garbage collection; execution lives in
+ * chunkGc.ts. Deterministic given its inputs, which is what makes dry-run safe.
  *
- * A chunk is garbage when NO current version AND NO recent-history
- * version references it. GC uses a **two-phase** model to survive races
- * between a newly-uploaded-but-not-yet-finalised version and the sweep:
- *
- *   1. Mark phase: any stored-but-not-referenced chunk is tombstoned.
- *      Tombstones live in firestore with a creation timestamp.
- *   2. Sweep phase: tombstones older than the TTL (30 days) are eligible
- *      for deletion — BUT only if the chunk is STILL not referenced.
- *      The re-check on the second phase is the resurrection guard: if
- *      a new version brought the chunk back to life between marking
- *      and sweeping, we drop the tombstone and keep the chunk.
- *
- * Operational mode is split into planning (this module) and execution
- * (chunkGc.ts). The plan is deterministic given inputs, which makes
- * dry-run mode trivially safe: produce the plan, log it, skip the writes.
- *
- * NOT in scope here:
- *   - actually reading R2 listings / firestore docs (done by the handler)
- *   - emitting telemetry
- *   - pause-during-publish decision (handler checks before calling us)
+ * A chunk is garbage when no current or recent-history version references it.
+ * Two phases survive the race with a not-yet-finalised upload:
+ *   1. mark — tombstone any stored-but-unreferenced chunk (timestamped).
+ *   2. sweep — delete tombstones past the TTL, but ONLY if still unreferenced.
+ *      That re-check is the resurrection guard.
  */
 
 /** TTL between tombstone and actual deletion. 30 days (ms). */
@@ -47,41 +33,24 @@ export interface GcPlanInput {
 }
 
 export interface GcPlan {
-  /**
-   * Hashes to tombstone on this run. These are orphans that have no
-   * existing tombstone record yet.
-   */
+  /** Orphans with no tombstone record yet. */
   toTombstone: string[];
-  /**
-   * Hashes to delete on this run. These had a tombstone older than the
-   * TTL AND are still orphaned (not referenced) AND are still stored.
-   */
+  /** Tombstone past TTL, still orphaned, still stored. */
   toDelete: string[];
-  /**
-   * Tombstone records to clear because the chunk came back to life
-   * (referenced again) or disappeared from storage on its own.
-   */
+  /** Chunk was referenced again, or vanished from storage on its own. */
   tombstonesToClear: string[];
-  /**
-   * Tombstones kept on this run (not yet ripe, still orphaned).
-   * Returned for transparency / auditing, not required for execution.
-   */
+  /** Not yet ripe, still orphaned. Audit-only; execution ignores it. */
   tombstonesRetained: TombstoneRecord[];
 }
 
-/**
- * Produce the GC plan. Deterministic and side-effect free — feed inputs,
- * get back three lists. The handler applies them (or logs, in dry-run).
- */
+/** Deterministic, side-effect free; the handler applies (or logs, in dry-run). */
 export function planGc(input: GcPlanInput): GcPlan {
   const ttl = input.tombstoneTtlMs ?? TOMBSTONE_TTL_MS;
 
-  // Index tombstones by hash for O(1) lookup + stable ordering downstream.
   const tombIndex = new Map<string, TombstoneRecord>();
   for (const t of input.tombstones) {
-    // if the same hash has multiple tombstones (shouldn't happen, but
-    // firestore concurrency), keep the OLDEST — that's the one whose
-    // TTL elapses first.
+    // Duplicate tombstones for one hash shouldn't happen, but on firestore
+    // concurrency keep the OLDEST — its TTL elapses first.
     const existing = tombIndex.get(t.hash);
     if (!existing || t.tombstonedAt < existing.tombstonedAt) {
       tombIndex.set(t.hash, t);
@@ -93,25 +62,21 @@ export function planGc(input: GcPlanInput): GcPlan {
   const tombstonesToClear: string[] = [];
   const tombstonesRetained: TombstoneRecord[] = [];
 
-  // Phase 1: consider each stored chunk for marking.
-  // Iterate `stored` (not `referenced`) because we only tombstone things
-  // that EXIST; referenced chunks that aren't stored yet are a different
-  // problem (upload raced with version finalize).
-  // Sort for deterministic output ordering — tests rely on it.
+  // Phase 1. Iterate `stored`, not `referenced`: only existing chunks get
+  // tombstoned; a referenced-but-unstored chunk is an upload/finalize race.
+  // Sorted for deterministic output — tests rely on it.
   const storedSorted = [...input.stored].sort();
   for (const hash of storedSorted) {
     if (input.referenced.has(hash)) {
-      // live chunk. if it has a stale tombstone, drop it (resurrection).
+      // Resurrection: drop any stale tombstone.
       if (tombIndex.has(hash)) tombstonesToClear.push(hash);
       continue;
     }
-    // orphan
     const existing = tombIndex.get(hash);
     if (!existing) {
       toTombstone.push(hash);
       continue;
     }
-    // orphan with tombstone: is it ripe?
     if (input.now - existing.tombstonedAt >= ttl) {
       toDelete.push(hash);
     } else {
@@ -119,10 +84,8 @@ export function planGc(input: GcPlanInput): GcPlan {
     }
   }
 
-  // Phase 2: tombstones whose chunk has disappeared from storage (e.g.
-  // deleted out of band) should also be cleared — otherwise they linger
-  // in the tombstone collection forever. Don't include these in `toDelete`
-  // (nothing to delete), just clear the metadata.
+  // Phase 2: clear tombstones whose chunk vanished out of band, or they linger
+  // forever. Not in `toDelete` — there is nothing left to delete.
   const tombstonedSorted = [...tombIndex.keys()].sort();
   for (const hash of tombstonedSorted) {
     if (!input.stored.has(hash) && !tombstonesToClear.includes(hash)) {
@@ -132,10 +95,6 @@ export function planGc(input: GcPlanInput): GcPlan {
 
   return { toTombstone, toDelete, tombstonesToClear, tombstonesRetained };
 }
-
-/* --------------------------------------------------------------------- */
-/*  Summary helpers                                                      */
-/* --------------------------------------------------------------------- */
 
 export interface GcSummary {
   /** True iff the plan would cause any mutations. */

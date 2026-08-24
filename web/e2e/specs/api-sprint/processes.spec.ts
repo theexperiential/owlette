@@ -1,22 +1,7 @@
 /**
- * api-sprint W5.4 — process-api e2e (track 2B).
- *
- * Hits the public scoped process management endpoints under
- * `/api/sites/{s}/machines/{m}/processes/*` with a `machine=*:write` api key.
- *
- * Verbs covered (≥1 happy-path each):
- *   - GET    /api/sites/{s}/machines/{m}/processes
- *   - POST   /api/sites/{s}/machines/{m}/processes
- *   - GET    /api/sites/{s}/machines/{m}/processes/{pid}
- *   - PATCH  /api/sites/{s}/machines/{m}/processes/{pid}
- *   - DELETE /api/sites/{s}/machines/{m}/processes/{pid}
- *   - POST   /api/sites/{s}/machines/{m}/processes/{pid}/start
- *   - POST   /api/sites/{s}/machines/{m}/processes/{pid}/stop
- *   - POST   /api/sites/{s}/machines/{m}/processes/{pid}/kill
- *   - POST   /api/sites/{s}/machines/{m}/processes/{pid}/schedule
- *
- * Negative paths:
- *   - 409 duplicate_process_name when creating a process with a taken name
+ * Process-api e2e: every verb under `/api/sites/{s}/machines/{m}/processes/*`
+ * (list, create, get, patch, delete, start, stop, kill, schedule) driven with a
+ * `machine=*:write` api key, plus the 409 duplicate_process_name path.
  */
 import crypto from 'crypto';
 import { test, expect } from '@playwright/test';
@@ -32,10 +17,8 @@ let writeKey: MintedApiKey;
 
 async function clearProcessConfig(): Promise<void> {
   const db = getAdminDb();
-  // The machine config doc lives at sites/{site}/machines/{machine} (process
-  // list is on the same doc per processConfig.server.ts) — we reset by
-  // overwriting an empty list rather than deleting the whole doc (display
-  // hardware subdoc would be lost otherwise).
+  // The process list shares sites/{site}/machines/{machine}, so reset by writing
+  // an empty list — deleting the doc would take the display hardware subdoc too.
   await db
     .collection('config')
     .doc(SITE_ID)
@@ -266,7 +249,7 @@ test('POST /api/sites/{s}/machines/{m}/processes — 409 duplicate_process_name 
     headers: authHeaders(writeKey),
     data: { name, exe_path: 'C:/b.exe' },
   });
-  // The processConfig layer raises ProcessConfigError(409, ..., 'duplicate_process_name').
+  // processConfig raises ProcessConfigError(409, 'duplicate_process_name').
   expect(dupe.status()).toBe(409);
   const body = await dupe.json();
   expect(body.code).toBe('duplicate_process_name');

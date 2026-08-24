@@ -2,9 +2,8 @@
  * k6 load test: GET /api/sites/{siteId}/machines/{machineId}/processes
  * public API launch load suite.
  *
- * The fleet-management UI + every external monitoring integration polls this
- * endpoint per machine. Returns the merged config + live-status process list
- * — one Firestore doc read for the config + one for the machine status.
+ * Polled per machine by the fleet UI and every external monitoring
+ * integration. Two Firestore doc reads: config + machine status.
  *
  * SLO: p99 < 250 ms.
  *

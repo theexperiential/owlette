@@ -119,11 +119,11 @@ There is no separate public URL prefix runtime variable. R2 buckets should remai
 
 ---
 
-## cron (required for health checks)
+## cron (required for the scheduled endpoints)
 
 | variable | description |
 |----------|-------------|
-| `CRON_SECRET` | Shared secret for authenticating cron health-check requests |
+| `CRON_SECRET` | Shared secret authenticating every scheduled endpoint — sent as `X-Cron-Secret` on the six `/api/cron/*` routes and as `Authorization: Bearer` on `/api/hoot/escalation`. Each environment has its own value. See [scheduled endpoints](/docs/setup/web-deployment#scheduled-endpoints). |
 
 Generate:
 

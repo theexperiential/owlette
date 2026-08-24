@@ -1,25 +1,14 @@
 /**
- * Canonical public Hoot conversation collection.
+ * Canonical Hoot conversation collection: GET lists, POST creates.
  *
- *   GET  /api/hoot/conversations  — list conversations the caller can access
- *   POST /api/hoot/conversations  — create a conversation
+ * GET filters to the caller's effective site access set; for api-key callers
+ * that set is intersected with the key's `chat=<siteId>:read` scopes, so a
+ * single-site key can't list other sites even when its user has access.
  *
- * This is the sole implementation; the legacy `/api/chat` + `/api/chat/new`
- * compatibility aliases were removed (no public consumers existed).
- *
- * GET filters to conversations whose `siteId` is in the caller's effective
- * access set. For api-key callers, the access set is also intersected with the
- * `chat=<siteId>:read` (or wildcard) scopes the key carries — a key scoped to
- * one site cannot list conversations on others, even if the user behind the
- * key has access. Session/id-token callers fall through to the canonical
- * site-membership read (`getUserSiteIds`).
- *
- * POST requires `chat=<siteId>:write`. Idempotent via `Idempotency-Key`.
+ * POST requires `chat=<siteId>:write`, idempotent via `Idempotency-Key`.
  * Body: { siteId, machineId?, title?, initial_message?: { role, content } }.
- * machineId is optional: omit for site-wide conversations (server-side LLM
- * fans tools out across all online machines on the site). When provided, the
- * conversation is pinned to that machine — the send endpoint will route to the
- * same machine on every turn.
+ * Omitting machineId makes the conversation site-wide (tools fan out across
+ * every online machine); supplying it pins every turn to that machine.
  */
 
 import type { NextRequest } from 'next/server';
@@ -52,10 +41,6 @@ import { getAdminDb } from '@/lib/firebase-admin';
 const SITE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const VALID_ROLES: ChatRole[] = ['user'];
 
-/* -------------------------------------------------------------------------- */
-/*  GET — list conversations                                                  */
-/* -------------------------------------------------------------------------- */
-
 export async function GET(request: NextRequest) {
   try {
     let auth;
@@ -83,9 +68,8 @@ export async function GET(request: NextRequest) {
       request.nextUrl.searchParams.get('cursor') ??
       '';
     const includeDeleted = request.nextUrl.searchParams.get('includeDeleted') === 'true';
-    // Conversations are user-private. Default to "owner is me"; only superadmins
-    // may opt into a cross-user view via `?owner=all`. Without this default, any
-    // site member could enumerate other users' chats on shared sites.
+    // Conversations are user-private: default to "owner is me" or any site member
+    // could enumerate others' chats. `?owner=all` is superadmin-only.
     const ownerParam = request.nextUrl.searchParams.get('owner');
     let ownerFilter: string | undefined = auth.userId;
     if (ownerParam === 'all') {
@@ -139,19 +123,12 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Resolve the set of site ids whose chat conversations the caller may read.
- *
- * - Session/id-token callers: their site-membership list (`getUserSiteIds`),
- *   plus any sites they own (resolved via a `where('owner','==',uid)` read on
- *   the `sites` collection). Superadmins fall back to "every site referenced
- *   by their key/membership" — we deliberately do not return a wildcard set
- *   here because the underlying list helper enforces a site-id filter to keep
- *   query plans sane.
- * - Api-key callers with scoped keys: intersection of their site-membership
- *   list with the `chat` scopes on the key. A wildcard chat scope (`chat=*`)
- *   widens the intersection back to the full membership list.
- * - Api-key callers with legacy keys (`scopes` empty/absent): treated like
- *   session callers — full membership list, no scope intersection.
+ * Site ids whose conversations the caller may read.
+ * - Session/id-token: membership list plus owned sites. No wildcard even for
+ *   superadmins — the list helper requires a site-id filter for query plans.
+ * - Scoped api keys: membership ∩ the key's `chat` scopes (`chat=*` widens
+ *   back to the full membership list).
+ * - Legacy keys (no `scopes`): treated like session callers.
  */
 async function resolveReadableSiteIds(
   userId: string,
@@ -181,16 +158,11 @@ async function readOwnedSiteIds(userId: string): Promise<string[]> {
     const snap = await db.collection('sites').where('owner', '==', userId).get();
     return snap.docs.map((d) => d.id);
   } catch {
-    // Owner-lookup failures degrade gracefully: the caller still sees their
-    // membership list. The list filter is a defence-in-depth narrowing — it
-    // never grants access beyond the underlying scope/membership check.
+    // Degrade to the membership list: this filter only narrows, it never grants
+    // access beyond the scope/membership check.
     return [];
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/*  POST — create a conversation                                              */
-/* -------------------------------------------------------------------------- */
 
 interface CreateBody {
   siteId?: unknown;

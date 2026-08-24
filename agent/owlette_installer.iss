@@ -60,7 +60,7 @@
 #endif
 
 #define MyAppName "Owlette"
-#define MyAppPublisher "The Experiential Company"
+#define MyAppPublisher "Tridant Inc."
 #define MyAppURL "https://owlette.app"
 #define MyAppRepoURL "https://github.com/theexperiential/owlette"
 ; The desktop app (Tauri) is the product's face as of 3.0.0 — it replaced the
@@ -111,7 +111,7 @@ DisableWelcomePage=yes
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-FinishedLabel=Setup has finished installing [name] on your computer.%n%nThe Owlette service and tray icon will start automatically within a few moments. Look for the Owlette icon (a dot in a circle) in your taskbar—it may be hidden under the overflow menu (^).
+FinishedLabel=Setup has finished installing [name] on your computer.%n%nThe Owlette service and tray icon will start automatically within a few moments. Look for the Owlette icon (a dot in a circle) in your taskbar—it may be hidden under the overflow menu (^).%n%nIf this machine is not paired yet, finish pairing in the Owlette window that opened, or open Owlette from the Start menu.
 
 [Tasks]
 ; Desktop icons removed - tray icon auto-starts on login via startup folder
@@ -337,9 +337,10 @@ Name: "{userstartup}\Owlette"; Filename: "{#MyAppExePath}"; Parameters: "--tray"
 ; resulting exclusion set to logs\defender_setup.log so a silent failure is diagnosable.
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionPath '{app}\python\python.sys' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionPath '{app}\python\pythonw.sys' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath 'C:\Owlette\python' -ErrorAction SilentlyContinue; [void]((Get-Command Get-MpPreference -ErrorAction SilentlyContinue) -and (('owlette defender exclusions @ ' + (Get-Date -Format s) + ' :: ' + ((Get-MpPreference).ExclusionPath -join ';')) | Out-File -Append -Encoding utf8 '{commonappdata}\Owlette\logs\defender_setup.log'))"""; StatusMsg: "Configuring Windows Defender exclusion..."; Flags: runhidden waituntilterminated
 
-; Steps 1-2 (pairing + service install) are handled in [Code] CurStepChanged()
-; to support exit code checking and conditional execution.
-; See RunPairingAndInstallService() below.
+; The pairing handoff and the service install are handled in [Code]
+; CurStepChanged() so the pairing branch can be chosen at runtime and the
+; service install's exit code can be read. The service install itself is
+; UNCONDITIONAL — see RunPairingHandoff() and CurStepChanged() below.
 
 ; Note: Tray icon launches automatically on login via startup folder (see [Icons] section above)
 ; No need to launch it here - it will start on next login or can be launched manually from Start Menu
@@ -350,7 +351,16 @@ Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-
 ; agent's own self-update must never pop a window over a running show. The
 ; service has already spawned the tray by now, so single-instance folds this
 ; launch into it and simply shows the window.
-Filename: "{#MyAppExePath}"; WorkingDir: "{app}\app"; Description: "open owlette"; Flags: postinstall skipifsilent nowait
+;
+; runasoriginaluser is required, not optional: without it Inno starts this with
+; Setup's own token, so in administrative install mode the app — and any browser
+; it shells open — runs ELEVATED. Its argv carries no --pair, so useLaunchFlag
+; ignores it and this stays a plain "show the window" affordance; the Description
+; must not read as a second pairing step.
+; Only when the GUI handoff did NOT already open the app. On the console
+; fallback and /ADD= paths this is still the operator only launcher; after a
+; handoff it offers to open a window that is already on screen.
+Filename: "{#MyAppExePath}"; WorkingDir: "{app}\app"; Description: "open owlette"; Flags: postinstall skipifsilent nowait runasoriginaluser; Check: ShouldOfferOpenApp
 
 [UninstallRun]
 ; Close the desktop app first — it lives in {app}\app and would otherwise hold
@@ -373,46 +383,63 @@ var
   ServiceWasStopped: Boolean;
   InstallSucceeded: Boolean;
   PairingSucceeded: Boolean;
+  // Set only by the GUI handoff, and read by ShouldOfferOpenApp to suppress
+  // the finished page redundant "open owlette" checkbox.
+  AppOpenedByHandoff: Boolean;
+
+// The only table in this script that produces user-facing hosts and configure_site
+// arguments. Everything that needs the server — the configure_site.py args, the GUI
+// handoff, the status caption, the ready-page memo, the failure message — reads it
+// from here, and this script deliberately holds no URL at all. ShouldConfigureSite
+// keeps its own token->environment map on purpose: it answers a different question,
+// "was a different server explicitly requested?". The python side's equivalents are
+// shared_utils.get_api_base_url and shared_utils.get_web_host.
+function GetServerParam(): String;
+begin
+  if ExpandConstant('{param:SERVER|prod}') = 'dev' then
+    Result := 'dev'
+  else
+    Result := 'prod';
+end;
+
+function GetWebHost(): String;
+begin
+  if GetServerParam() = 'dev' then
+    Result := 'dev.owlette.app'
+  else
+    Result := 'owlette.app';
+end;
+
+// The ready-to-install page is the last surface an operator reads BEFORE
+// committing, and it is the one place the wrong environment actually gets
+// chosen — the status caption only flashes for a few seconds and the MsgBox
+// only appears on failure. Every Memo* parameter must be re-emitted in this
+// order or the page silently loses what Inno normally shows there.
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
+  MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  Result := '';
+  if MemoUserInfoInfo <> '' then Result := Result + MemoUserInfoInfo + NewLine + NewLine;
+  if MemoDirInfo <> '' then Result := Result + MemoDirInfo + NewLine + NewLine;
+  if MemoTypeInfo <> '' then Result := Result + MemoTypeInfo + NewLine + NewLine;
+  if MemoComponentsInfo <> '' then Result := Result + MemoComponentsInfo + NewLine + NewLine;
+  if MemoGroupInfo <> '' then Result := Result + MemoGroupInfo + NewLine + NewLine;
+  if MemoTasksInfo <> '' then Result := Result + MemoTasksInfo + NewLine + NewLine;
+  Result := Result + 'Owlette server:' + NewLine + Space + GetWebHost();
+end;
 
 function GetConfigureArgs(Param: String): String;
 var
-  ServerParam: String;
   AddPhrase: String;
-  OpenBrowserParam: String;
-  ApiUrl: String;
 begin
-  // Determine API base URL from /SERVER= parameter
-  ServerParam := ExpandConstant('{param:SERVER|prod}');
-  if ServerParam = 'dev' then
-    ApiUrl := 'https://dev.owlette.app/api'
-  else
-    ApiUrl := 'https://owlette.app/api';
-
-  Result := '--url "' + ApiUrl + '"';
+  Result := '--server ' + GetServerParam();
 
   // Check for /ADD= parameter (pre-authorized pairing phrase for silent install)
   AddPhrase := ExpandConstant('{param:ADD|}');
   if AddPhrase <> '' then
     Result := Result + ' --add "' + AddPhrase + '"';
 
-  OpenBrowserParam := ExpandConstant('{param:OPENBROWSER|}');
-  if (OpenBrowserParam = '1') or (OpenBrowserParam = 'true') or (OpenBrowserParam = 'yes') then
-    Result := Result + ' --open-browser';
-
   Log('Configure args: ' + Result);
-end;
-
-// Legacy function kept for backward compatibility
-function GetServerEnvironment(Param: String): String;
-var
-  ServerParam: String;
-begin
-  ServerParam := ExpandConstant('{param:SERVER|prod}');
-  if ServerParam = 'dev' then
-    Result := 'https://dev.owlette.app/setup'
-  else
-    Result := 'https://owlette.app/setup';
-  Log('Server environment: ' + ServerParam + ' -> ' + Result);
 end;
 
 function ShouldConfigureSite(): Boolean;
@@ -583,53 +610,163 @@ begin
     Log('WebView2 runtime still not detected - the desktop app may not open on this machine');
 end;
 
+// Called from CurStepChanged AFTER the service install - the only point at which
+// the claim "the Owlette service has been installed and started" is true, which
+// is why this lives here and not inside RunPairingHandoff. The
+// `if not WizardSilent()` guard lives at the call site.
+//
+// SuppressibleMsgBox, not MsgBox: under /SUPPRESSMSGBOXES it returns Default
+// instead of rendering an invisible session-0 dialog and hanging the scheduled
+// task the agent's self-update runs the installer from. Each path is quoted
+// independently so the printed command is runnable under a /DIR= with spaces,
+// and the command carries the server so an operator on a /SERVER=dev machine
+// does not silently re-pair against production.
+procedure ShowPairingFailedMessage();
+var
+  Msg: String;
+begin
+  Msg :=
+    'Pairing was not completed, but the Owlette service has been installed and started.' + #13#10 + #13#10 +
+    'This machine will stay offline until it is paired with a site on ' + GetWebHost() + '.' + #13#10 + #13#10 +
+    'To finish pairing, either:' + #13#10 +
+    '  - open Owlette from the Start menu and choose "join a site", or' + #13#10 +
+    '  - run this command from an administrator prompt:' + #13#10 + #13#10 +
+    '    "' + ExpandConstant('{app}\python\python.exe') + '" "' +
+    ExpandConstant('{app}\agent\src\configure_site.py') + '" --server ' + GetServerParam();
+  SuppressibleMsgBox(Msg, mbInformation, MB_OK, IDOK);
+end;
+
+// Returns False only when a console pairing run we waited on actually failed.
+// The GUI handoff is ewNoWait and has no outcome to report - by design.
+function ShouldOfferOpenApp(): Boolean;
+begin
+  Result := not AppOpenedByHandoff;
+end;
+
+function RunPairingHandoff(): Boolean;
+var
+  ResultCode: Integer;
+  ShowCmd: Integer;
+  AppExe, PythonExe, ConfigArgs, AddPhrase: String;
+begin
+  Result := True;
+  AddPhrase := ExpandConstant('{param:ADD|}');
+  // Same path as #define MyAppExePath; build_installer_full.bat confirms the
+  // desktop exe lands at {app}\app\owlette-desktop.exe.
+  AppExe := ExpandConstant('{app}\app\owlette-desktop.exe');
+
+  // Silent with no /ADD= phrase: nobody can read a pairing phrase on this path.
+  // Today it burns the full 600 s device-code timeout in an invisible session-0
+  // console before failing; skipping costs nothing now that the service
+  // installs unconditionally.
+  if WizardSilent() and (AddPhrase = '') then
+  begin
+    Log('Silent install with no /ADD= phrase - installed unpaired');
+    Result := True;
+    Exit;
+  end;
+
+  // The GUI handoff. Every condition is load-bearing: `not WizardSilent()` is
+  // the session-0 guard (the agent's self-update runs this installer as SYSTEM
+  // via schtasks, and a hidden window in session 0 is a leaked, unclosable
+  // process); `AddPhrase = ''` keeps the /ADD= bulk-deploy path on the console;
+  // WebView2 must be present or the app cannot create a window and the handoff
+  // would strand the operator. ewNoWait so the wizard never blocks on a window
+  // the operator has not finished with, and try/except because ISetup.chm says
+  // ExecAsOriginalUser "can raise an exception instead of just returning False".
+  if (not WizardSilent()) and (AddPhrase = '') and (FindWebView2Runtime() <> '') and FileExists(AppExe) then
+  begin
+    WizardForm.StatusLabel.Caption := 'Opening owlette to finish pairing with ' + GetWebHost() + '...';
+    try
+      if ExecAsOriginalUser(AppExe, '--pair --server ' + GetServerParam(), '', SW_SHOW, ewNoWait, ResultCode) then
+      begin
+        AppOpenedByHandoff := True;
+        Log('Handed pairing to the desktop app');
+      end
+      else
+        Log('Could not hand off to the desktop app: ' + SysErrorMessage(ResultCode));
+    except
+      Log('ExecAsOriginalUser raised: ' + GetExceptionMessage);
+    end;
+    Result := True;
+    Exit;
+  end;
+
+  // Otherwise - an /ADD= phrase, or interactive without WebView2 - pair on the
+  // console. This is the only branch with an outcome to report.
+  PythonExe := ExpandConstant('{app}\python\python.exe');
+  ConfigArgs := '"' + ExpandConstant('{app}\agent\src\configure_site.py') + '" ' + GetConfigureArgs('');
+  if WizardSilent() then ShowCmd := SW_HIDE else ShowCmd := SW_SHOW;
+  if not WizardSilent() then
+    WizardForm.StatusLabel.Caption := 'Pairing with ' + GetWebHost() + '...';
+  Log('Running pairing: ' + PythonExe + ' ' + ConfigArgs);
+  Result := Exec(PythonExe, ConfigArgs, '', ShowCmd, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+  if not Result then
+    Log('Pairing was not completed (exit code ' + IntToStr(ResultCode) + ')');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
-  PythonExe: String;
-  ConfigArgs: String;
   InstallBat: String;
 begin
   if CurStep = ssPostInstall then
   begin
-    InstallSucceeded := True;
-    PairingSucceeded := True;  // Assume success (upgrade scenario skips pairing)
-
-    // Step 0: WebView2 runtime — must precede the service install, because
-    // install.bat starts the service and the service launches the desktop app.
+    // Step 0: WebView2 runtime. First, because the handoff below refuses to run
+    // without it and install.bat starts the service, which launches the app.
     EnsureWebView2Runtime();
 
-    // Step 1: Run pairing flow (if needed)
+    // Step 1: pairing handoff, BEFORE the service install. The order is
+    // load-bearing: install.bat starts the service, OwletteService.__init__
+    // calls _try_launch_tray(), and a --tray instance holding the
+    // single-instance lock would turn the --pair launch into a FORWARDED second
+    // instance whose app.emit is dropped when the webview has not yet
+    // registered its listener - window opens, pairing dialog does not, --server
+    // lost. Handing off first makes --pair reliably the first instance, so it
+    // arrives by the launch_args() pull, which cannot be missed.
+    // PairingSucceeded is LOG-ONLY and must never gate step 2 again. The
+    // try/except is what keeps an ExecAsOriginalUser exception (ISetup.chm: it
+    // "can raise an exception instead of just returning False") from aborting
+    // ssPostInstall before the service is installed - the safety property the
+    // old service-first ordering used to provide.
+    PairingSucceeded := True;
     if ShouldConfigureSite() then
     begin
-      PythonExe := ExpandConstant('{app}\python\python.exe');
-      ConfigArgs := '"' + ExpandConstant('{app}\agent\src\configure_site.py') + '" ' + GetConfigureArgs('');
-
-      Log('Running pairing: ' + PythonExe + ' ' + ConfigArgs);
-      WizardForm.StatusLabel.Caption := 'Pairing with Owlette...';
-
-      Exec(PythonExe, ConfigArgs, '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
-      Log('Pairing exit code: ' + IntToStr(ResultCode));
-
-      if ResultCode <> 0 then
-      begin
+      try
+        PairingSucceeded := RunPairingHandoff();
+      except
+        Log('Pairing handoff raised: ' + GetExceptionMessage);
         PairingSucceeded := False;
-        Log('Pairing failed - skipping service install');
-        MsgBox('Agent pairing was not completed. The Owlette service will not start until you run the pairing flow again.' + #13#10 + #13#10 + 'You can re-pair by running:' + #13#10 + ExpandConstant('{app}\python\python.exe {app}\agent\src\configure_site.py'), mbInformation, MB_OK);
       end;
     end;
 
-    // Step 2: Install service (only if pairing succeeded or was skipped)
-    if PairingSucceeded then
+    // Step 2: install the service. UNCONDITIONAL as of 3.1.0 - pairing no longer
+    // gates it. A machine always ends up with a registered, running service; an
+    // unpaired one simply has nothing to talk to yet. Inno idiom: Exec returns
+    // "could the process be started"; when it returns False, ResultCode holds a
+    // system error code, not an exit code.
+    InstallBat := ExpandConstant('{app}\scripts\install.bat');
+    WizardForm.StatusLabel.Caption := 'Installing Owlette service...';
+    Log('Installing service: ' + InstallBat);
+    if Exec(InstallBat, '--silent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     begin
-      InstallBat := ExpandConstant('{app}\scripts\install.bat');
-      WizardForm.StatusLabel.Caption := 'Installing Owlette service...';
-      Log('Installing service: ' + InstallBat);
-      Exec(InstallBat, '--silent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
       Log('Service install exit code: ' + IntToStr(ResultCode));
+      InstallSucceeded := (ResultCode = 0);
+    end
+    else
+    begin
+      Log('Could not start the service installer: ' + SysErrorMessage(ResultCode));
+      InstallSucceeded := False;
     end;
 
-    Log('Owlette installation completed' + ' (pairing: ' + IntToStr(Ord(PairingSucceeded)) + ')');
+    // Step 3: only now can the failure message truthfully say the service is
+    // installed and running, which is why it lives here and not inside
+    // RunPairingHandoff.
+    if (not PairingSucceeded) and (not WizardSilent()) then
+      ShowPairingFailedMessage();
+
+    Log('Owlette installation completed (service install: ' + IntToStr(Ord(InstallSucceeded)) +
+        ', pairing: ' + IntToStr(Ord(PairingSucceeded)) + ')');
     Log('User data stored in: ' + ExpandConstant('{commonappdata}\Owlette'));
   end;
 end;

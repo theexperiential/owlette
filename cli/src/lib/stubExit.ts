@@ -1,19 +1,11 @@
 /**
- * Shared helper for "stub" cli commands — nouns whose surface area is
- * documented but whose public api is not yet shipped. Calling a stub
- * always terminates the process with exit code 3 (reserved for stubs,
- * distinct from generic errors (1) and usage errors (2)).
+ * Shared exit for "stub" cli commands — documented nouns whose public api has not
+ * shipped. Always exits 3, reserved for stubs (1 = error, 2 = usage).
  *
- * Output contract:
- *   - `--json` mode: a single canonical envelope on stdout
- *       { ok: false, stub: true, noun, reason, dashboard_url, future_plan }
- *     (snake_case keys match the documented json envelope schema in
- *     docs/cli/overview.md#json-envelope-schema)
- *   - human mode: a multi-line block on stderr explaining the stub,
- *     pointing at the dashboard, and naming the future plan doc.
- *
- * Keeping this in one place means every stub command stays a 3-5 line
- * shim that just declares its noun + reason and delegates here.
+ * `--json` prints one envelope on stdout:
+ * `{ ok: false, stub: true, noun, reason, dashboard_url, future_plan }` — the
+ * snake_case keys are the schema in docs/cli/overview.md#json-envelope-schema.
+ * Human mode prints a block on stderr pointing at the dashboard and plan doc.
  */
 
 import type { Command } from 'commander';

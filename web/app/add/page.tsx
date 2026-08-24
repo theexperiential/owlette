@@ -30,22 +30,25 @@ export default function AddMachinePage() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [machineId, setMachineId] = useState<string | null>(null);
   /**
-   * Whether the current selection was made for the user (the single-site
-   * convenience below) rather than chosen by them.
-   *
-   * This effect re-runs as auth resolves: `user` settles before `role` does,
-   * so the first pass sees `isSuperadmin === false` and takes the membership
-   * branch, which returns a narrower list than a superadmin actually has. If
-   * that narrow list happens to hold exactly one site it gets auto-selected,
-   * and the corrected wider list arriving afterwards used to leave the stale
-   * selection in place — authorizing a machine against a site the operator
-   * never chose. A deliberate choice is never withdrawn.
+   * Whether the selection was auto-made (single-site convenience) rather than
+   * chosen. `user` settles before `role`, so the first pass takes the narrower
+   * membership branch; if that held one site it auto-selected, and the wider
+   * superadmin list arriving after used to leave the stale pick in place —
+   * authorizing against a site nobody chose. A deliberate choice is never withdrawn.
    */
   const autoSelectedRef = useRef(false);
+  /**
+   * The owlette server this page authorizes against. Rendered under the
+   * description because it is the operator's only chance to notice they are on
+   * dev while the machine is pairing with prod (or the reverse). Read after
+   * mount so the server render and the first client render agree.
+   */
+  const [host, setHost] = useState('');
 
-  // Get pairing phrase from URL query params (from agent browser auto-open)
+  // Pairing phrase arrives as ?code= when the agent auto-opens the browser.
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      setHost(window.location.host);
       const params = new URLSearchParams(window.location.search);
       const code = params.get('code');
       if (code) {
@@ -54,7 +57,6 @@ export default function AddMachinePage() {
     }
   }, []);
 
-  // Fetch user's sites
   useEffect(() => {
     async function fetchSites() {
       if (!user || !db) {
@@ -77,7 +79,7 @@ export default function AddMachinePage() {
         const fetchedSites: Site[] = [];
 
         if (isSuperadmin) {
-          // Admin: fetch all sites via collection (same as setup page)
+          // Superadmin sees every site, as on the setup page.
           const { collection, getDocs } = await import('firebase/firestore');
           const sitesRef = collection(db, 'sites');
           const sitesSnapshot = await getDocs(sitesRef);
@@ -92,14 +94,14 @@ export default function AddMachinePage() {
                 fetchedSites.push({ id: siteDoc.id, ...siteDoc.data() as Omit<Site, 'id'> });
               }
             } catch {
-              // Skip inaccessible sites
+              // Skip inaccessible sites.
             }
           }
         }
 
         setSites(fetchedSites);
         setSelectedSiteId((prev) => {
-          // Exactly one choice — pick it, and record that we did.
+          // One choice — pick it, and record that we did.
           if (fetchedSites.length === 1) {
             autoSelectedRef.current = true;
             return fetchedSites[0].id;
@@ -114,7 +116,7 @@ export default function AddMachinePage() {
         });
       } catch (error: unknown) {
         console.error('Error fetching sites:', error);
-        toast.error('Failed to load sites');
+        toast.error('failed to load sites');
       } finally {
         setLoading(false);
       }
@@ -123,7 +125,6 @@ export default function AddMachinePage() {
     fetchSites();
   }, [user, isSuperadmin]);
 
-  // Redirect to login if not authenticated
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/login?redirect=/add');
@@ -132,11 +133,11 @@ export default function AddMachinePage() {
 
   const handleAuthorize = async () => {
     if (!pairPhrase.trim()) {
-      toast.error('Please enter a pairing phrase');
+      toast.error('please enter a pairing phrase');
       return;
     }
     if (!selectedSiteId) {
-      toast.error('Please select a site');
+      toast.error('please select a site');
       return;
     }
 
@@ -154,17 +155,28 @@ export default function AddMachinePage() {
 
       if (!response.ok) {
         const data = await response.json();
+        // The route returns 404 for two different things. "Pairing phrase not
+        // found." is the one that can mean the machine paired against a
+        // different owlette server, so only that one gets the wrong-server hint
+        // — "Pairing phrase has expired." is strictly more precise and must
+        // reach the operator verbatim, as must the 409 already-used message.
+        // `response.status` is out of scope in the catch, so choose here.
+        if (response.status === 404 && /not found/i.test(data.error ?? '')) {
+          throw new Error(
+            `phrase not found on ${host} — it may have expired, or the machine may be pairing with a different owlette server.`
+          );
+        }
         throw new Error(data.error || 'Authorization failed');
       }
 
       const data = await response.json();
       setIsAuthorized(true);
       setMachineId(data.machineId);
-      toast.success('Machine authorized!');
+      toast.success('machine authorized');
     } catch (error: unknown) {
       console.error('Error authorizing:', error);
       const message = error instanceof Error ? error.message : String(error);
-      toast.error(message || 'Failed to authorize machine');
+      toast.error(message || 'failed to authorize machine');
     } finally {
       setIsAuthorizing(false);
     }
@@ -182,7 +194,6 @@ export default function AddMachinePage() {
 
   if (!user) return null;
 
-  // Success state
   if (isAuthorized) {
     return (
       <div className="relative flex min-h-screen items-center justify-center p-4">
@@ -227,6 +238,9 @@ export default function AddMachinePage() {
             <CardDescription className="text-muted-foreground">
               enter the pairing phrase shown on your machine
             </CardDescription>
+            {host && (
+              <p className="font-mono text-xs text-muted-foreground">authorizing on {host}</p>
+            )}
           </div>
         </CardHeader>
         <CardContent className="space-y-6">

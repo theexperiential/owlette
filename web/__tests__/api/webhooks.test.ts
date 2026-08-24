@@ -35,7 +35,7 @@ jest.mock('@/lib/apiAuth.server', () => {
   };
 });
 
-// Stub the ssrf + dns-resolve path so webhook url validation is deterministic.
+// Stub ssrf + dns resolution so url validation is deterministic.
 jest.mock('@/lib/webhookUrl', () => ({
   validateWebhookUrl: jest.fn(async (raw: unknown) => {
     if (typeof raw !== 'string' || !raw.startsWith('https://')) {
@@ -75,9 +75,7 @@ beforeEach(() => {
   mocks.collectionGet.mockResolvedValue(querySnapshot([]));
 });
 
-/* ========================================================================== */
-/*  POST /api/webhooks                                                        */
-/* ========================================================================== */
+// POST /api/webhooks
 
 describe('POST /api/webhooks', () => {
   it('400 when siteId missing', async () => {
@@ -165,9 +163,7 @@ describe('POST /api/webhooks', () => {
   });
 });
 
-/* ========================================================================== */
-/*  GET /api/webhooks (list)                                                  */
-/* ========================================================================== */
+// GET /api/webhooks (list)
 
 describe('GET /api/webhooks', () => {
   it('returns cursor-paginated list, filters tombstoned, scrubs signingSecret', async () => {
@@ -204,7 +200,7 @@ describe('GET /api/webhooks', () => {
     expect(body.webhooks[0]!.id).toBe('wh_alive_0000000001');
     expect(body.next_page_token).toBe('');
     expect(body.nextPageToken).toBe('');
-    // signingSecret must NEVER appear in any response shape from list.
+    // signingSecret must NEVER appear in a list response.
     const raw = JSON.stringify(body);
     expect(raw).not.toMatch(/whsec_/);
     expect(body.webhooks[0]!.signingSecret).toBeUndefined();
@@ -301,9 +297,7 @@ describe('GET /api/webhooks', () => {
   });
 });
 
-/* ========================================================================== */
-/*  GET /api/webhooks/{id} (detail)                                            */
-/* ========================================================================== */
+// GET /api/webhooks/{id} (detail)
 
 describe('GET /api/webhooks/{webhookId}', () => {
   it('404 when doc is absent', async () => {
@@ -350,9 +344,7 @@ describe('GET /api/webhooks/{webhookId}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  PATCH /api/webhooks/{id}                                                   */
-/* ========================================================================== */
+// PATCH /api/webhooks/{id}
 
 describe('PATCH /api/webhooks/{webhookId}', () => {
   it('400 when no updatable fields supplied', async () => {
@@ -436,9 +428,7 @@ describe('PATCH /api/webhooks/{webhookId}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  DELETE /api/webhooks/{id}                                                 */
-/* ========================================================================== */
+// DELETE /api/webhooks/{id}
 
 describe('DELETE /api/webhooks/{webhookId}', () => {
   it('stamps deletedAt + tombstoneExpiresAt + paused=true', async () => {
@@ -515,9 +505,7 @@ describe('DELETE /api/webhooks/{webhookId}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/webhooks/{id}/rotate-secret                                     */
-/* ========================================================================== */
+// POST /api/webhooks/{id}/rotate-secret
 
 describe('POST /api/webhooks/{webhookId}/rotate-secret', () => {
   it('returns new signingSecret + previousSecretValidUntil + gracePeriodHours', async () => {
@@ -582,9 +570,7 @@ describe('POST /api/webhooks/{webhookId}/rotate-secret', () => {
   });
 });
 
-/* ========================================================================== */
-/*  GET /api/webhooks/{id}/deliveries                                         */
-/* ========================================================================== */
+// GET /api/webhooks/{id}/deliveries
 
 describe('GET /api/webhooks/{webhookId}/deliveries', () => {
   it('404 when subscription is missing', async () => {
@@ -657,9 +643,7 @@ describe('GET /api/webhooks/{webhookId}/deliveries', () => {
   });
 });
 
-/* ========================================================================== */
-/*  GET /api/webhooks/{id}/deliveries/{deliveryId}                            */
-/* ========================================================================== */
+// GET /api/webhooks/{id}/deliveries/{deliveryId}
 
 describe('GET /api/webhooks/{webhookId}/deliveries/{deliveryId}', () => {
   it('404 when delivery belongs to a different subscription', async () => {
@@ -726,14 +710,12 @@ describe('GET /api/webhooks/{webhookId}/deliveries/{deliveryId}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/webhooks/{id}/deliveries/{deliveryId}/retry                     */
-/* ========================================================================== */
+// POST /api/webhooks/{id}/deliveries/{deliveryId}/retry
 
 describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
   it('creates a new pending delivery with retryOf pointer + fresh stripe signature', async () => {
-    // first get: subscription lookup → returns current secret.
-    // second get: original delivery lookup → returns canonicalBody + headers.
+    // get 1: subscription (current secret). get 2: original delivery
+    // (canonicalBody + headers).
     mocks.get
       .mockResolvedValueOnce(
         docSnapshot(WEBHOOK, {
@@ -771,8 +753,8 @@ describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
     expect(body.state).toBe('pending');
     expect(typeof body.nextAttemptAt).toBe('string');
 
-    // New firestore record: signature uses stripe-style t=<unix>,v1=<hex>
-    // and the public delivery-id header is preserved for receiver dedup.
+    // Stripe-style t=<unix>,v1=<hex>; the public delivery-id header is kept
+    // for receiver dedup.
     const writePayload = mocks.set.mock.calls[0]![0] as {
       secret: string;
       retryOf: string;
@@ -833,6 +815,4 @@ describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
   });
 });
 
-/* ========================================================================== */
-/*  billing gate — POST is pro-only (billing-system wave 0.6)                 */
-/* ========================================================================== */
+// billing gate — POST is pro-only (billing-system wave 0.6)

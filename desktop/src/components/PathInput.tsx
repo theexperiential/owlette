@@ -4,10 +4,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { middleTruncate } from '@/lib/middleTruncate'
 import { cn } from '@/lib/utils'
 
-/**
- * What is painted over a blurred field, and the geometry that makes it land
- * exactly where the field's own text would.
- */
+/** The painted-over text plus the geometry that lands it on the real text. */
 interface Overlay {
   text: string
   /** The input's own padding and font, so the two cannot drift apart. */
@@ -34,35 +31,24 @@ function pixels(value: string): number {
 }
 
 /**
- * A path field that shows the whole path when it can, and the two ends of it
- * when it cannot.
+ * A path field that shows both ends of a path it cannot show whole — an
+ * overflowing input shows only the front, but a path is read from both.
  *
- * A path is read from both ends — the drive and vendor at the front, the file
- * name at the back — and an input that overflows shows only the front. So a
- * field that is not being edited is painted over with
- * `C:/Program Files/…/TouchDesigner.exe`, sized to the box with the box's own
- * font.
+ * **The value is never touched.** An input that displays one string and holds
+ * another saves the lie on the next keystroke, so the truncation is an overlay:
+ * the real text goes transparent and a span draws `C:/Program
+ * Files/…/TouchDesigner.exe` on top, both gone on focus. Auto-save, pickers and
+ * external changes all see the full path throughout.
  *
- * **The value is never touched.** An input cannot show one string and hold
- * another without the next keystroke saving the lie, so the truncation is an
- * overlay: the real text goes transparent, a span draws the short form on top,
- * and both disappear the moment the field takes focus. Everything that reads or
- * writes this field — the auto-save, the pickers, an external change arriving
- * from the web app — sees the full path throughout.
- *
- * The tooltip is the other half of the same idea: hovering a field whose text
- * does not fit reveals the whole value, and a field that fits never grows a
- * pointless one. That gate is the *presence* of the content, not a controlled
- * `open` — Radix owns opening and closing, so the tooltip behaves like every
- * other one in the app.
+ * The tooltip is gated by the *presence* of its content, not a controlled
+ * `open` — see the comment at its render site.
  */
 export function PathInput({ className, onFocus, onBlur, ...props }: ComponentProps<typeof Input>) {
-  /** Whether the field's own text overflows its box — measured on hover. */
+  /** Does the text overflow its box? Measured on hover. */
   const [overflowing, setOverflowing] = useState(false)
   const [overlay, setOverlay] = useState<Overlay | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  // Read by the measuring effect, which must not run against a field the
-  // operator is in the middle of typing into.
+  // The measuring effect must not run against a field being typed into.
   const focused = useRef(false)
 
   const value = typeof props.value === 'string' ? props.value : ''
@@ -77,11 +63,9 @@ export function PathInput({ className, onFocus, onBlur, ...props }: ComponentPro
     const style = getComputedStyle(input)
     const paddingLeft = pixels(style.paddingLeft)
     const paddingRight = pixels(style.paddingRight)
-    // `clientWidth` is zero before the first layout, and in any environment that
-    // does not lay one out at all — a test renderer, most of all. Both mean "we
-    // cannot know what fits", and showing the untouched value is the right
-    // answer for both. Checked before anything is measured, so a run with no
-    // layout never even asks for a canvas.
+    // `clientWidth` is 0 before first layout and in a test renderer. Both mean
+    // "we can't know what fits", so show the untouched value. Checked first, so
+    // a layout-less run never asks for a canvas.
     const available = input.clientWidth - paddingLeft - paddingRight
     if (available <= 0) {
       setOverlay(null)
@@ -102,9 +86,8 @@ export function PathInput({ className, onFocus, onBlur, ...props }: ComponentPro
   useEffect(() => {
     measure()
 
-    // The pane is resizable, so the box this had to fit changes without the
-    // value changing. ResizeObserver is in every webview this ships to; it is
-    // guarded for the test environment, which has no layout to observe anyway.
+    // The pane resizes, so the box changes without the value changing. The
+    // guard is for the test environment, which has no layout to observe.
     const input = inputRef.current
     if (!input || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => measure())
@@ -130,16 +113,16 @@ export function PathInput({ className, onFocus, onBlur, ...props }: ComponentPro
             onFocus={(event) => {
               focused.current = true
               setOverlay(null)
-              // Unmounting the content is what keeps a tooltip from popping over
-              // the field being typed in; the next hover measures again.
+              // Unmount the content so no tooltip pops over the field being
+              // typed in; the next hover measures again.
               setOverflowing(false)
               onFocus?.(event)
             }}
             onBlur={(event) => {
               focused.current = false
               onBlur?.(event)
-              // After the caller's handler: a blur is what commits an edit, and
-              // what is measured has to be the value that was saved.
+              // After the caller's handler — blur commits the edit, and we
+              // must measure the value that was saved.
               measure()
             }}
           />
@@ -159,15 +142,10 @@ export function PathInput({ className, onFocus, onBlur, ...props }: ComponentPro
           )}
         </div>
       </TooltipTrigger>
-      {/*
-        Rendered only for a value that does not fit. A tooltip that repeats a
-        path already fully on screen is noise — and this is how that is said,
-        rather than by driving Radix's `open` from here: a controlled tooltip
-        opened programmatically never enters Radix's own hover state, so the
-        very next thing Radix does is ask to close it again. The result was a
-        tooltip that flashed and vanished under a stationary cursor. Uncontrolled,
-        it stays up exactly as long as the pointer is on the field.
-      */}
+      {/* Rendered only when the value doesn't fit — expressed by presence
+          rather than Radix's `open`, because a programmatically-opened tooltip
+          never enters Radix's hover state and Radix immediately closes it
+          again. That flashed and vanished under a stationary cursor. */}
       {overflowing && (
         <TooltipContent className="max-w-[min(48rem,calc(100vw-4rem))] font-mono text-xs break-all">
           {value}

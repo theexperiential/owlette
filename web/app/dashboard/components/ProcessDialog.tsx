@@ -1,11 +1,4 @@
-/**
- * ProcessDialog Component
- *
- * Dual-purpose dialog for creating new processes or editing existing ones.
- * Displays a comprehensive form for all process configuration options.
- *
- * Used by: Dashboard page for process management
- */
+/** Dual-purpose dialog: create a new process or edit an existing one. */
 
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -56,23 +49,19 @@ export function ProcessDialog({
   onDelete,
   siteTimezone,
 }: ProcessDialogProps) {
-  // Disclosure for the schedule section. The schedule is editable in every
-  // launch mode (same rule the desktop app ships): from `off`/`always on` this
-  // is pre-configuring — the windows are written on save and the mode stays
-  // where it was. In `scheduled` the section is pinned open, so this flag only
-  // drives the other two modes.
+  // Disclosure for the schedule section. The schedule is editable in every launch mode
+  // (the same rule the desktop app ships): from `off`/`always on` this pre-configures —
+  // windows are written on save and the mode stays. In `scheduled` it is pinned open.
   const [scheduleSectionOpen, setScheduleSectionOpen] = useState(false);
   const launchMode = form.launch_mode || 'off';
   const scheduleSectionVisible = launchMode === 'scheduled' || scheduleSectionOpen;
-  // Prefill with the default windows when the process has none stored — the
-  // summary bar and the editor must show the same thing. Nothing is written to
-  // the form until the user actually edits a block.
+  // Prefill the default windows when none are stored, so the summary bar and the editor
+  // show the same thing; nothing is written to the form until the user edits a block.
   const scheduleBlocks = form.schedules && form.schedules.length > 0 ? form.schedules : DEFAULT_SCHEDULE;
 
-  // Collapse again once the dialog closes so the next process opens clean.
-  // Adjusting during render (React's documented "state derived from a prop
-  // change" pattern) rather than in an effect: an effect would re-render the
-  // whole dialog a second time on every close.
+  // Collapse again once the dialog closes so the next process opens clean. Adjusted
+  // during render (React's "state derived from a prop change" pattern) rather than in an
+  // effect, which would re-render the whole dialog a second time on every close.
   const [wasOpen, setWasOpen] = useState(open);
   if (wasOpen !== open) {
     setWasOpen(open);
@@ -96,7 +85,6 @@ export function ProcessDialog({
             the fields alone can outgrow a laptop viewport, and a Dialog that
             overflows puts its footer (save/cancel) out of reach. */}
         <div className="space-y-4 py-4 max-h-[70vh] overflow-y-auto pr-1">
-          {/* Name */}
           <div className="space-y-2">
             <Label htmlFor="edit-name" className="text-white">name</Label>
             <Input
@@ -157,7 +145,6 @@ export function ProcessDialog({
             </div>
           </div>
 
-          {/* Executable Path */}
           <div className="space-y-2">
             <Label htmlFor="edit-exe-path" className="text-white">executable path</Label>
             <Input
@@ -169,7 +156,6 @@ export function ProcessDialog({
             />
           </div>
 
-          {/* File Path / Cmd Args */}
           <div className="space-y-2">
             <Label htmlFor="edit-file-path" className="text-white">file path / command arguments</Label>
             <Input
@@ -181,7 +167,6 @@ export function ProcessDialog({
             />
           </div>
 
-          {/* Working Directory */}
           <div className="space-y-2">
             <Label htmlFor="edit-cwd" className="text-white">working directory</Label>
             <Input
@@ -194,7 +179,6 @@ export function ProcessDialog({
           </div>
 
           <div className="grid grid-cols-3 gap-4">
-            {/* Priority */}
             <div className="space-y-2">
               <Label htmlFor="edit-priority" className="text-white">task priority</Label>
               <Select
@@ -213,7 +197,6 @@ export function ProcessDialog({
               </Select>
             </div>
 
-            {/* Visibility */}
             <div className="space-y-2">
               <Label htmlFor="edit-visibility" className="text-white">window visibility</Label>
               <Select
@@ -235,7 +218,6 @@ export function ProcessDialog({
           </div>
 
           <div className="grid grid-cols-3 gap-4">
-            {/* Time Delay */}
             <div className="space-y-2">
               <Label htmlFor="edit-time-delay" className="text-white">launch delay (sec)</Label>
               <Input
@@ -247,7 +229,6 @@ export function ProcessDialog({
               />
             </div>
 
-            {/* Time to Init */}
             <div className="space-y-2">
               <Label htmlFor="edit-time-init" className="text-white">init timeout (sec)</Label>
               <Input
@@ -259,7 +240,6 @@ export function ProcessDialog({
               />
             </div>
 
-            {/* Relaunch Attempts */}
             <div className="space-y-2">
               <Label htmlFor="edit-relaunch" className="text-white">relaunch attempts</Label>
               <Input

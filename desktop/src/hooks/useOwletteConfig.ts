@@ -13,11 +13,10 @@ export interface ConfigStore {
   /**
    * Read-modify-write one change into `config.json`.
    *
-   * The transform never sees this hook's cached copy: the document is re-read
-   * from disk inside the mutation, so a change the service or the web app made
-   * since the last watcher event is merged rather than overwritten. Mutations
-   * are serialised — two overlapping read-modify-write cycles would silently
-   * drop the first one's edit.
+   * The transform never sees this hook's cached copy: the document is re-read from disk
+   * inside the mutation, so a change the service or the web app made since the last
+   * watcher event is merged rather than overwritten. Mutations are serialised — two
+   * overlapping read-modify-write cycles would silently drop the first one's edit.
    */
   mutate: (transform: (config: OwletteConfig) => OwletteConfig) => Promise<OwletteConfig>
 }
@@ -29,10 +28,9 @@ function message(error: unknown): string {
 /**
  * `config/config.json`, watched rather than polled.
  *
- * A failed read holds the previous document and reports the error. It must
- * never fall back to an empty object: the host errors on a torn or unparseable
- * file precisely so that a UI which writes back what it "read" cannot erase an
- * operator's process list.
+ * A failed read holds the previous document and reports the error. It must never fall
+ * back to an empty object: the host errors on a torn or unparseable file precisely so a
+ * UI writing back what it "read" cannot erase an operator's process list.
  */
 export function useOwletteConfig(): ConfigStore {
   const [config, setConfig] = useState<OwletteConfig | null>(null)

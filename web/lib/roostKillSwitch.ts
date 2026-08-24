@@ -1,16 +1,14 @@
 /**
- * web-side mirror of `agent/src/roost_kill_switch.py` (wave 5.4).
+ * Web-side mirror of `agent/src/roost_kill_switch.py`.
  *
- * Per-site v2 kill switch. An admin sets `sites/{siteId}.roostEnabled = false`
- * in firestore to halt all new roost work for that site — the API routes
- * refuse to issue signed URLs or finalise versions until it flips back.
+ * Per-site kill switch: `sites/{siteId}.roostEnabled = false` halts new roost
+ * work — no signed URLs, no version finalisation — until it flips back.
  *
- * Constants MUST stay in sync with the python side; a `test_field_name_is_stable`
- * test locks it in on the agent, and this file is load-bearing for the gate
- * logic on every roost route.
+ * Constants MUST stay in sync with the python side (`test_field_name_is_stable`
+ * locks it there).
  *
- * **fail-open semantics**: missing flag OR read error = ENABLED. A transient
- * firestore blip should never silently disable a customer.
+ * FAIL-OPEN: missing flag OR read error = ENABLED. A firestore blip must never
+ * silently disable a customer.
  */
 
 import { problem, ProblemType } from './apiErrors';
@@ -19,25 +17,17 @@ import type { NextResponse } from 'next/server';
 /** Field name on `sites/{siteId}` doc. Must match ROOST_ENABLED_FIELD in python. */
 export const ROOST_ENABLED_FIELD = 'roostEnabled';
 
-/**
- * Pure decision: given a site doc shape (or null), is roost enabled?
- * Fail-open rules match the python side.
- */
+/** Pure decision, fail-open, matching the python side. */
 export function isEnabledFromDoc(doc: Record<string, unknown> | null | undefined): boolean {
   if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return true;
   const value = doc[ROOST_ENABLED_FIELD];
   if (value === undefined || value === null) return true;
   if (typeof value === 'boolean') return value;
-  // non-boolean value — fail-open + leave the warning to the log layer.
+  // Non-boolean: fail open; warning is the log layer's job.
   return true;
 }
 
-/**
- * Build a standardised `problem+json` response for callers to return when
- * the kill switch is engaged. 503 because "service is temporarily
- * unavailable for this site" matches the HTTP semantics; `ProblemType.ServiceUnavailable`
- * carries the stable URI clients switch on.
- */
+/** 503 problem+json for an engaged kill switch — clients switch on the type URI. */
 export function roostDisabledResponse(siteId: string): NextResponse {
   return problem({
     type: ProblemType.ServiceUnavailable,
@@ -51,15 +41,12 @@ export function roostDisabledResponse(siteId: string): NextResponse {
 }
 
 /**
- * Gate helper for API routes. Reads the site doc via `readSiteDoc`, decides
- * enabled/disabled, and returns either null (pass through) or a 503 response.
+ * Route gate: null to pass through, or a 503.
  *
  *   const gated = await gateOrProceed(siteId, readSiteDoc);
  *   if (gated) return gated;
  *
- * The caller supplies `readSiteDoc` so server-side callers can use whatever
- * firestore-admin wrapper they already have without this module reaching
- * into admin SDK directly.
+ * `readSiteDoc` is injected so this module never reaches into the admin SDK.
  */
 export async function gateOrProceed(
   siteId: string,
@@ -69,7 +56,7 @@ export async function gateOrProceed(
   try {
     doc = await readSiteDoc(siteId);
   } catch {
-    // fail-open on read error — same contract as the python side.
+    // Fail open on read error, as the python side does.
     return null;
   }
   if (isEnabledFromDoc(doc)) return null;

@@ -1,25 +1,14 @@
 /**
  * POST /api/roosts/{roostId}/version-url
+ * in:  { siteId, versionId }   out: { url, expiresAt }
  *
- * input:  { siteId: string, versionId: string }
- * output: { url: string, expiresAt: string }
+ * Fresh 15-minute signed GET url for a version JSON body in R2, minted at sync time — a url
+ * baked into the roost doc at publish would already be expired by the time a canary retry
+ * ran. Mirrors /api/chunks/download-urls. The roost doc's `versionUrl` is UNSIGNED, a hint
+ * for tooling only, and is not fetchable from the private bucket.
  *
- * Mints a fresh short-lived signed GET URL for a version JSON body
- * stored in R2. Agents call this at sync time — signed URLs are 15 min
- * so a URL baked into the roost doc at publish time would already be
- * expired by the time a canary retry (or anything slower than ~15 min)
- * ran. Mirrors the `/api/chunks/download-urls` pattern.
- *
- * The roost doc's stored `versionUrl` is an UNSIGNED object URL kept
- * as a hint for tooling. It is NOT fetchable directly from a private
- * R2 bucket — clients must call this endpoint to get a fetchable URL.
- *
- * Security:
- * - Auth required (bearer token, matches chunk endpoints).
- * - requireSiteScope ensures the caller can read the named site.
- * - We validate `versionId` exists on the roost's versions subcollection
- *   so callers can only mint URLs for versions actually published to
- *   this roost (can't probe arbitrary R2 keys by guessing ids).
+ * Auth required, requireSiteScope on the named site, and `versionId` must exist on this
+ * roost's versions subcollection so callers can't probe arbitrary R2 keys.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -75,9 +64,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const versionIdError = validateResourceId(body.versionId, 'versionId');
     if (versionIdError) return versionIdError;
 
-    // Confirm the version belongs to this roost on this site. Without
-    // this check a compromised agent could mint GET URLs for any
-    // versionId (SHA-256 is unguessable but defence-in-depth is cheap).
+    // Without this, a compromised agent could mint GET urls for any versionId.
     const db = getAdminDb();
     const versionRef = db
       .collection('sites')

@@ -1,27 +1,15 @@
 /**
- * `owlette.installerDeployments` - classic installer deployment lifecycle.
+ * `owlette.installerDeployments` — classic installer deployment lifecycle over
+ * `/api/sites/{siteId}/deployments[/{deploymentId}[/retry|cancel|uninstall]]`.
  *
- * Wraps the wave-1A installer-deployments routes:
- *
- *   GET    /api/sites/{siteId}/deployments
- *   POST   /api/sites/{siteId}/deployments
- *   GET    /api/sites/{siteId}/deployments/{deploymentId}
- *   POST   /api/sites/{siteId}/deployments/{deploymentId}/retry
- *   POST   /api/sites/{siteId}/deployments/{deploymentId}/cancel
- *   POST   /api/sites/{siteId}/deployments/{deploymentId}/uninstall
- *   DELETE /api/sites/{siteId}/deployments/{deploymentId}
- *
- * Every mutation auto-generates an `Idempotency-Key` of the form
- * `sdk-installer-deployments-<verb>-${randomUUID()}` if the caller does
- * not pass `opts.idempotencyKey`. Errors surface as the canonical
- * `OwletteApiError` instances thrown by `client.request`.
+ * Mutations auto-generate `Idempotency-Key:
+ * sdk-installer-deployments-<verb>-${randomUUID()}` unless the caller passes
+ * `opts.idempotencyKey`. Failures throw `OwletteApiError` from `client.request`.
  */
 import { randomUUID } from 'crypto';
 import type { OwletteClient } from '../lib/client';
 
-/* --------------------------------------------------------------------- */
-/*  types                                                                */
-/* --------------------------------------------------------------------- */
+// types
 
 export type InstallerDeploymentTargetStatus =
   | 'pending'
@@ -121,9 +109,7 @@ export interface InstallerDeploymentDeleteResult {
   deleted: boolean;
 }
 
-/* --------------------------------------------------------------------- */
-/*  resource                                                             */
-/* --------------------------------------------------------------------- */
+// resource
 
 export class InstallerDeployments {
   constructor(private readonly client: OwletteClient) {}

@@ -1,21 +1,12 @@
 /**
- * GET /api/installer
+ * GET /api/installer — installer versions, newest first, cursor-paginated
+ * (AIP-158). Returns `{ versions, nextPageToken }`.
  *
- * List installer versions, newest first. Cursor-paginated per AIP-158.
+ * Superadmin only: an `installer=*:read` api key, or a session/id-token whose
+ * `users/{uid}.role === 'superadmin'`.
  *
- * Auth:
- *   - api key with `installer=*:read` scope (superadmin-only at minting)
- *   - session / id-token from a user where `users/{uid}.role === 'superadmin'`
- *
- * Query params:
- *   - page_size (1..100, default 20)
- *   - page_token (opaque — version id of the doc to start after)
- *   - includeDeleted=true to surface soft-deleted entries (default false)
- *
- * Response:
- *   { versions: InstallerVersion[], nextPageToken: string }
- *
- * api-sprint wave 1 track 1B (installer-api).
+ * Params: page_size (1..100, default 20), page_token (opaque — the version id to
+ * start after), includeDeleted (default false).
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';

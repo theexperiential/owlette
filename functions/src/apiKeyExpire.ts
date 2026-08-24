@@ -1,26 +1,18 @@
 // REQUIRES composite index on (expiresAt ASC, expiredMarkedAt ASC) — see firestore.indexes.json
 /**
- * Scheduled daily sweep of expired api keys (roost public api wave 2.6).
+ * Daily sweep of expired api keys. For each user's api_keys subcollection, finds
+ * `expiresAt < now` without `expiredMarkedAt`, stamps `expiredMarkedAt` (so the
+ * settings ui can tell "expiring" from "expired"), and deletes the top-level
+ * `api_keys/{keyHash}` lookup so auth fails on the missing-doc check rather than
+ * the later expiresAt check — belt-and-braces with `resolveApiKeyContext`.
  *
- * For every user's api_keys subcollection:
- *   1. Find entries where `expiresAt < now` and no `expiredMarkedAt` yet.
- *   2. Stamp `expiredMarkedAt` on the subcollection doc so the settings ui
- *      can distinguish "live but soon" from "already expired."
- *   3. Delete the top-level `api_keys/{keyHash}` lookup doc so auth
- *      resolution short-circuits on the missing-doc check rather than
- *      the (slightly later) expiresAt check — belt-and-suspenders with
- *      the request-time check in `resolveApiKeyContext`.
- *
- * Rotated keys already have `retiresAt` stamped; those are handled by the
- * same sweep via the retired-grace code path in resolveApiKeyContext and
- * are cleaned up here once retiresAt is also past.
- *
- * Idempotent: re-running skips keys that already carry `expiredMarkedAt`.
- * Safe to run ad-hoc via `firebase functions:shell` for manual cleanup.
+ * Rotated keys carry `retiresAt` and are cleaned up here once that is also past.
+ * Idempotent (already-marked keys are skipped), so it is safe to run ad hoc via
+ * `firebase functions:shell`.
  */
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 
 const BATCH_LIMIT = 400;
@@ -33,7 +25,7 @@ interface SweepSummary {
 }
 
 export async function sweepExpiredApiKeys(now = Date.now()): Promise<SweepSummary> {
-  const db = admin.firestore();
+  const db = getFirestore();
   const summary: SweepSummary = {
     keysScanned: 0,
     keysMarkedExpired: 0,
@@ -41,9 +33,8 @@ export async function sweepExpiredApiKeys(now = Date.now()): Promise<SweepSummar
     errors: 0,
   };
 
-  // Collection-group query to scan every user's api_keys subcollection in one
-  // pass. Firestore composite index on (expiresAt, expiredMarkedAt) keeps
-  // this cheap even with many keys.
+  // Collection-group scan of every user's api_keys in one pass; the
+  // (expiresAt, expiredMarkedAt) composite index keeps it cheap.
   const expired = await db
     .collectionGroup('api_keys')
     .where('expiresAt', '<', now)
@@ -75,8 +66,7 @@ export async function sweepExpiredApiKeys(now = Date.now()): Promise<SweepSummar
         summary.lookupsDeleted += 1;
       }
 
-      // firestore batch cap is 500 writes. Commit midway and start fresh to
-      // avoid exceeding the limit when sweeping a backlog.
+      // Firestore batches cap at 500 writes — commit and start a fresh one.
       if (opsInBatch >= BATCH_LIMIT) {
         await batch.commit();
         batch = db.batch();
@@ -97,10 +87,7 @@ export async function sweepExpiredApiKeys(now = Date.now()): Promise<SweepSummar
   return summary;
 }
 
-/**
- * Scheduled 03:00 UTC daily. Timeout 120s is generous — even 10k expired
- * keys take well under a minute to mark.
- */
+/** Daily at 03:00 UTC; 120s timeout covers well over 10k keys. */
 export const sweepExpiredApiKeysDaily = onSchedule(
   { schedule: '0 3 * * *', timeoutSeconds: 120, memory: '256MiB' },
   async () => {

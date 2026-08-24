@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { Users, Shield, ShieldAlert, Crown, Loader2, Settings, MoreVertical, UserCog, Trash2 } from 'lucide-react';
+import { Users, Shield, ShieldAlert, ShieldOff, Crown, Loader2, Settings, MoreVertical, UserCog, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from '@/lib/toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -75,20 +75,16 @@ interface UserActivity {
 }
 
 /**
- * Audit target id recorded by platform routes that act on the platform itself
- * rather than one addressable resource. Admin-delete rows written before
- * `/api/users/{uid}` started passing `targetIdParam` carry this instead of the
- * deleted uid, so the feed shows "user not recorded" for them.
+ * Audit target id for platform-level actions with no addressable resource.
+ * Admin-delete rows predating `targetIdParam` carry this instead of the deleted
+ * uid, so the feed shows "user not recorded" for them.
  */
 const PLATFORM_TARGET_ID = '__platform__';
 
 /** Per-device pref field on `users/{uid}/devicePrefs/global`. */
 const SHOW_DELETED_USERS_PREF = 'adminShowDeletedUsers';
 
-/**
- * Compact tally chip. Lives in the page header (right of the title) rather
- * than in a full-width card row so the users table gets the vertical space.
- */
+/** Tally chip. In the header, not a card row, so the table keeps the height. */
 function StatChip({
   icon: Icon,
   iconBg,
@@ -113,15 +109,7 @@ function StatChip({
   );
 }
 
-/**
- * User Management Page
- *
- * Admin-only page for managing user roles and permissions.
- * Allows admins to:
- * - View all users
- * - Promote users to admin
- * - Demote admins to user
- */
+/** Admin-only page for viewing users and changing their roles. */
 export default function UserManagementPage() {
   const { user: currentUser, isSuperadmin } = useAuth();
   const { users, loading, error, updateUserRole, getUserCounts, assignSiteToUser, removeSiteFromUser, deleteUser } = useUserManagement(isSuperadmin);
@@ -130,6 +118,9 @@ export default function UserManagementPage() {
   const [manageSitesDialogOpen, setManageSitesDialogOpen] = useState(false);
   const [deleteConfirmDialogOpen, setDeleteConfirmDialogOpen] = useState(false);
   const [roleChangeDialogOpen, setRoleChangeDialogOpen] = useState(false);
+  const [mfaResetDialogOpen, setMfaResetDialogOpen] = useState(false);
+  const [resettingMfaUser, setResettingMfaUser] = useState<string | null>(null);
+  const [userToResetMfa, setUserToResetMfa] = useState<{ uid: string; email: string } | null>(null);
   const [selectedUser, setSelectedUser] = useState<{ uid: string; email: string; role: UserRole; sites: string[] } | null>(null);
   const [userToDelete, setUserToDelete] = useState<{ uid: string; email: string } | null>(null);
   const [authoredTalons, setAuthoredTalons] = useState<UserAuthoredTalons | null>(null);
@@ -140,17 +131,15 @@ export default function UserManagementPage() {
   const [activity, setActivity] = useState<Record<string, UserActivity>>({});
   const { fetchUserAuthored } = useTalonReassign();
 
-  // Successors for the deletion flow: the same successor named for site
-  // ownership also inherits the talons, so the operator is asked once. No
+  // The site-ownership successor also inherits the talons, so ask once. No
   // siteId — the API re-checks eligibility per site and reports refusals.
   const successorCandidates = useMemo(
     () => eligibleTalonSuccessors(users, { excludeUid: userToDelete?.uid }),
     [users, userToDelete?.uid],
   );
 
-  // Show/hide deleted accounts in the users table, persisted per device so the
-  // choice survives reloads. Defaults to shown — hiding them is opt-in, since
-  // silently dropping rows would be a surprise for anyone who never toggles it.
+  // Persisted per device. Defaults to shown: silently dropping rows would
+  // surprise anyone who never finds the toggle.
   const { value: showDeletedUsers, setValue: setShowDeletedUsers } = useDevicePrefFlag(
     SHOW_DELETED_USERS_PREF,
     true,
@@ -158,15 +147,15 @@ export default function UserManagementPage() {
 
   const counts = getUserCounts();
 
-  // The tally chips already count active accounts only, so hiding deleted rows
-  // keeps the table and the chips telling the same story.
+  // The chips count active accounts only, so hiding deleted rows keeps table
+  // and chips consistent.
   const visibleUsers = useMemo(
     () => (showDeletedUsers ? users : users.filter((u) => u.deletedAt == null)),
     [users, showDeletedUsers],
   );
 
-  // uid -> display label, so audit rows can name people instead of raw uids.
-  // Soft-deleted users stay in `users`, so deleted accounts still resolve.
+  // uid -> display label for audit rows. Soft-deleted users stay in `users`,
+  // so deleted accounts still resolve.
   const userLabels = useMemo(() => {
     const map: Record<string, string> = {};
     for (const u of users) {
@@ -175,8 +164,7 @@ export default function UserManagementPage() {
     return map;
   }, [users]);
 
-  // Fetch the account-deletion audit feed once. Non-fatal: on error we log and
-  // leave `deletions` empty so the panel renders its empty state.
+  // Non-fatal: on error the panel just renders its empty state.
   useEffect(() => {
     let cancelled = false;
 
@@ -203,10 +191,9 @@ export default function UserManagementPage() {
     };
   }, []);
 
-  // Fetch Firebase Auth sign-in metadata (last-seen) for the table. Page-level
-  // rather than in useUserManagement: that hook is also used by ManageSitesDialog
-  // on non-superadmin pages (roosts/dashboard/logs), where this superadmin-only
-  // endpoint would 403. Non-fatal — the column renders "never" if it fails.
+  // Page-level, not in useUserManagement: that hook also runs in
+  // ManageSitesDialog on non-superadmin pages, where this endpoint 403s.
+  // Non-fatal — the column renders "never" if it fails.
   useEffect(() => {
     let cancelled = false;
 
@@ -236,8 +223,7 @@ export default function UserManagementPage() {
   };
 
   const handleOpenRoleChangeDialog = (userId: string, email: string, currentRole: UserRole) => {
-    // Prevent self-demotion from superadmin — preserves the platform-admin guarantee
-    // so a lone superadmin can't accidentally lock themselves out of user management.
+    // A lone superadmin must not be able to lock themselves out of this page.
     if (userId === currentUser?.uid && currentRole === 'superadmin') {
       toast.error('cannot demote yourself', {
         description: 'promote another superadmin first, then they can demote you.',
@@ -245,7 +231,7 @@ export default function UserManagementPage() {
       return;
     }
 
-    // newRole starts equal to currentRole; user picks a new value in the dialog.
+    // Starts equal to currentRole; the dialog supplies the new value.
     setUserToChangeRole({ uid: userId, email, currentRole, newRole: currentRole });
     setRoleChangeDialogOpen(true);
   };
@@ -257,7 +243,7 @@ export default function UserManagementPage() {
   const handleConfirmRoleChange = async () => {
     if (!userToChangeRole) return;
     if (userToChangeRole.newRole === userToChangeRole.currentRole) {
-      // No-op — dialog shouldn't allow this state but guard anyway.
+      // The dialog shouldn't allow this, but guard anyway.
       setRoleChangeDialogOpen(false);
       setUserToChangeRole(null);
       return;
@@ -282,8 +268,58 @@ export default function UserManagementPage() {
     }
   };
 
+  const handleOpenMfaResetDialog = (userId: string, email: string) => {
+    // The API refuses this too; catching it here saves a round-trip to a 403.
+    if (userId === currentUser?.uid) {
+      toast.error('cannot reset your own 2FA', {
+        description: 'remove your own factors from account settings, or ask another superadmin.',
+      });
+      return;
+    }
+
+    setUserToResetMfa({ uid: userId, email });
+    setMfaResetDialogOpen(true);
+  };
+
+  const handleConfirmMfaReset = async () => {
+    if (!userToResetMfa) return;
+
+    setResettingMfaUser(userToResetMfa.uid);
+    setMfaResetDialogOpen(false);
+
+    try {
+      const response = await fetch(
+        `/api/users/${encodeURIComponent(userToResetMfa.uid)}/mfa-reset`,
+        { method: 'POST' },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail ?? body.title ?? `reset failed (${response.status})`);
+      }
+      const result = await response.json();
+      const factorsCleared =
+        (result.clearedTotp ? 1 : 0) + (result.deletedPasskeys ?? 0);
+      toast.success('2FA reset', {
+        // Resetting an account that held nothing is legitimate — it's what a
+        // retry after a partial failure looks like, not "lost 0 factors".
+        description: factorsCleared === 0
+          ? `${userToResetMfa.email} had no factors to remove, and will be asked to set up 2FA at next sign-in.`
+          : `${userToResetMfa.email} lost ${factorsCleared} factor${
+              factorsCleared === 1 ? '' : 's'
+            }, and will be asked to set up 2FA at next sign-in.`,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('reset failed', {
+        description: message || 'failed to reset 2FA for this user.',
+      });
+    } finally {
+      setResettingMfaUser(null);
+      setUserToResetMfa(null);
+    }
+  };
+
   const handleOpenDeleteDialog = (userId: string, email: string) => {
-    // Prevent user from deleting themselves
     if (userId === currentUser?.uid) {
       toast.error('cannot delete yourself', {
         description: 'you cannot delete your own account.',
@@ -296,9 +332,8 @@ export default function UserManagementPage() {
     setAuthoredTalons(null);
     setDeleteConfirmDialogOpen(true);
 
-    // Fleet-wide talon lookup, fired as the dialog opens: the operator has to
-    // see what the deletion breaks before they confirm it, not after. Failure
-    // is non-fatal — the dialog still works, it just can't warn.
+    // Fired as the dialog opens: the operator must see what the deletion breaks
+    // before confirming. Non-fatal — without it the dialog just can't warn.
     void (async () => {
       try {
         setAuthoredTalons(await fetchUserAuthored(userId));
@@ -318,8 +353,8 @@ export default function UserManagementPage() {
     try {
       const result = await deleteUser(userToDelete.uid, {
         successorUid: successor,
-        // Only when a successor was actually chosen — the API refuses the flag
-        // on its own, and an unchosen successor means "let them lapse".
+        // Only with a chosen successor: the API refuses the bare flag, and no
+        // successor means "let them lapse".
         reassignTalons: Boolean(successor) && (authoredTalons?.count ?? 0) > 0,
       });
       toast.success('user deleted', {
@@ -334,8 +369,8 @@ export default function UserManagementPage() {
           } moved to a new owner.`,
         });
       }
-      // A per-site refusal (successor isn't a member there) has to be visible:
-      // those talons are now authored by a deleted account and will not run.
+      // Surface per-site refusals: those talons are now authored by a deleted
+      // account and will not run.
       const failures = result.talonReassignFailures ?? [];
       if (failures.length > 0) {
         toast.error('some talons could not be reassigned', {
@@ -497,8 +532,8 @@ export default function UserManagementPage() {
                     {/* Sites */}
                     <td className="p-4">
                       {user.role === 'admin' ? (
-                        // Admins are site-scoped — show the exact sites they admin
-                        // so superadmins can see at a glance who's responsible for what.
+                        // Admins are site-scoped; name the sites so a superadmin
+                        // can see who is responsible for what.
                         user.sites && user.sites.length > 0 ? (
                           <div className="flex flex-wrap gap-1 max-w-sm">
                             {user.sites.map((siteId) => (
@@ -604,6 +639,23 @@ export default function UserManagementPage() {
                             </DropdownMenuItem>
                             <DropdownMenuSeparator className="bg-border" />
                             <DropdownMenuItem
+                              onClick={() => handleOpenMfaResetDialog(user.uid, user.email)}
+                              disabled={resettingMfaUser === user.uid || user.uid === currentUser?.uid}
+                              className="text-red-400 hover:bg-red-950/30! hover:text-red-300! cursor-pointer focus:bg-red-950/30 focus:text-red-300"
+                            >
+                              {resettingMfaUser === user.uid ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  resetting...
+                                </>
+                              ) : (
+                                <>
+                                  <ShieldOff className="h-4 w-4 mr-2" />
+                                  reset 2FA...
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
                               onClick={() => handleOpenDeleteDialog(user.uid, user.email)}
                               disabled={deletingUser === user.uid || user.uid === currentUser?.uid}
                               className="text-red-400 hover:bg-red-950/30! hover:text-red-300! cursor-pointer focus:bg-red-950/30 focus:text-red-300"
@@ -655,8 +707,7 @@ export default function UserManagementPage() {
             <ul className="divide-y divide-border mt-4">
               {deletions.map((d) => {
                 const selfDelete = d.capability === 'USER_SELF_DELETE';
-                // Legacy admin-delete rows recorded the platform sentinel rather
-                // than the deleted uid — surface that instead of the raw token.
+                // Legacy rows recorded the platform sentinel, not the uid.
                 const targetUid = d.uid && d.uid !== PLATFORM_TARGET_ID ? d.uid : null;
                 const targetLabel = targetUid ? userLabels[targetUid] ?? targetUid : null;
                 const actorLabel = d.actorUid ? userLabels[d.actorUid] ?? d.actorUid : 'an unknown actor';
@@ -878,6 +929,53 @@ export default function UserManagementPage() {
             >
               <Trash2 className="h-4 w-4 mr-2" />
               delete user
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 2FA Reset Confirmation Dialog — the supported recovery path for a user
+          who has lost their last factor AND their backup codes. Destructive:
+          it strips every factor, so the consequences are spelled out rather
+          than left to be discovered at the target's next sign-in. */}
+      <Dialog open={mfaResetDialogOpen} onOpenChange={setMfaResetDialogOpen}>
+        <DialogContent className="border-border bg-card text-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-foreground flex items-center gap-2">
+              <ShieldOff className="h-5 w-5 text-red-400" />
+              reset 2FA
+            </DialogTitle>
+            <DialogDescription className="text-foreground">
+              remove every second factor from <strong className="text-foreground">{userToResetMfa?.email}</strong>?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="my-4 space-y-3">
+            <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-4">
+              <p className="text-red-300 text-sm">
+                their authenticator app, passkeys and backup codes all stop working. they will be
+                signed out of every trusted device, and asked to set up 2FA again the next time they
+                sign in.
+              </p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              only do this once you have confirmed who you are talking to — a reset hands the
+              account to whoever signs in next.
+            </p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setMfaResetDialogOpen(false)}
+              className="bg-secondary border border-border cursor-pointer"
+            >
+              cancel
+            </Button>
+            <Button
+              onClick={handleConfirmMfaReset}
+              className="bg-red-600 hover:bg-red-700 text-foreground cursor-pointer"
+            >
+              <ShieldOff className="h-4 w-4 mr-2" />
+              reset 2FA
             </Button>
           </DialogFooter>
         </DialogContent>

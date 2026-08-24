@@ -1,38 +1,19 @@
 """
 sync_assembler — atomic file reassembly for roost (project distribution v2).
 
-reads chunks from the local content store, concatenates them into a
-target file at `<extract_root>/<version_path>`, and atomically renames
-into place. NEVER overwrites a live file partially: writes go to a
-`<path>.partial` sidecar, get fsynced, then replace the target via
-`os.replace` (atomic on POSIX; uses ReplaceFileW on Windows under the
-hood for python ≥3.3).
+concatenates content-store chunks into `<extract_root>/<version_path>` via a
+`<path>.partial` sidecar that is fsynced then `os.replace`d, so a live file is
+never partially overwritten.
 
-design:
-- destination_allowlist gates EVERY target path before any disk write.
-  fail-closed: empty allowlist rejects everything.
-- per-file state tracked in SyncState; on resume, files in 'assembling'
-  state get their `.partial` either continued or discarded.
-- one Assembler instance handles a whole distribution; it doesn't keep
-  thread state, so multiple distributions can have their own instances
-  without contention.
-- cancellation honored between files (NOT mid-file — a half-assembled
-  file with the wrong size on disk would be confusing). cancel mid-rename
-  is impossible (rename is atomic).
-- assemble-then-prune: once EVERY file in the version is on disk, the
-  extract tree is reconciled against the version's file list and anything
-  extraneous is deleted. doing it in that order means a crash mid-sync
-  leaves a "mixed but complete superset" tree (old files still playable),
-  never a tree with files missing.
-- runs as agent SYSTEM user; relies on destination_allowlist + the sync
-  guard rails (no symlinks, no junctions, no ADS, no reserved names) to
-  prevent customer-controlled-path → SYSTEM-write escalation.
+- destination_allowlist gates EVERY target path before any disk write; empty
+  allowlist rejects everything (fail-closed). runs as SYSTEM, so that gate plus
+  the sync guard rails are what stop customer-path → SYSTEM-write escalation.
+- cancellation is honored between files only — mid-file would leave a
+  wrong-sized file on disk.
+- assemble-then-prune: a crash between the two leaves a complete superset (old
+  files still playable) rather than a tree with files missing.
 
-NOT this module's job:
-- chunk download (sync_downloader)
-- version fetch (sync_version)
-- HTTP / network anything
-- ACL hardening of extracted files (wave 4b.3 — extends this)
+not here: chunk download (sync_downloader), version fetch (sync_version), HTTP.
 """
 
 from __future__ import annotations
@@ -54,17 +35,14 @@ from sync_state import SyncState
 
 logger = logging.getLogger(__name__)
 
-# kept in sync with sync_downloader.DEFAULT_CONTENT_STORE — see
-# sync_downloader._default_content_store() for the canonical resolver.
+# canonical resolver lives in sync_downloader._default_content_store().
 DEFAULT_CONTENT_STORE = _default_content_store()
 
-# read buffer for streaming chunks into the target file. small enough to
-# avoid OOM on 50GB files; large enough to keep IO efficient.
+# small enough to avoid OOM on 50GB files, large enough to keep IO efficient.
 _ASSEMBLE_BUFFER_BYTES = 1024 * 1024  # 1 MiB
 
-# windows MAX_PATH; paths at or beyond this length need the `\\?\` prefix
-# to be addressable by win32 file APIs even when LongPathsEnabled is set
-# in the registry, because some win32 APIs still cap at 260 without it.
+# windows MAX_PATH. at/above this, win32 APIs need the `\\?\` prefix even with
+# LongPathsEnabled set — some of them still cap at 260 without it.
 _WINDOWS_MAX_PATH = 260
 
 
@@ -97,37 +75,27 @@ def assemble_all(
     assemble every file from chunks into `extract_root/<file.path>`, then
     reconcile the tree so it matches the version exactly.
 
-    extract_root: the customer-configured destination (e.g. `C:\\TouchDesigner\\Projects`).
-    allowlist: pre-built DestinationAllowlist; assembler validates each
-    target path against it before any write.
-    cancel_event: checked between files. cancel during write is NOT honored
-    (atomic-rename safety) — wait until current file completes.
-    prune: when True (default), delete files under extract_root that the
-    version does not declare — this is what makes a rollback an actual
-    project-level swap instead of a per-file overwrite. Only runs after
-    every file assembled successfully and the run wasn't cancelled.
+    cancel_event is checked between files only (atomic-rename safety).
+    prune deletes files under extract_root the version does not declare — what
+    makes a rollback a project-level swap, not a per-file overwrite; only runs
+    after every file assembled and the run wasn't cancelled.
 
-    raises AssembleError on first failure if cancel_event is None
-    (caller can decide to keep going by passing a cancel_event).
+    raises AssembleError on first failure when cancel_event is None.
     """
     if cancel_event is None:
         cancel_event = threading.Event()
-    # recompute each call so env-var overrides in tests are honored; see
-    # sync_downloader.download_all for the matching pattern.
+    # recomputed each call so env-var overrides in tests are honored.
     if content_store is None:
         store = Path(_default_content_store())
     else:
         store = Path(os.path.expanduser(content_store))
 
-    # validate the extract_root itself BEFORE doing any disk work. this
-    # catches misconfiguration loud and early instead of failing per-file.
+    # validate extract_root BEFORE any disk work — fail loud, not per-file.
     try:
         resolved_root = allowlist.validate(extract_root)
     except DestinationNotAllowedError as e:
-        # log before raising: the handler turns this into a command failure,
-        # but an operator debugging a refused deploy on the machine itself
-        # must be able to see WHY in service.log without a firestore round
-        # trip. (roost hardening finding 2 — refusals were silent locally.)
+        # log before raising so a refusal is visible in service.log without a
+        # firestore round trip (roost hardening finding 2: refusals were silent).
         logger.error(
             f"sync_assembler: distribution {distribution_id} REFUSED — "
             f"extract_root {extract_root!r} is not allowed by "
@@ -141,8 +109,8 @@ def assemble_all(
     assembled = 0
     skipped = 0
     failed = 0
-    # snapshot BEFORE any per-file failure flips cancel_event ourselves.
-    # lets us distinguish "user cancelled" from "failure short-circuit".
+    # snapshot before a per-file failure sets cancel_event, so "user cancelled"
+    # stays distinguishable from "failure short-circuit".
     was_externally_cancelled = cancel_event.is_set()
 
     for f in files_list:
@@ -186,8 +154,7 @@ def assemble_all(
         f"assembled={assembled} skipped={skipped} failed={failed} "
         f"cancelled={result.cancelled}"
     )
-    # failure always raises so the caller gets a hard error. external
-    # cancellation returns peacefully (result.cancelled tells the story).
+    # failure raises; external cancellation returns via result.cancelled.
     if failed > 0:
         logger.error(
             f"sync_assembler: distribution {distribution_id} FAILED — "
@@ -198,21 +165,13 @@ def assemble_all(
             f"distribution {distribution_id}: {failed} file(s) failed to assemble"
         )
 
-    # tree reconciliation — the second half of the "atomic project-level
-    # swap". every file the version declares is now on disk; anything else
-    # under extract_root belongs to a version we are no longer running (a
-    # rollback's newer files, a renamed asset, an aborted `.partial`) and
-    # has to go, or the roost's on-disk state is a union of every version
-    # ever deployed rather than the one we were told to run.
+    # second half of the atomic project-level swap: anything under extract_root
+    # the version doesn't declare belongs to a version we no longer run.
     #
-    # ORDER MATTERS: assemble first, prune second. a crash between the two
-    # leaves a complete superset (every current file present, plus stale
-    # extras) — the show keeps playing and the next sync re-reconciles.
-    # pruning first would open a window where files are missing.
-    #
-    # runs even when assembled == 0: a rollback whose files are all
-    # byte-identical to what's on disk still has to lose the extra file the
-    # newer version added.
+    # ORDER MATTERS — assemble first, prune second. a crash between the two
+    # leaves a complete superset; pruning first opens a window with files
+    # missing. runs even when assembled == 0: an all-identical rollback still
+    # has to lose the extra file the newer version added.
     if prune and not result.cancelled:
         result.pruned, result.prune_failed = _prune_extraneous(
             distribution_id=distribution_id,
@@ -222,21 +181,11 @@ def assemble_all(
             state=state,
         )
 
-    # post-assembly cleanup: delete chunks referenced by this version from the
-    # content store. once a file has been atomically renamed into the extract
-    # location AND committed in the state DB, the chunks are pure duplication —
-    # R2 retains the authoritative copies, and a future re-sync or rollback
-    # re-downloads. for a 100GB roost this avoids 100GB of redundant disk usage.
-    #
-    # we only scope the delete to chunks referenced by THIS version so that
-    # if another distribution is mid-download against the same content store,
-    # its chunks stay untouched. slow commands are serialized in the agent
-    # command loop, so concurrent distributions are rare — this is
-    # belt-and-suspenders in case the contract changes.
-    #
-    # skipped on external cancellation (chunks may still be needed on resume)
-    # and on "nothing happened" runs where every file was a skip — no point
-    # churning the cache for idempotent re-runs.
+    # once renamed into place and committed, chunks are pure duplication (R2 is
+    # authoritative; a re-sync or rollback re-downloads) — 100GB saved on a
+    # 100GB roost. scoped to THIS version's chunks so a concurrent distribution
+    # sharing the store keeps its own. skipped on cancellation (resume needs
+    # them) and on all-skip runs.
     if not result.cancelled and assembled > 0:
         chunks_to_cleanup = {
             c.hash
@@ -260,24 +209,19 @@ def _assemble_one(
     assemble ONE file. returns True if a write occurred, False if the file
     was already present + matching (idempotent skip).
     """
-    # build the target path. POSIX-style version path is normalized to
-    # the local OS separator; allowlist.validate() handles the security
-    # checks (path traversal, ADS, reserved names, etc).
+    # POSIX version path → local separator; allowlist.validate() covers
+    # traversal, ADS and reserved names.
     target_relative = Path(*version_file.path.split('/'))
     target_str = str(extract_root / target_relative)
     resolved_target = allowlist.validate(target_str)
 
-    # idempotent skip: if the target file already exists and its size
-    # matches AND it has the right total bytes, assume it's good.
-    # (full-content verification is the scrub's job, not the hot-path
-    # assembler — wave 4b.7 handles periodic re-verification.)
+    # idempotent skip on a size match; full-content verification is the
+    # periodic scrub's job, not the hot path.
     if resolved_target.exists():
         try:
             if resolved_target.stat().st_size == version_file.size:
-                # Re-harden ACL even on skip — an operator re-sync after
-                # an agent upgrade is how stale DACLs (e.g. pre-operator-ACE
-                # hardening from earlier builds) get fixed. _harden_acl is
-                # a single syscall; cheap enough to run unconditionally.
+                # Re-harden even on skip: a re-sync is how stale DACLs from
+                # older builds get fixed, and it's one cheap syscall.
                 _harden_acl(_long_path(str(resolved_target)))
                 state.set_file_state(distribution_id, version_file.path, 'committed')
                 logger.debug(f"sync_assembler: {version_file.path!r} already present + matches size")
@@ -287,15 +231,11 @@ def _assemble_one(
 
     state.set_file_state(distribution_id, version_file.path, 'assembling')
 
-    # write to a `.partial` sidecar so a crash mid-write leaves the live
-    # file (if any) untouched.
+    # `.partial` sidecar so a crash mid-write leaves the live file untouched.
     partial = resolved_target.with_suffix(resolved_target.suffix + '.partial')
-    # _ensure_parent_dir handles long-path prefix for mkdir on windows.
     _ensure_parent_dir(resolved_target)
 
-    # use long-path-prefixed strings for win32 file APIs when the path
-    # would exceed MAX_PATH. open() / os.replace / os.fsync all accept
-    # the `\\?\` prefix on windows.
+    # open() / os.replace / os.fsync all accept the `\\?\` prefix on windows.
     partial_str = _long_path(str(partial))
     target_str = _long_path(str(resolved_target))
 
@@ -316,13 +256,12 @@ def _assemble_one(
                             break
                         out.write(buf)
                         bytes_written += len(buf)
-            # flush + fsync so power loss between rename and the data
-            # actually hitting disk doesn't corrupt the file.
+            # fsync before the rename — power loss in between corrupts the file.
             out.flush()
             try:
                 os.fsync(out.fileno())
             except OSError as e:
-                # fsync can fail on remote filesystems; log + continue.
+                # fsync fails on some remote filesystems; log + continue.
                 logger.warning(
                     f"sync_assembler: fsync failed for {partial}: {e}"
                 )
@@ -332,22 +271,14 @@ def _assemble_one(
                 f"size mismatch: wrote {bytes_written} bytes, version says {version_file.size}"
             )
 
-        # atomic rename. on windows, os.replace uses MoveFileExW with
-        # MOVEFILE_REPLACE_EXISTING; on POSIX it's rename(2).
+        # atomic: MoveFileExW/MOVEFILE_REPLACE_EXISTING on windows, rename(2) elsewhere.
         os.replace(partial_str, target_str)
 
-        # post-rename realpath check (wave 4b.2 — TOCTOU defense).
-        # allowlist.validate() ran before the rename, but a privileged
-        # attacker could swap an intermediate parent dir to a symlink or
-        # junction in the window between validate and rename. resolve the
-        # target AFTER the rename lands and confirm it still sits under
-        # the expected extract_root. fail-closed: on mismatch, delete the
-        # file and raise. do NOT keep a potentially-exfiltrated file on
-        # disk.
+        # TOCTOU defense: a parent dir could be swapped to a symlink/junction
+        # between validate() and the rename. fail-closed — delete and raise.
         _verify_under_root(resolved_target, extract_root)
 
-        # fsync the parent directory so the rename itself is durable. on
-        # windows this is a no-op (rename via MoveFileEx handles it).
+        # make the rename itself durable; no-op on windows (MoveFileEx handles it).
         if os.name == 'posix':
             dir_fd = os.open(str(resolved_target.parent), os.O_RDONLY)
             try:
@@ -355,9 +286,7 @@ def _assemble_one(
             finally:
                 os.close(dir_fd)
 
-        # harden the ACL: SYSTEM + Administrators only, inheritance stripped.
-        # best-effort + windows-only; log on failure but don't fail the assembly
-        # (the file is on disk and the show needs to play).
+        # best-effort, windows-only: never fail the assembly over an ACL.
         _harden_acl(target_str)
 
         state.set_file_state(distribution_id, version_file.path, 'committed')
@@ -368,13 +297,10 @@ def _assemble_one(
         return True
 
     except Exception:
-        # leave the .partial in place — sync_state knows the file is in
-        # 'assembling' state and the next run will retry. forcing a
-        # cleanup here would lose the resume opportunity.
+        # leave the .partial: sync_state has it 'assembling' and the next run
+        # resumes. cleaning up here would lose that.
         raise
 
-
-# ─── tree reconciliation (project-level swap) ───────────────────────
 
 
 def _prune_extraneous(
@@ -385,32 +311,19 @@ def _prune_extraneous(
     state: SyncState,
 ) -> Tuple[int, int]:
     """
-    delete the files this agent wrote for THIS roost that the version being
-    installed no longer declares, then remove the directories that emptied
-    out as a result. returns (deleted, failed).
+    delete files this agent wrote for THIS roost that the installing version no
+    longer declares, then rmdir what emptied out. returns (deleted, failed).
 
-    the candidate set comes from provenance, not from a directory walk:
-    SyncState knows every path every distribution of this roost put on
-    disk, so we delete only what we ourselves wrote. that matters because
-    the default extract path (`~/Documents/Owlette/`) is SHARED by every
-    roost that doesn't override it — a "delete everything the version
-    doesn't list" walk would have each deploy wipe the other roosts' files,
-    and would eat anything the operator keeps alongside them. the cost of
-    the safer rule: if the state DB is lost (reinstall), stale files
-    survive until something rewrites them. that is the correct direction to
-    fail.
+    candidates come from SyncState provenance, NOT a directory walk: the default
+    extract path (`~/Documents/Owlette/`) is shared by every roost that doesn't
+    override it, so a "delete what the version doesn't list" walk would have each
+    deploy wipe the other roosts and the operator's own files. cost of the safer
+    rule: a lost state DB leaves stale files behind — the right way to fail.
 
-    safety rails on every candidate:
-      - re-validated through the destination allowlist (which rejects any
-        path with a symlink/junction in its ancestry, ADS, reserved names)
-      - realpath-checked to still sit under `extract_root` — the same TOCTOU
-        defense `_verify_under_root` applies to writes
-      - a `.partial` sidecar of the same path goes with it (an interrupted
-        write for a file the version dropped is pure garbage)
-
-    a delete that fails (file locked by TouchDesigner, ACL, AV) is logged
-    and counted, never raised: the version's own files are already on disk
-    and the show has to keep playing. the next sync retries the prune.
+    every candidate is re-validated through the allowlist and realpath-checked
+    under `extract_root` (same TOCTOU defense as writes); its `.partial` sidecar
+    goes too. a failed delete (locked by TouchDesigner, ACL, AV) is logged and
+    counted, never raised — the next sync retries.
     """
     dist = state.get_distribution(distribution_id)
     if dist is None:
@@ -423,15 +336,12 @@ def _prune_extraneous(
     keep = {_cmp_key(extract_root / Path(*f.path.split('/'))) for f in files}
     root_cmp = _cmp_key(extract_root)
 
-    # map each prior distribution's extract_root through the allowlist once,
-    # so N file rows don't pay N resolutions. a root that no longer resolves
-    # (or is no longer allowed) contributes nothing.
+    # resolve each prior extract_root once so N rows don't pay N resolutions.
     root_matches: dict = {}
 
     def _same_root(raw_root: Optional[str]) -> bool:
         if not raw_root:
-            # pre-4a.4 rows without an extract_root: we cannot prove the file
-            # landed in THIS tree, so we leave it alone.
+            # no extract_root recorded: can't prove it landed in THIS tree.
             return False
         if raw_root not in root_matches:
             try:
@@ -502,9 +412,8 @@ def _prune_target_is_safe(
     path: Path, extract_root: Path, allowlist: DestinationAllowlist
 ) -> bool:
     """
-    last gate before an unlink: the candidate must still pass the allowlist
-    AND still resolve under `extract_root`. fail-closed — anything we can't
-    positively confirm is left on disk.
+    last gate before an unlink: still allowlisted AND still resolving under
+    `extract_root`. fail-closed — anything unconfirmed stays on disk.
     """
     try:
         allowlist.validate(str(path))
@@ -534,13 +443,9 @@ def _prune_target_is_safe(
 
 def _remove_empty_dirs(dirs: Set[Path], extract_root: Path) -> int:
     """
-    rmdir every directory in `dirs` that a prune just emptied, then walk
-    upward doing the same until a non-empty directory or `extract_root`
-    itself is reached. `extract_root` is NEVER removed — the roost keeps
-    its (possibly empty) home.
-
-    rmdir on a non-empty or in-use directory raises and is treated as "stop
-    here": the intended no-op, not an error worth logging.
+    rmdir each just-emptied directory, then walk upward until a non-empty dir or
+    `extract_root` (never removed — the roost keeps its home). rmdir raising on a
+    non-empty/in-use dir means "stop here", not an error.
     """
     removed = 0
     root_cmp = _cmp_key(extract_root)
@@ -559,22 +464,17 @@ def _remove_empty_dirs(dirs: Set[Path], extract_root: Path) -> int:
     return removed
 
 
-# ─── post-assembly chunk cleanup ────────────────────────────────────
-
 
 def cleanup_chunks(
     chunk_hashes: Iterable[str], content_store: Optional[str] = None
 ) -> Tuple[int, int]:
     """
-    public entry point for releasing a distribution's chunks from the local
-    content store. returns (deleted, bytes_freed).
+    release a distribution's chunks from the local content store; returns
+    (deleted, bytes_freed).
 
-    used on the TERMINAL FAILURE path (sync_commands) as well as internally
-    after a successful assembly: a distribution that ended in 'failed' is
-    never resumed — a retry arrives as a fresh command and re-downloads
-    whatever the content store is missing — so holding its bytes is pure
-    leak. cancellation is the one case that must NOT call this: a cancelled
-    distribution resumes from exactly these chunks.
+    also called on the TERMINAL FAILURE path — a 'failed' distribution is never
+    resumed (a retry is a fresh command), so its bytes are pure leak. NEVER call
+    on cancellation: a cancelled distribution resumes from exactly these chunks.
     """
     store = (
         Path(_default_content_store()) if content_store is None
@@ -587,21 +487,14 @@ def _cleanup_content_store(
     content_store: Path, chunks_to_cleanup: Set[str]
 ) -> Tuple[int, int]:
     """
-    best-effort delete of every chunk in `chunks_to_cleanup` from the content
-    store — both the finished `<hash>` blob and any half-downloaded
-    `<hash>.partial` sidecar. iterates one chunk at a time; a failed delete
-    logs a warning but does NOT fail the sync — the assembled file is already
-    on disk and that's what matters. returns (deleted, bytes_freed).
+    best-effort delete of each chunk blob and its `.partial` sidecar; a failed
+    delete warns but never fails the sync. returns (deleted, bytes_freed).
 
-    we explicitly do NOT remove the shard parent dirs or the content-store
-    root. a future sync will download fresh chunks into the same directory
-    structure; removing the root would just force a re-mkdir on the next
-    run. empty shard dirs are harmless (a few bytes of inode overhead each)
-    and NTFS handles orphan directories fine.
+    shard dirs and the store root are deliberately left — the next sync reuses
+    the same structure and empty dirs cost an inode.
 
-    callers should only invoke this on SUCCESSFUL assembly or on terminal
-    failure — deleting chunks while a distribution can still resume would
-    force a re-download.
+    only call on SUCCESSFUL assembly or terminal failure; deleting chunks a
+    distribution could still resume from forces a re-download.
     """
     deleted = 0
     total_bytes = 0
@@ -610,10 +503,8 @@ def _cleanup_content_store(
         base = chunk_path(content_store, chunk_hash)
         for path in (base, base.with_name(base.name + '.partial')):
             try:
-                # stat before unlink so we can report freed bytes. the
-                # exists() guard handles the common case where the chunk was
-                # never downloaded (dedup hit against a prior sync that
-                # already cleaned up) or has no partial sidecar.
+                # stat before unlink to report freed bytes; the exists() guard
+                # covers dedup hits and missing sidecars.
                 if path.exists():
                     try:
                         total_bytes += path.stat().st_size
@@ -622,16 +513,13 @@ def _cleanup_content_store(
                     path.unlink()
                     deleted += 1
             except OSError as e:
-                # don't fail the sync — log and move on. a leftover chunk is a
-                # wasted disk page, not a correctness issue.
+                # a leftover chunk is wasted disk, not a correctness issue.
                 failed += 1
                 logger.warning(
                     f"sync_assembler: failed to delete cached chunk "
                     f"{chunk_hash[:12]}… at {path!s}: {e}"
                 )
     if deleted or failed:
-        # format bytes freed in human-friendly units for log readability
-        # (100GB syncs make the raw byte count unwieldy).
         freed_mb = total_bytes / (1024 * 1024)
         logger.info(
             f"sync_assembler: cleaned up {deleted} chunk(s) from content store "
@@ -640,20 +528,15 @@ def _cleanup_content_store(
     return (deleted, total_bytes)
 
 
-# ─── windows long-path support ───────────────────────────────────────
-
 
 def _long_path(path: str) -> str:
     """
-    on windows, prefix a path with `\\?\` if it's at or above MAX_PATH (260)
-    so win32 file APIs don't reject it. behavior is a no-op on POSIX and
-    on short paths.
+    prefix a windows path with `\\?\` at/above MAX_PATH (260); no-op on POSIX
+    and on short paths.
 
-    requirements for `\\?\` to work:
-    - path must be absolute and fully-resolved (no `..`, no `.`)
-      → guaranteed by destination_allowlist.validate() before we get here
-    - path must use backslashes (forward slashes are NOT auto-converted)
-    - already-prefixed paths are passed through unchanged
+    `\\?\` requires an absolute, fully-resolved, backslash path — resolution is
+    guaranteed by destination_allowlist.validate() upstream. already-prefixed
+    paths pass through.
     """
     if os.name != 'nt':
         return path
@@ -661,9 +544,9 @@ def _long_path(path: str) -> str:
         return path
     if len(path) < _WINDOWS_MAX_PATH:
         return path
-    # absolutize backslashes; \\?\ works only with backslash paths
+    # `\\?\` works only with backslash paths.
     normalized = path.replace('/', '\\')
-    # UNC paths get a different prefix: \\?\UNC\server\share\... (NOT \\?\\\server\share)
+    # UNC needs \\?\UNC\server\share\..., not \\?\\\server\share.
     if normalized.startswith('\\\\'):
         return '\\\\?\\UNC\\' + normalized[2:]
     return '\\\\?\\' + normalized
@@ -671,9 +554,8 @@ def _long_path(path: str) -> str:
 
 def _ensure_parent_dir(target: 'Path') -> None:
     """
-    create target.parent (mkdir -p), with long-path support on windows.
-    Path.mkdir doesn't accept the `\\?\` prefix natively in older python,
-    so we use os.makedirs on the prefixed string when the path is long.
+    mkdir -p on target.parent. Path.mkdir rejects the `\\?\` prefix on older
+    python, so long paths go through os.makedirs on the prefixed string.
     """
     parent = target.parent
     parent_str = str(parent)
@@ -685,19 +567,13 @@ def _ensure_parent_dir(target: 'Path') -> None:
 
 def _verify_under_root(resolved_target: 'Path', extract_root: 'Path') -> None:
     """
-    confirm that `resolved_target` still lives under `extract_root` after the
-    atomic rename has landed. closes the TOCTOU window between
-    destination_allowlist.validate() and os.replace() — if a parent dir was
-    swapped to a symlink/junction during that window, the file would appear
-    to be under the root by path but resolve elsewhere.
+    confirm `resolved_target` still resolves under `extract_root` after the
+    rename, closing the TOCTOU window between allowlist.validate() and
+    os.replace() where a parent dir could be swapped to a symlink/junction.
 
-    on mismatch: best-effort delete of the suspect file and raise
-    AssembleError. we intentionally do NOT leave the file on disk — a
-    successful post-rename that points outside the root is a strong signal
-    of active tampering.
-
-    uses os.path.realpath (resolves symlinks AND junctions on windows) with
-    case-folded comparison on windows (NTFS is case-insensitive).
+    on mismatch the file is deleted and AssembleError raised — a post-rename
+    path outside the root signals active tampering. realpath resolves junctions
+    too; comparison is case-folded on windows.
     """
     try:
         real_target = os.path.realpath(str(resolved_target))
@@ -720,11 +596,9 @@ def _verify_under_root(resolved_target: 'Path', extract_root: 'Path') -> None:
 
 def _path_is_within(real_target: str, real_root: str) -> bool:
     """
-    True when the already-realpath-resolved `real_target` sits under
-    `real_root`. case-folded on windows (NTFS is case-insensitive).
-
-    the separator is appended to both sides so `/foo/bar` does not match a
-    root of `/foo/ba`, while `real_root` itself still matches itself.
+    True when the already-realpath-resolved `real_target` sits under `real_root`;
+    case-folded on windows. the separator is appended to both sides so `/foo/bar`
+    does not match a root of `/foo/ba`, while `real_root` still matches itself.
     """
     if os.name == 'nt':
         target_cmp = real_target.casefold()
@@ -738,9 +612,8 @@ def _path_is_within(real_target: str, real_root: str) -> bool:
 
 def _cmp_key(path: Path) -> str:
     """
-    comparison key for two paths that should refer to the same file.
-    case-folded on windows so `Assets/Logo.png` and `assets/logo.png` are
-    one entry, exact elsewhere.
+    same-file comparison key: case-folded on windows so `Assets/Logo.png` and
+    `assets/logo.png` are one entry, exact elsewhere.
     """
     s = str(path)
     return s.casefold() if os.name == 'nt' else s
@@ -748,9 +621,8 @@ def _cmp_key(path: Path) -> str:
 
 def _quarantine_delete(path: 'Path') -> None:
     """
-    best-effort delete of a file whose post-rename location is suspect.
-    errors are swallowed (logged only) — the caller is about to raise and
-    the higher priority is that no caller acts on the file.
+    best-effort delete of a file whose post-rename location is suspect; errors
+    are logged only, since the caller is about to raise anyway.
     """
     try:
         p = path if isinstance(path, Path) else Path(str(path))
@@ -765,27 +637,17 @@ def _quarantine_delete(path: 'Path') -> None:
 
 def _harden_acl(path_str: str) -> None:
     """
-    set explicit DACL: SYSTEM (full) + Administrators (full) + the
-    interactive operator (modify, if detectable), inheritance stripped.
-    windows-only; no-op on POSIX. best-effort: failure logs a warning
-    but doesn't raise (the file is on disk, show must keep playing).
+    set explicit DACL: SYSTEM (full) + Administrators (full) + the interactive
+    operator (modify, if detectable), inheritance stripped. windows-only,
+    best-effort — failure warns and never raises.
 
-    win32security is deferred-imported so test environments without pywin32
-    can still load this module. ImportError → skip silently (covered by the
-    fail-soft contract; not a security regression because the threat model
-    assumes ACLs land on production machines that have pywin32 installed).
+    inherited defaults on a multi-user kiosk would let any local user read or
+    swap assembled .toe files. the explicit operator ACE is required because UAC
+    hands non-elevated processes a filtered token with the Admins SID stripped,
+    so admins-group membership alone yields ACCESS_DENIED from the desktop.
 
-    threat addressed (B-class baseline): default windows ACL inheritance on
-    multi-user kiosks would let ANY local user read/modify assembled .toe
-    files (potential malicious-payload swap or IP exfiltration). We scope
-    access to SYSTEM + admins + the single operator account.
-
-    UX requirement: the interactive user must be able to open extracted
-    files from their desktop session (Photos, TouchDesigner, file
-    explorer) without elevation. Admins-group membership isn't enough on
-    Win10/11 because UAC hands non-elevated processes a filtered token
-    with the Admins SID stripped — without an explicit user ACE, those
-    processes see ACCESS_DENIED.
+    win32security is deferred-imported so pywin32-less test envs can load this
+    module; ImportError skips silently.
     """
     if os.name != 'nt':
         return
@@ -793,22 +655,17 @@ def _harden_acl(path_str: str) -> None:
         import win32security as ws
         import ntsecuritycon as ntcon
     except ImportError:
-        # pywin32 not installed (test env on non-windows, etc.) — skip.
+        # pywin32 not installed (non-windows test env) — skip.
         return
     try:
-        # build a fresh DACL: SYSTEM + Administrators full control, the
-        # interactive operator (if detected) MODIFY. No other ACEs —
-        # everyone else is implicitly denied since DACL is now exclusive.
+        # fresh exclusive DACL — everyone not listed is implicitly denied.
         dacl = ws.ACL()
         system_sid, _, _ = ws.LookupAccountName('', 'SYSTEM')
         admins_sid, _, _ = ws.LookupAccountName('', 'Administrators')
         dacl.AddAccessAllowedAce(ws.ACL_REVISION, ntcon.GENERIC_ALL, system_sid)
         dacl.AddAccessAllowedAce(ws.ACL_REVISION, ntcon.GENERIC_ALL, admins_sid)
 
-        # Grant the operator MODIFY (read + write + delete, NOT take
-        # ownership / change permissions). Best-effort: if the username
-        # can't be resolved the DACL still works, just without the
-        # user-specific ACE — same as the pre-UX-fix behaviour.
+        # Best-effort: an unresolvable username just drops the user ACE.
         try:
             from destination_allowlist import get_interactive_username
             username = get_interactive_username()
@@ -817,9 +674,8 @@ def _harden_acl(path_str: str) -> None:
         if username:
             try:
                 user_sid, _, _ = ws.LookupAccountName('', username)
-                # MODIFY = read+write+delete. Excludes WRITE_DAC (change
-                # perms) and WRITE_OWNER so the operator can't undo the
-                # hardening. Matches Windows "Modify" permission set.
+                # Windows "Modify": excludes WRITE_DAC/WRITE_OWNER so the
+                # operator can't undo the hardening.
                 MODIFY = (
                     ntcon.FILE_GENERIC_READ
                     | ntcon.FILE_GENERIC_WRITE
@@ -828,21 +684,17 @@ def _harden_acl(path_str: str) -> None:
                 )
                 dacl.AddAccessAllowedAce(ws.ACL_REVISION, MODIFY, user_sid)
             except Exception as e:
-                # LookupAccountName fails on detached / renamed accounts.
-                # Log once per file — rare and the user can still open via
-                # an elevated shell; better than failing the whole sync.
+                # LookupAccountName fails on detached/renamed accounts.
                 logger.warning(
                     f"sync_assembler: couldn't add operator {username!r} to DACL "
                     f"for {path_str!r}: {e}"
                 )
 
         sd = ws.GetFileSecurity(path_str, ws.DACL_SECURITY_INFORMATION)
-        # SetSecurityDescriptorDacl(present=True, dacl=..., defaulted=False)
+        # args: present=True, dacl, defaulted=False
         sd.SetSecurityDescriptorDacl(1, dacl, 0)
-        # strip inheritance with PROTECTED_DACL_SECURITY_INFORMATION. use the
-        # pywin32 constant when available (correctly typed); fall back to the
-        # raw bitmask coerced to int. literal 0x80000000 overflows a signed
-        # C long on python 3.9 + 32-bit pywin32 builds.
+        # strip inheritance. prefer the pywin32 constant: a literal 0x80000000
+        # overflows a signed C long on python 3.9 + 32-bit pywin32.
         protected_dacl = getattr(ws, 'PROTECTED_DACL_SECURITY_INFORMATION', None)
         if protected_dacl is None:
             protected_dacl = int(0x80000000)

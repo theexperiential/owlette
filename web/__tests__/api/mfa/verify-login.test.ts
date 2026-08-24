@@ -1,16 +1,12 @@
 /** @jest-environment node */
 
 /**
- * Concurrency tests for `/api/mfa/verify-login` backup-code path.
+ * Concurrency tests for `/api/mfa/verify-login`'s backup-code path.
  *
- * Wave 1-3 round-1 audit flagged a "two parallel logins with the same
- * backup code both succeed" race. The fix routes backup-code consumption
- * through `db.runTransaction`, which Firestore re-runs on contention.
- *
- * The CAS-style mock below simulates that contention: both transactions
- * read the same backup-code list, but only the first commit "wins" and
- * the second one re-runs against the post-commit state (where the code
- * is no longer present) and returns `no_match`.
+ * Guards a race where two parallel logins with the same backup code both
+ * succeeded; consumption now goes through `db.runTransaction`. The CAS mock
+ * below simulates contention: both txns read the same list, only the first
+ * commit wins, and the loser re-runs against post-commit state → `no_match`.
  */
 
 const mockVerifyTOTP = jest.fn();
@@ -23,7 +19,7 @@ const mockMarkSessionMfaVerified = jest.fn();
 const mockMintDeviceTrustToken = jest.fn();
 const mockCreateTrustedDevice = jest.fn();
 
-/** Kept in sync with the real DEVICE_TRUST_COOKIE constant. */
+/** Keep in sync with the real DEVICE_TRUST_COOKIE constant. */
 const TRUST_COOKIE = 'owlette_device_trust';
 
 jest.mock('@sentry/nextjs', () => ({
@@ -79,17 +75,10 @@ jest.mock('@/lib/deviceTrust.server', () => ({
 }));
 
 /**
- * Shared mutable doc state. Both transactions read+write this; the
- * runTransaction simulator below applies optimistic concurrency control
- * by tracking the "version" of the doc at read time and rejecting writes
- * whose pre-image is stale.
- *
- * NOTE: a real Firestore txn would AUTO-RETRY internally on contention.
- * The route's only contract is that ONE call succeeds and ONE fails,
- * which is what we assert at the end. To honour the auto-retry contract
- * the simulator below re-invokes the callback on contention with the
- * latest snapshot, so the losing call sees an empty backupCodes list
- * the second time around and returns `no_match`.
+ * Shared mutable doc state. The runTransaction simulator applies optimistic
+ * concurrency control by tracking the doc version at read time and rejecting
+ * stale-pre-image writes, then re-invoking the callback — mirroring Firestore's
+ * auto-retry, so the losing call re-reads and returns `no_match`.
  */
 interface DocState {
   version: number;
@@ -113,9 +102,8 @@ jest.mock('@/lib/firebase-admin', () => ({
     runTransaction: async <T>(
       cb: (tx: unknown) => Promise<T>,
     ): Promise<T> => {
-      // Simulate Firestore's optimistic-CAS retry: run the callback,
-      // and if its "read version" was stale at commit time, retry once.
-      // Two passes max — enough for the parallel-collision case.
+      // Firestore's optimistic-CAS retry: rerun once if the read version was
+      // stale at commit. Two passes is enough for a parallel collision.
       for (let attempt = 0; attempt < 2; attempt++) {
         const readVersion = docState.version;
         const snapshot = {
@@ -134,8 +122,7 @@ jest.mock('@/lib/firebase-admin', () => ({
           },
         };
         const result = await cb(tx);
-        // Apply pending updates only if the doc version hasn't moved
-        // since this transaction started.
+        // Commit only if the doc version hasn't moved.
         if (readVersion === docState.version) {
           for (const payload of pendingUpdates) {
             docState.data = { ...docState.data, ...payload };
@@ -145,7 +132,7 @@ jest.mock('@/lib/firebase-admin', () => ({
           }
           return result;
         }
-        // Stale — retry once with the new state.
+        // Stale — retry with the new state.
       }
       throw new Error('transaction failed after retries');
     },
@@ -157,7 +144,7 @@ import { createMockRequest } from '../helpers/utils';
 
 beforeEach(() => {
   jest.clearAllMocks();
-  // Reset shared doc state. Two backup codes, both valid.
+  // Two backup codes, both valid.
   docState = {
     version: 0,
     exists: true,
@@ -179,12 +166,12 @@ beforeEach(() => {
     return docState.data;
   });
   mockVerifyTOTP.mockReturnValue(false);
-  // Only match hash-bk-1 (the code under contention).
+  // Only hash-bk-1 (the code under contention) matches.
   mockVerifyBackupCode.mockImplementation(
     (_code: string, hash: string) => hash === 'hash-bk-1',
   );
 
-  // Device-trust defaults: a fixed token pair, persistence resolves.
+  // Device-trust defaults: fixed token pair, persistence resolves.
   mockMintDeviceTrustToken.mockReturnValue({
     raw: 'raw-token-123',
     hash: 'hash-token-123',
@@ -211,12 +198,11 @@ describe('POST /api/mfa/verify-login — backup code single-use under concurrenc
     ]);
 
     const codes: number[] = [resA.status, resB.status];
-    // Exactly one 200 and one 400 (mismatch) — the second call to retry
-    // sees backupCodes containing only hash-bk-2, which doesn't match.
+    // One 200, one 400: the retrying call sees only hash-bk-2, which won't match.
     expect(codes.filter((c) => c === 200).length).toBe(1);
     expect(codes.filter((c) => c === 400).length).toBe(1);
 
-    // The successful call consumed hash-bk-1 — only hash-bk-2 should remain.
+    // hash-bk-1 was consumed; only hash-bk-2 remains.
     expect(docState.data.backupCodes).toEqual(['hash-bk-2']);
   });
 
@@ -226,12 +212,12 @@ describe('POST /api/mfa/verify-login — backup code single-use under concurrenc
     expect(r1.status).toBe(200);
     expect(docState.data.backupCodes).toEqual(['hash-bk-2']);
 
-    // The request body omits trustDevice → no device-trust mint, no Set-Cookie.
+    // No trustDevice in the body → no mint, no Set-Cookie.
     expect(mockMintDeviceTrustToken).not.toHaveBeenCalled();
     expect(mockCreateTrustedDevice).not.toHaveBeenCalled();
     expect(r1.cookies.get(TRUST_COOKIE)).toBeUndefined();
 
-    // Replay should fail since the code is now consumed.
+    // Replay fails — the code is consumed.
     const r2 = await POST(verifyReq());
     expect(r2.status).toBe(400);
     expect(docState.data.backupCodes).toEqual(['hash-bk-2']);
@@ -254,9 +240,8 @@ describe('POST /api/mfa/verify-login — device trust ("remember this device")',
   }
 
   beforeEach(() => {
-    // The TOTP path reads userData.mfaSecret; a colon-free value takes the
-    // legacy "use as-is" branch, so verifyTOTP is consulted directly and no
-    // decrypt mock is needed.
+    // A colon-free mfaSecret takes the legacy "use as-is" branch, so verifyTOTP
+    // runs directly and no decrypt mock is needed.
     docState.data.mfaSecret = 'PLAINSECRET';
     mockVerifyTOTP.mockReturnValue(true);
   });
@@ -332,11 +317,11 @@ describe('POST /api/mfa/verify-login — device trust ("remember this device")',
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    // The 2FA verification itself must still succeed; only trust persistence failed.
+    // 2FA must still succeed; only trust persistence failed.
     expect(body.success).toBe(true);
     expect(body.deviceTrusted).toBe(false);
 
-    // Mint was attempted, persistence failed, and no cookie was set.
+    // Minted, persistence failed, no cookie set.
     expect(mockMintDeviceTrustToken).toHaveBeenCalledTimes(1);
     expect(res.cookies.get(TRUST_COOKIE)).toBeUndefined();
     expect(consoleErrorSpy).toHaveBeenCalled();

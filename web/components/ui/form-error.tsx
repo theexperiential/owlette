@@ -3,26 +3,18 @@ import { AlertCircleIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
- * Inline form validation error.
+ * Inline form validation error — THE validation surface for owlette forms.
+ * Replaces three prior patterns: the unstyleable native `required` bubble,
+ * transient toasts, and a one-off /reset-password block hardcoding red-900/800/
+ * 400. Rebuilt on --destructive.
  *
- * THE validation surface for owlette forms. Three patterns were in play before
- * this existed: the browser's native `required` bubble (unstyleable, and
- * visually foreign to the app), transient toasts, and a one-off inline block on
- * /reset-password that hardcoded red-900/red-800/red-400. This consolidates
- * them on the last one, rebuilt on --destructive.
+ * Inline rather than toast on purpose: a field error belongs beside the field
+ * and must persist until fixed. Toasts stay for action outcomes.
  *
- * Inline rather than toast on purpose: a field error belongs next to the field
- * and should persist until fixed, not expire in a corner of the screen. Toasts
- * remain the right surface for the outcome of an action (saved, failed,
- * dispatched) — not for "this input is wrong".
- *
- * Forms using this must set `noValidate` so the native bubble never pre-empts
- * it, and own their own empty-field checks — `required` still marks intent for
- * assistive tech and is left in place.
- *
- * Renders nothing when `message` is falsy, so callers can pass state directly.
- * role="alert" announces the message when it appears; pair with
- * aria-describedby on the field where one error maps to one input.
+ * Forms using this must set `noValidate` (so the native bubble can't pre-empt
+ * it) and own their empty-field checks; `required` stays for assistive tech.
+ * Renders nothing when `message` is falsy. role="alert" announces on appear —
+ * pair with aria-describedby where one error maps to one input.
  */
 export function FormError({
   message,

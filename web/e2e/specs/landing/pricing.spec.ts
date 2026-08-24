@@ -1,11 +1,9 @@
 /**
- * Landing — pricing regression
+ * Landing — pricing regression.
  *
- * Locks down the two-tier pricing layout (core + pro) on the public landing
- * page. Pricing copy is high-signal — accidental edits to the per-machine
- * rates, the "free during beta" label, the 3-machine pro minimum, or the
- * roost storage allowance should break CI, not silently ship to production.
- * The landing page is public, so this spec runs without a storage state.
+ * Locks the two-tier layout (core + pro): the per-machine rates, the "free during beta"
+ * label, the 3-machine pro minimum and the roost storage allowance must break CI rather
+ * than silently ship. The landing page is public, so this spec runs without storage state.
  */
 
 import { test, expect } from '@playwright/test';
@@ -19,7 +17,6 @@ test.describe('landing — pricing', () => {
     const pricing = page.locator('section#pricing');
     await expect(pricing).toBeVisible();
 
-    // Section header.
     await expect(
       pricing.getByRole('heading', { name: /simple, transparent pricing\./i }),
     ).toBeVisible();
@@ -35,14 +32,16 @@ test.describe('landing — pricing', () => {
     await expect(coreCard).toBeVisible();
     await expect(proCard).toBeVisible();
 
-    // Core card — $10 per machine per month, free during beta.
-    await expect(coreCard).toContainText('$10');
+    // Core card — $20 per machine per month, free during beta, $10 founders rate.
+    await expect(coreCard).toContainText('$20');
+    await expect(coreCard).toContainText('$10 founders rate');
     await expect(coreCard).toContainText('/machine/month');
     await expect(coreCard).toContainText('free during beta');
 
-    // Pro card — $50 per machine per month with a 3-machine minimum, free
+    // Pro card — $60 per machine per month with a 3-machine minimum, free
     // during beta, roost storage copy.
-    await expect(proCard).toContainText('$50');
+    await expect(proCard).toContainText('$60');
+    await expect(proCard).toContainText('$30 founders rate');
     await expect(proCard).toContainText('/machine/month');
     await expect(proCard).toContainText('3-machine minimum');
     await expect(proCard).toContainText('free during beta');
@@ -51,13 +50,21 @@ test.describe('landing — pricing', () => {
     await expect(proCard).toContainText('$0.05/GB overage');
 
     // Pro-only integration surface (gated out of core).
-    await expect(proCard).toContainText('public REST API with scoped keys');
+    await expect(proCard).toContainText('REST API');
     await expect(proCard).toContainText('CLI + TypeScript SDK');
-    await expect(proCard).toContainText('webhooks with HMAC signing');
-    await expect(proCard).toContainText('unlimited sites with multi-site rbac');
+    await expect(proCard).toContainText('webhooks');
+    await expect(proCard).toContainText('unlimited sites');
     await expect(coreCard).not.toContainText('REST API');
     await expect(coreCard).not.toContainText('CLI');
     await expect(coreCard).not.toContainText('webhooks');
+
+    // Pro-only product surface — deployment, hoot and talons moved out of core.
+    await expect(proCard).toContainText('software & file deployment');
+    await expect(proCard).toContainText('hoot');
+    await expect(proCard).toContainText('talons');
+    await expect(coreCard).not.toContainText('deployment');
+    await expect(coreCard).not.toContainText('hoot');
+    await expect(coreCard).not.toContainText('talons');
 
     // Core scope constraint — single-site only.
     await expect(coreCard).toContainText('1 site with role-based access');

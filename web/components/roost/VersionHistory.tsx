@@ -1,14 +1,10 @@
 'use client';
 
 /**
- * VersionHistory — chronological list of versions for a roost (wave 3.2).
- *
- * Mounted inside the expanded roost-row panel. On mount + on demand
- * (after a rollback / new push), fetches the version list from
- * `GET /api/roosts/{id}/versions` and renders one `VersionRow` per
- * entry, newest first. Below the list, a primary "+ new version"
- * button opens the push modal pre-populated with the existing roost's
- * locked fields.
+ * Chronological version list for a roost, mounted in the expanded roost-row
+ * panel. Fetches `GET /api/roosts/{id}/versions` on mount and on demand (after
+ * a rollback or push), newest first, with a "+ new version" button that opens
+ * the push modal pre-populated with the roost's locked fields.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -23,18 +19,13 @@ interface VersionHistoryProps {
   currentVersionId: string | null;
   /** Opens the parent's "+ new version" push modal pre-populated for this roost. */
   onNewVersion: () => void;
-  /**
-   * Bumps when the parent wants the list to re-fetch — e.g. after a new
-   * upload finalises or a description edit lands. Acts like a
-   * monotonically-increasing "refresh token".
-   */
+  /** Monotonic refresh token — bump to force a re-fetch (upload, edit). */
   refreshKey?: number;
   /**
-   * Fallback: when the API returns no versions but the roost itself has a
-   * current version pointer, synthesize a single row from the roost's
-   * denormalised metadata. Covers legacy roosts that predate the version
-   * subcollection backfill so users see their original upload as v1
-   * instead of "no versions yet".
+   * When the API returns no versions but the roost has a current-version
+   * pointer, synthesize one row from the roost's denormalised metadata. Covers
+   * legacy roosts predating the version-subcollection backfill, which would
+   * otherwise read "no versions yet" despite having content.
    */
   currentVersionNumber?: number | null;
   roostTotalFiles?: number;
@@ -112,10 +103,9 @@ export function VersionHistory({
     setLocalRefreshKey((k) => k + 1);
   }, []);
 
-  // Synthesize a placeholder row from the roost's denormalised metadata
-  // when the API has nothing to show but the roost clearly has content.
-  // Marked with a trailing `:fallback` versionId so renderers can detect it
-  // and so it never collides with a real content-addressed version id.
+  // Placeholder row from denormalised roost metadata when the API has nothing
+  // but the roost clearly has content. The trailing `:fallback` versionId lets
+  // renderers detect it and can't collide with a content-addressed id.
   const displayVersions = useMemo<VersionSummary[]>(() => {
     if (versions.length > 0) return versions;
     if (!currentVersionId) return [];

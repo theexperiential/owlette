@@ -1,12 +1,10 @@
 //! Graceful termination of a supervised process.
 //!
-//! Mirrors `shared_utils.graceful_terminate` (`agent/src/shared_utils.py`:2061-2122):
-//! post `WM_CLOSE` to the process's visible top-level windows, give it a few
-//! seconds to shut itself down, then terminate. The one addition here is an
-//! identity check — the frontend hands us a PID it read out of
-//! `app_states.json`, which the service may have replaced between the read and
-//! the click, so we confirm the PID still belongs to the executable the caller
-//! meant before touching it.
+//! Mirrors `shared_utils.graceful_terminate` (`agent/src/shared_utils.py`):
+//! `WM_CLOSE` the visible top-level windows, wait, then terminate. Adds an
+//! identity check — the frontend's PID comes from `app_states.json` and the
+//! service may have replaced the process since, so confirm the PID still runs
+//! the expected executable before touching it.
 
 use std::time::{Duration, Instant};
 
@@ -57,12 +55,9 @@ pub struct TerminateOutcome {
   pub image_path: Option<String>,
 }
 
-/// Terminate `pid`, but only if it is still running `expected_exe`.
-///
-/// `expected_exe` may be a full path (compared in full) or a bare file name
-/// (compared against the image's file name). A mismatch is an error, not a
-/// silent no-op: it means the UI's view of the process table is stale and the
-/// operator needs to know their click did nothing.
+/// Terminate `pid`, but only if it is still running `expected_exe` (a full
+/// path, compared whole, or a bare file name). A mismatch is an error, not a
+/// no-op: the UI's process table is stale and the operator must know.
 pub fn terminate_pid(
   pid: u32,
   expected_exe: &str,
@@ -135,11 +130,9 @@ pub fn terminate_pid(
   })
 }
 
-/// Does `actual` (a full image path) satisfy the caller's `expected` value?
-///
-/// Comparison is case-insensitive and separator-insensitive because config
-/// entries are operator-typed. A bare name matches on the file name alone; a
-/// value containing a separator must match the whole path.
+/// Case- and separator-insensitive because config entries are operator-typed.
+/// A bare name matches the file name alone; anything with a separator must
+/// match the whole path.
 pub fn image_matches(actual: &str, expected: &str) -> bool {
   let actual_key = normalize(actual);
   let expected_key = normalize(expected);
@@ -325,10 +318,8 @@ mod tests {
 
   #[test]
   fn the_identity_check_reads_the_live_image_path() {
-    // Proves the check compares against what QueryFullProcessImageNameW
-    // reports, not against whatever the caller passed: our own PID matched
-    // against our own executable name must pass the identity gate. It then
-    // fails on the window sweep boundary instead, so assert on the message.
+    // The error must name what QueryFullProcessImageNameW reported, not what
+    // the caller passed.
     let current = std::env::current_exe().expect("current exe");
     let image = current.to_string_lossy().into_owned();
     let error = terminate_pid(

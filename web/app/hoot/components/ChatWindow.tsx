@@ -12,8 +12,9 @@ import { CopyButton } from './CopyButton';
 import { SynapticIndicator } from './SynapticIndicator';
 import { getRandomSuggestions } from '../data/suggestedQuestions';
 import { YOU_TRANSLATIONS } from '@/lib/dashboardConstants';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { HootIcon } from '@/components/icons/HootIcon';
+import { useScrollFade } from '@/hooks/useScrollFade';
 
 function pickYouTranslation(messageId: string) {
   let hash = 0;
@@ -36,11 +37,7 @@ interface ChatWindowProps {
   toolCommands?: Record<string, Record<string, { commandId: string }>>;
   /** Cancel a running tool by its toolCallId (fans out to every machine it dispatched to). */
   onCancelTool?: (toolCallId: string) => void;
-  /**
-   * toolCallIds with a cancel request in flight. Pending state lives in
-   * HootChatView (next to the async cancel handler); this window only
-   * derives a per-card boolean from it.
-   */
+  /** toolCallIds with a cancel in flight; the pending state itself lives in HootChatView. */
   cancelPendingCommandIds?: Set<string>;
   /** The active turn's runner died (server restarted) — show the interrupted notice. */
   turnStale?: boolean;
@@ -51,6 +48,9 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Messages dissolve under the header rather than being cut mid-line by it.
+  // The hook keeps `containerRef` pointed at the same node for the autoscroll.
+  const scrollerRef = useScrollFade(containerRef);
   const isUserScrolledUp = useRef(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
@@ -89,7 +89,6 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
     }
   }, [messages, isLoading]);
 
-  // Close lightbox on Escape
   useEffect(() => {
     if (!expandedImage) return;
     const handleKey = (e: KeyboardEvent) => {
@@ -154,7 +153,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
         </span>
       </button>
 
-      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+      <div ref={scrollerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
       <div ref={topRef} />
 
       {/* Lightbox overlay */}
@@ -199,6 +198,18 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
             {/* Content */}
             <div className={`min-w-0 ${isUser ? 'max-w-[75%]' : 'flex-1'}`}>
               <div className={`flex items-center gap-2 h-7 text-sm font-semibold text-foreground mb-1 ${isUser ? 'justify-end' : ''}`}>
+                {/*
+                  Three tooltip triggers stand shoulder to shoulder in this row.
+                  Hoverable content keeps a tooltip open while the pointer is
+                  judged to be travelling towards it, and a trigger refuses to
+                  open while that flag is set — with the neighbour an inch away
+                  it falls inside the grace area, so moving along the row left
+                  the first tooltip up and never opened the second. None of
+                  these are worth hovering into, so the row turns it off. The
+                  delay matches the app-wide provider in `app/layout.tsx`;
+                  nesting one resets it to Radix's slower default otherwise.
+                */}
+                <TooltipProvider disableHoverableContent delayDuration={300}>
                 {(() => {
                   const fullText = message.parts
                     .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
@@ -211,8 +222,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                       className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-cyan focus-visible:outline-offset-2 rounded-sm transition-opacity"
                     />
                   ) : null;
-                  // Edit pencil — user messages only, hidden while streaming or
-                  // already editing. Branches the conversation on save.
+                  // Edit pencil — user messages only, hidden while streaming or editing.
                   const editBtn = isUser && onEditMessage && !isLoading && !isEditing ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -245,6 +255,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                   })() : <span>hoot</span>;
                   return isUser ? <>{editBtn}{copyBtn}{label}</> : <>{label}{copyBtn}</>;
                 })()}
+                </TooltipProvider>
               </div>
 
               {isEditing ? (
@@ -346,12 +357,10 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                 const approvalId = toolPart.approval?.id;
                 const running = !hasResult && !awaitingApproval && !denied;
 
-                // Cancel is only offered for a running tool that has actually
-                // dispatched at least one agent command (its toolCallId is
-                // present in toolCommands with ≥1 machine entry). Server-side
-                // tools and not-yet-dispatched calls have no cancel affordance.
-                // The cancel fans out to every machine the call targeted, so it
-                // is keyed by the toolCallId (not a single commandId).
+                // Cancel only for a running tool that actually dispatched agent
+                // commands (toolCallId present in toolCommands with ≥1 machine).
+                // It fans out to every machine the call targeted, hence keyed by
+                // toolCallId rather than a single commandId.
                 const toolCallId = running ? toolPart.toolCallId : undefined;
                 const cancellable = Boolean(
                   toolCallId && Object.keys(toolCommands?.[toolCallId] ?? {}).length > 0,

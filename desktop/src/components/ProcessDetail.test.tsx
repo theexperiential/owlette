@@ -232,8 +232,8 @@ describe('the launch mode control', () => {
 
     fireEvent.click(segment('scheduled'))
 
-    // The caller writes config.json for every call, and rewriting it identically
-    // makes the service re-read and re-upload the config for nothing.
+    // Every call rewrites config.json, and an identical rewrite makes the
+    // service re-read and re-upload for nothing.
     expect(onLaunchMode).not.toHaveBeenCalled()
   })
 
@@ -265,8 +265,8 @@ describe('the launch mode control', () => {
     expect(shell?.className).toContain('border-border')
 
     // Outside the grid on purpose: the indicator is a third of the group and
-    // translates by whole multiples of itself, so a fourth cell would make it a
-    // quarter wide and land it short of every segment.
+    // translates in whole multiples of itself — a fourth cell makes it a
+    // quarter wide and lands it short of every segment.
     expect(group.className).toContain('grid-cols-3')
     expect(group.contains(pencil)).toBe(false)
   })
@@ -430,9 +430,8 @@ describe('the status row', () => {
   })
 
   it('keeps the name field a full member of the auto-saving form', () => {
-    // Moving it into the header moved markup, not behaviour: the whole
-    // auto-save suite above addresses this same field through its label, and
-    // this is the assertion that it is still the header's copy doing the work.
+    // The move was markup-only: the auto-save suite above addresses this same
+    // field by label, and this asserts it is the header's copy doing the work.
     const { onSave } = setup()
     const name = screen.getByLabelText('name') as HTMLInputElement
 
@@ -508,9 +507,8 @@ describe('the status row', () => {
   })
 
   it('does not claim a launch time describes a status it does not', () => {
-    // `timestamp` is written once, when the process is launched, and left alone
-    // by every status change after it — so beside `killed` it would be a
-    // "started" that is not when this state began.
+    // `timestamp` is written at launch and never updated, so beside `killed` it
+    // would read as a "started" that isn't when this state began.
     setup(base, { status: 'KILLED', startedAt: Date.now() - 60_000 })
 
     expect(screen.queryByTestId('detail-started')).toBeNull()

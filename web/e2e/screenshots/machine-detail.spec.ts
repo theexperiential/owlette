@@ -32,13 +32,19 @@ test('machine detail docs screenshot', async ({ page }) => {
     await expect(card).toBeVisible();
 
     await card.getByText('cpu', { exact: true }).first().click();
-    const chart = page.locator('.recharts-surface').first();
-    await expect(chart).toBeVisible();
 
-    const panel = chart.locator(
-      'xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " bg-card ") and contains(concat(" ", normalize-space(@class), " "), " border-border ")][1]',
-    );
+    // MetricsDetailPanel is the only shadcn Card on /dashboard that is not a
+    // machine card and holds a recharts chart. Identify it structurally rather
+    // than by theme classes: the panel's background token moved bg-card ->
+    // bg-card-sunken in fcb7c1b2, which silently broke the old class-matching
+    // xpath. Machine cards also render recharts sparklines, so `.first()` on a
+    // bare `.recharts-surface` can latch onto a card before the panel mounts.
+    const panel = page
+      .locator('div[data-slot="card"]:not([data-testid="machine-card"])')
+      .filter({ has: page.locator('.recharts-surface') })
+      .first();
     await expect(panel).toBeVisible();
+    await expect(panel.locator('.recharts-surface').first()).toBeVisible();
     await expect(panel).toContainText(ctx.machineId!);
 
     await panel.getByRole('button', { name: /ram/i }).click();

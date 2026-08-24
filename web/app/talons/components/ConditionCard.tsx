@@ -1,21 +1,17 @@
 'use client';
 
 /**
- * Stage 2 of the talon pipeline — WHETHER the outputs run, and on WHICH
- * machines.
+ * Stage 2 of the talon pipeline — WHETHER the outputs run, and on WHICH machines.
  *
- * Two jobs sit here because they answer the same question ("does this run, and
- * where?"): the condition gate, and the machine scope. Scope is a top-level
- * talon field rather than part of the condition, but it is rendered in this
- * stage for every condition type — a `command` output needs a target whether or
- * not a vision check gates it, so hiding the selector behind `visual_check`
- * would strand it.
+ * The condition gate and the machine scope both live here because they answer the same
+ * question. Scope is a top-level talon field, not part of the condition, but it renders
+ * for every condition type: a `command` output needs a target whether or not a vision
+ * check gates it, so hiding the selector behind `visual_check` would strand it.
  *
- * The `scope.machineIds: []` trap: an empty array is INVALID. "every machine"
- * is `null`, which is what the `all machines` toggle produces. A cleared
- * checkbox list produces `[]` on purpose, so the validator's own message
- * ("must be a non-empty array … or null") lands inline instead of the editor
- * quietly widening the scope to the whole site.
+ * `scope.machineIds: []` trap: an empty array is INVALID — "every machine" is `null`,
+ * which the `all machines` toggle produces. A cleared checkbox list produces `[]` on
+ * purpose so the validator's message lands inline instead of the editor quietly widening
+ * the scope to the whole site.
  */
 
 import { Checkbox } from '@/components/ui/checkbox';
@@ -24,10 +20,6 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { TALON_EXPECTATION_MAX_LENGTH } from '@/lib/talons/validation';
 import type { TalonCondition, TalonConditionType, TalonScope } from '@/lib/talons/types';
-
-/* -------------------------------------------------------------------------- */
-/*  draft shapes                                                              */
-/* -------------------------------------------------------------------------- */
 
 export interface ConditionDraft {
   type: TalonConditionType;
@@ -89,10 +81,6 @@ export function conditionDraftToInput(draft: ConditionDraft): TalonCondition {
 export function scopeDraftToInput(draft: ScopeDraft): TalonScope {
   return { machineIds: draft.allMachines ? null : draft.machineIds };
 }
-
-/* -------------------------------------------------------------------------- */
-/*  card                                                                      */
-/* -------------------------------------------------------------------------- */
 
 interface ConditionCardProps {
   draft: ConditionDraft;

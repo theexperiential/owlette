@@ -17,8 +17,7 @@ const FULL_NAMES: Record<DayKey, string> = {
 const SHORT_LABELS: Record<DayKey, string> = {
   mon: 'mon', tue: 'tue', wed: 'wed', thu: 'thu', fri: 'fri', sat: 'sat', sun: 'sun',
 };
-// Single-letter labels — Tuesday/Thursday and Saturday/Sunday share initials,
-// but the title attribute disambiguates and matches the convention used in
+// Tue/Thu and Sat/Sun share initials; the title attribute disambiguates, as in
 // ScheduleEditor's pill variant.
 const SINGLE_LABELS: Record<DayKey, string> = {
   mon: 'M', tue: 'T', wed: 'W', thu: 'T', fri: 'F', sat: 'S', sun: 'S',
@@ -43,9 +42,9 @@ interface DayPillSelectorProps {
 }
 
 /**
- * Day-of-week toggle row used by both RestartScheduleDialog and ScheduleEditor.
- * Supports click-drag selection on desktop (mouseDown captures the new mode,
- * mouseEnter applies it across pills, window mouseUp ends the drag).
+ * Day-of-week toggle row for RestartScheduleDialog and ScheduleEditor.
+ * Click-drag on desktop: mouseDown captures the mode, mouseEnter applies it
+ * across pills, window mouseUp ends the drag.
  */
 export default function DayPillSelector({
   value,
@@ -60,10 +59,8 @@ export default function DayPillSelector({
   const [isDragging, setIsDragging] = useState(false);
   const dragModeRef = useRef<'add' | 'remove' | null>(null);
 
-  // Detect coarse pointers (touch) to skip drag wiring entirely. Lazy
-  // initializer so we don't sync the pointer check via setState-in-effect;
-  // SSR-guarded for safety, and pointer fineness doesn't change at runtime
-  // in any browser we care about.
+  // Coarse pointers skip drag wiring. Lazy initializer avoids a
+  // setState-in-effect sync; SSR-guarded, and fineness never changes at runtime.
   const [supportsDrag] = useState(
     () =>
       enableDragSelect &&
@@ -94,7 +91,7 @@ export default function DayPillSelector({
 
   const handleMouseDown = (day: DayKey, e: React.MouseEvent) => {
     if (!supportsDrag) {
-      // Coarse pointer — just toggle on click via the onClick handler.
+      // Coarse pointer — onClick handles the toggle.
       return;
     }
     e.preventDefault(); // suppress focus + drag-select of text
@@ -110,13 +107,12 @@ export default function DayPillSelector({
     setDay(day, dragModeRef.current);
   };
 
-  // For coarse pointers, we still need basic click toggling.
+  // Coarse pointers still need plain click toggling.
   const handleClick = (day: DayKey) => {
     if (supportsDrag) return; // mouseDown already handled it
     toggleDay(day);
   };
 
-  // Variant styling
   const baseClasses =
     variant === 'pill'
       ? `${compact ? 'w-7 h-7 text-[10px]' : 'w-8 h-8 text-xs'} rounded-full font-medium transition-colors cursor-pointer flex items-center justify-center select-none`

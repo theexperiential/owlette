@@ -1,35 +1,12 @@
 /**
- * RFC 7807 problem+json error envelope for public API routes.
- *
+ * RFC 7807 problem+json envelope for public API routes — type URIs, stable
+ * codes, docs links, and a requestId for trace correlation.
  * https://datatracker.ietf.org/doc/html/rfc7807
- *
- * Public API routes use this for consistent machine-readable errors with
- * type URIs, stable codes, docs links, and request IDs for trace correlation.
- *
- * Usage:
- *
- *   import { problem, problemFromError, ProblemType } from '@/lib/apiErrors';
- *
- *   if (!chunks?.length) {
- *     return problem({
- *       type: ProblemType.ValidationFailed,
- *       title: 'invalid request',
- *       status: 400,
- *       detail: 'request body must include a non-empty `hashes` array',
- *     });
- *   }
- *
- *   } catch (err) {
- *     return problemFromError(err, 'v2/chunks/check');
- *   }
  */
 import { NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 
-/**
- * Stable problem-type URIs. These are public identifiers consumed by API
- * clients to switch on error semantics — keep them stable across versions.
- */
+/** Public identifiers clients switch on — keep stable across versions. */
 export const ProblemType = {
   ValidationFailed: 'https://owlette.app/problems/validation-failed',
   Unauthorized: 'https://owlette.app/problems/unauthorized',
@@ -95,15 +72,9 @@ export interface ProblemDetails {
   [key: string]: unknown;
 }
 
-/**
- * Build a NextResponse with the RFC 7807 envelope and the right Content-Type.
- *
- * The Content-Type is `application/problem+json` per the RFC. Clients that
- * accept `application/json` will still parse it correctly.
- */
+/** Build the RFC 7807 response, Content-Type `application/problem+json`. */
 export function problem(details: ProblemDetails, headers?: HeadersInit): NextResponse {
-  // `??` only catches null/undefined; an empty string passed by a caller
-  // would otherwise become an invalid `X-Request-Id: ''` header.
+  // Not `??`: an empty-string requestId would become an invalid `X-Request-Id: ''`.
   const callerRid = typeof details.requestId === 'string' && details.requestId.length > 0
     ? details.requestId
     : undefined;
@@ -131,25 +102,20 @@ export function problem(details: ProblemDetails, headers?: HeadersInit): NextRes
 }
 
 /**
- * Wrap an unexpected error into a 500 problem+json response.
+ * Wrap an unexpected error into a generic 500. Deliberately does NOT forward
+ * the message: v1's `handleError()` mapping leaks error categories
+ * ("permission-denied" vs "not-found") that confirm resource existence. Log +
+ * Sentry server-side, hand the client a requestId to quote.
  *
- * **DOES NOT pass the error message through to the client.** v2 routes
- * intentionally avoid the `handleError()` mapping used by v1 because
- * that mapping leaks error categories (e.g. "permission-denied" vs
- * "not-found") that can be used adversarially to confirm resource
- * existence. Instead: log + Sentry the real error server-side; return
- * a generic message + requestId for the client to quote in support.
- *
- * For known error categories (validation, auth, quota), use `problem()`
- * directly with the appropriate ProblemType — those carry safe detail.
+ * Known categories (validation, auth, quota) should call `problem()` directly
+ * — their detail is safe to surface.
  */
 export function problemFromError(
   err: unknown,
   context: string,
   status = 500,
 ): NextResponse {
-  // server-side observability: log + sentry with full context. never
-  // surfaces to the client.
+  // Server-side only; never surfaces to the client.
   if (err instanceof Error) {
     Sentry.captureException(err, { tags: { context, surface: 'v2-api' } });
     console.error(`[v2-api error - ${context}]`, err.message, err.stack);
@@ -167,8 +133,6 @@ export function problemFromError(
     instance: context,
   });
 }
-
-/* ─── convenience constructors for common cases ───────────────────────── */
 
 export function problemValidation(detail: string, errors?: Record<string, string[]>): NextResponse {
   return problem({
@@ -212,9 +176,7 @@ export function problemRateLimited(
   detail?: string,
   headers?: HeadersInit,
 ): NextResponse {
-  // clamp non-positive to 1 (semantically "retry immediately"); cap to 1h
-  // (arbitrary upper bound to surface bugs vs. let through obvious
-  // garbage like Number.MAX_SAFE_INTEGER).
+  // Clamp to [1, 3600]s: 1 means "retry now", the cap catches garbage input.
   const safe = Math.max(1, Math.min(3600, Math.floor(retryAfterSeconds || 0)));
   const responseHeaders = new Headers(headers);
   responseHeaders.set('Retry-After', String(safe));

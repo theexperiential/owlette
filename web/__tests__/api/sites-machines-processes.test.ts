@@ -1,22 +1,12 @@
 /** @jest-environment node */
 
 /**
- * HTTP-shape tests for the public scoped process API
- * (`/api/sites/{siteId}/machines/{machineId}/processes/*`).
- *
- * Covers all 9 verbs (list, detail, create, update, delete, kill, start,
- * stop, schedule). For each verb:
- *  - 200/202/201 happy path
- *  - 401 / 403 / 404 / 409 negative paths
- *  - idempotency-key behaviour where applicable
- *  - audit + command-queue side-effects
+ * HTTP-shape tests for `/api/sites/{siteId}/machines/{machineId}/processes/*`:
+ * all 9 verbs, each with its happy path, 401/403/404/409 negatives, idempotency
+ * where applicable, and audit + command-queue side effects.
  */
 
 import { NextRequest } from 'next/server';
-
-/* -------------------------------------------------------------------------- */
-/*  Mocks                                                                     */
-/* -------------------------------------------------------------------------- */
 
 jest.mock('@/lib/withRateLimit', () => ({
   withRateLimit: (handler: unknown) => handler,
@@ -26,9 +16,8 @@ jest.mock('@/lib/logger', () => ({
   __esModule: true,
 }));
 
-// Auth gate. Default: pass-through admin actor (canonical _shared.ts shape:
-// `{ok: true, userId, auth, scopeCheck}` on success; `{ok: false, response}` on
-// auth failure). Flip via authForbidden() / authUnauthorized() helpers below.
+// Auth gate, defaulting to a pass-through admin actor in the canonical
+// _shared.ts shape. Flip with authForbidden() / authUnauthorized().
 const mockRequireMachineAuthAndScope = jest.fn().mockResolvedValue({
   ok: true,
   userId: 'test-user',
@@ -37,10 +26,8 @@ const mockRequireMachineAuthAndScope = jest.fn().mockResolvedValue({
 });
 jest.mock('@/app/api/_shared', () => ({
   requireMachineAuthAndScope: (...args: unknown[]) => mockRequireMachineAuthAndScope(...args),
-  // Advisory-header sink (legacy-key / version-missing / billing warning).
-  // The real one mutates and returns the same response; mirror that so the
-  // routes' `return applyAuthDeprecations(NextResponse.json(...), ...)` shape
-  // survives the mock.
+  // Advisory-header sink. The real one mutates and returns the SAME response;
+  // mirror that or the routes' `return applyAuthDeprecations(...)` breaks.
   applyAuthDeprecations: (response: unknown) => response,
 }));
 
@@ -233,10 +220,6 @@ import { POST as POST_STOP } from '@/app/api/sites/[siteId]/machines/[machineId]
 import { POST as POST_SCHEDULE } from '@/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/schedule/route';
 import { PATCH as PATCH_LAUNCH_MODE } from '@/app/api/sites/[siteId]/machines/[machineId]/processes/[processId]/launch-mode/route';
 
-/* -------------------------------------------------------------------------- */
-/*  Helpers                                                                   */
-/* -------------------------------------------------------------------------- */
-
 const SITE = 's1';
 const MACHINE = 'm1';
 const PID = 'proc-1';
@@ -324,10 +307,6 @@ beforeEach(() => {
   mockExecuteMachineCommand.mockResolvedValue({ commandId: 'cmd-process-1' });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  GET list                                                                  */
-/* -------------------------------------------------------------------------- */
-
 describe('GET /api/sites/{siteId}/machines/{machineId}/processes', () => {
   it('returns 200 with merged config + status', async () => {
     mockReadProcessList.mockResolvedValueOnce([makeProcRow()]);
@@ -399,10 +378,6 @@ describe('process route authorization wrappers', () => {
     );
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  POST create                                                               */
-/* -------------------------------------------------------------------------- */
 
 describe('POST /api/sites/{siteId}/machines/{machineId}/processes', () => {
   beforeEach(() => {
@@ -559,10 +534,6 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/processes', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  GET detail                                                                */
-/* -------------------------------------------------------------------------- */
-
 describe('GET /api/sites/{siteId}/machines/{machineId}/processes/{processId}', () => {
   it('returns 200 with the process detail', async () => {
     mockReadProcessList.mockResolvedValueOnce([makeProcRow()]);
@@ -634,10 +605,6 @@ describe('GET /api/sites/{siteId}/machines/{machineId}/processes/{processId}', (
     expect(res.status).toBe(403);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  PATCH update                                                              */
-/* -------------------------------------------------------------------------- */
 
 describe('PATCH /api/sites/{siteId}/machines/{machineId}/processes/{processId}', () => {
   beforeEach(() => {
@@ -755,10 +722,6 @@ describe('PATCH /api/sites/{siteId}/machines/{machineId}/processes/{processId}',
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  DELETE remove                                                             */
-/* -------------------------------------------------------------------------- */
-
 describe('DELETE /api/sites/{siteId}/machines/{machineId}/processes/{processId}', () => {
   beforeEach(() => {
     mockWithProcessLock.mockImplementation(async (_s, _m, fn) => {
@@ -818,10 +781,6 @@ describe('DELETE /api/sites/{siteId}/machines/{machineId}/processes/{processId}'
     );
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  Control verbs (kill / restart / start / stop)                             */
-/* -------------------------------------------------------------------------- */
 
 describe.each([
   ['kill', POST_KILL, 'kill_process'],
@@ -917,10 +876,6 @@ describe.each([
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  PATCH launch-mode                                                        */
-/* -------------------------------------------------------------------------- */
-
 describe('PATCH /api/sites/{siteId}/machines/{machineId}/processes/{processId}/launch-mode', () => {
   beforeEach(() => {
     mockWithProcessLock.mockImplementation(async (_s, _m, fn) => {
@@ -992,10 +947,6 @@ describe('PATCH /api/sites/{siteId}/machines/{machineId}/processes/{processId}/l
     );
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  POST schedule                                                             */
-/* -------------------------------------------------------------------------- */
 
 describe('POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/schedule', () => {
   beforeEach(() => {
@@ -1102,7 +1053,7 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/sc
       jsonReq(`${urlDetail()}/schedule`, 'POST', { mode: 'off' }, { 'idempotency-key': 'sk8' }),
       ctx()
     );
-    // Schedule path should not call mockFsSet (which is the command-queue write).
+    // mockFsSet is the command-queue write — schedule must not touch it.
     expect(mockFsSet).not.toHaveBeenCalled();
     // It SHOULD call withProcessLock (via the mock).
     expect(mockWithProcessLock).toHaveBeenCalled();

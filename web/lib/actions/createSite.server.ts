@@ -1,24 +1,17 @@
 /**
- * createSite action core (security-boundary-migration wave 3.9 - site CRUD).
+ * createSite action core. Replaces the client-side `setDoc` in
+ * `useFirestore.ts:createSite`: validates the site id, refuses to overwrite an
+ * existing site, and writes the site doc with the caller as `owner`.
  *
- * Replaces the client-side `setDoc` in `web/hooks/useFirestore.ts:createSite`.
- * The action validates the requested site id (`web/lib/validators.ts`),
- * refuses to overwrite an existing site, and writes the site doc with the
- * caller as `owner`.
+ * The site doc and the creator's membership MUST stay in one batch. Ownership
+ * alone isn't enough — the server honours it, but the client site list resolves
+ * membership only (`useSites` iterates `users/{uid}.sites[]` and never queries
+ * by `owner`). A site without the membership entry is invisible to the user who
+ * created it, with no self-service recovery; that stranded every self-serve
+ * signup between 1756e5f (2026-03-20) and this fix.
  *
- * The site document and the creator's membership are written in one batch.
- * Ownership alone is not enough: the server honours it (firestore.rules
- * `isSiteOwner`, `GET /api/sites`, `apiAuth.server.ts`) but the client site
- * list resolves membership only — `useSites` in `web/hooks/useFirestore.ts`
- * iterates `users/{uid}.sites[]` and never queries by `owner`. A site written
- * without that membership entry is therefore invisible in-product to the very
- * user who just created it, with no self-service way to recover. That split
- * stranded every self-serve signup between 1756e5f (2026-03-20) and this fix.
- * Keep the two writes atomic so a site can never exist without its creator.
- *
- * Capability: `SITE_MEMBER_MANAGE` via the platform route wrapper. Site
- * creation has no existing site id to authorize against, so the route is
- * treated as a platform-level mutation.
+ * Capability `SITE_MEMBER_MANAGE` via the platform route wrapper — there is no
+ * existing site id to authorize against, so this is a platform-level mutation.
  */
 
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
@@ -33,9 +26,9 @@ export interface CreateSiteInput {
   name: string;
   ownerUid: string;
   timezone?: string;
-  /** Inject a Firestore instance; tests pass a mock, production omits. */
+  /** Tests pass a mock; production omits. */
   db?: Firestore;
-  /** Inject a clock; tests pass a fixed value, production omits. */
+  /** Tests pass a fixed clock; production omits. */
   now?: () => Date;
 }
 
@@ -95,10 +88,9 @@ export async function createSite(
 
   const nowDate = (input.now ?? (() => new Date()))();
 
-  // `update` rather than `set(..., {merge:true})` on the user doc: the route
-  // has already run `assertActiveUser`, so the document exists. If that
-  // invariant ever breaks, failing the batch — and creating no site at all —
-  // is the right outcome; a site nobody can see is the bug being fixed here.
+  // `update`, not `set(..., {merge:true})`: the route already ran
+  // `assertActiveUser`, so the doc exists. If that invariant breaks, failing the
+  // whole batch is correct — an invisible site is exactly the bug fixed here.
   const batch = db.batch();
   batch.set(siteRef, {
     name: trimmedName,

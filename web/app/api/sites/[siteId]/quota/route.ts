@@ -1,14 +1,7 @@
 /**
- * GET /api/sites/{siteId}/quota
- *      → Current quota snapshot for a site:
- *        { usedBytes, pendingBytes, limitBytes, fractionUsed,
- *          lastAlarmLevel, alarms[] }
- *
- * Reads the `sites/{siteId}/roost/quota` doc written by quotaEnforce
- * (functions/src/quotaEnforce.ts), sums its `pending` subcollection, and
- * surfaces recent alarm firings from `sites/{siteId}/quota_alarms`.
- *
- * roost public api wave 3.7.
+ * GET /api/sites/{siteId}/quota — quota snapshot from the
+ * `sites/{siteId}/roost/quota` doc written by quotaEnforce, plus the summed
+ * `pending` subcollection and recent `quota_alarms`. roost public api wave 3.7.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -54,15 +47,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       0,
     );
 
-    // Prefer the cached planLimitBytes written by quotaEnforce's reconcile
-    // (it honors one-off grants), else fall back to the standard allowance.
+    // quotaEnforce's cached planLimitBytes honors one-off grants
     const limitBytes = typeof data.planLimitBytes === 'number'
       ? data.planLimitBytes
       : SITE_STORAGE_BYTES;
     const committedBytes = Math.max(0, usedBytes + pendingBytes);
-    // No ratio to take when a site's cap is zero — mirrors the
-    // `planLimitBytes <= 0` short-circuit in quotaLogic.reportQuota, which
-    // returns NaN there (not JSON-representable, so `null` over the wire).
+    // Cap of zero has no ratio. quotaLogic.reportQuota returns NaN there, which
+    // isn't JSON-representable — hence null on the wire.
     const fractionUsed = limitBytes > 0
       ? Math.min(1, committedBytes / limitBytes)
       : null;

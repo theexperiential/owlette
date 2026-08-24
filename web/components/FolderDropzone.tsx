@@ -1,20 +1,13 @@
 'use client';
 
 /**
- * FolderDropzone — native HTML5 folder-drop for roost upload (wave 3.1).
+ * Native HTML5 folder-drop for roost upload, producing `NamedBlob[]` for the
+ * chunking + upload pipeline. Two modalities: drag-drop (recursive enumeration
+ * via `DataTransferItem.webkitGetAsEntry()`) and click-to-browse
+ * (`<input type="file" webkitdirectory>` → `.webkitRelativePath`).
  *
- * Produces `NamedBlob[]` suitable for the chunking + upload pipeline.
- * Two input modalities:
- *   1. drag-drop an entire folder: enumerated recursively via
- *      `DataTransferItem.webkitGetAsEntry()` (supported in all major
- *      browsers since 2018).
- *   2. click-to-browse: `<input type="file" webkitdirectory>` which
- *      surfaces each File's `.webkitRelativePath`.
- *
- * No dependencies — Uppy would give us polish + tus resumability, but
- * our IndexedDB-backed upload queue (wave 3.3) already covers the
- * resume story for our use case, and the hashing/queue primitives are
- * first-party.
+ * Dependency-free on purpose: the IndexedDB upload queue already covers resume,
+ * so Uppy/tus would only add polish.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -27,22 +20,15 @@ interface FolderDropzoneProps {
   /** Called with the enumerated files once the user finishes dropping or selecting. */
   onFilesReady: (files: NamedBlob[], rootFolderName: string) => void;
   /**
-   * Called with ADDITIONAL files the user picks / drops after the initial
-   * selection (summary view shows "+ folder" and "+ files" buttons in that
-   * mode). Parent is responsible for merging — typically by path, with
-   * later entries winning. Omit to disable append mode; summary then
-   * shows only the clear button.
+   * Additional files picked after the initial selection. The parent merges
+   * (typically by path, later wins). Omit to disable append mode.
    */
   onFilesAppend?: (newFiles: NamedBlob[]) => void;
   /** Called when the user clears the selection. */
   onClear?: () => void;
   /** Total byte / file-count display for the currently-selected folder. */
   summary?: { fileCount: number; totalBytes: number };
-  /**
-   * Enumerated files, passed from the parent so this component can show a
-   * preview of what's queued. Leave undefined (or an empty array) to
-   * collapse the preview and show only the summary chip.
-   */
+  /** Enumerated files for the queued-preview; undefined/empty collapses it. */
   files?: readonly NamedBlob[];
   /** Disable interaction (e.g. during upload). */
   disabled?: boolean;
@@ -56,10 +42,8 @@ export function FolderDropzone({
   files,
   disabled = false,
 }: FolderDropzoneProps) {
-  // Unified dispatch: when the summary is visible and the parent opted
-  // into append mode, new picks get routed to onFilesAppend. Otherwise
-  // (initial pick, or parent doesn't support append) we go through the
-  // normal replace path.
+  // Route to onFilesAppend when the summary is visible and the parent opted into
+  // append mode; otherwise take the replace path.
   const deliver = useCallback(
     (newFiles: NamedBlob[], rootName: string) => {
       if (summary && onFilesAppend) {
@@ -75,9 +59,8 @@ export function FolderDropzone({
   const inputRef = useRef<HTMLInputElement>(null);
   const filesInputRef = useRef<HTMLInputElement>(null);
 
-  // File System Access API support check. Falls back to webkitdirectory
-  // on Firefox/Safari. Set via useEffect so SSR initial render matches
-  // the client's first hydration render (both start false).
+  // File System Access API check (Firefox/Safari fall back to webkitdirectory).
+  // Set in an effect so SSR and first hydration render both start false.
   const [supportsFSA, setSupportsFSA] = useState(false);
   useEffect(() => {
     setSupportsFSA(
@@ -130,9 +113,8 @@ export function FolderDropzone({
       if (!fileList || fileList.length === 0) return;
       setEnumerating(true);
       try {
-        // Loose-file picker → no folder structure. Use each file's name
-        // as its version path (enumerateInputFiles already handles the
-        // webkitRelativePath-absent case).
+        // Loose-file picker → no folder structure; each file's name is its
+        // version path (enumerateInputFiles handles the missing relativePath).
         const files = enumerateInputFiles(fileList);
         if (files.length === 0) return;
         const rootName = deriveRootName(files);
@@ -145,9 +127,8 @@ export function FolderDropzone({
     [deliver],
   );
 
-  // FSA-native path for multi-file selection — same per-origin permission
-  // persistence as showDirectoryPicker. Chrome/Edge only; Firefox/Safari
-  // fall through to the `<input type="file" multiple>` below.
+  // FSA multi-file path (Chrome/Edge only, same per-origin permission
+  // persistence as showDirectoryPicker); others fall through to `<input>`.
   const handleFsaFilesPick = useCallback(async () => {
     if (disabled || enumerating) return;
     setEnumerating(true);
@@ -179,10 +160,8 @@ export function FolderDropzone({
     }
   }, [disabled, enumerating, deliver]);
 
-  // Preferred path on Chrome/Edge — the File System Access API asks the
-  // user for permission ONCE per origin (and persists the grant) instead
-  // of the per-upload "Upload all files from X?" prompt that
-  // webkitdirectory triggers every time.
+  // Preferred on Chrome/Edge: FSA prompts once per origin and persists the
+  // grant, unlike webkitdirectory's per-upload "Upload all files from X?".
   const handleFsaPick = useCallback(async () => {
     if (disabled || enumerating) return;
     setEnumerating(true);
@@ -199,7 +178,7 @@ export function FolderDropzone({
       const rootName = handle.name || deriveRootName(out);
       deliver(out, rootName);
     } catch (err) {
-      // user cancelled the picker — silent no-op.
+      // user cancelled the picker.
       if ((err as Error).name === 'AbortError') return;
       throw err;
     } finally {
@@ -463,13 +442,11 @@ export function FolderDropzone({
   );
 }
 
-/* --------------------------------------------------------------------- */
-/*  Enumeration helpers                                                  */
-/* --------------------------------------------------------------------- */
+// Enumeration helpers
 
 /**
- * Read a `DataTransfer` from a drop event. Prefers the `items` API for
- * folder enumeration; falls back to the `files` list (single-file drops).
+ * Read a `DataTransfer` from a drop event: `items` API for folder enumeration,
+ * falling back to the `files` list for single-file drops.
  */
 export async function enumerateDataTransfer(
   dt: DataTransfer,
@@ -496,8 +473,8 @@ export function enumerateInputFiles(files: FileList): NamedBlob[] {
   const out: NamedBlob[] = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
-    // webkitdirectory: `.webkitRelativePath` is `<rootFolder>/<subpath>/<filename>`.
-    // loose-file fallback: relativePath is missing, use the filename.
+    // webkitdirectory gives `<rootFolder>/<subpath>/<filename>`; loose files have
+    // no relativePath, so use the filename.
     const relPath =
       (f as File & { webkitRelativePath?: string }).webkitRelativePath ||
       f.name;
@@ -510,16 +487,14 @@ export function enumerateInputFiles(files: FileList): NamedBlob[] {
 }
 
 /**
- * Recursively walk a FileSystemDirectoryHandle (from `showDirectoryPicker`),
- * yielding NamedBlob entries with forward-slash version-relative paths.
- * Generator shape matches `walkEntry` but uses the newer FSA API which
- * integrates with per-origin permission grants.
+ * Recursively walk a FileSystemDirectoryHandle (`showDirectoryPicker`), yielding
+ * NamedBlobs with forward-slash version-relative paths. Same shape as
+ * `walkEntry`, but on the FSA API with its per-origin permission grants.
  */
 async function* walkDirectoryHandle(
   handle: FileSystemDirectoryHandle,
   prefix: string,
 ): AsyncGenerator<NamedBlob> {
-  // `entries()` is an async iterable of [name, handle] pairs.
   const iter = (
     handle as unknown as {
       entries: () => AsyncIterable<
@@ -541,10 +516,7 @@ async function* walkDirectoryHandle(
   }
 }
 
-/**
- * Recursively walk a FileSystemEntry tree (from `webkitGetAsEntry`),
- * collecting files with their folder-relative paths.
- */
+/** Recursively walk a `webkitGetAsEntry` tree, collecting folder-relative paths. */
 async function walkEntry(
   entry: FileSystemEntry,
   prefix: string,
@@ -563,7 +535,7 @@ async function walkEntry(
   }
   if (entry.isDirectory) {
     const reader = (entry as FileSystemDirectoryEntry).createReader();
-    // readEntries hands back in batches; loop until empty.
+    // readEntries returns in batches; loop until empty.
     while (true) {
       const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
         reader.readEntries(resolve, reject);
@@ -578,13 +550,11 @@ async function walkEntry(
 }
 
 /**
- * Normalise each path segment through `sanitizeFilename`. If ANY segment
- * is unsalvageable, drop the whole file — we'd rather omit a hostile
- * name than rename it silently.
+ * Normalise each segment through `sanitizeFilename`; if ANY segment is
+ * unsalvageable, drop the file rather than silently renaming a hostile name.
  */
 function toVersionPath(input: string): string | null {
-  // Version paths are POSIX-style with forward slashes; inputs may
-  // arrive with either separator depending on OS.
+  // Version paths are POSIX; inputs may use either separator depending on OS.
   const segments = input.replace(/\\/g, '/').split('/').filter(Boolean);
   const cleaned: string[] = [];
   for (const seg of segments) {

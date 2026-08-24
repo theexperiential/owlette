@@ -15,10 +15,8 @@ function builtInId(name: string): string {
 }
 
 /**
- * Strip undefined values from an object. Firestore rejects `undefined` field
- * values with "Unsupported field value: undefined". Optional preset fields
- * (extract_path, verify_files) come through as undefined when the user leaves
- * them blank, so we drop them before writing rather than storing nulls.
+ * Firestore rejects `undefined` field values, and blank optional preset fields
+ * arrive as undefined — drop them rather than storing nulls.
  */
 function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Record<string, unknown> = {};
@@ -33,10 +31,8 @@ export interface ProjectDistributionPreset {
   name: string;
   description?: string;
   /**
-   * Optional saved URL. Useful for projects redistributed periodically (e.g.
-   * a Dropbox link that stays the same across deployments). Distribution
-   * name is intentionally NOT carried — names tend to be per-deployment
-   * (e.g. "Summer Show 2024").
+   * Saved URL for projects redistributed periodically. The distribution name is
+   * deliberately not carried — names are per-deployment.
    */
   project_url?: string;
   extract_path?: string;
@@ -60,13 +56,12 @@ export interface UseProjectDistributionPresetsReturn {
 }
 
 /**
- * Hook to manage project distribution presets scoped to a site.
- * Firestore path: config/{siteId}/project_distribution_presets/{presetId}
+ * Site-scoped distribution presets at
+ * `config/{siteId}/project_distribution_presets/{presetId}`.
  *
- * Built-in presets are always present (merged client-side from
- * BUILT_IN_PROJECT_DISTRIBUTION_PRESETS). If an admin edits a built-in, the
- * override is saved to Firestore under the same `builtin-*` ID and takes
- * precedence over the hardcoded default.
+ * Built-ins are merged client-side from
+ * BUILT_IN_PROJECT_DISTRIBUTION_PRESETS; editing one saves an override under
+ * the same `builtin-*` id, which then wins over the hardcoded default.
  */
 export function useProjectDistributionPresets(
   siteId: string | null
@@ -76,19 +71,16 @@ export function useProjectDistributionPresets(
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Mirrors useSchedulePresets / useRestartPresets — set-state-in-effect is
-    // the established pattern across all preset hooks for handling the
-    // Firebase-not-ready and params-not-ready gates. Diverging here would
-    // make preset behavior inconsistent across the app.
+    // set-state-in-effect matches every other preset hook's not-ready gates;
+    // diverging here would make preset behavior inconsistent app-wide.
     if (!db) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setLoading(false);
       return;
     }
     if (!siteId) {
-      // Params not ready — stay in loading until the site resolves. Flipping
-      // to loading=false here would cause the dialog to briefly render
-      // built-in defaults as if Firestore overrides didn't exist.
+      // Stay loading until the site resolves — loading=false here flashes the
+      // built-in defaults as if no Firestore override existed.
       setLoading(true);
       setFirestorePresets([]);
       return;
@@ -125,11 +117,10 @@ export function useProjectDistributionPresets(
     }
   }, [siteId]);
 
-  // Merge built-in defaults with Firestore overrides + custom presets
   const presets = useMemo(() => {
     const firestoreById = new Map(firestorePresets.map(p => [p.id, p]));
 
-    // Built-ins: use Firestore override if it exists, otherwise the hardcoded default
+    // Override if Firestore has one, else the hardcoded default.
     const builtIns: ProjectDistributionPreset[] = BUILT_IN_PROJECT_DISTRIBUTION_PRESETS.map(
       (bp, i) => {
         const id = builtInId(bp.name);
@@ -150,7 +141,7 @@ export function useProjectDistributionPresets(
       }
     );
 
-    // Custom presets: everything in Firestore that isn't a built-in override
+    // Custom = everything in Firestore that isn't a built-in override.
     const builtInIds = new Set(
       BUILT_IN_PROJECT_DISTRIBUTION_PRESETS.map(bp => builtInId(bp.name))
     );

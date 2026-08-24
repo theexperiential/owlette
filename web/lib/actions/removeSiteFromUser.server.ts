@@ -1,12 +1,9 @@
 /**
- * removeSiteFromUser action core (security-boundary-migration wave 3.9).
+ * Removes siteIds from `users/{uid}.sites[]`, then best-effort cancels the
+ * user's pending commands on those sites. The arrayRemove is authoritative —
+ * a failed cancel sweep does not roll back membership.
  *
- * Removes one or more siteIds from `users/{uid}.sites[]` via `arrayRemove`,
- * then best-effort cancels any pending commands the user issued on those
- * sites. The arrayRemove is the authoritative state change — failure to
- * cancel commands does not roll back the membership change.
- *
- * Capability: `SITE_MEMBER_MANAGE` — wrapper-enforced.
+ * Capability `SITE_MEMBER_MANAGE`, enforced by the wrapper.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
@@ -22,9 +19,8 @@ const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 export interface RemoveSiteFromUserInput {
   uid: string;
   siteIds: string[];
-  /** Inject a Firestore instance — tests pass a mock; production omits. */
+  /** Injected in tests; production omits both. */
   db?: Firestore;
-  /** Inject the command-cancel sweep — tests pass a stub; production omits. */
   cancelCommands?: (uid: string, siteIds: string[]) => Promise<number>;
 }
 
@@ -78,8 +74,7 @@ export async function removeSiteFromUser(
     sites: FieldValue.arrayRemove(...validatedSiteIds),
   });
 
-  // Best-effort: cancel pending commands the user issued on the removed
-  // sites. Errors here don't block the response.
+  // Best-effort; errors don't block the response.
   let cancelledCommandCount = 0;
   const cancelFn = input.cancelCommands ?? cancelUserCommandsOnSites;
   try {

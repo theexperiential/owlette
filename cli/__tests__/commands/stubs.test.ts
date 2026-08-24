@@ -1,32 +1,15 @@
 /**
- * Stub-command coverage tests.
+ * Stub-command coverage. `machine live-view` is the CLI's last deferred stub
+ * (out of MVP until the WebRTC-native implementation lands); every other verb is
+ * now a real http handler covered by its own `*-http.test.ts`.
  *
- * The only remaining public-api deferred stub the CLI ships is
- * `machine live-view`. That surface is intentionally outside the MVP
- * until the WebRTC-native implementation is prioritized.
+ * Asserts exit code 3, human-mode stderr carrying the dashboard url +
+ * future-plan path + verb name, and the `--json` envelope
+ * `{ ok, stub, noun, reason, dashboard_url, future_plan }` — snake_case per
+ * docs/cli/overview.md#json-envelope-schema.
  *
- * For that verb we assert the same three properties every other promoted
- * verb used to satisfy:
- *   1. invoking the verb terminates the process with exit code 3
- *   2. human-mode stderr surfaces the dashboard url + future-plan path
- *      + the verb name in the header line
- *   3. `--json` mode emits the canonical envelope on stdout:
- *        { ok: false, stub: true, noun, reason, dashboard_url, future_plan }
- *      (snake_case keys per docs/cli/overview.md#json-envelope-schema)
- *
- * Earlier batches' verbs (chat / user / deploy / installer / process /
- * the other 3 machine mutations) are now real http handlers — their
- * coverage moved to dedicated `*-http.test.ts` files.
- *
- * Because `stubExit` calls `process.exit(3)` synchronously, we mock
- * `process.exit` to throw a sentinel error so jest can observe the
- * intended exit code without the worker actually dying. Test bodies
- * catch the sentinel (parseAsync is async) and assert against captured
- * stdout / stderr.
- *
- * Drives:
- *   src/commands/machine.ts (live-view stub)
- *   src/lib/stubExit.ts (canonical envelope shape)
+ * `process.exit` is mocked to throw a sentinel so the synchronous exit(3) in
+ * `stubExit` is observable without killing the jest worker.
  */
 
 import { Command } from 'commander';
@@ -154,8 +137,7 @@ describe.each(FIXTURES)('owlette $noun $verb (stub)', (fix) => {
     expect(typeof parsed.future_plan).toBe('string');
     expect(parsed.future_plan as string).toContain(fix.futurePlanSubstr);
     expect(typeof parsed.reason).toBe('string');
-    // Snake_case keys are load-bearing per command-surface.md — guard against
-    // an accidental flip to camelCase in stubExit.ts.
+    // snake_case is load-bearing per command-surface.md; guard the flip to camelCase
     expect(parsed.dashboardUrl).toBeUndefined();
     expect(parsed.futurePlan).toBeUndefined();
   });

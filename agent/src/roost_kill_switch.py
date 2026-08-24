@@ -1,28 +1,11 @@
 """
-roost_kill_switch — emergency stop for v2 project distribution (wave 5.4).
+roost_kill_switch — emergency stop for roost sync, per site.
 
-an admin can disable roost on a per-site basis by setting
-`sites/{siteId}.roostEnabled = false` in firestore. agents check this
-flag before starting any new sync_pull; a running sync is not cancelled
-mid-flight (that's cancel_sync's job), but no NEW work begins once the
-flag is false.
+`sites/{siteId}.roostEnabled = false` blocks any NEW sync_pull; in-flight syncs
+are cancel_sync's job. Fail-open: missing flag or firestore read error means
+ENABLED — fail-closed would halt a site on a transient network blip.
 
-**fail-open semantics**: a missing flag OR a firestore read error is
-treated as ENABLED. the alternative — fail-closed — would grind a site
-to a halt on a transient network blip, which is worse than leaking one
-extra sync cycle while an admin attempts a kill.
-
-**propagation time**: agents check the flag on every `sync_pull` via a
-cached firestore read with a short TTL. the "within 60s" acceptance of
-wave 5.4 is satisfied because the agent's main loop drives sync_pull
-re-checks ~every 10s when there's queued work, and the cache TTL is
-30s so a stale cached `enabled=true` clears before the minute mark.
-
-NOT this module's job:
-  - cancelling in-flight sync work (cancel_sync handler)
-  - the web-side gate (web/lib/roostKillSwitch.ts mirrors this)
-  - actual firestore writes by the admin UI (gate surface, not the
-    write surface)
+Web mirror of this gate: web/lib/roostKillSwitch.ts.
 """
 
 from __future__ import annotations
@@ -33,13 +16,10 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# Field name on `sites/{siteId}` carrying the flag. Shared with the web
-# side — if this moves, `web/lib/roostKillSwitch.ts` must move with it.
+# Shared with web/lib/roostKillSwitch.ts — move both together.
 ROOST_ENABLED_FIELD = 'roostEnabled'
 
-# How long to cache a site-doc read before re-fetching. 30 s balances
-# "flip takes effect fast" against firestore read cost. task 5.4's
-# "within 60s" acceptance explicitly permits this magnitude.
+# Site-doc read cache TTL. 30s keeps a kill inside the 60s propagation budget.
 _CACHE_TTL_SECONDS = 30.0
 
 
@@ -79,14 +59,8 @@ def is_enabled_from_doc(site_doc: Optional[dict]) -> bool:
     """
     pure decision: given a site doc (or None), is roost enabled?
 
-    fail-open rules:
-      - None (doc not found / read error): ENABLED
-      - dict without the field: ENABLED (default for sites created before
-        the flag existed, or new sites that haven't had an opinion written)
-      - explicit `roostEnabled: false`: DISABLED
-      - explicit `roostEnabled: true`: ENABLED
-      - non-bool value (migration glitch, type confusion): ENABLED
-        (fail-open on malformed data; log a warning elsewhere)
+    Only an explicit `roostEnabled: false` disables; None / missing field /
+    non-bool all fail open to ENABLED.
     """
     if site_doc is None:
         return True
@@ -97,7 +71,6 @@ def is_enabled_from_doc(site_doc: Optional[dict]) -> bool:
         return True
     if isinstance(value, bool):
         return value
-    # malformed — log but fail-open.
     logger.warning(
         f"roost_kill_switch: non-boolean {ROOST_ENABLED_FIELD}={value!r} "
         f"— treating as enabled (fail-open)"
@@ -114,13 +87,8 @@ def check_enabled(
     """
     check whether roost is enabled for `site_id`.
 
-    `firestore_reader` is any callable/object providing a `get_site_doc(site_id)`
-    method returning the site doc (or None on missing / error). passing
-    the reader in lets tests substitute an in-memory fake without touching
-    the real firestore REST client.
-
-    **fail-open on exceptions**: any error reading the flag is logged and
-    treated as enabled. see module docstring for why.
+    `firestore_reader` needs `get_site_doc(site_id) -> dict | None`; injected so
+    tests can fake it. Read errors fail open to enabled and are not cached.
     """
     now = now_fn()
     cached = _cache.get(site_id, now)
@@ -130,8 +98,6 @@ def check_enabled(
     try:
         doc = firestore_reader.get_site_doc(site_id)
     except Exception as e:
-        # treat as enabled (fail-open); don't cache the error so the
-        # next check retries the read.
         logger.warning(
             f"roost_kill_switch: failed to read site doc for {site_id!r}: "
             f"{type(e).__name__}: {e} — treating as enabled"
@@ -144,7 +110,7 @@ def check_enabled(
 
 
 def invalidate_cache() -> None:
-    """force the next check_enabled() to re-read. used by tests + explicit admin flows."""
+    """force the next check_enabled() to re-read."""
     _cache.invalidate()
 
 

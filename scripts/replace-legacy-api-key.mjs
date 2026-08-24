@@ -1,21 +1,12 @@
 #!/usr/bin/env node
 /**
- * Replace a single legacy (empty-scope) API key with a fresh scoped key.
+ * Replace one legacy (empty-scope) API key with a fresh scoped key: mint
+ * owk_<env>_<random>, write the per-user doc AND the top-level hash lookup, and
+ * set revokedAt on both ends of the old key. The raw key prints ONCE.
  *
- * Mints a new owk_<env>_<random> key with the supplied scopes, writes
- * both the per-user subcollection doc and the top-level hash → key
- * lookup doc, and sets revokedAt on the old key (both ends). The new
- * raw key is printed ONCE to stdout — paste it into the relevant env
- * file (e.g. .claude/.env.local).
- *
- * Usage:
- *   # Dry-run — prints what would happen, writes nothing:
- *   node scripts/replace-legacy-api-key.mjs --env=dev --old-key=$OWLETTE_API_KEY --scopes=installer=*:write,installer=*:read,installer=*:admin
- *
- *   # Live (writes to Firestore):
- *   node scripts/replace-legacy-api-key.mjs --env=dev --old-key=$OWLETTE_API_KEY --scopes=installer=*:write,installer=*:read,installer=*:admin --apply
- *
- * The script is READ-ONLY by default; --apply is required to mutate.
+ * READ-ONLY unless --apply is passed:
+ *   node scripts/replace-legacy-api-key.mjs --env=dev --old-key=$OWLETTE_API_KEY \
+ *     --scopes=installer=*:write,installer=*:read,installer=*:admin [--apply]
  */
 
 import { createRequire } from 'module';
@@ -30,8 +21,6 @@ const ROOT = join(__dirname, '..');
 
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 const admin = require('firebase-admin');
-
-// ---- CLI parsing ------------------------------------------------------------
 
 const args = process.argv.slice(2);
 
@@ -66,8 +55,6 @@ if (scopes.length === 0) {
   process.exit(1);
 }
 
-// ---- .env loading -----------------------------------------------------------
-
 function loadEnvFile(path) {
   if (!existsSync(path)) return;
   const content = readFileSync(path, 'utf8');
@@ -88,8 +75,6 @@ loadEnvFile(join(ROOT, 'web', '.env.local'));
 loadEnvFile(join(ROOT, '.claude', '.env.local'));
 loadEnvFile(join(ROOT, 'scripts', '.env.local'));
 
-// ---- Credentials ------------------------------------------------------------
-
 const suffix = env === 'prod' ? '_PROD' : '_DEV';
 const projectId = process.env[`FIREBASE_PROJECT_ID${suffix}`] || process.env.FIREBASE_PROJECT_ID;
 const clientEmail = process.env[`FIREBASE_CLIENT_EMAIL${suffix}`] || process.env.FIREBASE_CLIENT_EMAIL;
@@ -100,11 +85,8 @@ if (!projectId || !clientEmail || !rawPrivateKey) {
 }
 const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
 
-// ---- Key generation ---------------------------------------------------------
-
 function generateKey(envLabel) {
-  // Mirror the format used by the existing /api/keys mint route:
-  // owk_{live|test}_<base64url(32 random bytes)>
+  // Format must match the /api/keys mint route: owk_{live|test}_<base64url(32B)>
   const tag = envLabel === 'prod' ? 'live' : 'test';
   const random = crypto.randomBytes(32).toString('base64url');
   return `owk_${tag}_${random}`;
@@ -124,8 +106,6 @@ function promptYesNo(question) {
   });
 }
 
-// ---- Main -------------------------------------------------------------------
-
 async function main() {
   console.log(`\n${apply ? '[APPLY]' : '[DRY RUN]'} Replace legacy API key — env=${env}, project=${projectId}`);
   console.log(`Scopes for new key: ${scopes.join(', ')}\n`);
@@ -133,7 +113,6 @@ async function main() {
   admin.initializeApp({ credential: admin.credential.cert({ projectId, clientEmail, privateKey }) });
   const db = admin.firestore();
 
-  // 1. Resolve the old key.
   const oldHash = sha256(oldKey);
   const oldLookupRef = db.collection('api_keys').doc(oldHash);
   const oldLookupSnap = await oldLookupRef.get();
@@ -164,7 +143,6 @@ async function main() {
   console.log(`  current scopes: ${Array.isArray(oldSubData.scopes) ? (oldSubData.scopes.length ? oldSubData.scopes.join('|') : '(empty)') : '(missing field)'}`);
   console.log(`  revokedAt    : ${oldSubData.revokedAt ? 'already revoked' : 'no'}`);
 
-  // 2. Generate the new key.
   const newRawKey = generateKey(env);
   const newHash = sha256(newRawKey);
   const newKeyId = crypto.randomUUID();
@@ -188,7 +166,7 @@ async function main() {
     }
   }
 
-  // 3. Transaction: write new docs + revoke old.
+  // One transaction: write the new docs and revoke the old key together.
   await db.runTransaction(async (tx) => {
     const newSubRef = db.collection('users').doc(ownerUid).collection('api_keys').doc(newKeyId);
     const newLookupRef = db.collection('api_keys').doc(newHash);
@@ -201,7 +179,6 @@ async function main() {
 
     const now = admin.firestore.FieldValue.serverTimestamp();
 
-    // Per-user subcollection doc.
     tx.set(newSubRef, {
       keyId: newKeyId,
       userId: ownerUid,
@@ -214,7 +191,7 @@ async function main() {
       replacementReason: 'legacy_scope_backfill',
     });
 
-    // Top-level hash → key lookup.
+    // Hash → key lookup.
     tx.set(newLookupRef, {
       userId: ownerUid,
       keyId: newKeyId,
@@ -223,7 +200,7 @@ async function main() {
       createdAt: now,
     });
 
-    // Revoke the old key on BOTH ends so apiAuth.server.ts rejects it.
+    // BOTH ends, or apiAuth.server.ts still accepts it.
     tx.update(oldSubRef, {
       revokedAt: now,
       revokedReason: 'replaced_by_scoped_key',

@@ -1,26 +1,14 @@
 //! The icon Windows shows for an executable, as a PNG the process list can draw.
 //!
-//! A row that says `touch` beside a green dot tells an operator which entry it
-//! is; the TouchDesigner icon tells them at a glance, which is the whole point
-//! of the collapsed rail where the name is not on screen at all.
+//! The shell is asked first (`SHGetFileInfoW`) so the image matches what
+//! Explorer draws for the same path; when it declines, the file's own icon
+//! resource is read (`ExtractIconExW`) — see [`resource_icon`], not a
+//! hypothetical fallback.
 //!
-//! The shell is asked first (`SHGetFileInfoW`), so a `.bat` gets the script
-//! icon and a file type with a registered handler gets that handler's — the
-//! same image Explorer draws for the same path, which is what an operator is
-//! comparing it against. When the shell declines, the file's own icon resource
-//! is read directly (`ExtractIconExW`); see [`resource_icon`] for why that is
-//! not a hypothetical fallback.
-//!
-//! Two things this deliberately does not do:
-//!
-//! * **It does not resolve a process's *document*.** The caller passes
-//!   `exe_path`, so a `.toe` entry shows the TouchDesigner icon and a python
-//!   script shows python's. That is the application the operator recognises; the
-//!   document is what the `name` field is for.
-//! * **It does not fail loudly.** A path that is gone, a target with no icon at
-//!   all, a shell extension that misbehaves — each is `None`, and the list draws
-//!   its lucide fallback. An icon is decoration; it can never be a reason a row
-//!   does not appear.
+//! Deliberately does not: resolve a process's *document* (callers pass
+//! `exe_path`, so a `.toe` shows the TouchDesigner icon); or fail loudly —
+//! every failure is `None` and the list draws its lucide fallback, because an
+//! icon must never be the reason a row does not appear.
 
 use std::collections::HashMap;
 use std::ffi::{c_void, OsStr};
@@ -42,28 +30,22 @@ use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, I
 
 use crate::png;
 
-/// Anything wider than this is not an icon, it is a bitmap something handed us
-/// by mistake; refusing it keeps a bad shell extension from asking for a
-/// gigabyte of scanlines.
+/// Wider than this is not an icon but a bitmap handed over by mistake; refusing
+/// keeps a bad shell extension from asking for a gigabyte of scanlines.
 const MAX_ICON_EDGE: u32 = 512;
 
-/// Entries kept before the whole table is dropped.
-///
-/// One per configured process is the real load — a couple of dozen at most — so
-/// this only ever trips if something starts asking about arbitrary paths. Clear
-/// rather than evict: without an access order there is no least-recently-used to
-/// pick, and re-extracting a handful of icons costs a millisecond each.
+/// Entries kept before the whole table is dropped. Clear rather than evict:
+/// there is no access order to pick an LRU from, and re-extraction is ~1 ms.
 const CACHE_LIMIT: usize = 256;
 
 /// What was extracted, and the file it was extracted from.
 struct Cached {
-  /// Modified time and size together: an in-place update that lands in the same
-  /// millisecond is unlikely, and one that also keeps the exact byte count is
-  /// not something an installer produces.
+  /// Modified time + size as the staleness key: an in-place update landing in
+  /// the same millisecond AND keeping the byte count is not something an
+  /// installer produces.
   modified: Option<SystemTime>,
   size: u64,
-  /// `None` is a real answer — this file has no icon — and is cached as one, so
-  /// a scriptless `.bat` is not re-probed on every render.
+  /// `None` is a real answer (this file has no icon) and is cached as one.
   icon: Option<String>,
 }
 
@@ -75,10 +57,9 @@ fn cache() -> &'static Mutex<HashMap<String, Cached>> {
 
 /// The icon for `path`, base64-encoded PNG, or `None` when there is not one.
 ///
-/// `config.json` stores forward slashes (`C:/apps/player.exe`) because the web
-/// app writes them; the shell wants backslashes, and Windows paths compare
-/// case-insensitively — so the path is normalised once, here, and that
-/// normalised form is both what is passed to the shell and what keys the cache.
+/// `config.json` stores forward slashes (the web app writes them) but the shell
+/// wants backslashes and Windows paths compare case-insensitively — normalise
+/// once here; that form is both passed to the shell and used as the cache key.
 pub fn icon_base64(path: &str) -> Result<Option<String>, String> {
   let target = path.trim();
   if target.is_empty() {
@@ -87,8 +68,7 @@ pub fn icon_base64(path: &str) -> Result<Option<String>, String> {
   let target = target.replace('/', "\\");
   let key = target.to_lowercase();
 
-  // A path that is not there has no icon, and no cache entry worth keeping: the
-  // operator is probably still typing it.
+  // No file, no icon and no cache entry — the operator is probably still typing.
   let Ok(metadata) = std::fs::metadata(&target) else {
     forget(&key);
     return Ok(None);
@@ -134,15 +114,11 @@ fn forget(key: &str) {
   }
 }
 
-// ─── win32 ──────────────────────────────────────────────────────────────────
-
-/// COM on the calling thread, for as long as this lives.
-///
-/// The shell resolves an icon through handlers that are COM objects, and a
-/// command runs on whichever async-runtime worker took it — a thread that has
-/// never initialised COM. `RPC_E_CHANGED_MODE` (another mode already in force)
-/// is not an error to us: the thread has an apartment, which is all the shell
-/// needs. It is the one outcome we must *not* balance with an uninitialise.
+/// COM on the calling thread, for as long as this lives. Shell icon handlers
+/// are COM objects and commands run on arbitrary async-runtime workers that
+/// have never initialised COM. `RPC_E_CHANGED_MODE` is fine — the thread has an
+/// apartment — and is the one outcome that must NOT be balanced with an
+/// uninitialise.
 struct ComScope(bool);
 
 impl ComScope {
@@ -202,11 +178,8 @@ fn wide(text: &str) -> Vec<u16> {
   OsStr::new(text).encode_wide().chain(Some(0)).collect()
 }
 
-/// The shell's icon for `path` — what Explorer draws for the same file.
-///
-/// Handles everything an association can decide: a `.bat` gets the script icon,
-/// a document gets its handler's. It is the first choice for exactly that
-/// reason, and it is also the one that can decline.
+/// The shell's icon for `path` — what Explorer draws for the same file. First
+/// choice because it honours file associations; also the one that can decline.
 fn shell_icon(path: &str) -> Option<OwnedIcon> {
   let wide_path = wide(path);
   let mut info = SHFILEINFOW::default();
@@ -216,10 +189,8 @@ fn shell_icon(path: &str) -> Option<OwnedIcon> {
       FILE_ATTRIBUTE_NORMAL,
       Some(&mut info),
       std::mem::size_of::<SHFILEINFOW>() as u32,
-      // The large icon is 32×32, which is the size a 16 px row draws crisply on
-      // a 200 % display and downsamples cleanly on a 100 % one. The small icon
-      // would be soft on every machine with a scaled display, which is most of
-      // the fleet.
+      // 32×32: crisp on a 200 % display, downsamples cleanly on 100 %. The
+      // small icon is soft on every scaled display, which is most of the fleet.
       SHGFI_ICON | SHGFI_LARGEICON,
     )
   };
@@ -230,14 +201,10 @@ fn shell_icon(path: &str) -> Option<OwnedIcon> {
   Some(OwnedIcon(info.hIcon))
 }
 
-/// The first icon in the file's own resources, read without the shell.
-///
-/// The fallback, and not a theoretical one: `SHGetFileInfoW` returns success
-/// with a null handle for some executables inside this process while producing
-/// the icon perfectly well for the same file from a plain console process —
-/// TouchDesigner is one, which is the single most likely icon in this fleet.
-/// Whatever the shell is doing there, the icon *is* in the file, and this is
-/// the call that reads it.
+/// First icon in the file's own resources, read without the shell. Not a
+/// theoretical fallback: `SHGetFileInfoW` returns success with a null handle
+/// for some executables inside this process (TouchDesigner among them) while
+/// working fine for the same file from a plain console process.
 fn resource_icon(path: &str) -> Option<OwnedIcon> {
   let wide_path = wide(path);
   let mut large = HICON::default();
@@ -250,28 +217,24 @@ fn resource_icon(path: &str) -> Option<OwnedIcon> {
   Some(OwnedIcon(large))
 }
 
-/// One extraction at a time, process-wide.
-///
-/// Every row asks for its icon in the same frame, and the shell answers a
-/// concurrent `SHGetFileInfoW` by *succeeding* with a null icon handle — which
-/// looks exactly like a file that has no icon, and produced a generic glyph on
-/// whichever row happened to lose the race. Extraction is a millisecond and the
-/// answer is cached, so a queue costs nothing worth measuring.
+/// One extraction at a time, process-wide: a concurrent `SHGetFileInfoW`
+/// *succeeds* with a null icon handle, indistinguishable from "no icon", which
+/// gave whichever row lost the race a generic glyph. Extraction is ~1 ms and
+/// cached, so the queue costs nothing.
 static EXTRACTION: Mutex<()> = Mutex::new(());
 
 /// Ask for `path`'s icon and encode it.
 fn extract(path: &str) -> Result<Option<String>, String> {
-  // A poisoned lock means another extraction panicked mid-Win32-call; the guard
-  // is still ours to take, and refusing every icon after that helps nobody.
+  // Poisoned = another extraction panicked mid-Win32-call; take it anyway
+  // rather than refusing every icon from then on.
   let _queue = EXTRACTION
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner());
   let _com = ComScope::enter();
 
   let Some(icon) = shell_icon(path).or_else(|| resource_icon(path)) else {
-    // The row is about to draw a generic glyph for a file that exists. Said
-    // once per path (the answer is cached), and at a level that is on in the
-    // field — a silent fallback is one nobody can diagnose from a screenshot.
+    // info, not debug: a silent fallback cannot be diagnosed from a screenshot.
+    // Said once per path since the answer is cached.
     log::info!("no icon for {path}: the shell declined and the file has none of its own");
     return Ok(None);
   };
@@ -295,9 +258,8 @@ fn pixels(icon: HICON) -> Result<Option<(u32, u32, Vec<u8>)>, String> {
   let colour = OwnedBitmap(info.hbmColor);
   let mask = OwnedBitmap(info.hbmMask);
 
-  // A 1-bit icon (a cursor, or something very old) carries its image in the
-  // mask alone. Nothing in a process list looks like that; the fallback glyph
-  // is a better answer than a black square.
+  // A 1-bit icon carries its image in the mask alone; the fallback glyph beats
+  // a black square.
   if colour.0.is_invalid() {
     log::debug!("the icon has no colour bitmap — only a mask");
     return Ok(None);
@@ -343,15 +305,12 @@ fn pixels(icon: HICON) -> Result<Option<(u32, u32, Vec<u8>)>, String> {
     return Err("GetDIBits could not read the icon bitmap".into());
   }
 
-  // Icons written before Windows XP have no alpha channel at all: every alpha
-  // byte is zero, and the shape lives in the AND mask instead. Taking that
-  // literally would draw a fully transparent icon, which is how this is usually
-  // discovered — as an icon that "does not load".
+  // Pre-XP icons have no alpha channel: every alpha byte is zero and the shape
+  // lives in the AND mask. Taken literally that draws a fully transparent icon.
   if bgra.iter().skip(3).step_by(4).all(|&alpha| alpha == 0) {
     match mask_alpha(&dc, mask.0, width, height) {
       Some(alpha) => apply_alpha(&mut bgra, &alpha),
-      // No mask either: assume the icon is simply opaque rather than dropping
-      // it, since we do have colour for every pixel.
+      // No mask either: colour exists for every pixel, so assume opaque.
       None => bgra.iter_mut().skip(3).step_by(4).for_each(|a| *a = 0xff),
     }
   }
@@ -360,15 +319,14 @@ fn pixels(icon: HICON) -> Result<Option<(u32, u32, Vec<u8>)>, String> {
   Ok(Some((width, height, bgra)))
 }
 
-/// A top-down 32-bit `BITMAPINFO`, which is what asks `GetDIBits` to convert
-/// whatever the bitmap actually is into BGRA rows in the order we want them.
+/// Top-down 32-bit `BITMAPINFO`: asks `GetDIBits` to convert whatever the
+/// bitmap is into BGRA rows in the order we want them.
 fn rgba_header(width: u32, height: u32) -> BITMAPINFO {
   BITMAPINFO {
     bmiHeader: BITMAPINFOHEADER {
       biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
       biWidth: width as i32,
-      // Negative: rows top-down, matching PNG's order. A positive height would
-      // hand back the image upside down.
+      // Negative = top-down rows, matching PNG; positive returns it flipped.
       biHeight: -(height as i32),
       biPlanes: 1,
       biBitCount: 32,
@@ -379,17 +337,16 @@ fn rgba_header(width: u32, height: u32) -> BITMAPINFO {
   }
 }
 
-/// A 1-bit DIB needs a two-entry colour table, which `BITMAPINFO` has no room
-/// for — its `bmiColors` is declared as one. This is the same allocation with
-/// the space the shape actually needs.
+/// A 1-bit DIB needs a two-entry colour table; `BITMAPINFO::bmiColors` declares
+/// only one. Same layout with the room the shape actually needs.
 #[repr(C)]
 struct MonochromeInfo {
   header: BITMAPINFOHEADER,
   colours: [RGBQUAD; 2],
 }
 
-/// Per-pixel alpha derived from an icon's AND mask: a set bit means the
-/// background shows through, which is what `DrawIcon` does with it.
+/// Per-pixel alpha from an icon's AND mask: a set bit means the background
+/// shows through, matching `DrawIcon`.
 fn mask_alpha(dc: &ScreenDc, mask: HBITMAP, width: u32, height: u32) -> Option<Vec<u8>> {
   if mask.is_invalid() {
     return None;
@@ -466,8 +423,7 @@ mod tests {
 
   #[test]
   fn a_mask_bit_that_is_set_means_the_background_shows_through() {
-    // One 8-pixel row: the first four pixels masked out, the last four kept.
-    // A row is padded to four bytes even when it needs one.
+    // One 8-pixel row, first four masked out; rows pad to four bytes.
     let bits = [0b1111_0000, 0, 0, 0];
     assert_eq!(
       alpha_from_mask_bits(&bits, 8, 1),
@@ -477,8 +433,7 @@ mod tests {
 
   #[test]
   fn the_mask_is_read_a_padded_row_at_a_time() {
-    // 33 pixels wide: two rows of eight bytes (32 bits rounded up to 64), so
-    // reading it as five bytes per row would smear row two into row one.
+    // 33 px wide = 8 bytes/row; reading five bytes/row smears row two into one.
     let mut bits = vec![0u8; 8 * 2];
     bits[0] = 0b1000_0000; // first pixel of row one
     bits[8] = 0b0100_0000; // second pixel of row two
@@ -493,8 +448,8 @@ mod tests {
 
   #[test]
   fn a_truncated_mask_reads_as_opaque_rather_than_panicking() {
-    // GetDIBits has written fewer rows than it claimed before now; an icon with
-    // a missing corner beats an app that stops.
+    // GetDIBits has written fewer rows than it claimed; a missing corner beats
+    // a panic.
     assert_eq!(alpha_from_mask_bits(&[], 2, 1), [0xff, 0xff]);
   }
 
@@ -521,9 +476,8 @@ mod tests {
 
   #[test]
   fn a_forward_slashed_path_is_the_same_file_as_a_backslashed_one() {
-    // `config.json` is written with forward slashes by the web app and by the
-    // drop classifier, and the shell will not take them — so this spelling is
-    // the one the app actually asks about, not an edge case.
+    // `config.json` holds forward slashes and the shell will not take them —
+    // this spelling is what the app actually asks about, not an edge case.
     let exe = std::env::current_exe().expect("current exe");
     let forward = exe.to_string_lossy().replace('\\', "/");
     assert!(forward.contains('/'), "{forward}");
@@ -535,8 +489,8 @@ mod tests {
 
   #[test]
   fn a_real_executable_yields_a_png() {
-    // The test binary itself: it has no icon resource of its own, so this also
-    // covers the path where the shell substitutes the generic one.
+    // The test binary has no icon resource, so this also covers the shell
+    // substituting the generic one.
     let exe = std::env::current_exe().expect("current exe");
     let path = exe.to_string_lossy().into_owned();
 
@@ -547,8 +501,7 @@ mod tests {
       &icon[..16]
     );
 
-    // …and the second call answers from the cache, with the same bytes. A
-    // forward-slashed spelling of the same file is the same cache entry.
+    // Second call answers from cache; forward-slashed is the same entry.
     assert_eq!(icon_base64(&path.replace('\\', "/")), Ok(Some(icon)));
   }
 }

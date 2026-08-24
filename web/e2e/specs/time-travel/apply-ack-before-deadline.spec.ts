@@ -1,22 +1,13 @@
 /**
- * Time-travel — apply + ack BEFORE deadline (E2.2)
+ * Time-travel — apply + ack BEFORE deadline. Inverse of E2.1: the
+ * operator-keeps-layout path against a fake clock partway into the 30s window.
  *
- * Inverse of E2.1. Exercises the operator-keeps-layout path against
- * a fake clock partway into the 30s ack window:
+ * Dispatch restore → banner with deadline t+30s → fastForward 15s (banner still
+ * up) → click "keep" → fastForward past 30s.
  *
- *   1. Install clock (E1.2 pattern) + seed assigned layout.
- *   2. Dispatch restore → banner appears with deadline = t+30s.
- *   3. fastForward 15s — banner still up, countdown halfway.
- *   4. Click "keep" → ackLayout writes ack_display_topology + banner
- *      dismisses locally + "ack sent" toast fires.
- *   5. fastForward another 20s — confirms the deadline-expiry
- *      setInterval was cleared on keep (no auto-revert toast fires
- *      even though wall-clock equivalent has elapsed past 30s).
- *
- * The last step is the load-bearing addition vs D3.4's operator-keep
- * coverage: D3.4 proved keep works, E2.2 proves keep disarms the
- * deadline watchdog. A regression that kept the banner-dismiss but
- * left the setInterval running would show up only here.
+ * That last step is the point: D3.4 already proves keep works, this proves keep
+ * DISARMS the deadline watchdog. A regression that dismissed the banner but
+ * left the setInterval running shows up only here.
  */
 
 import { test, expect } from '@playwright/test';
@@ -95,11 +86,9 @@ test('operator keeps the layout at t=15s — banner dismisses + no auto-revert f
   await expect(confirmDialog).toBeVisible();
   await confirmDialog.getByRole('button', { name: /^restore$/i }).click();
 
-  // DisplayLayoutPanel has two role="status" elements: the ack banner
-  // and the loading spinner (aria-label="loading displays"). A restore
-  // dispatch can re-flip `loading` on the display hook mid-tick, so
-  // `getByRole('status')` alone hits a strict-mode violation. Scope to
-  // the banner via its distinctive text.
+  // DisplayLayoutPanel has two role="status" nodes — the ack banner and the
+  // loading spinner — and a restore dispatch can re-flip `loading` mid-tick, so
+  // a bare getByRole('status') trips strict mode. Scope by the banner text.
   const banner = panel.getByRole('status').filter({ hasText: /keep this layout/i });
   await expect(banner).toBeVisible();
 
@@ -113,15 +102,12 @@ test('operator keeps the layout at t=15s — banner dismisses + no auto-revert f
   await expect(page.getByText('ack sent', { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(banner).toBeHidden();
 
-  // Now the load-bearing check: advance PAST the original 30s deadline.
-  // If keep correctly disarmed the 250ms deadline setInterval, nothing
-  // should happen. If it didn't, the auto-revert toast would fire here.
+  // Load-bearing: past the original 30s deadline. If keep disarmed the 250ms
+  // deadline setInterval nothing happens; otherwise the auto-revert toast fires.
   await page.clock.fastForward(20_000);
 
-  // Negative assertion — ensure the auto-revert toast does NOT appear.
-  // Sonner toasts auto-dismiss after ~4s by default, but we're asserting
-  // it was never rendered, which `toHaveCount(0)` checks immediately
-  // against the current DOM without waiting for a fresh render.
+  // toHaveCount(0) checks the current DOM immediately, so sonner's ~4s
+  // auto-dismiss can't mask a toast that was actually rendered.
   await expect(
     page.getByText('no confirmation sent — agent will auto-revert', { exact: true }),
   ).toHaveCount(0);

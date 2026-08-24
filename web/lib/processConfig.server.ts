@@ -1,26 +1,19 @@
 /**
- * Shared Process Config Mutation Helper
+ * Transactional mutation of the process array at
+ * `config/{siteId}/machines/{machineId}`. Admin-SDK transactions here, unlike the
+ * client hooks in useFirestore.ts which read-modify-write non-transactionally.
  *
- * Provides a transactional wrapper for mutating the process config array
- * stored at `config/{siteId}/machines/{machineId}`. Eliminates duplicated
- * boilerplate across process CRUD API endpoints.
- *
- * Uses Firestore Admin SDK transactions to prevent race conditions
- * (the client-side hooks in useFirestore.ts do non-transactional read-modify-write).
- *
- * Two helpers are exposed:
- * - `withProcessConfig`: legacy admin-route helper (uses `id` field, no
- *   duplicate-name protection). Kept unchanged to avoid breaking the
- *   existing dashboard.
- * - `withProcessLock`: public-API helper (uses `processId` field, lazily
- *   backfills missing ids, rejects duplicate names inside the transaction).
+ * - `withProcessConfig`: legacy admin-route helper (`id` field, no duplicate-name
+ *   protection). Kept unchanged so the existing dashboard keeps working.
+ * - `withProcessLock`: public-API helper (`processId`, lazy id backfill, rejects
+ *   duplicate names inside the transaction).
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
 import crypto from 'crypto';
 
 export interface ProcessConfig {
-  /** Legacy id field — historical name kept for compatibility with dashboard hooks. */
+  /** Legacy id — kept for the dashboard hooks. */
   id: string;
   name: string;
   exe_path: string;
@@ -37,7 +30,7 @@ export interface ProcessConfig {
   schedulePresetId?: string | null;
   schedule?: { mode: 'off' | 'always' | 'scheduled'; blocks?: ScheduleBlock[] } | null;
   index?: number;
-  /** Public-API id (Wave 2 — same UUID, exposed under `processId`). */
+  /** Public-API id — same UUID as `id`. */
   processId?: string;
   [key: string]: unknown;
 }
@@ -50,15 +43,8 @@ export interface ScheduleBlock {
 }
 
 /**
- * Execute a transactional mutation on a machine's process config array.
- *
- * Handles: config read → validation → mutation → write → configChangeFlag.
- *
- * @param siteId - The site ID
- * @param machineId - The machine ID
- * @param mutator - Function that receives the current processes array and returns
- *                  the updated array plus any result value to return to the caller
- * @returns The result value from the mutator
+ * Transactional mutation of a machine's process config array:
+ * read → validate → mutate → write → configChangeFlag. Returns the mutator's result.
  */
 export async function withProcessConfig<T>(
   siteId: string,
@@ -83,7 +69,7 @@ export async function withProcessConfig<T>(
 
     const mutationResult = mutator(config.processes as ProcessConfig[]);
 
-    // Strip undefined values from schedule blocks (Firestore rejects undefined)
+    // Firestore rejects undefined.
     const cleanedProcesses = mutationResult.processes.map(cleanProcessForFirestore);
 
     transaction.update(configRef, { processes: cleanedProcesses });
@@ -91,20 +77,18 @@ export async function withProcessConfig<T>(
     return mutationResult.result;
   });
 
-  // Set configChangeFlag to notify agent (non-critical — agent polls anyway)
+  // Nudge the agent; non-critical, it polls on its own cycle anyway.
   try {
     const statusRef = db.collection('sites').doc(siteId).collection('machines').doc(machineId);
     await statusRef.update({ configChangeFlag: true });
   } catch {
-    // Non-critical: agent polls config on its own cycle
+    // Ignore.
   }
 
   return result;
 }
 
-/**
- * Strip undefined values and clean schedule blocks for Firestore compatibility.
- */
+/** Strip undefined values and clean schedule blocks for Firestore. */
 function cleanProcessForFirestore(process: ProcessConfig): Record<string, unknown> {
   const cleaned: Record<string, unknown> = {};
 
@@ -137,36 +121,23 @@ export class ProcessConfigError extends Error {
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Public-API helpers (Wave 2 — process-api)                                 */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Public-API view of a process config row. Same shape as `ProcessConfig`
- * but with `processId` (server-generated UUID) as the canonical id field.
- *
- * The legacy `id` field is preserved and kept in lockstep with `processId`
- * (both are the same value) so the agent (which still reads `id`) and the
- * existing admin route continue to work unchanged.
+ * Public-API view of a process row: `processId` (server-generated UUID) is the
+ * canonical id. Legacy `id` is held in lockstep with the same value because the
+ * agent and the admin route still read it.
  */
 export interface PublicProcessConfig extends ProcessConfig {
   processId: string;
 }
 
 /**
- * Transactional read-modify-write of `processes[]` with public-API guarantees:
+ * Transactional read-modify-write of `processes[]`: lazily backfills `processId`,
+ * runs the mutator, then rejects newly-introduced duplicate names — the check is
+ * inside the txn, which is what makes it race-safe. Pre-existing duplicates
+ * (agent-synced configs never validated names) do not block unrelated saves.
+ * Sets `configChangeFlag` to nudge the agent.
  *
- * 1. Reads the current `processes[]` array inside a Firestore transaction.
- * 2. Lazily backfills `processId` on any row missing it (uses existing
- *    `id` if present, otherwise generates a new UUID).
- * 3. Calls the mutator with the normalized array.
- * 4. Validates the returned array has unique `name` values (case-sensitive
- *    exact match) — race-safe because the check runs inside the txn.
- * 5. Writes back the cleaned array; sets `configChangeFlag` on the status
- *    doc to nudge the agent.
- *
- * @throws ProcessConfigError(409, code: 'duplicate_process_name') if names collide
- * @throws ProcessConfigError(404) if config doc is missing
+ * @throws ProcessConfigError 409 'duplicate_process_name', or 404 if no config doc.
  */
 export async function withProcessLock<T>(
   siteId: string,
@@ -188,15 +159,20 @@ export async function withProcessLock<T>(
       throw new ProcessConfigError(500, 'Invalid configuration structure — no processes array');
     }
 
-    // Lazy backfill: ensure every process has a `processId`.
+    // Lazy backfill of `processId`.
     const normalized = (config.processes as ProcessConfig[]).map((p) => normalizeProcess(p));
+
+    // Snapshot before the mutator runs — it may rename entries in place.
+    const namesBefore = normalized.map((p) => p.name);
 
     const mutationResult = fn(normalized);
 
-    // Race-safe duplicate-name rejection (inside the transaction).
-    assertUniqueNames(mutationResult.processes);
+    // Inside the txn, so the duplicate check is race-safe.
+    assertNoNewDuplicateNames(
+      namesBefore,
+      mutationResult.processes.map((p) => p.name)
+    );
 
-    // Strip undefined values + clean schedule blocks for Firestore compatibility.
     const cleaned = mutationResult.processes.map(cleanProcessForFirestore);
 
     transaction.update(configRef, { processes: cleaned });
@@ -204,7 +180,7 @@ export async function withProcessLock<T>(
     return mutationResult.result;
   });
 
-  // Set configChangeFlag (non-critical — agent polls anyway).
+  // Non-critical: the agent polls on its own cycle.
   try {
     const statusRef = db.collection('sites').doc(siteId).collection('machines').doc(machineId);
     await statusRef.update({ configChangeFlag: true });
@@ -216,12 +192,8 @@ export async function withProcessLock<T>(
 }
 
 /**
- * Read the current process list with lazy `processId` backfill.
- *
- * Public API surfaces both the live status and the config; this is the
- * config side. Used by GET list + GET detail.
- *
- * Returns null if the config doc doesn't exist (machine has no config yet).
+ * Config-side process list with lazy `processId` backfill (GET list + detail).
+ * Null when the machine has no config doc yet.
  */
 export async function readProcessList(
   siteId: string,
@@ -250,20 +222,13 @@ export async function readProcessList(
   return normalized;
 }
 
-/**
- * Generate a new server-side processId. Centralized so every create path
- * uses the same scheme.
- */
+/** New server-side processId; centralized so every create path matches. */
 export function generateProcessId(): string {
   return crypto.randomUUID();
 }
 
-/**
- * Normalise a stored process row: ensure `processId` exists, mirror it
- * to the legacy `id` field (and vice versa). Idempotent.
- */
+/** Ensure `processId` exists and mirrors the legacy `id`. Idempotent. */
 function normalizeProcess(p: ProcessConfig): PublicProcessConfig {
-  // Prefer existing processId; fall back to legacy id; otherwise generate.
   const processId = p.processId || p.id || generateProcessId();
   return {
     ...p,
@@ -273,30 +238,42 @@ function normalizeProcess(p: ProcessConfig): PublicProcessConfig {
 }
 
 /**
- * Throws ProcessConfigError(409, 'duplicate_process_name') if any two
- * processes share the same `name`. Names are compared case-sensitive
- * (matches existing agent behaviour).
+ * Throws 409 'duplicate_process_name' when a mutation introduces — or worsens —
+ * a repeated `name`. Case-sensitive, to match agent behaviour.
+ *
+ * Collisions that already existed before the mutation are tolerated: the agent
+ * side never validated names, so synced configs can arrive with duplicates
+ * already in them, and rejecting the whole array would brick every subsequent
+ * save on the machine — including the rename that would clean them up.
  */
-function assertUniqueNames(processes: PublicProcessConfig[]): void {
-  const seen = new Set<string>();
-  for (const p of processes) {
-    if (!p.name) continue;
-    if (seen.has(p.name)) {
+export function assertNoNewDuplicateNames(
+  namesBefore: Array<string | undefined>,
+  namesAfter: Array<string | undefined>
+): void {
+  const before = new Map<string, number>();
+  for (const name of namesBefore) {
+    if (!name) continue;
+    before.set(name, (before.get(name) ?? 0) + 1);
+  }
+  const after = new Map<string, number>();
+  for (const name of namesAfter) {
+    if (!name) continue;
+    after.set(name, (after.get(name) ?? 0) + 1);
+  }
+  for (const [name, count] of after) {
+    if (count > 1 && count > (before.get(name) ?? 0)) {
       throw new ProcessConfigError(
         409,
-        `Duplicate process name: ${p.name}`,
+        `Duplicate process name: ${name}`,
         'duplicate_process_name'
       );
     }
-    seen.add(p.name);
   }
 }
 
 /**
- * Find a process by its public-API id. Returns the index and the row,
- * or `null` if not found. Comparison is by `processId` field only —
- * legacy rows that have only `id` are normalized via `withProcessLock`
- * before lookup runs.
+ * Index of a process by public-API id, or -1. Matches on `processId` only —
+ * legacy `id`-only rows are normalized by `withProcessLock` before lookup.
  */
 export function findProcessIndex(
   processes: PublicProcessConfig[],

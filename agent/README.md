@@ -43,8 +43,8 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
    - Or manage from the web dashboard
 
 3. **Connect to Owlette Dashboard**:
-   - The installer displays a 3-word pairing phrase and authorization URL
-   - Open the pairing page locally or enter the phrase from another device
+   - The installer opens the Owlette window on **join a site**, showing a 3-word pairing phrase and the authorization link for the server you installed against
+   - Authorize with that window's own button, or enter the phrase from a phone or another device
    - Select a site and authorize; the agent polls until tokens are returned
 
 ---

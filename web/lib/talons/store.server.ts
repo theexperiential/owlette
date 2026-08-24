@@ -1,32 +1,19 @@
 /**
  * Talon store — the one write path for `sites/{siteId}/talons/{talonId}`.
+ * Every mutation routes through here so validation, the privileged-output
+ * gate, webhook SSRF checks, the author-LLM-key precondition, `nextRunAt`
+ * stamping and the audit emit can't be sidestepped by a new caller.
  *
- * Every talon mutation (UI route, hoot tool call, admin tooling) goes
- * through these functions so that validation, the privileged-output gate,
- * the SSRF check on webhook outputs, the author-LLM-key precondition,
- * `nextRunAt` stamping and the audit emit can never be sidestepped by adding
- * a new caller.
+ * One document per talon, never an array on a settings doc: dashboard and
+ * hoot edit concurrently (an array write clobbers the other writer), and the
+ * cron sweep needs the `enabled == true && nextRunAt <= now` collection-group
+ * query (composite index in firestore.indexes.json).
  *
- * Storage shape: ONE DOCUMENT PER TALON, never an array on a settings doc.
- * Talons are edited concurrently by the dashboard and by hoot; a whole-array
- * write would silently clobber the other writer's edit. Per-doc writes also
- * let the cron sweep query `enabled == true && nextRunAt <= now` across the
- * `talons` collection group (see the composite index in firestore.indexes.json).
+ * `validateTalonInput` owns and normalizes the caller half and rejects unknown
+ * top-level fields; every server-owned field is stamped here after validation.
  *
- * Field ownership: `validateTalonInput` owns the caller-supplied half and
- * normalizes it (trims, de-dupes, defaults); it REJECTS unknown top-level
- * fields, so every server-owned field (`schemaVersion`, `createdBy`,
- * `createdVia`, `createdAt`, `nextRunAt`, `consecutiveFailures`, run
- * bookkeeping) is stamped here, after validation, from trusted context —
- * never passed through the validator. `createdBy` can later be moved to a
- * successor by `reassignTalons`, which resolves that successor against the
- * capability matrix rather than trusting the request body (see its doc).
- *
- * Secrets: a talon with a webhook output gets a `whsec_` signing secret in
- * `sites/{siteId}/talon_secrets/{talonId}`, a collection no client can read
- * (firestore.rules 2.7.0). The secret never appears on the talon document and
- * is never part of a return value — deliberately unlike the `webhooks`
- * collection, whose `signingSecret` is readable by any site member.
+ * Webhook talons get a `whsec_` secret in `sites/{siteId}/talon_secrets/{id}`,
+ * which no client can read — deliberately unlike `webhooks.signingSecret`.
  */
 import { randomBytes } from 'node:crypto';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
@@ -53,17 +40,10 @@ import {
 /** 32 random bytes → 64 hex chars, `whsec_`-prefixed like the webhooks API. */
 const SIGNING_SECRET_BYTES = 32;
 
-/**
- * `createdBy` prefix for a non-user author. Such a talon has no uid, so it can
- * never satisfy the llm-key precondition — nothing whose key it could spend.
- */
+/** `createdBy` prefix for a non-user author: no uid, so it can never satisfy the llm-key precondition. */
 const SYSTEM_AUTHOR_PREFIX = 'system:';
 
-/**
- * Firestore auto-ids are 20 alphanumeric chars; both bounds are deliberately
- * looser and match the route-level regexes. Their real job is rejecting ids
- * that would escape the document path.
- */
+/** Deliberately looser than Firestore's 20-char auto-ids, matching the route regexes; the job is rejecting ids that escape the document path. */
 const TALON_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const UID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -108,9 +88,8 @@ export type TalonStoreErrorCode =
   | 'successor_invalid';
 
 /**
- * Store rejection carrying the HTTP status the route should return. Mirrors
- * `ActionInputError` in `@/lib/actions/createProcess.server`, plus the field
- * error list so the editor can render inline messages instead of one string.
+ * Store rejection carrying the HTTP status the route returns. Mirrors
+ * `ActionInputError`, plus field errors so the editor can render inline.
  */
 export class TalonStoreError extends Error {
   readonly status: number;
@@ -162,10 +141,9 @@ function talonSecretsCollection(db: Firestore, siteId: string) {
 }
 
 /**
- * The site's configured IANA timezone, or `'UTC'` when the site predates the
- * field or stores something unusable. Fixed clock-time entries are resolved
- * against this — the site zone, not the machine zone, because one talon can
- * span machines in several zones and its schedule must have one meaning.
+ * Site's IANA timezone, `'UTC'` when unset/unusable. Fixed clock times resolve
+ * against the SITE zone, not the machine zone: one talon can span machines in
+ * several zones and its schedule must have one meaning.
  */
 export async function getSiteTimezone(db: Firestore, siteId: string): Promise<string> {
   try {
@@ -208,18 +186,10 @@ function validateOrThrow(input: unknown): ValidatedTalonInput {
 }
 
 /**
- * Two outputs put process control on a real machine, and both take the same
- * privilege as issuing that command by hand (`MACHINE_EXEC_COMMAND` — site
- * admins and superadmins):
- *
- *   - a `command` output, which queues the command directly;
- *   - a hoot output with `allowActions`, which hands an unattended turn the
- *     tier-2 tool set — process control, service management, screenshots. The
- *     mechanism differs; the power class does not, so neither does the gate.
- *
- * Site-scoped: an admin of another site is a member here and is refused.
- * Checked on create AND update, so a talon can never acquire either through an
- * edit either.
+ * Both privileged output classes take MACHINE_EXEC_COMMAND (site admin+):
+ * `command` queues a machine command directly; a hoot output with
+ * `allowActions` hands an unattended turn the tier-2 tool set. Site-scoped,
+ * and checked on create AND update so an edit can't acquire either.
  */
 function hasCommandOutput(outputs: TalonOutput[]): boolean {
   return outputs.some((output) => output.type === 'command');
@@ -255,10 +225,9 @@ function assertPrivilegedOutputsAllowed(ctx: TalonStoreContext, outputs: TalonOu
 }
 
 /**
- * Full SSRF check on every webhook output. The shared validator only checks
- * that the URL is syntactically https (it also runs in the browser); this is
- * the DNS-resolving, private-range-rejecting pass. The dispatcher re-validates
- * at send time because DNS can change underneath us.
+ * DNS-resolving, private-range-rejecting SSRF pass; the shared validator is
+ * syntax-only because it also runs in the browser. The dispatcher re-validates
+ * at send time — DNS can change underneath us.
  */
 async function assertWebhookUrlsAreSafe(outputs: TalonOutput[]): Promise<void> {
   for (const [index, output] of outputs.entries()) {
@@ -274,15 +243,10 @@ async function assertWebhookUrlsAreSafe(outputs: TalonOutput[]): Promise<void> {
 }
 
 /**
- * Visual-check conditions and hoot outputs both call the model with no user in
- * the loop, and every unattended run spends the key of the talon's AUTHOR —
- * there is no shared site key to fall back to (see `resolveLlmConfig`). So the
- * precondition is "does this talon have an author with a key", checked here at
- * authoring time: it turns "the talon silently fails on every run at 3am" into
- * a rejection the author sees while editing, naming the one place to fix it.
- *
- * `authorId` is `undefined` for a system actor, which can never satisfy the
- * requirement — nothing whose key could be spent.
+ * Unattended model calls (visual_check conditions, hoot outputs) spend the
+ * talon AUTHOR's key — there is no shared site key (`resolveLlmConfig`).
+ * Checked at authoring time so it fails in the editor, not silently at 3am.
+ * `authorId` is undefined for a system actor, which can never satisfy it.
  */
 async function assertAuthorLlmKeyAvailable(
   authorId: string | undefined,
@@ -305,8 +269,7 @@ async function assertAuthorLlmKeyAvailable(
   try {
     await assertLlmKeyAvailable(db, authorId);
   } catch {
-    // The underlying message names the encryption key or the storage path —
-    // neither helps the operator, and one of them is infrastructure detail.
+    // Underlying message leaks infra detail (encryption key / storage path).
     throw new TalonStoreError(
       400,
       'llm_key_required',
@@ -320,11 +283,7 @@ function actorAuthorUid(actor: Actor): string | undefined {
   return actor.type === 'user' ? actor.userId : undefined;
 }
 
-/**
- * The uid whose key an EXISTING talon runs on, or `undefined` when it has no
- * user author. Mirrors {@link authorIdentifier}, which writes the
- * {@link SYSTEM_AUTHOR_PREFIX} for the non-user case.
- */
+/** The uid an EXISTING talon's key spend resolves to; undefined when it has no user author. */
 function talonAuthorUid(talon: Pick<TalonDoc, 'createdBy'>): string | undefined {
   const createdBy = talon.createdBy;
   if (!createdBy || createdBy.startsWith(SYSTEM_AUTHOR_PREFIX)) return undefined;
@@ -339,11 +298,7 @@ function mintWebhookSecret(): string {
   return `whsec_${randomBytes(SIGNING_SECRET_BYTES).toString('hex')}`;
 }
 
-/**
- * `createdBy` is the authoring uid. System actors never author talons (the
- * runner only executes them), but the field is non-optional, so a system
- * caller is recorded under its actor name rather than left blank.
- */
+/** `createdBy` is non-optional, so a system caller is recorded under its actor name rather than blank. */
 function authorIdentifier(actor: Actor): string {
   return actor.type === 'user' ? actor.userId : `${SYSTEM_AUTHOR_PREFIX}${actor.name}`;
 }
@@ -389,10 +344,8 @@ async function requireTalon(
 }
 
 /**
- * Validate, gate, and persist a new talon.
- *
- * @param input raw caller input — normalized by `validateTalonInput`; server
- *              fields are stamped here and rejected if the caller sends them.
+ * Validate, gate, and persist a new talon. `input` is raw caller input;
+ * server-owned fields are stamped here and rejected if the caller sends them.
  */
 export async function createTalon(
   db: Firestore,
@@ -402,10 +355,8 @@ export async function createTalon(
   const value = validateOrThrow(input);
   assertPrivilegedOutputsAllowed(ctx, value.outputs);
 
-  // Count-then-write rather than a transaction: the cap is a product limit,
-  // not a security boundary, and two admins racing the twentieth create can at
-  // worst land on 21. A transaction would have to read the whole collection to
-  // count it, on every create, to close a gap nothing depends on.
+  // Count-then-write, not a transaction: the cap is a product limit, not a
+  // security boundary — two admins racing the last slot land at worst on 21.
   const collection = talonsCollection(db, ctx.siteId);
   const countSnapshot = await collection.count().get();
   const existingCount = countSnapshot.data().count;
@@ -438,9 +389,8 @@ export async function createTalon(
     createdAt: now,
     updatedAt: now,
     consecutiveFailures: 0,
-    // Omitted, never null: the sweep filters `nextRunAt <= now`, and Firestore
-    // sorts null BELOW every timestamp, so a null would match that range and
-    // hand the runner talons that have no schedule at all.
+    // Omitted, never null: Firestore sorts null below every timestamp, so null
+    // matches the sweep's `nextRunAt <= now` and hands it unscheduled talons.
     ...(nextRunAt ? { nextRunAt } : {}),
   };
 
@@ -466,8 +416,7 @@ export async function createTalon(
 }
 
 /**
- * Replace a talon's caller-owned fields. Full-document semantics — the input
- * is a complete talon, matching what `validateTalonInput` accepts; run
+ * Replace a talon's caller-owned fields. Full-document semantics; run
  * bookkeeping (`lastRunAt`, `consecutiveFailures`, …) is untouched.
  */
 export async function updateTalon(
@@ -481,9 +430,7 @@ export async function updateTalon(
   const value = validateOrThrow(input);
   assertPrivilegedOutputsAllowed(ctx, value.outputs);
   await assertWebhookUrlsAreSafe(value.outputs);
-  // The AUTHOR's key, not the editor's: `createdBy` never changes on an update,
-  // so a second admin adding an ai output is adding it to a talon that will
-  // still run on the original author's key.
+  // The AUTHOR's key, not the editor's — `createdBy` never changes on update.
   await assertAuthorLlmKeyAvailable(
     talonAuthorUid(existing),
     db,
@@ -513,10 +460,8 @@ export async function updateTalon(
 
   const ref = talonsCollection(db, ctx.siteId).doc(talonId);
   const secretRef = talonSecretsCollection(db, ctx.siteId).doc(talonId);
-  // A talon that gains its first webhook output needs a secret minted now.
-  // Losing one does NOT delete the secret: it stays the talon's stable signing
-  // identity, so re-adding a webhook later doesn't silently rotate the key out
-  // from under the receiver. Only deletion clears it.
+  // Mint on the first webhook output. Losing the output does NOT delete the
+  // secret — it stays the stable signing identity; only deletion clears it.
   const needsSecret = hasWebhookOutput(value.outputs) && !(await secretRef.get()).exists;
 
   const batch = db.batch();
@@ -537,12 +482,9 @@ export async function updateTalon(
 }
 
 /**
- * Flip a talon on or off.
- *
- * Enabling re-arms `nextRunAt` from now: a talon that sat disabled for a month
- * would otherwise carry a month-old next-run and fire the instant the sweep
- * sees it. Disabling leaves the rest of the document alone — the stale
- * `nextRunAt` is harmless because the sweep filters on `enabled == true`.
+ * Flip a talon on or off. Enabling re-arms `nextRunAt` from now — a month-old
+ * next-run would otherwise fire the instant the sweep sees it. Disabling leaves
+ * it stale, harmless because the sweep filters `enabled == true`.
  */
 export async function setTalonEnabled(
   db: Firestore,
@@ -553,9 +495,8 @@ export async function setTalonEnabled(
   const existing = await requireTalon(db, ctx.siteId, talonId);
 
   const now = new Date();
-  // A human moved the switch, so whatever the system had to say about the last
-  // time it moved it is history — on either edge. Leaving a stale reason behind
-  // would have a freshly re-armed talon still claiming it was switched off.
+  // A human moved the switch: clear the system's disabledReason on either edge,
+  // else a re-armed talon still claims it was switched off.
   const updates: Record<string, unknown> = {
     enabled,
     updatedAt: now,
@@ -607,22 +548,12 @@ export async function deleteTalon(
   logger.info(`Talon deleted: ${talonId} on ${ctx.siteId}`, { context: 'talons/store' });
 }
 
-/* -------------------------------------------------------------------------- */
-/*  reassign — hand authorship to a successor                                 */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Why this exists: `createdBy` is provenance for most of a talon, but a hoot
- * output re-resolves the AUTHOR's site access on every unattended run
- * (`hootOutput.server.ts`), and a throw there is a hard run failure. So when
- * the person who wrote a talon loses access — removed from the site, or
- * soft-deleted — every AI talon they authored stops running, silently, at
- * whatever hour it was scheduled for. Reassignment is how an operator moves
- * that dependency to somebody who is still here, before the departure rather
- * than after the 3am failure.
- *
- * The author's fire-time access check is deliberately NOT weakened; this
- * changes who the author *is*.
+ * Why reassign exists: a hoot output re-resolves the AUTHOR's site access on
+ * every unattended run (`hootOutput.server.ts`) and a throw there fails the
+ * run, so when the author loses access their ai talons stop silently at 3am.
+ * The fire-time check is deliberately NOT weakened — this changes who the
+ * author is.
  */
 export type TalonSuccessorRejection =
   | 'not_found'
@@ -657,11 +588,8 @@ export interface TalonReassignResult {
 }
 
 /**
- * Resolve a uid to the actor the capability matrix understands.
- *
- * Reads `users/{uid}` directly rather than taking a caller-supplied role: the
- * successor is named in a request body, and trusting that would let anyone
- * with TALON_MANAGE hand a privileged talon to an account that cannot hold it.
+ * Resolve a uid to a capability-matrix actor. Reads `users/{uid}` rather than
+ * trusting a caller-supplied role — the successor is named in a request body.
  */
 async function loadSuccessorActor(
   db: Firestore,
@@ -670,8 +598,7 @@ async function loadSuccessorActor(
   const snapshot = await db.collection('users').doc(uid).get();
   const data = snapshot.exists ? snapshot.data() : undefined;
   if (!data) return { ok: false, reason: 'not_found' };
-  // Soft-deleted accounts keep their user doc (it is an audit surface), so
-  // `deletedAt` — not document existence — is what "still here" means.
+  // Soft-deleted accounts keep their user doc, so `deletedAt` is the liveness test.
   if (data.deletedAt != null) return { ok: false, reason: 'soft_deleted' };
 
   const role = data.role === 'admin' || data.role === 'superadmin' ? data.role : 'member';
@@ -683,14 +610,10 @@ async function loadSuccessorActor(
 }
 
 /**
- * The successor must clear the same two gates the store holds an author to:
- * TALON_MANAGE on this site to author a talon at all, and
- * MACHINE_EXEC_COMMAND when any of the talons carries a privileged output.
- *
- * Both are checked even though the current matrix grants them to the same
- * roles — they are separate gates on the create/update path, and collapsing
- * them here would silently re-open the privileged-output hole if the matrix
- * ever diverges.
+ * Successor must clear both author gates: TALON_MANAGE, plus
+ * MACHINE_EXEC_COMMAND when any talon carries a privileged output. Kept
+ * separate even though today's matrix grants both to the same roles — merging
+ * them re-opens the privileged-output hole if the matrix diverges.
  */
 function successorRejection(
   siteId: string,
@@ -723,11 +646,9 @@ export async function listTalonsAuthoredBy(
 }
 
 /**
- * How many talons on the site `uid` authored.
- *
- * An aggregate — the departure surfaces call this to warn before the damage,
- * and a preview must never cost a document read per talon. Single-field
- * equality, so Firestore's automatic collection-scoped index covers it.
+ * How many talons on the site `uid` authored. Aggregate, so a departure
+ * preview costs no per-talon read; single-field equality, covered by
+ * Firestore's automatic collection-scoped index.
  */
 export async function countTalonsAuthoredBy(
   db: Firestore,
@@ -750,14 +671,10 @@ export interface AuthoredTalonRef {
 }
 
 /**
- * Every talon `uid` authored, across every site, in one collection-group
- * query. The user soft-delete flow needs this: a superadmin's `sites[]` can be
- * empty while they still author talons anywhere, so walking the membership
- * array would under-report exactly the accounts whose departure hurts most.
- *
- * The `orderBy('name')` is load-bearing — it is what the composite
- * collection-group index in `firestore.indexes.json` is declared over
- * (`createdBy ASC, name ASC`).
+ * Every talon `uid` authored across all sites, in one collection-group query:
+ * a superadmin's `sites[]` can be empty while they still author talons, so
+ * walking the membership array under-reports. The `orderBy('name')` is
+ * load-bearing — the composite index is declared over `createdBy ASC, name ASC`.
  */
 export async function listTalonsAuthoredByAcrossSites(
   db: Firestore,
@@ -786,21 +703,15 @@ export async function listTalonsAuthoredByAcrossSites(
 }
 
 /**
- * Move authorship of one or more talons to `toUid`.
+ * Move authorship of one or more talons to `toUid`. Selection is every talon
+ * by `fromUid` OR an explicit `talonIds` list, never both.
  *
- * Selection is either every talon authored by `fromUid` (the departure case)
- * or an explicit `talonIds` list (the "fix this one" case) — never both, so a
- * caller can't half-express what they meant and get a superset.
+ * One atomic batch (MAX_TALONS_PER_SITE is far under the 500-op limit), and
+ * nothing is written unless every selected talon exists and the successor
+ * clears both author gates — a partial handover gives no signal which half.
  *
- * One batch: MAX_TALONS_PER_SITE (20) is far under the 500-op batch limit, so
- * a site's whole talon set always fits in a single atomic commit. Nothing is
- * written unless every selected talon exists and the successor clears both
- * author gates — a partial reassignment would leave some automations pointing
- * at someone who has left and give no signal which.
- *
- * Deliberately NOT recorded on the document: the previous author. The audit
- * row carries `previousCreatedBy`, and the audit log is the system of record
- * for "who used to own this" — a second copy on the talon would drift.
+ * The previous author lives only in the audit row (`previousCreatedBy`); a
+ * second copy on the document would drift.
  */
 export async function reassignTalons(
   db: Firestore,
@@ -881,16 +792,10 @@ export async function reassignTalons(
     return { siteId: ctx.siteId, toUid, reassignedTalonIds: [], skippedTalonIds };
   }
 
-  // A successor who cannot run these talons is not a successor. The authoring
-  // bar already demands a key for ai talons (`assertAuthorLlmKeyAvailable`), and
-  // reassignment is authoring by another name — without this, handing over a
-  // wall check re-enables it straight into `creator_missing_llm_key` on the next
-  // run, which is the exact silent rot this feature exists to stop.
-  // Optional-chained on purpose: this is the one talon read path that runs over
-  // documents it did not just validate, and a talon written before a field
-  // existed must be movable rather than crash the whole handover. A doc with no
-  // condition cannot be a visual check, so treating absent as "no ai" is also
-  // the correct answer, not just the safe one.
+  // Reassignment is authoring, so the successor needs a key too — otherwise the
+  // handover re-enables straight into `creator_missing_llm_key` on the next run.
+  // Optional-chained: these docs were not validated on this path, and a talon
+  // predating a field must stay movable (absent condition => not a visual check).
   const movingNeedsLlm = moving.some(
     (talon) =>
       talon.condition?.type === 'visual_check' ||
@@ -915,15 +820,10 @@ export async function reassignTalons(
     batch.update(collection.doc(talon.id), {
       createdBy: toUid,
       updatedAt: now,
-      // Reassignment RESOLVES the creator reasons — the talon was switched off
-      // because its author was gone, deleted, or keyless, and it now has one who
-      // is none of those. Leaving it disabled behind a reason naming the old
-      // author's problem would make the handover a no-op the operator has to
-      // finish by hand, staring at a sentence that is no longer true.
-      //
-      // Only the creator reasons. `repeated_failures` describes the talon, not
-      // its author, and reassignment fixes nothing about it; a talon a HUMAN
-      // switched off carries no reason at all and must stay off.
+      // Reassignment resolves the creator reasons: the new author is present and
+      // keyed, so re-arm rather than leave a reason that is no longer true.
+      // Creator reasons only — `repeated_failures` describes the talon, and a
+      // human-disabled talon carries no reason and must stay off.
       ...(isCreatorDisabledReason(talon.disabledReason)
         ? { enabled: true, disabledReason: FieldValue.delete(), consecutiveFailures: 0 }
         : {}),
@@ -931,8 +831,7 @@ export async function reassignTalons(
   }
   await batch.commit();
 
-  // One audit row per talon: `targetId` has to name the resource that changed,
-  // so "did this talon change?" queries stay answerable.
+  // One row per talon: `targetId` must name the resource that changed.
   for (const talon of moving) {
     const rearmed = isCreatorDisabledReason(talon.disabledReason);
     emitTalonAudit(

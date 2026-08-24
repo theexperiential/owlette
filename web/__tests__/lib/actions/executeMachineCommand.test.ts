@@ -1,24 +1,12 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/actions/executeMachineCommand.server.ts`
- * (security-boundary-migration wave 3.1).
+ * Unit tests for `web/lib/actions/executeMachineCommand.server.ts`: allowlist
+ * enforcement, input validation, machine-doc gating (404/409), command write
+ * shape, correlationId propagation, audit payload.
  *
- * Covers:
- *   - allowlist enforcement (every accepted type writes; unknown types
- *     reject with 400 unsupported_command_type)
- *   - input validation (missing type, bad payload shape, missing
- *     ctx fields)
- *   - machine-doc lookup (404 not_found / 409 machine_offline)
- *   - command write shape parity with the legacy public-route write —
- *     `type`, payload fields, `siteId`, `machineId`, `status: 'pending'`,
- *     `queuedBy`, lifecycle stamps from `stampCommand`
- *   - correlationId propagation via stamped `auditCorrelationId`
- *   - audit `emitMutation` payload
- *
- * Authorization (capability + scope + idempotency) is enforced by the
- * route shim / `authorizedSiteHandler` wrapper — those tests live
- * alongside the route integration in
+ * Authorization (capability + scope + idempotency) lives in the route shim /
+ * `authorizedSiteHandler` and is tested in
  * `web/__tests__/api/sites-machines-commands.test.ts`.
  */
 
@@ -42,7 +30,7 @@ import type { Actor } from '@/lib/capabilities';
 
 const mockedEmit = emitMutation as jest.MockedFunction<typeof emitMutation>;
 
-/* ── fake firestore ───────────────────────────────────────────────────── */
+// fake firestore
 
 interface SetCall {
   path: string;
@@ -125,7 +113,7 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-/* ── input validation ─────────────────────────────────────────────────── */
+// input validation
 
 describe('executeMachineCommand — input validation', () => {
   it('rejects empty siteId', async () => {
@@ -210,7 +198,7 @@ describe('executeMachineCommand — input validation', () => {
   });
 });
 
-/* ── allowlist enforcement ────────────────────────────────────────────── */
+// allowlist enforcement
 
 describe('executeMachineCommand — allowlist', () => {
   it('rejects an unknown command type with 400 unsupported_command_type', async () => {
@@ -229,11 +217,8 @@ describe('executeMachineCommand — allowlist', () => {
     expect(mockedEmit).not.toHaveBeenCalled();
   });
 
-  // One pass-through test per allowlisted type — confirms each type
-  // makes it past the allowlist gate and writes a pending command. The
-  // exact payload shape is type-specific and the route shim is
-  // responsible for filtering / normalization, so this test only
-  // verifies the type is accepted and surfaces in the firestore write.
+  // One pass-through per allowlisted type: only that it clears the gate and
+  // reaches the write. Payload normalization is the route shim's job.
   for (const type of [...ALLOWED_COMMAND_TYPES].sort()) {
     it(`accepts ${type} and writes a pending command`, async () => {
       const fake = buildFakeDb();
@@ -254,9 +239,8 @@ describe('executeMachineCommand — allowlist', () => {
   }
 
   it('covers the full inventory hit list', () => {
-    // Sanity: every command type called out in the wave-3 task is
-    // present. If this assertion fails, the allowlist drifted from the
-    // route-audit reference and needs a paired update there.
+    // A failure here means the allowlist drifted from the route-audit
+    // reference and needs a paired update there.
     const expected = [
       'reboot_machine',
       'shutdown_machine',
@@ -285,7 +269,7 @@ describe('executeMachineCommand — allowlist', () => {
   });
 });
 
-/* ── machine doc gating ───────────────────────────────────────────────── */
+// machine doc gating
 
 describe('executeMachineCommand — machine doc gating', () => {
   it('throws 404 not_found when machine doc is absent', async () => {
@@ -315,9 +299,8 @@ describe('executeMachineCommand — machine doc gating', () => {
   });
 
   it('writes when machine.online is missing (legacy docs without the field)', async () => {
-    // online === false is the offline gate; absence of the field is
-    // treated as "online" so legacy machine docs predating the heartbeat
-    // refactor still accept commands.
+    // `online === false` is the gate; an absent field means online, so legacy
+    // pre-heartbeat machine docs still accept commands.
     const fake = buildFakeDb({});
     const result = await executeMachineCommand(
       ctxFor(),
@@ -329,7 +312,7 @@ describe('executeMachineCommand — machine doc gating', () => {
   });
 });
 
-/* ── command write shape ──────────────────────────────────────────────── */
+// command write shape
 
 describe('executeMachineCommand — command write shape', () => {
   it('writes the canonical pending entry with payload + lifecycle stamps', async () => {
@@ -454,7 +437,7 @@ describe('executeMachineCommand — command write shape', () => {
   });
 });
 
-/* ── per-type payload pass-through ────────────────────────────────────── */
+// per-type payload pass-through
 
 describe('executeMachineCommand — per-type payload pass-through', () => {
   it('apply_display_topology forwards layout + applyId', async () => {
@@ -564,7 +547,7 @@ describe('executeMachineCommand — per-type payload pass-through', () => {
   });
 });
 
-/* ── audit emission ───────────────────────────────────────────────────── */
+// audit emission
 
 describe('executeMachineCommand — audit emission', () => {
   it('emits machine_command_dispatched with the command type + machine id', async () => {

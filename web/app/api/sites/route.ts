@@ -74,18 +74,18 @@ export async function GET(request: NextRequest) {
     const isSuperadmin = userData?.role === 'superadmin';
     const assignedSites: string[] = Array.isArray(userData?.sites) ? userData!.sites : [];
 
-    // Determine the candidate site set the user can access.
+    // Candidate site set for this user.
     let candidates: Set<string> | 'all';
     if (isSuperadmin) {
       candidates = 'all';
     } else {
-      // Also include sites the user owns directly.
+      // plus sites owned directly
       const ownedSnap = await db.collection('sites').where('owner', '==', auth.userId).get();
       const ownedIds = ownedSnap.docs.map((d) => d.id);
       candidates = new Set([...assignedSites, ...ownedIds]);
     }
 
-    // Intersect with API-key scope when scoped to specific site ids.
+    // Intersect with the API-key scope when it names specific site ids.
     const scopeAllowed = scopeAllowedSites(auth.keyContext);
 
     let siteDocs: FirebaseFirestore.QueryDocumentSnapshot[];
@@ -125,30 +125,26 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Site creation is self-serve onboarding, NOT a superadmin-only platform
-// action. Any active authenticated user (browser session, Firebase id-token,
-// or a `site:admin`-scoped API key) may create a site and becomes its owner —
-// `createSite` stamps `owner = caller`. The wave-3.9 migration moved this
-// server-side (good) but routed it through `authorizedPlatformHandler`, which
-// hard-requires superadmin (authorizedHandler.server.ts:688) — that regressed
-// new users out of creating their first site. We authorize the caller here
-// directly instead, keeping rate-limiting, idempotency, audit, soft-delete
-// rejection, and API-key scope enforcement.
+// Site creation is self-serve onboarding, NOT superadmin-only: any active
+// authenticated caller (session, id-token, or `site:admin`-scoped key) may create
+// one and becomes its owner. Do NOT route this through
+// `authorizedPlatformHandler` — it hard-requires superadmin, which once locked
+// new users out of their first site. Authorization is done inline here, keeping
+// rate limiting, idempotency, audit, soft-delete rejection and scope checks.
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     let auth: ResolvedAuth;
     let scopeCheck: ScopeCheckResult;
     try {
       auth = await resolveAuth(request);
-      // Block soft-deleted / missing users before any write.
+      // Soft-deleted / missing users, before any write.
       await assertActiveUser(auth.userId);
-      // API keys must carry an explicit `site:admin` scope; sessions and
-      // id-tokens bypass scope enforcement inside requireScope.
+      // API keys need an explicit `site:admin`; sessions and id-tokens bypass
+      // scope enforcement inside requireScope.
       scopeCheck = requireScope(auth, 'site', '*', 'admin');
     } catch (err) {
-      // Mirror authorizedHandler's authErrorToResponse so scope/token errors
-      // keep their specific problem codes (e.g. scope_insufficient) rather than
-      // collapsing to a generic forbidden.
+      // Mirrors authorizedHandler's authErrorToResponse so scope/token errors keep
+      // their specific problem codes instead of collapsing to forbidden.
       if (err instanceof ApiAuthError) {
         if (err.code === 'token_expired') {
           const expiredAt = typeof err.details?.expiredAt === 'number' ? err.details.expiredAt : undefined;

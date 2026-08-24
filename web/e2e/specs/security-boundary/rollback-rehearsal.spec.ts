@@ -1,10 +1,11 @@
+import { type Auth } from 'firebase-admin/auth';
+import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import admin from 'firebase-admin';
 import { doc, getFirestore, setDoc } from 'firebase/firestore';
 import {
   assertDevProject,
@@ -216,8 +217,8 @@ async function waitForDirectWriteOutcome(
 }
 
 async function seedUser(
-  auth: admin.auth.Auth,
-  db: admin.firestore.Firestore,
+  auth: Auth,
+  db: Firestore,
   uid: string,
   email: string,
   role: 'member' | 'admin' | 'superadmin',
@@ -242,15 +243,15 @@ async function seedUser(
     role,
     sites,
     displayName: `W8 Rollback ${role}`,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
     mfaEnrolled: false,
     requiresMfaSetup: false,
   });
 }
 
 async function seedRollbackData(
-  db: admin.firestore.Firestore,
-  auth: admin.auth.Auth,
+  db: Firestore,
+  auth: Auth,
   ids: ReturnType<typeof makeRunIds>,
 ): Promise<{ memberUid: string; superUid: string; memberEmail: string; superEmail: string }> {
   const memberUid = `${ids.uid}-member`;
@@ -262,7 +263,7 @@ async function seedRollbackData(
     name: 'W8.1 Rollback Rehearsal',
     owner: ids.uid,
     timezone: 'UTC',
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
   await db
     .collection('sites')
@@ -290,7 +291,7 @@ async function seedRollbackData(
 }
 
 async function hasCapabilityBypassAudit(
-  db: admin.firestore.Firestore,
+  db: Firestore,
   siteId: string,
   memberUid: string,
 ): Promise<boolean> {
@@ -364,7 +365,7 @@ test('live dev rollback rehearsal flips kill switch and restores locked rules', 
       {
         capability_enforcement: true,
         rate_limit_enforcement: true,
-        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        lastUpdated: FieldValue.serverTimestamp(),
       },
       { merge: true },
     );
@@ -462,7 +463,7 @@ test('live dev rollback rehearsal flips kill switch and restores locked rules', 
       {
         capability_enforcement: true,
         rate_limit_enforcement: true,
-        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        lastUpdated: FieldValue.serverTimestamp(),
       },
       { merge: true },
     ).catch((err: unknown) => {

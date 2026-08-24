@@ -144,10 +144,7 @@ describe('RoostDetailPanel', () => {
     await openMenu();
     await user.click(await screen.findByRole('menuitem', { name: /delete roost/i }));
     expect(props.onDelete).toHaveBeenCalledTimes(1);
-    // Headroom: this opens the Radix menu 4× in sequence; under heavy
-    // parallel-suite CPU load the default 5s jest timeout was the flake source
-    // (a timeout, not a failed assertion). `delay: null` + `pointerEventsCheck: 0`
-    // on setup() keep the interactions fast; this raises the ceiling so
-    // contention alone can't trip it.
+    // Headroom: this opens the Radix menu 4× in sequence, and under parallel-suite CPU load
+    // the default 5s jest timeout was the flake source (a timeout, not a failed assertion).
   }, 20000);
 });

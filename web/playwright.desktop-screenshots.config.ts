@@ -1,33 +1,22 @@
 import { defineConfig } from '@playwright/test';
 
 /**
- * Playwright config for the agent documentation's desktop-app screenshots.
+ * Playwright config for the desktop-app documentation screenshots
+ * (`npm run screenshots:desktop`). Sibling to `playwright.config.ts` and
+ * `playwright.screenshots.config.ts`, and the only one that never runs the web
+ * app: no webServer, no emulators, no seeded users, and no browser launched —
+ * the specs `connectOverCDP` to the installed `owlette-desktop.exe`'s WebView2
+ * debug port and never touch the `page` / `browser` fixtures.
  *
- * A third sibling to `playwright.config.ts` (regression e2e) and
- * `playwright.screenshots.config.ts` (marketing/landing captures), and the only
- * one of the three that does not run the web app at all:
- *   - testDir is `./e2e/desktop-screenshots`
- *   - no `webServer`, no Firebase emulators, no seeded users. The subject is the
- *     installed `owlette-desktop.exe` on this machine, driven over CDP; there is
- *     nothing for Next.js or Firestore to serve.
- *   - no browser is launched by Playwright. The specs connect to the running
- *     WebView2's debug port with `chromium.connectOverCDP` and never touch the
- *     `page` / `browser` fixtures, so no `projects` entry declares one.
- *   - workers: 1 and serial specs — there is exactly one window, and each
- *     scenario replaces the previous one's fixture files underneath it.
- *   - retries: 0 — a screenshot that only comes out right on the second attempt
- *     is a screenshot nobody can reproduce.
+ * workers: 1 and serial specs because there is one window and each scenario
+ * overwrites the previous one's fixtures. retries: 0 — a screenshot that only
+ * works on the second attempt is not reproducible.
  *
- * The specs write PNGs straight into `web/public/docs-screens/`, which
- * `web/content/docs/agent/*.mdx` references. `outputDir` below is only for
- * Playwright's own failure artifacts.
+ * PNGs go straight to `web/public/docs-screens/` (referenced by
+ * `content/docs/agent/*.mdx`); `outputDir` is only for failure artifacts.
  *
- * Requires an installed, working agent on the machine running it (the release
- * binary at `C:\ProgramData\Owlette\app\owlette-desktop.exe`), which is why this
- * is a release-time step rather than part of CI — see
+ * Needs a real installed agent, so this is a release-time step, not CI — see
  * `.claude/skills/build-system.md` → "Agent Installer Release".
- *
- * Run with `npm run screenshots:desktop`.
  */
 
 const OUTPUT_DIR =
@@ -45,16 +34,14 @@ export default defineConfig({
   globalSetup: require.resolve('./e2e/desktop-screenshots/global-setup'),
   globalTeardown: require.resolve('./e2e/desktop-screenshots/global-teardown'),
 
-  // Launching the app, killing the tray it replaced and waiting for its debug
-  // port to answer is the slow part, and it happens once in the global setup.
+  // Global setup does the slow part: launch, kill the old tray, await the port.
   globalTimeout: 10 * 60_000,
   timeout: 90_000,
   expect: { timeout: 15_000 },
 
   use: {
     trace: 'retain-on-failure',
-    // The specs screenshot deliberately, into `public/docs-screens/`. A
-    // failure screenshot would land in the same run and confuse the output.
+    // Off: a failure screenshot would land among the deliberate captures.
     screenshot: 'off',
     video: 'off',
     actionTimeout: 15_000,

@@ -1,27 +1,21 @@
 /**
  * roost webhook emission — producer side of the production dispatcher.
  *
- * roost events (`version.*`, `deployment.*`, …) do NOT go through
- * `webhookSender.server.ts`: that is the legacy alerting path (its own
- * `X-owlette-Signature` header, immediate fetch, no retry budget). roost
- * events are queued as `webhook_deliveries` records and shipped by the
- * scheduled retry pump in `functions/src/webhookDispatch.ts`, which owns
- * backoff, give-up, auto-disable, and the billing lockout gate.
+ * roost events do NOT use `webhookSender.server.ts` (legacy alerting: own
+ * signature header, immediate fetch, no retry budget). They are queued as
+ * `webhook_deliveries` and shipped by the pump in
+ * `functions/src/webhookDispatch.ts`, which owns backoff, give-up,
+ * auto-disable and the billing lockout gate.
  *
- * The record shape below is the one `attemptDelivery()` consumes, and is
- * byte-identical to what `buildDelivery()` produces inside the dispatcher
- * — same canonical envelope, same content-addressed `Roost-Delivery` id,
- * same stripe-style `Roost-Signature`. `POST /api/webhooks/{id}/deliveries/
- * {deliveryId}/retry` writes the same record shape from the web side.
+ * The record shape here must stay byte-identical to `buildDelivery()` in the
+ * dispatcher (same envelope, `Roost-Delivery` id, `Roost-Signature`); the retry
+ * route writes the same shape.
  *
- * Deliberately NOT billing-gated here, mirroring the dispatcher's `emit()`:
- * nothing in this file reaches a customer endpoint, and the pump — the only
- * thing that does — re-checks the lockout at send time.
+ * Not billing-gated, mirroring the dispatcher's `emit()`: nothing here reaches a
+ * customer endpoint, and the pump re-checks the lockout at send time.
  *
- * Subscription compatibility: public-api subscriptions store
- * `signingSecret` + `paused`; a handful of pre-public-api records used
- * `secret` + `enabled`. Both are read, matching the same tolerance
- * `WebhookSettingsDialog.tsx` already applies when listing them.
+ * Subscriptions are read in both shapes: `signingSecret`+`paused` (public API)
+ * and the older `secret`+`enabled`.
  */
 
 import { createHash } from 'node:crypto';
@@ -34,9 +28,9 @@ import { signPayload } from '@/lib/webhookSignature';
 const DELIVERIES_COLLECTION = 'webhook_deliveries';
 
 /**
- * The canonical event envelope, matching the dispatcher's `WebhookPayload`.
- * No top-level `id` — delivery identity is carried by the `Roost-Delivery`
- * header, which is stable across retries so receivers can dedup on it.
+ * Canonical envelope, matching the dispatcher's `WebhookPayload`. No top-level
+ * `id`: delivery identity lives in the `Roost-Delivery` header, stable across
+ * retries so receivers can dedup on it.
  */
 interface RoostWebhookEnvelope {
   event: RoostWebhookEvent;
@@ -56,11 +50,8 @@ function sortForCanonical(value: unknown): unknown {
   return out;
 }
 
-/**
- * Content-addressed public delivery id — `sha256(event|siteId|body)`
- * truncated to 32 hex chars. Mirrors `deliveryId()` in
- * `functions/src/lib/webhookLogic.ts`.
- */
+/** `sha256(event|siteId|body)` truncated to 32 hex — mirrors `deliveryId()` in
+ *  `functions/src/lib/webhookLogic.ts`. */
 function publicDeliveryId(envelope: RoostWebhookEnvelope, canonicalBody: string): string {
   return createHash('sha256')
     .update(`${envelope.event}|${envelope.siteId}|${canonicalBody}`)
@@ -105,13 +96,9 @@ export interface EmitRoostWebhookArgs {
 
 /**
  * Queue `event` for every enabled subscription on `siteId` that asked for it.
- *
- * Never throws — a webhook that can't be queued must not fail the mutation
- * that produced it (same contract as `fireWebhooks` and `emitMutation`).
- * Failures are logged loudly instead, because a silently dropped event is
- * worse for the operator than a noisy log line.
- *
- * @returns the number of deliveries queued.
+ * Never throws — a webhook that can't be queued must not fail the mutation that
+ * produced it (same contract as `fireWebhooks`/`emitMutation`); failures are
+ * logged loudly instead. Returns the number of deliveries queued.
  */
 export async function emitRoostWebhook(args: EmitRoostWebhookArgs): Promise<number> {
   const { db, siteId, event, data } = args;
@@ -141,9 +128,8 @@ export async function emitRoostWebhook(args: EmitRoostWebhookArgs): Promise<numb
 
     await Promise.all(
       subscribers.map((sub) => {
-        // Record id is per-subscriber so two subscriptions to the same
-        // event don't collide on one tracked delivery; the public id in
-        // the header stays the pure content hash.
+        // Per-subscriber record id so two subscriptions to one event don't
+        // collide; the header's public id stays the pure content hash.
         const recordId = `${deliveryId}__${sub.id}`;
         return db
           .collection(DELIVERIES_COLLECTION)

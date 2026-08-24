@@ -1,63 +1,23 @@
 """
-screenshot_capture — agent-side flow for the public `capture_screenshot`
-command.
+screenshot_capture — agent-side flow for the `capture_screenshot` command.
 
-End-to-end pipeline (caller passes an executor that runs Python in the
-active user's interactive desktop session; service-side this is
-`OwletteService.execute_in_user_session`):
+Pipeline: capture_in_user_session → _compress_to_jpeg → request_upload_url
+→ upload_to_signed_url → finalize_screenshot.
 
-  1. capture_in_user_session(executor, monitor)
-       The Windows service runs as LocalSystem in Session 0 — mss inside
-       Session 0 captures a blank ~2 KB LocalSystem display rather than
-       the real desktop. We hand the capture code off to session_exec.py
-       via CreateProcessAsUser so mss runs in the user's session and
-       sees the actual screen. The user-session script does ONLY the
-       privileged minimal work — mss grab → raw PNG written to the job's
-       IPC output dir — then the service reads the bytes back.
+Two placement constraints drive the design:
+  * The service is LocalSystem in Session 0, where mss grabs a blank ~2 KB
+    LocalSystem display. The grab is shipped to session_exec.py via
+    CreateProcessAsUser so it runs in the user's desktop session.
+  * JPEG compression happens SERVICE-side, not in that user session: the
+    CreateProcessAsUser interpreter frequently can't import PIL, which
+    silently degraded uploads to uncapped multi-MB PNGs.
 
-  2. _compress_to_jpeg(png_bytes)
-       Service-side JPEG compression (PIL quality 72, max-width 7680 px).
-       Runs in the OwletteService process, which bundles Pillow — the
-       user-session interpreter launched by CreateProcessAsUser often
-       does NOT have PIL importable, so doing compression there silently
-       fell back to oversized PNG. Service-side keeps the JPEG size cap
-       (a photo/video-heavy screen as PNG can be 5-10 MB). Falls back to
-       PNG only if PIL is somehow missing from the service interpreter
-       too.
+Finalize is what writes `machine.lastScreenshot` (the field ScreenshotDialog
+listens to), appends the history doc, and prunes to the newest 20.
 
-  3. request_upload_url(...)
-       POST /api/sites/{site}/machines/{machine}/screenshots/upload-url
-       → 5-min v4-signed PUT URL + canonical storage path. Auth: bearer
-       Firebase ID token (the agent's). Web-side gate is
-       requireMachineAuthAndScope which short-circuits for agent tokens
-       whose `site_id` + `machine_id` claims match the URL.
-
-  4. upload_to_signed_url(...)
-       Direct PUT to GCS via the signed URL. Multi-MB body never proxies
-       through Next.js. Bounded retries on 5xx + network errors.
-
-  5. finalize_screenshot(...)
-       POST /api/sites/{site}/machines/{machine}/screenshots/finalize
-       with the storagePath + sizeKB. Web makes the object publicly
-       readable, writes `machine.lastScreenshot = { url, timestamp,
-       sizeKB }` (the field the dashboard's ScreenshotDialog listens on
-       via Firestore real-time), writes the `screenshots/{docId}`
-       history doc, and auto-prunes to the most-recent 20.
-
-Image format: JPEG (PIL quality 72, max-width 7680 px), compressed
-service-side — matches the established UX shipped with pre-refactor
-builds. The signed-URL endpoint binds content-type at signing time and
-the storage path extension reflects the actual body (jpg/png) so the
-URL doesn't lie about its content.
-
-Error model: every step that fails network-side or schema-side raises
-ScreenshotCaptureError with a short tag identifying which step failed.
-Unexpected runtime exceptions bubble unchanged — the command_router
-catches them and writes the trace into the command's `error` envelope.
-
-Runs on the `_slow_command_worker` thread (CommandRouter contract):
-the capture itself is ~200 ms but the IPC + network round-trips are
-unbounded; blocking the 10-second main loop would stall heartbeat.
+Every network/schema failure raises ScreenshotCaptureError tagged with the step;
+other exceptions bubble to command_router. Runs on `_slow_command_worker` — the
+IPC + network round-trips are unbounded and would stall the main loop.
 """
 
 from __future__ import annotations
@@ -86,55 +46,34 @@ MAX_UPLOAD_ATTEMPTS = 3
 INITIAL_BACKOFF_S = 1.0
 CAPTURE_TIMEOUT_S = 20
 
-# Match the pre-refactor working flow's image budget so the prod history
-# feed stays size-comparable across the patch window.
 MAX_IMAGE_WIDTH_PX = 7680
 JPEG_QUALITY = 72
 
 
-# UserSessionExecutor is `OwletteService.execute_in_user_session` —
-# typed via Callable so unit tests can pass a plain dict-returning
-# function without depending on the OwletteService class. Contract:
-#
+# `OwletteService.execute_in_user_session`, typed loosely so tests can pass a
+# plain function. Contract:
 #     executor(job_type='python', code=<str>, timeout=<int>, trusted=True)
-#     returns dict {
-#         outputDir: str,        # absolute path; mandatory
-#         error:     Optional[str],   # presence means failure
-#         files:     list[str],       # filenames written under outputDir
-#         stdout / stderr / exitCode / durationMs: diagnostic
-#     }
+#     → {outputDir: str (required), error: str|None (presence means failure),
+#         files: list[str], stdout/stderr/exitCode/durationMs}
 UserSessionExecutor = Callable[..., dict]
 
 
 class ScreenshotCaptureError(RuntimeError):
-    """raised when any step in the capture → upload → finalize pipeline
-    fails. The message carries a short tag identifying the step so the
-    command result envelope and operator logs surface where it broke."""
+    """capture/upload/finalize failure; message is tagged with the step."""
 
-
-# ---------------------------------------------------------------------------
-# user-session capture
-# ---------------------------------------------------------------------------
 
 
 def _build_capture_code(monitor: int) -> str:
     """
-    Compose the Python source the user-session interpreter will run. The
-    code does ONLY the privileged minimal work: grab the screen via mss
-    and write the raw PNG to `<output_dir>/screenshot.png`. JPEG
-    compression is intentionally NOT done here — it happens service-side
-    in `_compress_to_jpeg` so we don't depend on PIL being importable in
-    whatever interpreter `CreateProcessAsUser` launches (it frequently
-    isn't, even when the service's own Python has Pillow).
+    Source for the user-session interpreter: mss grab → raw PNG at
+    `<output_dir>/screenshot.png`, nothing else. No JPEG step here — that
+    interpreter often can't import PIL.
 
-    `output_dir` is the symbol session_exec.run_python injects into the
-    namespace before exec — same path returned in the result envelope as
-    `outputDir`. We pass `trusted=True` from the caller so the
-    user-session interpreter gives this code full builtins + unrestricted
-    imports (needed for `mss`).
+    `output_dir` is injected into the namespace by session_exec.run_python.
+    Callers must pass `trusted=True` so unrestricted imports (mss) work.
     """
-    # `monitor` is sanitized to an int by the caller before reaching the
-    # template, so f-string substitution is bounded to a numeric value.
+    # Caller has already coerced `monitor` to an int, so this f-string can only
+    # substitute a number.
     return f"""
 import os
 import mss
@@ -155,15 +94,9 @@ print(f'monitors={{monitors_count}} size={{len(png_bytes)}}')
 
 def _compress_to_jpeg(png_bytes: bytes) -> tuple[bytes, str]:
     """
-    Service-side compression of the raw PNG capture to JPEG (quality 72,
-    downscaled to max-width 7680 px). Runs in the OwletteService process,
-    which bundles Pillow — so unlike the user-session interpreter this
-    reliably has PIL. Returns (bytes, content_type).
-
-    Falls back to returning the original PNG if Pillow is somehow
-    unavailable in the service interpreter too (shouldn't happen on a
-    normal install; defensive so a capture never hard-fails on a missing
-    optional dep — we'd rather ship an oversized PNG than nothing).
+    Compress the raw PNG to JPEG service-side (Pillow ships with the service);
+    returns (bytes, content_type). Falls back to the untouched PNG if PIL is
+    missing — an oversized upload beats a failed capture.
     """
     try:
         import io
@@ -194,15 +127,9 @@ def capture_in_user_session(
     monitor: int = 0,
 ) -> tuple[bytes, int]:
     """
-    Run the screen capture inside the active user's desktop session and
-    return (raw_png_bytes, monitor_count). Cleans up the user-session IPC
-    output directory before returning so successive captures don't
-    accumulate disk.
-
-    Raises ScreenshotCaptureError if the user-session execution fails,
-    times out, or produces no output file. Compression to JPEG is the
-    caller's responsibility (see `_compress_to_jpeg`) — this function
-    returns the raw PNG mss produced.
+    Capture in the active user's desktop session → (raw_png_bytes,
+    monitor_count), cleaning up the IPC output dir. Raises
+    ScreenshotCaptureError on failure, timeout, or missing output file.
     """
     capture_code = _build_capture_code(monitor)
     result = executor(
@@ -244,8 +171,7 @@ def capture_in_user_session(
             f"capture: failed to read user-session output {image_path}: {e}"
         ) from e
 
-    # Best-effort cleanup of the result dir — orphans are harmless but
-    # accumulate over thousands of captures.
+    # Harmless if it fails, but orphans add up over thousands of captures.
     try:
         shutil.rmtree(output_dir, ignore_errors=True)
     except Exception:  # pragma: no cover — defensive only
@@ -256,9 +182,7 @@ def capture_in_user_session(
 
 
 def _parse_monitor_count(stdout: str) -> int:
-    """Pull `monitors=N` from the user-session stdout. Best-effort —
-    returns 1 if the marker is missing or malformed (the actual capture
-    succeeded either way, so we don't fail the command on this)."""
+    """`monitors=N` from stdout; 1 if absent — the capture itself still worked."""
     for line in stdout.splitlines():
         for token in line.split():
             if token.startswith('monitors='):
@@ -269,10 +193,6 @@ def _parse_monitor_count(stdout: str) -> int:
     return 1
 
 
-# ---------------------------------------------------------------------------
-# signed-URL upload
-# ---------------------------------------------------------------------------
-
 
 def request_upload_url(
     api_base: str,
@@ -282,10 +202,8 @@ def request_upload_url(
     content_type: str = DEFAULT_CONTENT_TYPE,
 ) -> dict:
     """
-    POST /api/sites/{site}/machines/{machine}/screenshots/upload-url and
-    return the parsed `{uploadUrl, storagePath, contentType, expiresAt}`
-    envelope. Raises ScreenshotCaptureError on non-2xx responses or
-    malformed bodies.
+    POST .../screenshots/upload-url → `{uploadUrl, storagePath, contentType,
+    expiresAt}`. Raises ScreenshotCaptureError on non-2xx or malformed body.
     """
     url = api_base.rstrip('/') + UPLOAD_URL_PATH_TMPL.format(
         site_id=site_id, machine_id=machine_id
@@ -334,9 +252,8 @@ def upload_to_signed_url(
     sleep_fn: Any = time.sleep,
 ) -> None:
     """
-    PUT bytes to the signed URL. Retries 5xx + network errors with
-    exponential backoff; 4xx fails fast (signed-URL 4xx = bad signature
-    or expired url, neither of which recover on retry).
+    PUT to the signed URL, retrying 5xx + network errors with backoff. 4xx
+    fails fast — a bad signature or expired url never recovers on retry.
     """
     last_exc: Optional[Exception] = None
     for attempt in range(1, max_attempts + 1):
@@ -367,10 +284,6 @@ def upload_to_signed_url(
     )
 
 
-# ---------------------------------------------------------------------------
-# finalize (writes lastScreenshot + history server-side)
-# ---------------------------------------------------------------------------
-
 
 def finalize_screenshot(
     api_base: str,
@@ -383,10 +296,8 @@ def finalize_screenshot(
     content_type: str = DEFAULT_CONTENT_TYPE,
 ) -> dict:
     """
-    POST /api/sites/{site}/machines/{machine}/screenshots/finalize. Web
-    flips the object to public-read, writes `machine.lastScreenshot`,
-    appends a history doc, and returns the canonical public URL. Raises
-    ScreenshotCaptureError on non-2xx.
+    POST .../screenshots/finalize. Web flips the object to public-read, writes
+    `machine.lastScreenshot`, appends history, returns the public URL.
     """
     url = api_base.rstrip('/') + FINALIZE_PATH_TMPL.format(
         site_id=site_id, machine_id=machine_id
@@ -427,10 +338,6 @@ def finalize_screenshot(
     return data
 
 
-# ---------------------------------------------------------------------------
-# orchestration
-# ---------------------------------------------------------------------------
-
 
 def capture_and_upload(
     user_session_executor: UserSessionExecutor,
@@ -441,41 +348,26 @@ def capture_and_upload(
     monitor: Any = 0,
 ) -> dict:
     """
-    Full pipeline: capture (user session) → request signed url → PUT →
-    finalize. Returns a result envelope suitable for the command's
-    `result` field.
+    Full pipeline; returns the command's `result` envelope:
+    `{storage_path, url, size_kb, monitor, monitor_count}` — `url` is the
+    public read URL finalize also wrote to machine.lastScreenshot.
 
-    On success:
-        {
-          'storage_path': str,    # canonical GCS path of the captured frame
-          'url':          str,    # public read URL (also written to
-                                  # machine.lastScreenshot by finalize)
-          'size_kb':      int,
-          'monitor':      int,    # echoed input selector
-          'monitor_count':int,    # how many physical displays were enumerated
-        }
-
-    Any failure raises ScreenshotCaptureError with a short tag in the
-    message indicating which step failed
+    Failures raise ScreenshotCaptureError tagged with the step
     (capture / upload-url / upload / finalize).
     """
     monitor_int = int(monitor) if isinstance(monitor, (int, float, bool)) else 0
-    # bool is a subclass of int — treat True/False as 0 to avoid surprises
+    # bool subclasses int; True must not select monitor 1.
     if isinstance(monitor, bool):
         monitor_int = 0
 
-    # 1. capture raw PNG in the user's desktop session
     png_bytes, monitor_count = capture_in_user_session(
         user_session_executor, monitor_int
     )
 
-    # 2. compress to JPEG service-side (the service interpreter has PIL;
-    #    the user-session one frequently doesn't). Caps worst-case size
-    #    on photo/video-heavy screens that PNG would leave uncapped.
     image_bytes, content_type = _compress_to_jpeg(png_bytes)
     size_kb = max(1, round(len(image_bytes) / 1024))
 
-    # 3. request signed PUT url, pinning content-type to what we produced
+    # Content-type is pinned at signing time to whatever we actually produced.
     issued = request_upload_url(
         api_base=api_base,
         site_id=site_id,
@@ -484,14 +376,12 @@ def capture_and_upload(
         content_type=content_type,
     )
 
-    # 4. PUT bytes directly to GCS
     upload_to_signed_url(
         upload_url=issued['uploadUrl'],
         image_bytes=image_bytes,
         content_type=content_type,
     )
 
-    # 5. finalize — web writes lastScreenshot + history + returns public URL
     finalized = finalize_screenshot(
         api_base=api_base,
         site_id=site_id,

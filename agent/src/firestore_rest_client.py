@@ -1,39 +1,15 @@
 """
-Firestore REST API Client for Owlette Agent
+Firestore REST API v1 client for the Owlette agent — the Admin SDK is never used
+here (custom-token auth, not service-account credentials).
 
-This module provides a Python client for Firestore REST API v1, replacing
-the Firebase Admin SDK. It uses custom tokens for authentication instead of
-service account credentials.
+Unlike the Admin SDK this client is SUBJECT TO Firestore security rules; every
+operation is scoped to the authenticated user's permissions.
 
-Security: This client enforces Firestore security rules (unlike Admin SDK).
-All operations are scoped to the authenticated user's permissions.
-
-API Documentation:
 https://firebase.google.com/docs/firestore/reference/rest
-
-Usage:
-    from auth_manager import AuthManager
-    from firestore_rest_client import FirestoreRestClient
-
-    auth = AuthManager()
-    firestore = FirestoreRestClient(project_id="owlette-dev", auth_manager=auth)
-
-    # Set document
-    firestore.set_document('sites/abc/machines/DESKTOP-001', {'online': True})
-
-    # Get document
-    data = firestore.get_document('sites/abc/machines/DESKTOP-001')
-
-    # Update document
-    firestore.update_document('sites/abc/machines/DESKTOP-001', {'cpu': 25.5})
-
-    # Real-time listener
-    def callback(data):
-        print(f"Document updated: {data}")
-    firestore.listen_to_document('config/abc/machines/DESKTOP-001', callback)
 """
 
 import hashlib
+import os
 import requests
 import json
 import re
@@ -49,8 +25,35 @@ logger = logging.getLogger(__name__)
 # Firestore REST API base URL
 FIRESTORE_API_BASE = "https://firestore.googleapis.com/v1"
 
+
+def resolve_api_base() -> str:
+    """The Firestore REST root this process talks to.
+
+    Production is always {@link FIRESTORE_API_BASE}. When FIRESTORE_EMULATOR_HOST
+    is set — the variable the Firebase CLI exports for every other SDK, and which
+    no installed agent ever has — the same /v1 surface is served over plain HTTP
+    by the local emulator, so point at that instead. Document paths, request
+    bodies and ID-token auth are identical; only the origin changes.
+
+    Read per call rather than captured at import so a test can set the variable
+    without reloading the module.
+    """
+    host = (os.environ.get('FIRESTORE_EMULATOR_HOST') or '').strip()
+    if not host:
+        return FIRESTORE_API_BASE
+    # The emulator advertises itself bare ("127.0.0.1:8080"); tolerate a scheme
+    # having been included anyway rather than emitting "http://http://…".
+    if host.startswith('http://') or host.startswith('https://'):
+        return f"{host.rstrip('/')}/v1"
+    return f"http://{host}/v1"
+
 # Special value for server timestamp
 SERVER_TIMESTAMP = "SERVER_TIMESTAMP"
+
+# Per-request HTTP timeout. Generous by default because the agent runs on links
+# that stall; see set_request_timeout() for the shutdown path, which cannot
+# afford it.
+DEFAULT_REQUEST_TIMEOUT = 30
 
 def timestamp_to_ms(value) -> int:
     """Convert a Firestore timestamp value to epoch milliseconds.
@@ -64,8 +67,7 @@ def timestamp_to_ms(value) -> int:
         return int(value)
     if isinstance(value, str):
         try:
-            # Firestore returns e.g. '2026-04-02T14:30:00.123456Z'
-            # Strip trailing 'Z' and parse as UTC
+            # Firestore returns e.g. 2026-04-02T14:30:00.123456Z — strip Z, parse UTC.
             cleaned = value.rstrip('Z')
             dt = datetime.fromisoformat(cleaned)
             return int(dt.timestamp() * 1000)
@@ -92,16 +94,15 @@ class FirestoreRestClient:
     """
 
     def __init__(self, project_id: str, auth_manager):
-        """
-        Initialize Firestore REST client.
-
-        Args:
-            project_id: Firebase project ID (e.g., "owlette-dev-3838a")
-            auth_manager: AuthManager instance for token management
-        """
+        """Initialize the client for `project_id` (e.g. "owlette-dev-3838a")."""
         self.project_id = project_id
         self.auth_manager = auth_manager
-        self.base_url = f"{FIRESTORE_API_BASE}/projects/{project_id}/databases/(default)/documents"
+        # Resolved once, here, and used by EVERY request path — the ":commit" and
+        # ":batchWrite" endpoints append to base_url rather than re-deriving from
+        # the module constant, so there is exactly one seam to redirect.
+        self.api_base = resolve_api_base()
+        self.base_url = f"{self.api_base}/projects/{project_id}/databases/(default)/documents"
+        self.request_timeout = DEFAULT_REQUEST_TIMEOUT
 
         # HTTP session for connection pooling
         self.session = requests.Session()
@@ -111,13 +112,18 @@ class FirestoreRestClient:
 
         logger.debug(f"FirestoreRestClient initialized: project={project_id}")
 
-    def close(self):
-        """Release the HTTP connection pool held by the underlying Session.
+    def set_request_timeout(self, seconds: float):
+        """Change the per-request HTTP timeout for every subsequent call.
 
-        Idempotent — safe to call multiple times. Closing a Session just
-        disposes of pooled sockets; it does not affect future use (the caller
-        should drop the reference afterwards and create a new client if needed).
+        Used by the shutdown path, where the OS window is shorter than the
+        default timeout and a stalled request costs more than a skipped write.
         """
+        self.request_timeout = seconds
+        logger.debug(f"Firestore request timeout set to {seconds}s")
+
+    def close(self):
+        """Release the Session's pooled sockets. Idempotent; drop the reference
+        afterwards and build a new client if one is needed."""
         sess = getattr(self, 'session', None)
         if sess is not None:
             try:
@@ -126,41 +132,24 @@ class FirestoreRestClient:
                 logger.debug(f"Session close failed (ignored): {e}")
 
     def _get_auth_headers(self) -> Dict[str, str]:
-        """
-        Get authorization headers with fresh access token.
-
-        Returns:
-            Dict with Authorization header
-        """
+        """Authorization header carrying a fresh access token."""
         token = self.auth_manager.get_valid_token()
         return {
             'Authorization': f'Bearer {token}',
         }
 
     def _to_firestore_value(self, value: Any) -> Dict[str, Any]:
-        """
-        Convert Python value to Firestore REST API format.
+        """Convert a Python value to Firestore REST format.
 
-        Args:
-            value: Python value (int, str, bool, dict, list, etc.)
-
-        Returns:
-            Firestore value object
-
-        Examples:
-            42 → {'integerValue': '42'}
-            'test' → {'stringValue': 'test'}
-            True → {'booleanValue': True}
-            SERVER_TIMESTAMP → {'timestampValue': '2025-11-02T14:30:00.000000Z'}
+        e.g. 42 → {'integerValue': '42'}, True → {'booleanValue': True}.
         """
         if value is None:
             return {'nullValue': None}
         elif isinstance(value, _DeleteFieldSentinel):
-            # Special marker for field deletion
             return None  # Signal to caller to handle as deletion
         elif value == SERVER_TIMESTAMP:
-            # SERVER_TIMESTAMP should be extracted by _extract_server_timestamps()
-            # before reaching here. If it does, fall back to client time with warning.
+            # Should have been pulled out by _extract_server_timestamps(); if it
+            # reaches here, fall back to client time.
             logger.warning("SERVER_TIMESTAMP not extracted before conversion - using client time as fallback")
             return {'timestampValue': datetime.utcnow().isoformat() + 'Z'}
         elif isinstance(value, bool):
@@ -172,29 +161,18 @@ class FirestoreRestClient:
         elif isinstance(value, str):
             return {'stringValue': value}
         elif isinstance(value, dict):
-            # Convert nested dict to map
             fields = {k: self._to_firestore_value(v) for k, v in value.items()}
             return {'mapValue': {'fields': fields}}
         elif isinstance(value, list):
-            # Convert list to array
             values = [self._to_firestore_value(item) for item in value]
             return {'arrayValue': {'values': values}}
         elif isinstance(value, datetime):
             return {'timestampValue': value.isoformat() + 'Z'}
         else:
-            # Fallback to string
             return {'stringValue': str(value)}
 
     def _from_firestore_value(self, firestore_value: Dict[str, Any]) -> Any:
-        """
-        Convert Firestore REST API format to Python value.
-
-        Args:
-            firestore_value: Firestore value object
-
-        Returns:
-            Python value
-        """
+        """Convert a Firestore REST value object to a Python value."""
         if 'nullValue' in firestore_value:
             return None
         elif 'booleanValue' in firestore_value:
@@ -206,29 +184,18 @@ class FirestoreRestClient:
         elif 'stringValue' in firestore_value:
             return firestore_value['stringValue']
         elif 'timestampValue' in firestore_value:
-            # Return as ISO string (can parse to datetime if needed)
-            return firestore_value['timestampValue']
+            return firestore_value['timestampValue']  # ISO 8601 string
         elif 'mapValue' in firestore_value:
-            # Convert nested map to dict
             fields = firestore_value['mapValue'].get('fields', {})
             return {k: self._from_firestore_value(v) for k, v in fields.items()}
         elif 'arrayValue' in firestore_value:
-            # Convert array to list
             values = firestore_value['arrayValue'].get('values', [])
             return [self._from_firestore_value(item) for item in values]
         else:
             return None
 
     def _to_firestore_document(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Convert Python dict to Firestore document format.
-
-        Args:
-            data: Python dictionary
-
-        Returns:
-            Firestore document with 'fields' object
-        """
+        """Convert a Python dict into a Firestore document (`{'fields': …}`)."""
         fields = {k: self._to_firestore_value(v) for k, v in data.items()}
         return {'fields': fields}
 
@@ -287,7 +254,7 @@ class FirestoreRestClient:
         Used instead of PATCH when SERVER_TIMESTAMP fields are present,
         since PATCH does not support updateTransforms.
         """
-        url = f"{FIRESTORE_API_BASE}/projects/{self.project_id}/databases/(default)/documents:commit"
+        url = f"{self.base_url}:commit"
         doc_name = f"projects/{self.project_id}/databases/(default)/documents/{path}"
 
         write_entry = {
@@ -305,7 +272,7 @@ class FirestoreRestClient:
             url,
             json={'writes': [write_entry]},
             headers=self._get_auth_headers(),
-            timeout=30
+            timeout=self.request_timeout
         )
         response.raise_for_status()
 
@@ -337,7 +304,7 @@ class FirestoreRestClient:
         """
         try:
             url = f"{self.base_url}/{path}"
-            response = self.session.get(url, headers=self._get_auth_headers(), timeout=30)
+            response = self.session.get(url, headers=self._get_auth_headers(), timeout=self.request_timeout)
 
             if response.status_code == 404:
                 logger.debug(f"Document not found: {path}")
@@ -383,7 +350,6 @@ class FirestoreRestClient:
             merge: If True, merge with existing data (default: False)
         """
         try:
-            # Extract SERVER_TIMESTAMP fields for proper server-side timestamps
             cleaned_data, timestamp_paths = self._extract_server_timestamps(data)
 
             if timestamp_paths:
@@ -400,22 +366,17 @@ class FirestoreRestClient:
             else:
                 # No server timestamps — use PATCH endpoint.
                 #
-                # CRITICAL: when merge=True, we MUST include updateMask in the
-                # request, otherwise PATCH treats the request as a full
-                # document replacement and DELETES every field not in the
-                # payload (per Firestore REST API spec). Without this,
-                # set_machine_flag/set_machine_flags would silently nuke
-                # online, lastHeartbeat, metrics, etc. on every call —
-                # which manifested as a 5-second offline window on the
-                # dashboard until the next _upload_metrics restored them.
+                # CRITICAL: merge=True MUST send an updateMask. Without one,
+                # PATCH is a full document replacement and deletes every field
+                # not in the payload — set_machine_flag wiped online/
+                # lastHeartbeat/metrics on every call, showing as a 5s offline
+                # blip until the next _upload_metrics.
                 url = f"{self.base_url}/{path}"
                 firestore_doc = self._to_firestore_document(cleaned_data)
 
                 params = None
                 if merge:
-                    # Build updateMask from all leaf field paths in the payload.
-                    # This tells Firestore to only update these specific fields
-                    # and leave everything else in the document untouched.
+                    # Leaf field paths only — everything else stays untouched.
                     update_mask_paths = list(self._flatten_field_paths(cleaned_data))
                     params = [('updateMask.fieldPaths', p) for p in update_mask_paths]
 
@@ -424,7 +385,7 @@ class FirestoreRestClient:
                     json=firestore_doc,
                     params=params,
                     headers=self._get_auth_headers(),
-                    timeout=30
+                    timeout=self.request_timeout
                 )
 
                 response.raise_for_status()
@@ -436,26 +397,13 @@ class FirestoreRestClient:
             raise
 
     def _escape_field_path(self, field_path: str) -> str:
-        """
-        Escape field path for Firestore REST API updateMask.
-
-        Field names containing special characters (anything other than
-        alphanumeric and underscore) must be enclosed in backticks.
-
-        Args:
-            field_path: Field path (may contain dots for nested fields)
-
-        Returns:
-            Escaped field path
-        """
-        # Split on dots for nested paths
+        """Escape a (possibly dotted) field path for an updateMask: any segment
+        with a character outside [a-zA-Z0-9_] must be backtick-quoted."""
         parts = field_path.split('.')
         escaped_parts = []
 
         for part in parts:
-            # Check if part contains special characters (not alphanumeric or underscore)
             if re.search(r'[^a-zA-Z0-9_]', part):
-                # Wrap in backticks
                 escaped_parts.append(f'`{part}`')
             else:
                 escaped_parts.append(part)
@@ -474,25 +422,21 @@ class FirestoreRestClient:
             updates: Fields to update (supports dot notation for nested fields)
         """
         try:
-            # Extract SERVER_TIMESTAMP fields for proper server-side timestamps
             cleaned_updates, timestamp_paths = self._extract_server_timestamps(updates)
 
             # Build updateMask from ALL original keys (including timestamp fields)
             update_mask_paths = [self._escape_field_path(key) for key in updates.keys()]
 
-            # Convert cleaned updates to Firestore format, handling nested paths
             firestore_fields = {}
             for key, value in cleaned_updates.items():
                 firestore_value = self._to_firestore_value(value)
 
-                # If _to_firestore_value returns None, it's a DELETE_FIELD sentinel
-                # Include in updateMask but not in fields (this deletes the field)
+                # None = DELETE_FIELD sentinel: in the updateMask but not in
+                # fields, which is what deletes it.
                 if firestore_value is None:
                     continue
 
-                # Handle nested paths like 'metrics.cpu'
-                if '.' in key:
-                    # For nested updates, we need to construct the nested structure
+                if '.' in key:  # nested path, e.g. 'metrics.cpu'
                     parts = key.split('.')
                     current = firestore_fields
 
@@ -501,16 +445,14 @@ class FirestoreRestClient:
                             current[part] = {'mapValue': {'fields': {}}}
                         current = current[part]['mapValue']['fields']
 
-                    # Set the final value
                     current[parts[-1]] = firestore_value
                 else:
-                    # Top-level field
                     firestore_fields[key] = firestore_value
 
             if timestamp_paths:
                 # Use :commit endpoint (supports fieldTransforms for server timestamps)
                 field_transforms = self._build_field_transforms(timestamp_paths)
-                url = f"{FIRESTORE_API_BASE}/projects/{self.project_id}/databases/(default)/documents:commit"
+                url = f"{self.base_url}:commit"
                 doc_name = f"projects/{self.project_id}/databases/(default)/documents/{path}"
 
                 write_entry = {
@@ -526,7 +468,7 @@ class FirestoreRestClient:
                     url,
                     json={'writes': [write_entry]},
                     headers=self._get_auth_headers(),
-                    timeout=30
+                    timeout=self.request_timeout
                 )
             else:
                 # No server timestamps — use existing PATCH logic
@@ -540,7 +482,7 @@ class FirestoreRestClient:
                     json={'fields': firestore_fields},
                     params=params,
                     headers=self._get_auth_headers(),
-                    timeout=30
+                    timeout=self.request_timeout
                 )
 
             response.raise_for_status()
@@ -559,7 +501,7 @@ class FirestoreRestClient:
         """
         try:
             url = f"{self.base_url}/{path}"
-            response = self.session.delete(url, headers=self._get_auth_headers(), timeout=30)
+            response = self.session.delete(url, headers=self._get_auth_headers(), timeout=self.request_timeout)
 
             # 404 is OK for delete (already doesn't exist)
             if response.status_code not in [200, 204, 404]:
@@ -579,79 +521,61 @@ class FirestoreRestClient:
         max_interval: float = 30.0,
         backoff_multiplier: float = 1.5
     ) -> tuple:
-        """
-        Listen to document changes in real-time using adaptive polling.
-
-        Uses exponential backoff: starts at min_interval polling, increases to
-        max_interval when idle. Configurable per-listener for different responsiveness needs.
-
-        Args:
-            path: Document path to listen to
-            callback: Function to call when document changes (receives doc data)
-            min_interval: Minimum polling interval in seconds (default: 2.0)
-            max_interval: Maximum polling interval in seconds (default: 30.0)
-            backoff_multiplier: Multiplier for interval increase when idle (default: 1.5)
+        """Watch a document by adaptive polling: min_interval when active,
+        backing off by backoff_multiplier toward max_interval when idle
+        (all seconds).
 
         Returns:
-            (thread, wake_event, stop_event) — thread is already started; set wake_event to
-            interrupt the backoff sleep and force an immediate poll; set stop_event to
-            terminate the polling loop.
+            (thread, wake_event, stop_event) — thread already started; set
+            wake_event to interrupt the sleep and poll now, stop_event to end it.
         """
         wake_event = threading.Event()
         stop_event = threading.Event()
 
         def poll_document():
             """Poll document for changes with exponential backoff."""
-            # Use a sentinel value to detect first run (different from None which means "document doesn't exist")
+            # Sentinel, not None: None means "document does not exist".
             _UNINITIALIZED = object()
             last_data = _UNINITIALIZED
             last_hash = None
 
-            # Adaptive polling parameters (configured per-listener)
             current_interval = min_interval
 
-            # Error tracking for reduced logging
             consecutive_errors = 0
             last_error_type = None
 
             while not stop_event.is_set():
                 try:
-                    # Get current document (suppress logging - we handle it here)
                     current_data = self.get_document(path, _suppress_logging=True)
 
-                    # Success - reset error tracking
                     if consecutive_errors > 0:
                         logger.info(f"Listener recovered for {path} after {consecutive_errors} errors")
                     consecutive_errors = 0
                     last_error_type = None
 
-                    # Calculate hash for reliable comparison (handles dict ordering, float precision, etc.)
+                    # Hash, not dict equality: survives key ordering and float noise.
                     if current_data is not None:
                         current_hash = hashlib.md5(json.dumps(current_data, sort_keys=True).encode()).hexdigest()
                     else:
                         current_hash = None
 
-                    # Check if changed using hash comparison (more reliable than dict comparison)
                     if current_hash != last_hash:
-                        # Document changed - reset to fast polling
                         current_interval = min_interval
 
-                        # Skip callback on first run if document doesn't exist
+                        # No callback on the first run for a document that does
+                        # not exist.
                         if last_data is not _UNINITIALIZED or current_data is not None:
                             logger.debug(f"Document changed: {path}")
                             callback(current_data)
                         last_data = current_data
                         last_hash = current_hash
                     else:
-                        # No change - increase interval (exponential backoff)
                         current_interval = min(current_interval * backoff_multiplier, max_interval)
 
-                    # Poll with current interval (wake_event.set() interrupts immediately)
                     logger.debug(f"Polling {path} - next check in {current_interval:.1f}s")
                     if stop_event.is_set():
                         break
-                    if wake_event.wait(current_interval):
-                        # Woken up externally — reset to fast polling
+                    if wake_event.wait(current_interval):  # woken externally
                         wake_event.clear()
                         current_interval = min_interval
 
@@ -661,14 +585,14 @@ class FirestoreRestClient:
                     consecutive_errors += 1
                     error_type = type(e).__name__
 
-                    # Determine if this is a connectivity error (should be logged less aggressively)
                     error_str = str(e).lower()
                     is_connectivity_error = any(x in error_str for x in [
                         'connection', 'network', 'getaddrinfo', 'errno 11001',
                         'unreachable', 'timeout', 'refused'
                     ])
 
-                    # Log strategy: first error, then every 30th, or when error type changes
+                    # Log the first error, every 30th after that, and any change
+                    # of error type.
                     should_log = (
                         consecutive_errors == 1 or
                         error_type != last_error_type or
@@ -677,18 +601,16 @@ class FirestoreRestClient:
 
                     if should_log:
                         if is_connectivity_error:
-                            # Connectivity errors: minimal logging
                             if consecutive_errors == 1:
                                 logger.warning(f"Listener lost connectivity for {path}: {error_type}")
                             else:
                                 logger.debug(f"Listener still offline for {path} ({consecutive_errors} errors)")
                         else:
-                            # Other errors: normal logging
                             logger.error(f"Error in document listener for {path}: {e}")
 
                     last_error_type = error_type
 
-                    # Back off on error - interruptible via stop_event
+                    # Interruptible via stop_event.
                     error_backoff = min(5 * (1 + consecutive_errors // 10), 60)  # 5s to 60s max
                     stop_event.wait(error_backoff)
                     current_interval = min_interval  # Reset interval after error
@@ -717,10 +639,8 @@ class FirestoreRestClient:
             ])
         """
         try:
-            # Firestore REST API batch write endpoint
-            url = f"{FIRESTORE_API_BASE}/projects/{self.project_id}/databases/(default)/documents:batchWrite"
+            url = f"{self.base_url}:batchWrite"
 
-            # Build batch write request
             batch_writes = []
 
             for write in writes:
@@ -731,7 +651,6 @@ class FirestoreRestClient:
                 doc_name = f"projects/{self.project_id}/databases/(default)/documents/{path}"
 
                 if operation == 'set':
-                    # Extract SERVER_TIMESTAMP fields for proper server-side timestamps
                     cleaned_data, timestamp_paths = self._extract_server_timestamps(data)
                     write_entry = {
                         'update': {
@@ -747,7 +666,6 @@ class FirestoreRestClient:
                         'delete': doc_name
                     })
                 elif operation == 'update':
-                    # Extract SERVER_TIMESTAMP fields for proper server-side timestamps
                     cleaned_data, timestamp_paths = self._extract_server_timestamps(data)
                     write_entry = {
                         'update': {
@@ -762,23 +680,20 @@ class FirestoreRestClient:
                         write_entry['updateTransforms'] = self._build_field_transforms(timestamp_paths)
                     batch_writes.append(write_entry)
 
-            # Execute batch write
             response = self.session.post(
                 url,
                 json={'writes': batch_writes},
                 headers=self._get_auth_headers(),
-                timeout=30
+                timeout=self.request_timeout
             )
 
             response.raise_for_status()
             logger.debug(f"Batch write completed: {len(writes)} operations")
 
         except Exception as e:
-            # Check if this is a 403 Forbidden error (expected with OAuth tokens)
             is_403 = hasattr(e, 'response') and e.response is not None and e.response.status_code == 403
 
             if is_403:
-                # 403 errors on batch writes are expected with OAuth tokens - log at DEBUG level
                 logger.debug(f"Batch write forbidden (expected with OAuth tokens): {e}")
                 if hasattr(e, 'response'):
                     try:
@@ -787,9 +702,7 @@ class FirestoreRestClient:
                     except (json.JSONDecodeError, ValueError):
                         pass
             else:
-                # Log other errors at ERROR level
                 logger.error(f"Error in batch write: {e}")
-                # Log response body for debugging (may contain security rule details)
                 if hasattr(e, 'response') and e.response is not None:
                     try:
                         error_details = e.response.json()
@@ -848,13 +761,12 @@ class CollectionReference:
             Generator of DocumentSnapshot objects
         """
         try:
-            # Firestore REST API list documents endpoint
             url = f"{self.client.base_url}/{self.path}"
 
             response = self.client.session.get(
                 url,
                 headers=self.client._get_auth_headers(),
-                timeout=30
+                timeout=self.client.request_timeout
             )
 
             response.raise_for_status()
@@ -864,16 +776,13 @@ class CollectionReference:
                 logger.error(f"Non-JSON response listing documents (status {response.status_code}): {response.text[:200]}")
                 return
 
-            # Parse documents from response
             documents = data.get('documents', [])
 
             for doc in documents:
-                # Extract document ID from name
                 # Format: projects/.../databases/.../documents/path/to/doc_id
                 doc_name = doc.get('name', '')
                 doc_id = doc_name.split('/')[-1]
 
-                # Create DocumentSnapshot-like object
                 yield DocumentSnapshot(
                     reference=DocumentReference(self.client, f"{self.path}/{doc_id}"),
                     data=self.client._from_firestore_document(doc),
@@ -976,28 +885,23 @@ class BatchWriter:
         if not self.operations:
             return
 
-        # Use the existing batch_write method
         self.client.batch_write(self.operations)
 
-        # Clear operations after commit
         self.operations = []
 
 
 # Example usage
 if __name__ == "__main__":
-    # Configure logging for testing
     logging.basicConfig(
         level=logging.DEBUG,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
-    # Example: Initialize client
     from auth_manager import AuthManager
 
     auth = AuthManager(api_base="https://dev.owlette.app/api")
     firestore = FirestoreRestClient(project_id="owlette-dev-3838a", auth_manager=auth)
 
-    # Example: Set document
     firestore.set_document('test/doc1', {
         'name': 'Test',
         'count': 42,
@@ -1005,21 +909,17 @@ if __name__ == "__main__":
         'timestamp': SERVER_TIMESTAMP
     })
 
-    # Example: Get document
     data = firestore.get_document('test/doc1')
     print(f"Document data: {data}")
 
-    # Example: Update document
     firestore.update_document('test/doc1', {
         'count': 43,
         'nested.field': 'value'
     })
 
-    # Example: SDK-like interface
     doc_ref = firestore.collection('sites').document('abc').collection('machines').document('DESKTOP-001')
     doc_ref.set({'online': True}, merge=True)
 
-    # Example: Listen to document
     def on_change(data):
         print(f"Config changed: {data}")
 

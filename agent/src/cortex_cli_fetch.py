@@ -1,65 +1,32 @@
 """
 On-demand fetch of the Claude Code CLI binary that Cortex drives.
 
-Why this module exists
----------------------
-``claude-agent-sdk`` vendors the Claude Code CLI at
-``claude_agent_sdk/_bundled/claude.exe`` — 241.5 MB, roughly 60% of the whole
-pre-3.0.0 installer payload. ``build_installer_full.bat`` now deletes it from
-the build tree (with a verify-and-fail guard), so a fresh 3.0.0 install ships
-the SDK *without* its CLI. This module is the only path that puts one back, and
-it does so lazily: nothing is downloaded until Cortex is actually enabled on a
-machine.
+``claude-agent-sdk`` vendors it at ``_bundled/claude.exe`` — 241.5 MB, ~60% of
+the pre-3.0.0 installer. ``build_installer_full.bat`` strips it, so this module
+is the only path that puts one back, and only once Cortex is enabled.
 
-The binary is pinned by sha256 in a single Firestore document,
-``installer_metadata/cortex_cli``::
+Pinned by sha256 in ``installer_metadata/cortex_cli``: ``version``,
+``downloadUrl`` (signed), ``sha256``, optional ``size`` (disk-space guard). That
+collection is world-readable and service-account-write-only, so the agent reads
+it with its normal token and only a trusted server can move the pin. Provision
+with ``scripts/upload-cortex-cli.mjs``.
 
-    {
-      "version":     "2.1.121",          # CLI version (claude_agent_sdk._cli_version)
-      "downloadUrl": "https://...",      # long-lived signed read URL
-      "sha256":      "<64 hex chars>",   # sha256 of the exact bytes
-      "size":        253241504           # bytes (optional, used for a disk-space guard)
-    }
+``ensure_cli`` resolution order:
+1. Sidecar-verified binary (``cache/claude-cli/version.json``) — no hashing, no
+   network, provided size and pin still match.
+2. Adopt a matching on-disk binary: hashing 241.5 MB beats downloading it. Covers
+   a lost sidecar and the SDK copy left behind by an in-place 2.x upgrade. A
+   cached binary that FAILS the pin is deleted — it can never satisfy it.
+3. Pinned download to ``.part``, verify, ``os.replace`` into place, write the
+   sidecar. A checksum rejection deletes and retries once.
+4. Unverified fallback: any CLI on disk, with a warning. Deliberate fleet
+   resilience — an outage must not take Cortex offline on a working machine.
+5. Return None. Failures persist in ``fetch_state.json`` behind exponential
+   backoff (5 min → 1 h), or the service's 30 s relaunch cooldown would turn a
+   broken fetch into a 30 s download loop.
 
-``installer_metadata`` is world-readable (``firestore.rules``: ``allow read: if
-true``) and service-account-write-only, so the agent reads it with its normal
-token and nothing but a trusted server can move the pin. Provisioning is
-``scripts/upload-cortex-cli.mjs``; refresh guidance lives in
-``docs/internal/cortex-cli-provisioning.md``.
-
-Resolution order (``ensure_cli``)
----------------------------------
-1. **Sidecar-verified binary.** ``cache/claude-cli/version.json`` records the
-   path, sha256 and size of a binary we have already checksum-verified. If that
-   file is still there, still the recorded size, and its recorded sha256 still
-   matches the pin, it is used as-is — no hashing, no network transfer.
-2. **Adopt a matching binary already on disk.** Hashing 241.5 MB is far cheaper
-   than downloading it, so before fetching we checksum any candidate we already
-   have against the pin: the cached binary whose sidecar was lost or corrupted,
-   and the SDK's ``_bundled/claude.exe`` (still present on every machine
-   upgraded in place from 2.x — the installer copies the python tree over
-   without pruning it). A match is adopted: the sidecar is written to point at
-   it and the download is skipped. A cached binary that fails the pin is
-   deleted, because it can never be used again.
-3. **Pinned download.** Otherwise stream ``downloadUrl`` to
-   ``cache/claude-cli/claude.exe.part``, ``verify_checksum`` it, then atomically
-   ``os.replace`` it into ``cache/claude-cli/claude.exe`` and write the sidecar.
-   A checksum rejection deletes the file and retries once.
-4. **Unverified fallback.** If the pin cannot be satisfied at all (metadata
-   unreachable, download failed, checksum rejected twice), any CLI already on
-   disk is used with a warning — the cached binary first (it *was* verified when
-   it was written, even if the sidecar has since been lost), then the SDK's
-   bundled copy. This is deliberate fleet resilience: an outage must not take
-   Cortex offline on a machine that already has a working CLI.
-5. **Give up cleanly.** ``None`` is returned, the caller writes a Cortex error
-   status and exits gracefully. Because the service relaunches Cortex on a 30 s
-   cooldown, repeated failures would otherwise re-download on a 30 s cadence —
-   so failures are persisted in ``cache/claude-cli/fetch_state.json`` and gate
-   the next attempt behind an exponential backoff (5 min doubling to 1 h).
-
-Offline behaviour: if the metadata document cannot be read but a
-sidecar-verified binary is present, it is used regardless of the pin. A
-machine that has already fetched its CLI keeps working with no network.
+Offline: a sidecar-verified binary is used regardless of the pin, so a machine
+that already fetched its CLI keeps working with no network.
 """
 
 import json
@@ -74,7 +41,6 @@ import shared_utils
 
 logger = logging.getLogger(__name__)
 
-# ─── Constants ────────────────────────────────────────────────────────────────
 
 CACHE_SUBDIR = os.path.join('cache', 'claude-cli')
 CLI_FILENAME = 'claude.exe'
@@ -84,12 +50,11 @@ FETCH_STATE_FILENAME = 'fetch_state.json'
 
 METADATA_DOC_PATH = 'installer_metadata/cortex_cli'
 
-# A checksum rejection means complete-but-corrupt bytes, which is worth one more
-# try. Transport-level flakiness is already retried 3x inside download_file().
+# Complete-but-corrupt bytes are worth one more try; transport flakiness is
+# already retried 3x inside download_file().
 MAX_DOWNLOAD_ATTEMPTS = 2
 
-# Persisted failure backoff, so the service's 30 s relaunch cooldown can't turn
-# a broken fetch into a download loop.
+# Persisted so the service's 30 s relaunch cooldown can't become a download loop.
 FETCH_BACKOFF_BASE_SECONDS = 300      # 5 minutes after the first failure
 FETCH_BACKOFF_MAX_SECONDS = 3600      # capped at 1 hour
 MAX_TRACKED_FAILURES = 16             # keeps the shift below bounded
@@ -99,8 +64,6 @@ FREE_SPACE_HEADROOM = 1.25
 
 _SHA256_LENGTH = 64
 
-
-# ─── Paths ────────────────────────────────────────────────────────────────────
 
 def get_cache_dir() -> str:
     """Absolute path of the CLI cache directory (``%ProgramData%\\Owlette\\cache\\claude-cli``)."""
@@ -121,11 +84,10 @@ def _fetch_state_path() -> str:
 
 
 def get_bundled_cli_path() -> Optional[str]:
-    """Path of the CLI the SDK vendors, if this install still has one.
+    """The SDK-vendored CLI path, if this install still has one.
 
-    Mirrors ``SubprocessCLITransport._find_bundled_cli`` (``<package>/_bundled/
-    claude.exe``). Returns None when the SDK is missing or the binary was
-    stripped by the installer build.
+    Mirrors ``SubprocessCLITransport._find_bundled_cli``. None when the SDK is
+    absent or the installer build stripped the binary.
     """
     try:
         import claude_agent_sdk
@@ -140,8 +102,6 @@ def get_bundled_cli_path() -> Optional[str]:
     candidate = os.path.join(os.path.dirname(package_file), '_bundled', CLI_FILENAME)
     return candidate if os.path.isfile(candidate) else None
 
-
-# ─── Small JSON helpers ───────────────────────────────────────────────────────
 
 def _read_json(path: str) -> Optional[Dict[str, Any]]:
     """Read a small JSON file, returning None when absent or unreadable."""
@@ -185,18 +145,11 @@ def _redact_url(url: str) -> str:
         return '<url>'
 
 
-# ─── Pinned metadata ──────────────────────────────────────────────────────────
-
 def read_pinned_metadata(db) -> Optional[Dict[str, Any]]:
     """Read and validate ``installer_metadata/cortex_cli``.
 
-    Args:
-        db: FirestoreRestClient (or anything exposing ``get_document(path)``).
-
-    Returns:
-        Dict with ``version``, ``downloadUrl``, ``sha256`` and (optional int)
-        ``size``, or None when the document is missing, malformed, or the read
-        failed.
+    Returns a dict with ``version``, ``downloadUrl``, ``sha256`` and optional int
+    ``size``, or None when the doc is missing, malformed, or unreadable.
     """
     if db is None:
         logger.warning("No Firestore client available — cannot read the pinned CLI metadata")
@@ -245,16 +198,11 @@ def read_pinned_metadata(db) -> Optional[Dict[str, Any]]:
     }
 
 
-# ─── Sidecar ──────────────────────────────────────────────────────────────────
-
 def _sidecar_binary(sidecar: Optional[Dict[str, Any]],
                     pinned: Optional[Dict[str, Any]]) -> Optional[str]:
-    """Return the recorded binary's path when it is still trustworthy.
-
-    Trust is: the recorded file still exists, is still the recorded size, and —
-    when ``pinned`` is supplied — was verified against the same version and
-    sha256 that is pinned now. Passing ``pinned=None`` (metadata unreachable)
-    relaxes only the pin comparison, never the existence/size check.
+    """The recorded binary's path while it is still trustworthy: exists, still
+    the recorded size, and — when ``pinned`` is given — verified against the
+    current pin. ``pinned=None`` relaxes only the pin, never existence/size.
     """
     if not sidecar:
         return None
@@ -312,8 +260,6 @@ def _write_sidecar(path: str, version: str, sha256: str, source: str) -> None:
     })
 
 
-# ─── Failure backoff ──────────────────────────────────────────────────────────
-
 def _fetch_backoff_remaining() -> float:
     """Seconds left before another fetch attempt is allowed (0 when allowed)."""
     state = _read_json(_fetch_state_path())
@@ -331,7 +277,7 @@ def _fetch_backoff_remaining() -> float:
 
     now = time.time()
     if last_failure > now:
-        # Clock moved backwards (or the file was hand-edited) — don't wedge.
+        # Clock moved backwards, or hand-edited — don't wedge.
         return 0.0
 
     delay = min(
@@ -363,8 +309,6 @@ def _clear_fetch_failures() -> None:
     except OSError as e:
         logger.debug(f"Could not clear CLI fetch state: {e}")
 
-
-# ─── Download ─────────────────────────────────────────────────────────────────
 
 def _has_free_space(cache_dir: str, needed: Optional[int]) -> bool:
     """Guard against filling a kiosk's system volume with a 241.5 MB download."""
@@ -400,10 +344,7 @@ def _make_progress_logger(total_label: str):
 
 
 def _download_and_verify(pinned: Dict[str, Any], cache_dir: str) -> Optional[str]:
-    """Download the pinned CLI, verify it, and atomically install it.
-
-    Returns the installed path, or None if every attempt failed.
-    """
+    """Download, verify and atomically install the pinned CLI; None on failure."""
     import installer_utils
 
     if not _has_free_space(cache_dir, pinned.get('size')):
@@ -421,8 +362,8 @@ def _download_and_verify(pinned: Dict[str, Any], cache_dir: str) -> Optional[str
     )
 
     for attempt in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
-        # download_file may relocate the destination if the target is locked,
-        # so the returned path is the only one safe to act on.
+        # download_file relocates a locked destination, so only its returned
+        # path is safe to act on.
         success, actual_path = installer_utils.download_file(
             pinned['downloadUrl'],
             partial_path,
@@ -430,7 +371,7 @@ def _download_and_verify(pinned: Dict[str, Any], cache_dir: str) -> Optional[str
         )
 
         if not success or not actual_path:
-            # download_file already burned its 3 transport retries.
+            # Its 3 transport retries are already spent.
             logger.error(f"Claude CLI download failed (attempt {attempt}/{MAX_DOWNLOAD_ATTEMPTS})")
             return None
 
@@ -462,32 +403,23 @@ def _download_and_verify(pinned: Dict[str, Any], cache_dir: str) -> Optional[str
     return None
 
 
-# ─── Public entry point ───────────────────────────────────────────────────────
-
 def ensure_cli(db=None) -> Optional[str]:
-    """Make sure a checksum-verified Claude Code CLI is on disk and return its path.
+    """Absolute path to a usable ``claude.exe``, or None.
 
-    See the module docstring for the full resolution order. Never raises: every
-    failure mode returns None so the caller can report a status and exit
-    gracefully instead of crash-looping.
-
-    Args:
-        db: FirestoreRestClient used to read ``installer_metadata/cortex_cli``.
-
-    Returns:
-        Absolute path to a usable ``claude.exe``, or None.
+    Resolution order is in the module docstring. NEVER raises — every failure
+    returns None so the caller reports a status instead of crash-looping.
     """
     cache_dir = get_cache_dir()
     try:
         os.makedirs(cache_dir, exist_ok=True)
     except OSError as e:
-        # Not fatal on its own — a bundled copy may still rescue us.
+        # Not fatal — a bundled copy may still rescue us.
         logger.error(f"Could not create the CLI cache directory {cache_dir}: {e}")
 
     pinned = read_pinned_metadata(db)
     sidecar = _read_json(_sidecar_path())
 
-    # 1. Already verified, still intact, still matches the pin.
+    # 1. Already verified, intact, matching the pin.
     cached = _sidecar_binary(sidecar, pinned)
     if cached:
         source = sidecar.get('source', 'cache') if sidecar else 'cache'
@@ -496,7 +428,7 @@ def ensure_cli(db=None) -> Optional[str]:
         )
         return cached
 
-    # Metadata unreachable and nothing verified on disk — best effort only.
+    # Metadata unreachable, nothing verified on disk — best effort only.
     if pinned is None:
         fallback = _unverified_fallback(cache_dir)
         if fallback:
@@ -506,13 +438,13 @@ def ensure_cli(db=None) -> Optional[str]:
         logger.error("Cortex CLI metadata unavailable and no CLI on disk")
         return None
 
-    # 2. Hashing what we already have is far cheaper than a 241.5 MB download.
+    # 2. Hashing what we have beats a 241.5 MB download.
     adopted = _adopt_local_candidate(pinned, cache_dir)
     if adopted:
         _clear_fetch_failures()
         return adopted
 
-    # 3. Download — unless we're still backing off from earlier failures.
+    # 3. Download, unless still backing off from earlier failures.
     backoff = _fetch_backoff_remaining()
     if backoff > 0:
         logger.warning(
@@ -526,18 +458,15 @@ def ensure_cli(db=None) -> Optional[str]:
         _clear_fetch_failures()
         return installed
 
-    # 4. Last resort: an unverified copy on disk beats no Cortex at all.
+    # 4. An unverified copy on disk beats no Cortex at all.
     _record_fetch_failure('download or checksum verification failed')
     return _unverified_fallback(cache_dir)
 
 
 def _adopt_local_candidate(pinned: Dict[str, Any], cache_dir: str) -> Optional[str]:
-    """Adopt an on-disk binary whose sha256 already matches the pin.
-
-    Covers two real cases: a cached binary whose sidecar was lost or corrupted,
-    and the SDK's bundled copy on a machine upgraded in place from 2.x. A cached
-    binary that fails the pin is deleted — it can never satisfy this pin, and
-    leaving it behind would mean re-hashing it on every start.
+    """Adopt an on-disk binary whose sha256 already matches the pin: a cached one
+    with a lost sidecar, or the SDK copy left by an in-place 2.x upgrade. A
+    cached binary that fails is deleted, or every start re-hashes it.
     """
     import installer_utils
 
@@ -570,12 +499,9 @@ def _adopt_local_candidate(pinned: Dict[str, Any], cache_dir: str) -> Optional[s
 
 
 def _unverified_fallback(cache_dir: str) -> Optional[str]:
-    """Last-resort CLI: any binary on disk, used without matching it to the pin.
-
-    Reached only when the pin cannot be satisfied (metadata unreachable, or the
-    download failed). A cached binary was checksum-verified when it was written
-    even if the sidecar has since been lost, so it is preferred over the SDK's
-    bundled copy.
+    """Last resort: any on-disk binary, unmatched against the pin. Reached only
+    when the pin cannot be satisfied. The cached binary wins over the bundled
+    copy — it WAS verified when written, even if the sidecar is now gone.
     """
     for path, label in (
         (os.path.join(cache_dir, CLI_FILENAME), 'cached'),

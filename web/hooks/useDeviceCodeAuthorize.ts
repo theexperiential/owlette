@@ -4,17 +4,12 @@ import { useCallback, useState } from 'react';
 import { toast } from '@/lib/toast';
 
 /**
- * Shared "enter code" device-code authorization.
+ * Shared "enter code" device-code authorization — one implementation for both
+ * the AddMachineButton modal and the zero-machine getting-started card, so the
+ * two cannot drift.
  *
- * Two surfaces let an operator type the installer's 3-word pairing phrase to
- * authorize a machine: the dashboard's AddMachineButton modal and the
- * zero-machine "getting started" card. This hook is the single implementation
- * of the authorize call so the two never drift.
- *
- * `POST /api/agent/auth/device-code/authorize` only requires a session + site
- * access (no precondition that the site already have a machine), so this works
- * on a brand-new, empty site — which is exactly when the getting-started card
- * needs it.
+ * `POST /api/agent/auth/device-code/authorize` needs only a session + site
+ * access, not an existing machine, so it works on a brand-new empty site.
  */
 export function useDeviceCodeAuthorize(siteId: string) {
   const [phrase, setPhrase] = useState('');

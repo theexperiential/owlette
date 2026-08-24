@@ -1,31 +1,27 @@
 //! Where everything lives, and what the supervised child is.
 //!
-//! The host is self-locating: it ships at `{install_root}\tools\owlette-host.exe`
-//! (the slot `nssm.exe` used to occupy), so the install root is two directories
-//! up from the binary. Nothing is read from the registry — a service whose
-//! configuration lives in two places is a service that can disagree with itself.
+//! Self-locating: the host ships at `{install_root}\tools\owlette-host.exe` (nssm.exe's old slot),
+//! so the install root is two directories up. Nothing comes from the registry — configuration in
+//! two places is configuration that can disagree with itself.
 //!
-//! The data directory is resolved separately, from `%ProgramData%`, because
-//! `install.bat` has always kept logs/config/cache under `%ProgramData%\Owlette`
-//! even when the payload is installed elsewhere via `/DIR=`.
+//! The data directory resolves separately from `%ProgramData%`: install.bat keeps logs/config/cache
+//! under `%ProgramData%\Owlette` even when the payload goes elsewhere via `/DIR=`.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-/// Service name. Unchanged from the NSSM registration on purpose: every other
-/// component addresses the service by this name (`shared_utils.SERVICE_NAME`,
-/// the desktop app's `service_ctl.rs`, the update recovery watchdog, docs).
+/// Unchanged from the NSSM registration: `shared_utils.SERVICE_NAME`, the desktop app's
+/// `service_ctl.rs`, the update recovery watchdog and the docs all address the service by it.
 pub const SERVICE_NAME: &str = "OwletteService";
 
-/// What Services.msc shows. Matches the NSSM registration byte for byte.
+/// Shown in Services.msc; matches the NSSM registration byte for byte.
 pub const DISPLAY_NAME: &str = "Owlette Service";
 
-/// Service description, also unchanged from the NSSM registration.
+/// Unchanged from the NSSM registration.
 pub const DESCRIPTION: &str = "Owlette process monitoring and management service";
 
-/// Services that must be running before the agent starts. Same three NSSM was
-/// given: TCP/IP, the DNS client and the network location awareness service, so
-/// a cold boot does not hand the agent a stack with no route.
+/// Same three NSSM was given — TCP/IP, DNS client, network location awareness — so a cold boot
+/// cannot hand the agent a stack with no route.
 pub const DEPENDENCIES: [&str; 3] = ["Tcpip", "Dnscache", "NlaSvc"];
 
 /// The child process the host supervises.
@@ -40,9 +36,7 @@ pub struct ChildSpec {
 }
 
 impl ChildSpec {
-  /// The command line as it is logged. Not used to launch anything (the child
-  /// is spawned from the fields above, so no quoting rules apply), only so the
-  /// host log records exactly what it started.
+  /// For the log only — the child is spawned from the fields above, so no quoting rules apply.
   pub fn command_line(&self) -> String {
     format!(
       "\"{}\" \"{}\"",
@@ -64,11 +58,9 @@ pub fn child_spec(install_root: &Path) -> ChildSpec {
   }
 }
 
-/// The install root for a host binary at `{root}\tools\owlette-host.exe`.
-///
-/// Falls back to the binary's own directory if it somehow has no grandparent,
-/// which keeps a developer running the exe out of `target\release` from
-/// panicking — it will simply fail to find python and say so.
+/// Install root for a host binary at `{root}\tools\owlette-host.exe`. Falls back to the binary's
+/// own directory when there is no grandparent, so running out of `target\release` fails to find
+/// python rather than panicking.
 pub fn install_root_from_exe(exe: &Path) -> PathBuf {
   exe
     .parent()
@@ -94,11 +86,18 @@ pub fn log_dir() -> PathBuf {
   data_dir().join("logs")
 }
 
-/// True when a service's registered image is NSSM.
-///
-/// The argument is the raw `ImagePath` (which includes any arguments), because
-/// that is what `QueryServiceConfig` hands back — so this is a substring test,
-/// not a file-name comparison.
+/// The stop sentinel the agent polls for, `%ProgramData%\Owlette\tmp\stop_signal.json` — beside
+/// the rest of the agent's runtime state, `shared_utils.get_data_path('tmp/...')` on its side.
+pub fn stop_signal_path() -> PathBuf {
+  stop_signal_path_in(&data_dir())
+}
+
+fn stop_signal_path_in(data_dir: &Path) -> PathBuf {
+  data_dir.join("tmp").join("stop_signal.json")
+}
+
+/// Takes the raw `ImagePath` including arguments (what `QueryServiceConfig` returns), so this is a
+/// substring test rather than a file-name comparison.
 pub fn image_is_nssm(image_path: &str) -> bool {
   image_path.to_ascii_lowercase().contains("nssm.exe")
 }
@@ -118,8 +117,7 @@ mod tests {
       spec.script,
       PathBuf::from(r"C:\ProgramData\Owlette\agent\src\owlette_runner.py")
     );
-    // NSSM's AppDirectory was agent\src, and owlette_runner.py's sys.path
-    // insert assumes it.
+    // NSSM's AppDirectory was agent\src, and owlette_runner.py's sys.path insert assumes it.
     assert_eq!(
       spec.working_dir,
       PathBuf::from(r"C:\ProgramData\Owlette\agent\src")
@@ -148,6 +146,15 @@ mod tests {
     assert_eq!(
       install_root_from_exe(Path::new(r"C:\owlette-host.exe")),
       PathBuf::from(r"C:\")
+    );
+  }
+
+  #[test]
+  fn the_stop_sentinel_sits_in_the_data_directory_s_tmp() {
+    // The agent reads this exact path via shared_utils.get_data_path('tmp/stop_signal.json').
+    assert_eq!(
+      stop_signal_path_in(Path::new(r"C:\ProgramData\Owlette")),
+      PathBuf::from(r"C:\ProgramData\Owlette\tmp\stop_signal.json")
     );
   }
 

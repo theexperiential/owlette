@@ -1,10 +1,6 @@
 /**
- * LLM provider abstraction for owlette chat.
- *
- * Uses Vercel AI SDK for a unified interface across providers.
- * Supports Anthropic (Claude) and OpenAI out of the box.
- *
- * IMPORTANT: Server-side only — never import this in client components.
+ * LLM provider abstraction (Vercel AI SDK) for anthropic + openai.
+ * Server-side ONLY — never import from a client component.
  */
 
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -19,15 +15,11 @@ export interface LlmConfig {
   model?: string;
 }
 
-// Default models per provider
 const DEFAULT_MODELS: Record<LlmProvider, string> = {
   anthropic: 'claude-sonnet-4-6',
   openai: 'gpt-4.1',
 };
 
-/**
- * Create a Vercel AI SDK model instance from provider config.
- */
 export function createModel(config: LlmConfig): LanguageModel {
   const model = config.model || DEFAULT_MODELS[config.provider];
 
@@ -46,12 +38,9 @@ export function createModel(config: LlmConfig): LanguageModel {
 }
 
 /**
- * Build the system prompt for the owlette hoot chat assistant.
- *
- * Handles both single-machine mode (siteMode=false) and site-wide mode
- * (siteMode=true, tool calls fan out to every online machine in the site).
- * Local Hoot running on the agent has its own CLAUDE.md constitution loaded
- * via Agent SDK and does not use this prompt.
+ * System prompt for hoot chat. siteMode fans tool calls out to every online
+ * machine in the site. Local Hoot on the agent uses its own CLAUDE.md
+ * constitution via Agent SDK, not this prompt.
  */
 export interface ProcessSummary {
   name: string;
@@ -113,16 +102,12 @@ LANGUAGE: You manage remote machines, not the operator's personal computer. Alwa
 FORMATTING: Your responses are rendered with full Markdown support. Use proper Markdown syntax: tables with | delimiters and separator rows, **bold**, ## headers, \`code blocks\`, and bullet lists. Never use plain-text column alignment — always use Markdown tables.`;
 }
 
-// ─── Cheapest Models (for lightweight tasks like categorization) ─────────────
-
 const CHEAPEST_MODELS: Record<LlmProvider, string> = {
   anthropic: 'claude-haiku-4-5',
   openai: 'gpt-4.1-nano',
 };
 
-/**
- * Create a cheap/fast model instance for lightweight tasks (categorization, tagging, etc.)
- */
+/** Cheap/fast model for lightweight tasks (categorization, tagging). */
 export function createCheapModel(config: LlmConfig): LanguageModel {
   const model = CHEAPEST_MODELS[config.provider];
   switch (config.provider) {
@@ -139,16 +124,12 @@ export function createCheapModel(config: LlmConfig): LanguageModel {
   }
 }
 
-// ─── Autonomous Mode ────────────────────────────────────────────────────────
-
 export const DEFAULT_AUTONOMOUS_DIRECTIVE =
   'Keep all configured processes running and machines operational. When a process crashes, check agent logs and system event logs for errors, restart the process. If a restart fails twice, escalate to site admins.';
 
 /**
- * Build the system prompt for autonomous Hoot (server-side fallback).
- *
- * Only used when local Hoot is offline — local Hoot uses Agent SDK with
- * its own CLAUDE.md constitution and builds this prompt dynamically.
+ * Autonomous-Hoot system prompt. Server-side fallback only — when local Hoot
+ * is online it builds its own prompt from its CLAUDE.md constitution.
  */
 export function buildAutonomousSystemPrompt(
   machineName: string,
@@ -179,9 +160,7 @@ RULES:
 8. VISUAL VERIFICATION — after restarting a display or media process, capture a screenshot to verify visual recovery. Report what you see. Skip for non-display services.`;
 }
 
-/**
- * Available models per provider (for settings UI).
- */
+/** Provider model list for the settings UI. */
 export const AVAILABLE_MODELS: Record<LlmProvider, { id: string; name: string }[]> = {
   anthropic: [
     { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },

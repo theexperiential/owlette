@@ -15,20 +15,15 @@ import { KeyCard } from '@/app/settings/api-keys/KeyCard';
 /**
  * One panel for api keys, mounted in both places keys are managed.
  *
- * The account-settings dialog and /settings/api-keys were not two views of one
- * feature — they were one feature and a degraded copy of it. The dialog could
- * create with a preset and revoke; it could not set a ttl, build custom
- * scopes, rotate, or show what a key was scoped to. Since the dialog is the
- * discoverable surface and the page is the one people could not find, the
- * capable half lived where nobody looked.
+ * The account-settings dialog and /settings/api-keys were one feature plus a degraded
+ * copy: the dialog could create-with-preset and revoke but not set a ttl, build custom
+ * scopes, rotate, or show what a key was scoped to — so the capable half lived on the
+ * page nobody could find. `compact` only trims chrome for the dialog; behaviour is
+ * identical in both.
  *
- * `compact` trims the chrome for the dialog (no page heading, tighter
- * spacing); everything functional is identical in both.
- *
- * KeyCard is rendered rather than reimplemented — six e2e specs bind to its
- * DOM shape (`div.rounded-md.border`, `p.font-medium`, `[data-slot="badge"]`,
- * `svg.lucide-refresh-cw`, `svg.lucide-trash-2`, a `code` holding the prefix).
- * Restyling it is a separate change from moving it.
+ * KeyCard is rendered rather than reimplemented: six e2e specs bind to its DOM shape
+ * (`div.rounded-md.border`, `p.font-medium`, `[data-slot="badge"]`, the lucide icons, a
+ * `code` holding the prefix). Restyling it is a separate change from moving it.
  */
 
 interface Props {

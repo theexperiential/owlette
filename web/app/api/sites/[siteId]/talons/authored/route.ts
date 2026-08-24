@@ -1,18 +1,15 @@
 /**
  * GET /api/sites/{siteId}/talons/authored?uid={uid} — what this person wrote.
  *
- * The departure preview. Removing a member touches nothing under
- * `sites/{siteId}`, so their talons survive the removal and keep looking
- * healthy in the list — but any talon with a hoot output re-resolves its
- * AUTHOR's site access on every run, so it starts failing the moment they lose
- * access. This endpoint is how the member-removal UI can say "they wrote 4
- * talons — these stop running" *before* the removal instead of after.
+ * The departure preview. Removing a member touches nothing under `sites/{siteId}`, so
+ * their talons survive and keep looking healthy in the list — but any talon with a hoot
+ * output re-resolves its AUTHOR's site access on every run, so it starts failing the
+ * moment they lose access. This lets the member-removal UI say "they wrote 4 talons —
+ * these stop running" *before* the removal instead of after.
  *
- * Names, not just a number: an operator deciding whether to reassign needs to
- * know it's the nightly restart, not a one-off test. Bounded by
- * MAX_TALONS_PER_SITE (20), so the read can never grow expensive; the pure
- * aggregate (`countTalonsAuthoredBy`) backs the surfaces that want only a
- * count.
+ * Names, not just a count: an operator deciding whether to reassign needs to know it's
+ * the nightly restart, not a one-off test. Bounded by MAX_TALONS_PER_SITE (20), so the
+ * read can never grow expensive; `countTalonsAuthoredBy` backs count-only surfaces.
  *
  * Capability: TALON_MANAGE, read-class api-key scope — same as listing talons.
  */

@@ -16,27 +16,19 @@ import type { ScheduleBlock } from '@/lib/owletteConfig'
 import { BLOCK_COLORS, DEFAULT_SCHEDULE } from '@/lib/scheduleDefaults'
 
 /**
- * The schedule editor, ported from `web/components/ScheduleEditor.tsx`.
+ * Ported from `web/components/ScheduleEditor.tsx`. Keep the blocks editor and
+ * time picker identical: both apps write the same `schedules` array into the
+ * same `config.json`, and a second dialect is how they drift.
  *
- * The blocks editor and its time picker are the web's, unchanged — the two apps
- * write the same `schedules` array into the same `config.json`, and a second
- * dialect of the same editor is how the two would drift apart.
- *
- * What is composed *around* the editor is the web's process dialog
- * (`web/app/dashboard/components/ProcessDialog.tsx:223-248`): the week bar over
- * the block list, no preset bar. Presets live in Firestore, which this app
- * never reads.
+ * The surround follows the web's process dialog (ProcessDialog.tsx:223-248):
+ * week bar over the block list, no preset bar — presets live in Firestore,
+ * which this app never reads.
  */
 
-// ─── Time Picker ─────────────────────────────────────────────────────────────
-
 /**
- * The web reads `userPreferences.timeFormat` off the auth context — a
- * per-dashboard-user setting this app cannot inherit, because a machine is
- * paired, not signed in. The right source for a native app is the operator's
- * own Windows regional preference, which the webview reports through Intl:
- * hourCycle h11/h12 means AM/PM, h23/h24 means 24-hour. Evaluated once per
- * launch — the OS setting is not something that changes under a dialog.
+ * The web's `userPreferences.timeFormat` can't be inherited — a machine is
+ * paired, not signed in — so read the operator's Windows regional preference via
+ * Intl hourCycle (h11/h12 = AM/PM, h23/h24 = 24h). Evaluated once per launch.
  */
 const USE_24H = (() => {
   try {
@@ -73,7 +65,7 @@ function formatTimeDisplay(value: string, use24h: boolean): string {
 function parseTimeInput(input: string, use24h: boolean, currentHour24?: number): string | null {
   const s = input.trim().toLowerCase().replace(/\s+/g, ' ')
 
-  // "H:MM" or "HH:MM" with optional am/pm — e.g. "9:30", "17:00", "5:00 pm"
+  // "9:30", "17:00", "5:00 pm"
   const colonMatch = s.match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/)
   if (colonMatch) {
     let h = parseInt(colonMatch[1])
@@ -91,7 +83,7 @@ function parseTimeInput(input: string, use24h: boolean, currentHour24?: number):
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
   }
 
-  // "Ham" / "Hpm" — e.g. "5pm", "9 am"
+  // "5pm", "9 am"
   const shortMatch = s.match(/^(\d{1,2})\s*(am|pm)$/)
   if (shortMatch) {
     let h = parseInt(shortMatch[1])
@@ -102,7 +94,7 @@ function parseTimeInput(input: string, use24h: boolean, currentHour24?: number):
     return `${h.toString().padStart(2, '0')}:00`
   }
 
-  // "HHMM" compact — e.g. "1700", "900"
+  // compact "1700", "900"
   const compactMatch = s.match(/^(\d{3,4})$/)
   if (compactMatch) {
     const n = parseInt(compactMatch[1])
@@ -115,10 +107,7 @@ function parseTimeInput(input: string, use24h: boolean, currentHour24?: number):
   return null
 }
 
-/**
- * Not exported, unlike the web's: its only other consumer there is the
- * dashboard's schedule popover, which has no counterpart in this app.
- */
+/** Not exported (unlike the web's): the dashboard schedule popover has no counterpart here. */
 function TimePicker({ value, onChange, compact }: TimePickerProps) {
   const use24h = USE_24H
   const [draft, setDraft] = useState<string | null>(null)
@@ -204,15 +193,13 @@ function TimePicker({ value, onChange, compact }: TimePickerProps) {
   )
 }
 
-// ─── Reusable Schedule Blocks Editor ────────────────────────────────────────
-
 interface ScheduleBlocksEditorProps {
   blocks: ScheduleBlock[]
   onChange: (blocks: ScheduleBlock[]) => void
   compact?: boolean
 }
 
-/** Get stable color index for a block, using its colorIndex or falling back to position */
+/** colorIndex if set, else position. */
 function getBlockColorIndex(block: ScheduleBlock, position: number): number {
   return block.colorIndex ?? position
 }
@@ -225,10 +212,8 @@ export function ScheduleBlocksEditor({ blocks, onChange, compact }: ScheduleBloc
   }
 
   const addBlock = () => {
-    // The next unused color — counted the way blocks actually RENDER
-    // (colorIndex ?? position), or a block without an explicit colorIndex
-    // holds a color this set would not see, and the new block ends up
-    // wearing the same one (two blue blocks, indistinguishable week bar).
+    // Must count colors the way blocks RENDER (colorIndex ?? position): counting
+    // only explicit colorIndex hands the new block a duplicate color.
     const usedColors = new Set(
       blocks.map((b, i) => getBlockColorIndex(b, i) % BLOCK_COLORS.length),
     )
@@ -407,15 +392,10 @@ export function ScheduleBlocksEditor({ blocks, onChange, compact }: ScheduleBloc
   )
 }
 
-// ─── Dialog Wrapper ─────────────────────────────────────────────────────────
-
 /**
- * The blocks the editor opens with.
- *
- * A block missing either half is unusable — the editor would read `days` and
- * `ranges` off it, and the save filter drops it in any case — so a config
- * mangled by hand is treated as if it held nothing, which is the same fallback
- * the web takes for an entry with no schedules at all.
+ * Blocks the editor opens with. A block missing `days` or `ranges` is unusable
+ * and the save filter drops it anyway, so a hand-mangled config falls back to
+ * the same default the web uses for no schedules at all.
  */
 function seedBlocks(schedules: ScheduleBlock[] | null | undefined): ScheduleBlock[] {
   const usable = (schedules ?? []).filter(
@@ -426,27 +406,23 @@ function seedBlocks(schedules: ScheduleBlock[] | null | undefined): ScheduleBloc
 
 interface ScheduleEditorProps {
   open: boolean
-  /** The windows on disk. Null, absent, or empty seeds the web's default. */
+  /** Null, absent, or empty seeds the web's default. */
   schedules: ScheduleBlock[] | null | undefined
   onClose: () => void
-  /** Called with the blocks to store. Only fires when `save schedule` is used. */
+  /** Only fires on `save schedule`. */
   onSave: (blocks: ScheduleBlock[]) => void
 }
 
 /**
- * Author one process's schedule windows.
- *
- * Mounted only while open, so the draft is seeded fresh every time — the same
- * arrangement (and the same reason) as the web's dialog. Cancelling, pressing
- * escape, or clicking away therefore throws the draft away and leaves
+ * Author one process's schedule windows. Mounted only while open (as in the web's
+ * dialog) so the draft reseeds every time and any dismissal discards it, leaving
  * `config.json` untouched.
  */
 export function ScheduleEditor({ open, schedules, onClose, onSave }: ScheduleEditorProps) {
   const [blocks, setBlocks] = useState<ScheduleBlock[]>(() => seedBlocks(schedules))
 
   const handleSave = () => {
-    // A block with no days, or none left with a time range, can never match —
-    // the web drops those on save rather than storing something inert.
+    // no days or no ranges can never match; the web drops these on save too
     onSave(blocks.filter((block) => block.days.length > 0 && block.ranges.length > 0))
     onClose()
   }
@@ -459,14 +435,10 @@ export function ScheduleEditor({ open, schedules, onClose, onSave }: ScheduleEdi
       }}
     >
       <DialogContent
-        // Two panes under one height cap, bounded below the titlebar. Left:
-        // what a schedule IS — title, rules, the week at a glance. Right: the
-        // work surface — the blocks, scrolling in place, with the actions
-        // pinned beneath them. Splitting the columns is what buys the blocks
-        // their full-height column instead of a squeezed strip.
-        // The title owns the full first row — the columns begin beside the
-        // description, so the block pane never crowds the close button and the
-        // hierarchy reads title → (rules | work surface).
+        // Two panes under one height cap: rules left, the scrolling block list
+        // right with actions pinned beneath. The split gives the blocks a
+        // full-height column. Title owns row 1 so the block pane can't crowd the
+        // close button.
         className="h-[min(34rem,calc(100vh-5.5rem))] grid-cols-[minmax(0,5fr)_minmax(0,6fr)] grid-rows-[auto_minmax(0,1fr)] gap-x-6 gap-y-4 sm:max-w-3xl"
         data-testid="schedule-editor"
       >

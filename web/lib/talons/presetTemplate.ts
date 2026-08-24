@@ -1,21 +1,18 @@
 /**
- * The portable half of a talon — what a reusable template stores, and the two
- * pure helpers the preset surfaces share.
+ * The portable half of a talon: what a reusable template stores, plus the pure
+ * helpers the preset surfaces share.
  *
- * A talon preset doc keeps its own `name` / `description` (the template's
- * identity) separate from the talon it produces, which lives under `template`.
- * Flattening the two would collide the preset's name with the talon's, which is
- * the ambiguity the deployment-template family lives with today.
+ * A preset doc keeps its own `name`/`description` separate from the talon under
+ * `template` — flattening them collides the two names, the ambiguity the
+ * deployment-template family lives with today.
  *
- * `TalonPresetTemplate` and `TalonPresetRequirement` are re-exported from
- * `@/lib/talons/types` rather than redeclared. They were briefly declared twice
- * — structurally identical, which typechecks and then silently drifts the first
- * time one side gains a field. This module exists to keep the preset surfaces
- * free of the built-in *catalog* (`@/lib/talons/templates`, which carries data);
- * the shared *types* have always belonged in `types.ts` with the rest.
+ * `TalonPresetTemplate` / `TalonPresetRequirement` are re-exported from
+ * `@/lib/talons/types`, never redeclared: duplicate structurally-identical
+ * declarations typecheck and then silently drift. This module keeps the preset
+ * surfaces free of the built-in catalog (`@/lib/talons/templates`, data-heavy).
  *
- * Dependency-free past `@/lib/talons/types` and the validator's constants — no
- * React, no Firestore — so a hook, a page, and a dialog can all import it.
+ * Dependency-free past types + validator constants — no React, no Firestore —
+ * so a hook, a page, and a dialog can all import it.
  */
 
 import type {
@@ -40,13 +37,10 @@ export interface TalonPresetSource {
 }
 
 /**
- * Drop the per-machine half of a `command` output.
- *
- * `processId` identifies a process on ONE machine, so carrying it into a
- * template would produce talons that silently target nothing — the validator
- * only length-checks it, it never asks whether the process exists. The name
- * survives, exactly as `DeploymentDialog` stores `close_processes` as exe names
- * rather than process ids, and the editor reopens it on the free-text path.
+ * Drop the per-machine half of a `command` output. `processId` names a process
+ * on ONE machine, so templating it produces talons that silently target nothing
+ * (the validator only length-checks it). The name survives, as
+ * `DeploymentDialog` does for `close_processes`.
  */
 function portableOutput(output: TalonOutput): TalonOutput {
   if (output.type !== 'command') return output;
@@ -58,14 +52,10 @@ function portableOutput(output: TalonOutput): TalonOutput {
 }
 
 /**
- * Project a talon onto the template that reproduces it elsewhere.
- *
- * Two fields are dropped rather than copied:
- *   - `scope` — machine ids belong to one site. The editor seeds every applied
- *     template with "all machines" (`{ machineIds: null }`); an empty array is
- *     invalid, so a stripped scope must not survive as `[]`.
- *   - `enabled` — a template must not decide whether the talon it creates is
- *     armed. Create mode already defaults it to on.
+ * Project a talon onto the template that reproduces it elsewhere. Two fields
+ * are dropped, not copied: `scope` (machine ids belong to one site; the editor
+ * seeds `{ machineIds: null }`, and `[]` is invalid so a stripped scope must
+ * not survive as one), and `enabled` (a template must not arm what it creates).
  */
 export function talonPresetTemplateFrom(source: TalonPresetSource): TalonPresetTemplate {
   const description = source.description?.trim();
@@ -83,13 +73,10 @@ export function talonPresetTemplateFrom(source: TalonPresetSource): TalonPresetT
 }
 
 /**
- * Case-insensitive name lookup across the MERGED preset list, so a collision
- * with a built-in is caught too — replacing one mints the `builtin-*` override
- * the api already knows how to write.
- *
- * Name uniqueness is not enforced server-side in any preset family; this is the
- * same client-side guard `RestartScheduleDialog` uses to keep an operator from
- * quietly accumulating three templates called "overnight".
+ * Case-insensitive lookup across the MERGED preset list so built-in collisions
+ * are caught too (replacing one mints a `builtin-*` override). Name uniqueness
+ * is not enforced server-side in any preset family — this is the same
+ * client-side guard `RestartScheduleDialog` uses.
  */
 export function findTalonPresetByName<T extends { name: string }>(
   presets: readonly T[],

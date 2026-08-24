@@ -1,14 +1,14 @@
 /**
  * Post-sign-in landing resolution (lib/postSignIn).
  *
- * This exists because signing in client-side does not make the user
- * authenticated server-side: AuthContext mints the __session cookie from
- * onAuthStateChanged without awaiting it. Navigating inside that window makes
- * proxy.ts bounce to /login?redirect=<path>, which reads to the user as a
- * sign-in that silently failed — the exact symptom reported against /register.
+ * Client-side sign-in does not make the user authenticated server-side:
+ * AuthContext mints the __session cookie from onAuthStateChanged without
+ * awaiting it, so navigating inside that window has proxy.ts bounce to
+ * /login?redirect=<path> — the "sign-in silently failed" symptom reported
+ * against /register.
  *
- * Every test passes settleMs: 0 so the suite is not paying the real 500ms
- * settle. The retry backoff is left real; the whole loop is under a second.
+ * Tests pass settleMs: 0 to skip the real 500ms settle; the retry backoff is
+ * left real and the loop still runs under a second.
  */
 import { resolvePostSignInPath } from '@/lib/postSignIn';
 
@@ -77,8 +77,8 @@ describe('resolvePostSignInPath', () => {
     await expect(resolvePostSignInPath('/dashboard', 0)).resolves.toBe('/dashboard');
   });
 
-  // Every other case passes settleMs: 0 for suite speed, which would leave the
-  // default — the value /login and /register actually use — unexercised.
+  // Everything else passes settleMs: 0, which would leave the real default —
+  // what /login and /register use — unexercised.
   it('applies the default settle when none is given', async () => {
     mockFetch([{ ok: true, body: { authenticated: true } }]);
 
@@ -87,8 +87,8 @@ describe('resolvePostSignInPath', () => {
     expect(performance.now() - started).toBeGreaterThanOrEqual(400);
   });
 
-  // Failing open is deliberate: proxy.ts is the authoritative gate, so the
-  // worst case is one redirect rather than a user stranded on a spinner.
+  // Failing open is deliberate: proxy.ts is the authoritative gate, so the worst
+  // case is one redirect, not a user stranded on a spinner.
   it('gives up after the retry budget and returns the target anyway', async () => {
     const fetchMock = mockFetch([{ ok: true, body: { authenticated: false } }]);
 

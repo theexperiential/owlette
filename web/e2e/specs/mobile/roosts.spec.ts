@@ -1,18 +1,11 @@
 /**
- * Mobile — /roosts
+ * Mobile /roosts. Viewport / isMobile / hasTouch come from the `mobile-chromium`
+ * project in playwright.config.ts.
  *
- * Viewport / isMobile / hasTouch come from the `mobile-chromium` project in
- * playwright.config.ts, which owns every spec under specs/mobile/**.
- *
- * Below `lg` the roost detail surface is a completely different component
- * tree: `RoostsPageClient` gates on a `matchMedia('(min-width: 1024px)')`
- * flag and renders `RoostMobileSheet` (a portalled right-slide Radix dialog)
- * instead of the inline `<aside>` (RoostsPageClient.tsx:104-106, 669, 729).
- * Every desktop `roosts/*.spec.ts` drives the aside, so the sheet had no
- * coverage at all. This spec owns it: open, read, close, plus the row-level
- * actions menu.
- *
- * Isolation: a dedicated roost + machine, both removed in `afterAll`.
+ * Below `lg` the detail surface is a different component tree entirely:
+ * RoostsPageClient renders the portalled `RoostMobileSheet` instead of the
+ * inline `<aside>` the desktop specs drive, so this spec is the sheet's only
+ * coverage. Uses a dedicated roost + machine, removed in `afterAll`.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -64,21 +57,17 @@ test('tapping a roost row opens the mobile detail sheet and closes again', async
 
   await page.locator(`[data-roost-row="${ROOST_ID}"]`).click();
 
-  // The sheet is portalled to document.body — the panel it wraps carries the
-  // stable id, so anchor there rather than on the sheet's sr-only title.
+  // portalled to body; anchor on the wrapped panel's stable id, not the sr-only title
   const panel = page.locator('#roost-detail-panel');
   await expect(panel).toBeVisible();
   await expect(panel.getByRole('heading', { name: ROOST_NAME })).toBeVisible();
   await expect(panel.getByLabel('current version v2')).toBeVisible();
-  // The head description renders twice inside the panel — once in the
-  // description row, once as the v2 entry in the version history — so take
-  // the first. v1's description only exists in the history, which is what
-  // proves that section mounted inside the sheet too.
+  // The head description renders twice (description row + v2 history entry), hence
+  // .first(). v1's only exists in the history, proving that section mounted.
   await expect(panel.getByText(HEAD_DESCRIPTION).first()).toBeVisible();
   await expect(panel.getByText('initial import')).toBeVisible();
 
-  // Targets section is open by default; the seeded machine is checked, which
-  // is what its "remove … as target" accessible name encodes.
+  // targets open by default; the checked state is encoded in the "remove ... as target" name
   await expect(panel.getByRole('button', { name: 'targets (1)' })).toBeVisible();
   const targetCheckbox = panel.getByRole('checkbox', {
     name: `remove ${MACHINE_ID} as target`,
@@ -87,8 +76,7 @@ test('tapping a roost row opens the mobile detail sheet and closes again', async
 
   await assertNoHorizontalOverflow(page);
 
-  // Collapsing the targets section is the panel's only in-place control that
-  // does not mutate server state.
+  // the only in-place control here that doesn't mutate server state
   await panel.getByRole('button', { name: 'targets (1)' }).click();
   await expect(targetCheckbox).toHaveCount(0);
 
@@ -100,8 +88,7 @@ test('tapping a roost row opens the mobile detail sheet and closes again', async
 test('the row actions menu opens over the list', async ({ page }) => {
   await openRoostsPage(page);
 
-  // Each row has its own ⋮ trigger; scope to this roost's row container so a
-  // co-resident fixture roost cannot satisfy the locator.
+  // scope to this roost's row; a co-resident fixture roost would also match
   const row = page
     .locator(`[data-roost-row="${ROOST_ID}"]`)
     .locator('xpath=parent::div');
@@ -117,7 +104,6 @@ test('the row actions menu opens over the list', async ({ page }) => {
 
   await page.keyboard.press('Escape');
   await expect(menu).toBeHidden();
-  // Opening the menu must not have selected the row (the trigger stops
-  // propagation), so the detail sheet stays closed.
+  // the trigger stops propagation, so opening the menu must not select the row
   await expect(page.locator('#roost-detail-panel')).toHaveCount(0);
 });

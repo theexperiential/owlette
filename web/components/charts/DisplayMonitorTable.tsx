@@ -1,19 +1,11 @@
 'use client';
 
 /**
- * DisplayMonitorTable
- *
- * Compact table view of a machine's monitors. Replaces the per-monitor card
- * stack — denser, easier to scan when comparing values across monitors,
- * better fit for the canvas-on-left / data-on-right 50/50 layout.
- *
- * Columns: # | name | resolution @ refresh | scale (+ rotation) | position | port
- * Selection: row highlight in the active tab's accent color.
- * Drift: amber cell tinting per-field (resolution / scale / position).
- * Edit mode: when an operator opens the editor on the assigned tab, position /
- * orientation / scale / primary become editable as native widgets. Resolution
- * + refresh dropdowns are bound to the per-monitor supported lists from
- * `useDisplayModes` (wave A3.4) and only render when the catalogue has arrived.
+ * Compact table of a machine's monitors: # | name | resolution @ refresh |
+ * scale (+ rotation) | position | port. Amber cell tinting marks per-field
+ * drift. In edit mode position / orientation / scale / primary become native
+ * widgets; the resolution + refresh Selects bind to the per-monitor supported
+ * lists from `useDisplayModes` and only render once the catalogue arrives.
  */
 
 import { memo, useState } from 'react';
@@ -30,14 +22,12 @@ import { cn } from '@/lib/utils';
 type MonitorUpdate = Partial<MonitorInfo>;
 
 /**
- * Unique `(w, h)` pairs across the monitor's supported modes, in descending
- * order. The catalogue arrives already sorted (descending w, then h, then hz)
- * so the first time each `(w, h)` is seen is the order we want to emit.
+ * Unique `(w, h)` pairs across the monitor's supported modes, descending. The
+ * catalogue arrives pre-sorted, so first-seen order is the order to emit.
  *
- * The monitor's current `{width, height}` is always appended if not already
- * present so an off-catalogue value (custom overclock, legacy config) stays
- * selectable — without this the Select would show no selection on entry and
- * look broken. A warning affordance for off-list picks ships in A3.5.
+ * The current `{width, height}` is always appended when absent so an
+ * off-catalogue value (overclock, legacy config) stays selectable — otherwise
+ * the Select shows no selection on entry and looks broken.
  */
 function uniqueResolutionsForMonitor(
   modes: readonly DisplayModeEntry[],
@@ -60,9 +50,8 @@ function uniqueResolutionsForMonitor(
 }
 
 /**
- * Refresh rates valid for a specific `(w, h)` — descending. Mirrors the
- * resolution helper: always include the monitor's current `refreshHz` even
- * if the catalogue doesn't list it, so the Select never shows blank.
+ * Refresh rates valid for a `(w, h)`, descending. Always includes the current
+ * `refreshHz` even if uncatalogued, so the Select never shows blank.
  */
 function refreshesForResolution(
   modes: readonly DisplayModeEntry[],
@@ -89,18 +78,11 @@ interface DisplayMonitorTableProps {
   monitors: MonitorInfo[];
   selectedMonitorId?: string;
   onSelect?: (id: string) => void;
-  /**
-   * Fires when the user double-clicks a row. The panel wires this to the
-   * `DisplayEditorDialog` so double-click opens the full monitor editor.
-   * Only attached to non-editable cells so double-clicks inside editable
-   * Selects (rotation / scale) are absorbed by the widget.
-   */
+  /** Double-click a row → full monitor editor. Attached only to non-editable
+   * cells so double-clicks inside editable Selects are absorbed by the widget. */
   onRowDoubleClick?: (id: string) => void;
-  /**
-   * Id of the monitor currently hovered in either this table or a linked
-   * sibling view (e.g. DisplayCanvas). Drives a shared row highlight so
-   * hovering a rect on the canvas lights up the matching row here.
-   */
+  /** Monitor hovered here or in a linked sibling view (DisplayCanvas), so
+   * hovering a canvas rect lights up the matching row. */
   hoveredMonitorId?: string;
   /** Fires on mouse enter/leave of a row — id is undefined on leave. */
   onHover?: (id: string | undefined) => void;
@@ -109,21 +91,13 @@ interface DisplayMonitorTableProps {
   /** When true, renders editable cells and fires onUpdateMonitor on changes. */
   editable?: boolean;
   onUpdateMonitor?: (id: string, partial: MonitorUpdate) => void;
-  /**
-   * Per-monitor catalogue of supported display modes, keyed by edidHash —
-   * feed from `useDisplayModes(...).catalogue?.byEdidHash`. When present in
-   * edit mode, the resolution + refresh cells become bound Selects. When
-   * absent (catalogue still loading, or monitor not in the catalogue), the
-   * cell falls back to the read-only "WxH @Hz" text.
-   */
+  /** Supported modes keyed by edidHash, from
+   * `useDisplayModes(...).catalogue?.byEdidHash`. Present + edit mode → bound
+   * Selects; absent → read-only "WxH @Hz" text. */
   modesByEdidHash?: Record<string, { modes: DisplayModeEntry[]; dpiScales: number[] }>;
 }
 
-/**
- * Map a rotation in degrees to Windows-style display orientation labels.
- * Matches the verbiage in Windows Settings → Display → Display orientation,
- * lowercased per the project copy convention.
- */
+/** Rotation degrees → the labels Windows Settings → Display uses, lowercased. */
 function orientationLabel(rotation: number): string {
   switch (rotation % 360) {
     case 90:
@@ -144,16 +118,11 @@ const ROTATION_OPTIONS: Array<{ value: number; label: string }> = [
   { value: 270, label: 'portrait (flipped)' },
 ];
 
-// Common Windows DPI scales. Not every monitor supports every value, but
-// Windows is forgiving — applying an unsupported scale clamps to the nearest
-// supported. Full per-monitor filtering is A3.4 (mode catalogue).
+// Common Windows DPI scales. Unsupported values clamp to the nearest supported,
+// so an unfiltered list is safe.
 const SCALE_OPTIONS = [100, 125, 150, 175, 200];
 
-/**
- * Effective panel dimensions on the virtual desktop, accounting for rotation.
- * Portrait orientations (90 / 270) swap the nominal width/height so the
- * displayed resolution matches what Windows treats the panel as.
- */
+/** Panel dimensions on the virtual desktop: 90/270 swap w/h, matching Windows. */
 function effectiveResolution(monitor: MonitorInfo): { w: number; h: number } {
   const rot = monitor.rotation % 360;
   if (rot === 90 || rot === 270) {
@@ -162,26 +131,21 @@ function effectiveResolution(monitor: MonitorInfo): { w: number; h: number } {
   return { w: monitor.resolution.width, h: monitor.resolution.height };
 }
 
-// Shared styles for in-table native inputs. Matches the dark theme and keeps
-// the row compact; native controls get a lot for free (keyboard, a11y) at the
-// cost of some styling ceiling — acceptable for an editor of this density.
+// Native controls on purpose: keyboard + a11y for free, at a styling ceiling
+// that's acceptable at this row density.
 const EDITABLE_CELL_BASE =
   'bg-card border border-border rounded px-1.5 py-0.5 text-xs text-foreground ' +
   'hover:border-accent focus:outline-none focus:ring-1 focus:ring-accent';
 
 /**
- * Controlled numeric input that survives the two classic controlled-number
- * traps: typing a bare "-" to start a negative (Number("-") is NaN) and
- * clearing the field to retype (Number("") is 0 — which gets pushed back
- * as a 0 the user can't backspace over, producing "09" / "080" etc.).
+ * Controlled numeric input surviving the two classic traps: a bare "-"
+ * (Number("-") is NaN) and a cleared field (Number("") is 0, pushed back as a 0
+ * the user can't backspace over → "09" / "080").
  *
- * We keep the raw text in local state and only push to the parent when it
- * parses to a finite number. Empty string and a lone "-" are held locally
- * as in-flight edits, so the caret sees what the user typed instead of
- * React overwriting it. External prop changes (e.g. primary-drag shifting
- * this secondary under the operator) flow into `local` only when the input
- * isn't focused — so typing is never clobbered mid-edit. On blur, an
- * unparseable value reverts to the last committed number.
+ * Raw text lives in local state and only reaches the parent when it parses
+ * finite; "" and "-" are held as in-flight edits. External prop changes sync
+ * into `local` only while unfocused, so typing is never clobbered mid-edit.
+ * Blur reverts an unparseable value to the last committed number.
  */
 interface NumericPositionInputProps {
   value: number;
@@ -198,12 +162,10 @@ function NumericPositionInput({
 }: NumericPositionInputProps) {
   const [local, setLocal] = useState<string>(() => String(value));
   const [focused, setFocused] = useState(false);
-  // Mirror of the last `value` prop we hydrated `local` from. When the prop
-  // changes from outside (primary-drag shifts this secondary, reset-to-
-  // assigned, etc.) we resync during render — skipped while focused so the
-  // operator's in-flight typing survives. "setState during render" is the
-  // canonical React pattern for this kind of prop-driven sync and avoids
-  // the repo's `react-hooks/set-state-in-effect` rule.
+  // Last `value` prop `local` was hydrated from. Outside changes (primary-drag,
+  // reset-to-assigned) resync during render — skipped while focused so
+  // in-flight typing survives. setState-during-render is the canonical React
+  // pattern here and avoids the repo's `react-hooks/set-state-in-effect` rule.
   const [lastSyncedValue, setLastSyncedValue] = useState<number>(value);
   if (value !== lastSyncedValue) {
     setLastSyncedValue(value);
@@ -224,9 +186,8 @@ function NumericPositionInput({
           setLocal(String(value));
           return;
         }
-        // Windows virtual-desktop coordinates are integer pixels. Round on
-        // blur so a user who typed `1.5` or `1e2` lands on a value the
-        // agent can actually apply without producing phantom drift.
+        // Windows virtual-desktop coords are integer px — round on blur so
+        // `1.5`/`1e2` land on something the agent can apply without drift.
         const rounded = Math.round(parsed);
         if (rounded !== value) onCommit(rounded);
         setLocal(String(rounded));
@@ -234,11 +195,8 @@ function NumericPositionInput({
       onChange={(e) => {
         const raw = e.target.value;
         setLocal(raw);
-        // Hold transient states ("", "-") and *any* non-integer mid-typing
-        // string locally without pushing a bogus number upstream. Commit
-        // only fires when the buffer parses cleanly to an integer — so
-        // `1.5` and `1e2` are held in the input, not committed, until the
-        // onBlur path rounds them.
+        // Commit only on a clean integer parse; "", "-", `1.5`, `1e2` are held
+        // locally until onBlur rounds them.
         if (raw === '' || raw === '-') return;
         const parsed = Number(raw);
         if (
@@ -306,12 +264,8 @@ function DisplayMonitorTableImpl({
             const rowDblClick = onRowDoubleClick
               ? () => onRowDoubleClick(monitor.id)
               : undefined;
-            // Keyboard activation for row selection. Guarded by
-            // `e.target === e.currentTarget` so pressing Enter inside a
-            // child input (orientation/scale/position) doesn't re-fire
-            // selection on the row — only keypresses landing on the row
-            // itself activate. Space also activates to match button-row
-            // convention.
+            // `e.target === e.currentTarget` so Enter inside a child input
+            // doesn't re-fire row selection.
             const rowKeyDown = onSelect
               ? (e: React.KeyboardEvent<HTMLTableRowElement>) => {
                   if (e.target !== e.currentTarget) return;
@@ -413,17 +367,14 @@ function DisplayMonitorTableImpl({
                   onDoubleClick={canEdit ? undefined : rowDblClick}
                 >
                   {(() => {
-                    // Per-monitor modes from the catalogue. May be missing when
-                    // the subscription hasn't landed yet, when the catalogue
-                    // hasn't been built for this machine, or when this monitor
-                    // is a mirror target that got deduped out of `byEdidHash`.
+                    // Missing when the subscription hasn't landed, the catalogue
+                    // isn't built, or this is a mirror target deduped out of
+                    // `byEdidHash`.
                     const monitorModes = modesByEdidHash?.[monitor.edidHash]?.modes;
                     const haveModes = !!monitorModes && monitorModes.length > 0;
                     if (!canEdit || !haveModes) {
-                      // Read-only fallback — view mode OR modes catalogue not
-                      // available yet. `effRes` shows the rotated dimensions
-                      // (what the desktop sees); the underlying stored
-                      // resolution is always the native panel orientation.
+                      // Read-only: view mode or no catalogue. `effRes` is the
+                      // rotated (desktop) size; stored resolution is native.
                       return (
                         <>
                           {effRes.w}×{effRes.h}
@@ -444,12 +395,8 @@ function DisplayMonitorTableImpl({
                       currentH,
                       monitor.refreshHz,
                     );
-                    // [A3.5] Off-catalogue detection — signal to the operator
-                    // when the current pick isn't something the driver
-                    // advertises so the apply-at-your-own-risk implication is
-                    // surfaced before they hit restore. Two independent flags
-                    // so a matching resolution + non-matching refresh (valid
-                    // at a different rate) shows only on the refresh widget.
+                    // Off-catalogue detection: warn before apply. Two flags so a
+                    // valid resolution with an invalid rate only warns on refresh.
                     const resolutionOffList = !monitorModes.some(
                       (m) => m.w === currentW && m.h === currentH,
                     );
@@ -467,10 +414,8 @@ function DisplayMonitorTableImpl({
                             const [wRaw, hRaw] = e.target.value.split('x');
                             const w = Number(wRaw);
                             const h = Number(hRaw);
-                            // Snap the refresh rate to the highest that the
-                            // newly-selected resolution supports — dropping
-                            // to 60Hz on a res switch feels worse than
-                            // preserving the operator's intent where valid.
+                            // Snap to the highest rate the new resolution
+                            // supports rather than dropping to 60Hz.
                             const candidateRefreshes = refreshesForResolution(
                               monitorModes,
                               w,
@@ -530,10 +475,8 @@ function DisplayMonitorTableImpl({
                           ))}
                         </select>
                         {refreshOffList && !resolutionOffList && (
-                          // Suppressed when the resolution itself is off-list —
-                          // a single warning at the resolution already
-                          // implicates everything downstream, showing two is
-                          // redundant noise.
+                          // Suppressed when the resolution is off-list too — one
+                          // warning already implicates everything downstream.
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <TriangleAlert

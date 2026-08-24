@@ -1,40 +1,21 @@
 /**
  * POST /api/webhooks/probe?siteId=...
- *   body:
- *     { url: string,
- *       event: RoostWebhookEvent,
- *       payload?: object,           // overrides the canned sample for `event`
- *       signingSecret?: string }    // if omitted, server mints a fresh one
- *   output:
- *     { status: number|null,
- *       durationMs: number,
- *       deliveryId: string,
- *       event: string,
- *       requestBody: string,        // the exact bytes posted to `url`
- *       signature: string,
- *       signingSecret: string,      // echoed (your value if provided) or the
- *                                   // freshly minted one — use it to verify
- *       responseBody?: string }
+ *   body   { url, event, payload?, signingSecret? }
+ *   output { status, durationMs, deliveryId, event, requestBody (the exact
+ *            bytes posted), signature, signingSecret (echoed or minted),
+ *            responseBody? }
  *
- *   - Stateless: NO subscription is created or modified. This endpoint
- *     exists so end-users can test their signature verifier against a
- *     live roost-signed payload before wiring a real webhook.
- *   - URL goes through the full SSRF guard (https, private ips rejected,
- *     dns-resolved addresses re-checked).
- *   - Event name is validated against `ROOST_WEBHOOK_EVENTS`. A small
- *     canned-payload catalog provides sensible defaults when `payload`
- *     is omitted; unknown-event + missing-payload → 400.
+ * Stateless — no subscription is created or touched. It exists so users can
+ * test a signature verifier against a live roost-signed payload before wiring
+ * a real webhook. The url goes through the full SSRF guard; the event is
+ * checked against `ROOST_WEBHOOK_EVENTS`, and an unknown event with no
+ * `payload` is a 400.
  *
- * Signature format: stripe-style `Roost-Signature: t=<unix>,v1=<hex>`,
- * matching the dispatcher in `functions/src/webhookDispatch.ts`. The
- * v1 hash covers `"<t>.<canonicalBody>"`, so the timestamp is part of
- * the signed material and receivers reject anything older than the
- * standard 5-minute tolerance.
+ * Signature: stripe-style `Roost-Signature: t=<unix>,v1=<hex>`, matching
+ * `functions/src/webhookDispatch.ts`. v1 covers `"<t>.<canonicalBody>"`, so
+ * the timestamp is signed and receivers can enforce the 5-minute tolerance.
  *
- * Scope: site:<id>:write (scope tied to siteId so probe firings can be
- * audited).
- *
- * roost public api wave 6.8.
+ * Scope: site:<id>:write, so probe firings are auditable.
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -181,7 +162,6 @@ export async function POST(request: NextRequest) {
     if (!parsed.ok) return parsed.response;
     const body = (parsed.body ?? {}) as ProbeBody;
 
-    // URL.
     const urlValidation = await validateWebhookUrl(body.url);
     if (!urlValidation.ok) {
       if (
@@ -204,7 +184,6 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Event.
     if (typeof body.event !== 'string' || !isValidWebhookEvent(body.event)) {
       return problemValidation(
         'event must be a known roost webhook event name',
@@ -213,7 +192,7 @@ export async function POST(request: NextRequest) {
     }
     const event = body.event;
 
-    // Payload — user-supplied or canned.
+    // User-supplied or canned.
     let payload: Record<string, unknown>;
     if (body.payload !== undefined && body.payload !== null) {
       if (typeof body.payload !== 'object' || Array.isArray(body.payload)) {
@@ -233,7 +212,7 @@ export async function POST(request: NextRequest) {
       payload = canned(site.siteId);
     }
 
-    // Signing secret — user-provided or freshly minted (returned).
+    // User-provided or minted; either way it comes back in the response.
     let signingSecret: string;
     if (body.signingSecret !== undefined && body.signingSecret !== null) {
       if (typeof body.signingSecret !== 'string' || body.signingSecret.length < 32) {
@@ -247,7 +226,6 @@ export async function POST(request: NextRequest) {
       signingSecret = `whsec_${randomBytes(SIGNING_SECRET_BYTES).toString('hex')}`;
     }
 
-    // Build + sign the canonical envelope.
     const occurredAt = new Date().toISOString();
     const envelope = {
       id: `evt_probe_${randomBytes(8).toString('hex')}`,
@@ -268,7 +246,6 @@ export async function POST(request: NextRequest) {
       'User-Agent': 'roost-probe/1.0',
     };
 
-    // Fire.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
     const t0 = Date.now();

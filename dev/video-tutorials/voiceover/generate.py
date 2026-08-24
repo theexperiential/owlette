@@ -28,12 +28,10 @@ Configuration (env or .env in this directory; see .env.example)
 
 Notes
 -----
-* Default model is eleven_multilingual_v2 — confirmed available through the convert
-  endpoint and the docs' pick for stable long-form narration. Switch to eleven_v3 for
-  the more expressive intro episodes (front matter `model: eleven_v3` or --model).
-* ElevenLabs v3 "audio tags" like [warm] / [pause] are passed through ONLY when the
-  model is eleven_v3. For any other model they're stripped before sending, so the same
-  script works on both without v2 reading the word "warm" aloud.
+* eleven_multilingual_v2 is the default (stable long-form); eleven_v3 is more
+  expressive, for intro episodes.
+* v3 "audio tags" ([warm], [pause]) pass through ONLY on eleven_v3 — otherwise
+  they are stripped, so v2 never reads "warm" aloud.
 """
 
 from __future__ import annotations
@@ -46,7 +44,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-# requests is the only hard runtime dep for real generation.
+# Only hard runtime dep, and only for real generation.
 try:
     import requests
 except ImportError:  # pragma: no cover - guidance path
@@ -66,9 +64,6 @@ BEAT_HEADING_RE = re.compile(r"^##\s*\[(b\d+)\]\s*(.*)$", re.MULTILINE)
 AUDIO_TAG_RE = re.compile(r"\[[^\]]{1,40}\]")
 
 
-# --------------------------------------------------------------------------- #
-#  .env loading                                                               #
-# --------------------------------------------------------------------------- #
 def load_env() -> None:
     """Load a .env from this directory into os.environ (without overriding it)."""
     try:
@@ -91,20 +86,16 @@ def load_env() -> None:
         os.environ.setdefault(key, value)
 
 
-# --------------------------------------------------------------------------- #
-#  Parsing                                                                    #
-# --------------------------------------------------------------------------- #
 class Beat:
     def __init__(self, beat_id: str, title: str, raw_text: str) -> None:
         self.id = beat_id
         self.title = title
-        # Cleaned spoken text with audio tags PRESERVED. Whether to strip tags is
-        # decided at render time from the resolved model, so the strip decision and
-        # the synthesis model can never disagree.
+        # Audio tags PRESERVED; stripping is decided at render time from the
+        # resolved model so the two can never disagree.
         self.raw_text = raw_text
 
     def resolved(self, *, strip_tags: bool) -> str:
-        """Spoken text for the chosen model — audio tags stripped for non-v3 models."""
+        """Spoken text; audio tags stripped for non-v3 models."""
         return strip_audio_tags(self.raw_text) if strip_tags else self.raw_text
 
 
@@ -119,7 +110,7 @@ class Episode:
         value = self.meta.get("number")
         if isinstance(value, int):
             return value
-        # Fall back to a leading number in the filename (e.g. "02-install...").
+        # Fall back to a leading number in the filename ("02-install...").
         m = re.match(r"(\d+)", self.path.stem)
         return int(m.group(1)) if m else 0
 
@@ -136,10 +127,10 @@ class Episode:
 
 
 def parse_front_matter(text: str) -> Tuple[Dict[str, object], str]:
-    """Split a leading `--- ... ---` YAML-ish block into a dict + the remaining body.
+    """Split a leading `--- ... ---` block into (meta, body).
 
-    Only scalar `key: value` pairs are supported (all this format needs). `null`
-    becomes None and bare integers become ints; everything else stays a string.
+    Scalar `key: value` only: `null` becomes None, bare ints become ints, the
+    rest stay strings.
     """
     if not text.startswith("---"):
         return {}, text
@@ -165,11 +156,10 @@ def parse_front_matter(text: str) -> Tuple[Dict[str, object], str]:
 
 
 def clean_voiceover(raw: str) -> str:
-    """Drop stray direction lines and collapse whitespace into one spoken paragraph.
+    """Drop direction lines, collapse whitespace into one spoken paragraph.
 
-    Audio tags are KEPT here; whether to strip them is decided at render time from the
-    resolved model (see strip_audio_tags), so the strip decision and the synthesis
-    model can never disagree.
+    Audio tags are KEPT — stripping happens at render time against the resolved
+    model (strip_audio_tags).
     """
     kept_lines = [
         ln for ln in raw.splitlines() if not ln.strip().startswith(DIRECTION_LABELS)
@@ -181,7 +171,7 @@ def strip_audio_tags(text: str) -> str:
     """Remove v3 audio tags like [warm]/[pause] and tidy the resulting spacing."""
     text = AUDIO_TAG_RE.sub("", text)
     text = re.sub(r"\s+", " ", text).strip()
-    # Tidy spaces left in front of punctuation after tag removal.
+    # Tag removal can leave a space before punctuation.
     return re.sub(r"\s+([,.!?;:])", r"\1", text)
 
 
@@ -199,7 +189,7 @@ def parse_episode(path: Path) -> Episode:
 
         marker = block.find(VOICEOVER_LABEL)
         if marker == -1:
-            # A beat with no spoken line (pure b-roll) — keep it visible.
+            # Pure b-roll: no spoken line, but keep the beat visible.
             beats.append(Beat(beat_id, title, ""))
             continue
         spoken_raw = block[marker + len(VOICEOVER_LABEL) :]
@@ -208,9 +198,6 @@ def parse_episode(path: Path) -> Episode:
     return Episode(path, meta, beats)
 
 
-# --------------------------------------------------------------------------- #
-#  ElevenLabs                                                                 #
-# --------------------------------------------------------------------------- #
 def synthesize(
     *,
     text: str,
@@ -254,9 +241,6 @@ def credits_per_char(model_id: str) -> float:
     return 0.5 if "flash" in model_id.lower() else 1.0
 
 
-# --------------------------------------------------------------------------- #
-#  Driver                                                                     #
-# --------------------------------------------------------------------------- #
 def resolve_scripts(args: argparse.Namespace) -> List[Path]:
     if args.scripts:
         return [Path(p).resolve() for p in args.scripts]
@@ -266,9 +250,9 @@ def resolve_scripts(args: argparse.Namespace) -> List[Path]:
 
 
 def resolve_model(meta: Dict[str, object], cli_model: Optional[str]) -> str:
-    """Single model precedence, used for BOTH tag-stripping and synthesis so they can
-    never disagree: CLI --model > script front matter `model:` > env
-    ELEVENLABS_MODEL_ID > default.
+    """CLI --model > front matter `model:` > ELEVENLABS_MODEL_ID > default.
+
+    One resolution for BOTH tag-stripping and synthesis so they can't disagree.
     """
     return str(
         cli_model
@@ -279,9 +263,9 @@ def resolve_model(meta: Dict[str, object], cli_model: Optional[str]) -> str:
 
 
 def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
-    """Print the episode plan and (unless --dry-run) synthesize per-beat MP3s.
+    """Print the plan and, unless --dry-run, synthesize per-beat MP3s.
 
-    Returns (total_chars, estimated_credits) for the grand-total tally.
+    Returns (total_chars, estimated_credits).
     """
     model_id = resolve_model(ep.meta, args.model)
     strip_tags = not model_id.lower().startswith("eleven_v3")
@@ -290,7 +274,6 @@ def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
     out_dir = Path(args.out).resolve() / ep.out_name
     cpc = credits_per_char(model_id)
 
-    # Resolve each beat's spoken text against the chosen model exactly once.
     resolved = {b.id: b.resolved(strip_tags=strip_tags) for b in ep.beats}
     spoken_beats = [b for b in ep.beats if resolved[b.id]]
     total_chars = sum(len(resolved[b.id]) for b in spoken_beats)
@@ -318,8 +301,7 @@ def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
         raise SystemExit("no voice id — set ELEVENLABS_VOICE_ID, front matter `voice:`, or --voice")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Build the FULL manifest every run — every beat gets an entry — so --only-beat
-    # re-renders a single MP3 without dropping the other beats' metadata.
+    # Full manifest every run, so --only-beat can't drop other beats' metadata.
     manifest: List[Dict[str, object]] = []
     for b in ep.beats:
         text = resolved[b.id]
@@ -328,8 +310,7 @@ def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
             continue
         fname = f"ep{ep.number:02d}-{b.id}.mp3"
         if args.only_beat and b.id != args.only_beat:
-            # Not the targeted beat: keep its manifest entry and reference an existing
-            # MP3 from a prior run if present; skip (re)synthesis.
+            # Untargeted beat: reuse a prior run's MP3, skip resynthesis.
             existing = (out_dir / fname).exists()
             manifest.append(
                 {
@@ -390,7 +371,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="parse + estimate cost, make no API calls")
     args = parser.parse_args()
 
-    # Nicer dry-run preview on UTF-8 terminals (em-dashes etc.); harmless elsewhere.
+    # Em-dashes etc. in the dry-run preview; harmless where unsupported.
     try:
         sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
     except Exception:

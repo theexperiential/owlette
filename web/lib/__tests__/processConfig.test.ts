@@ -1,30 +1,14 @@
 /** @jest-environment node */
 
-/**
- * Unit tests for `withProcessLock`, `readProcessList`, and `findProcessIndex`.
- *
- * Covers:
- * - happy path read-modify-write
- * - duplicate-name rejection inside the transaction
- * - lazy backfill of `processId` for legacy rows missing it
- * - concurrent-update isolation (the mutator sees the transaction-fresh view,
- *   not a stale snapshot — verified by simulating a contended retry)
- * - missing-config 404
- * - findProcessIndex semantics
- */
-
-// Mock firebase-admin BEFORE any imports of processConfig.server.
+// Mock firebase-admin BEFORE any import of processConfig.server.
 const mockGet = jest.fn();
 const mockUpdate = jest.fn().mockResolvedValue(undefined);
 
-// runTransaction simulator — tracks the most recent "stored" processes array
-// and re-runs the txn body up to N times if the simulator decides to inject a
-// retry (mirrors Firestore's optimistic-concurrency retry on contention).
-// Backing store: the "stored data" is just an object; storedDoc.data()
-// returns a fresh shallow clone so reads don't share references with writes.
+// runTransaction simulator: mirrors Firestore's optimistic-concurrency retry.
+// data() returns a shallow clone so reads never share refs with writes.
 let storedData: Record<string, unknown> | null = null;
 let storedExists = false;
-let injectedRetries = 0; // how many txn attempts to fail-and-retry before committing
+let injectedRetries = 0; // txn attempts to fail-and-retry before committing
 
 function makeDocSnapshot() {
   return {
@@ -45,15 +29,14 @@ const runTransaction = jest.fn((fn: (txn: unknown) => Promise<unknown>) => {
       const txn = {
         get: jest.fn().mockImplementation(async () => makeDocSnapshot()),
         update: jest.fn((_ref: unknown, patch: Record<string, unknown>) => {
-          // Defer the write until the txn body completes — this matches
-          // Firestore's commit semantics and lets us inject a "lost commit".
+          // Deferred to match commit semantics, and to allow a "lost commit".
           pendingPatch = patch;
         }),
       };
       const result = await fn(txn);
       if (injectedRetries > 0 && attempts < 5) {
         injectedRetries--;
-        // Pretend the commit was lost; loop and retry without applying patch.
+        // Commit "lost": retry without applying the patch.
         continue;
       }
       if (pendingPatch && Array.isArray((pendingPatch as { processes?: unknown }).processes)) {
@@ -63,8 +46,7 @@ const runTransaction = jest.fn((fn: (txn: unknown) => Promise<unknown>) => {
       return result;
     }
   });
-  // Re-arm the queue without propagating rejections (so a failed txn doesn't
-  // poison subsequent ones).
+  // Re-arm without propagating rejections so one failed txn can't poison the rest.
   txnQueue = next.catch(() => undefined);
   return next;
 });
@@ -167,16 +149,42 @@ describe('withProcessLock', () => {
     ).rejects.toMatchObject({ status: 409, code: 'duplicate_process_name' });
   });
 
-  it('rejects duplicate name even if both rows are pre-existing (race-safe)', async () => {
+  it('tolerates pre-existing duplicates a mutation does not touch', async () => {
+    // Agent-synced configs can arrive with duplicates already in them; a save
+    // that leaves the collision exactly as it found it must not 409, or every
+    // edit on that machine is bricked — including the cleanup rename.
     setStored({
       processes: [
         makeProc({ processId: 'a', name: 'Dup' }),
         makeProc({ processId: 'b', name: 'Dup' }),
+        makeProc({ processId: 'c', name: 'Other' }),
+      ],
+    });
+
+    const result = await withProcessLock<string>('s1', 'm1', (procs) => {
+      const next = procs.map((p) => (p.processId === 'c' ? { ...p, name: 'Renamed' } : p));
+      return { processes: next, result: 'saved' };
+    });
+
+    expect(result).toBe('saved');
+  });
+
+  it('still rejects joining a pre-existing collision (race-safe)', async () => {
+    // The check runs on the txn-fresh read, so a rename that lands on a name
+    // another writer just created is caught even though the caller never saw it.
+    setStored({
+      processes: [
+        makeProc({ processId: 'a', name: 'Dup' }),
+        makeProc({ processId: 'b', name: 'Dup' }),
+        makeProc({ processId: 'c', name: 'Other' }),
       ],
     });
 
     await expect(
-      withProcessLock('s1', 'm1', (procs) => ({ processes: procs, result: undefined }))
+      withProcessLock('s1', 'm1', (procs) => {
+        const next = procs.map((p) => (p.processId === 'c' ? { ...p, name: 'Dup' } : p));
+        return { processes: next, result: undefined };
+      })
     ).rejects.toMatchObject({ status: 409, code: 'duplicate_process_name' });
   });
 
@@ -213,7 +221,6 @@ describe('withProcessLock', () => {
   it('survives an injected retry without losing data (concurrent-update isolation)', async () => {
     setStored({ processes: [makeProc({ processId: 'a', name: 'A' })] });
 
-    // First commit will be retried; the second should see the (re-read) state.
     injectedRetries = 1;
 
     let attemptCount = 0;
@@ -223,7 +230,7 @@ describe('withProcessLock', () => {
       return { processes: next, result: undefined };
     });
 
-    // Mutator re-runs on retry; final state has exactly 2 rows (no double-append).
+    // Re-run must not double-append.
     expect(attemptCount).toBeGreaterThan(1);
     expect(getFinalProcesses()).toHaveLength(2);
   });
@@ -231,9 +238,8 @@ describe('withProcessLock', () => {
   it('serializes truly concurrent calls (each sees the prior write)', async () => {
     setStored({ processes: [] as PublicProcessConfig[] });
 
-    // Fire two concurrent appends. Even though we await sequentially in the
-    // test, the runTransaction mock is itself a single-flight FIFO, so each
-    // call sees the data committed by the prior one.
+    // The runTransaction mock is a single-flight FIFO, so the second append
+    // sees the first one's commit.
     const p1 = withProcessLock('s1', 'm1', (procs) => ({
       processes: [...procs, makeProc({ processId: 'one', name: 'One' })],
       result: 'one',

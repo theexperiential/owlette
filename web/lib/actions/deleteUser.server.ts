@@ -1,24 +1,18 @@
 /**
- * deleteUser action core (security-boundary-migration wave 3.9).
+ * deleteUser action core — thin wrapper around `performUserDeleteCascade`
+ * (`web/lib/userDeleteCascade.server.ts`: orphan-sites guard, successor
+ * validation, ownership transfer, api-key revocation, command sweep,
+ * `users/{uid}.deletedAt`), exposed through the shared action-core shape so the
+ * route shim, hoot tools and jobs share one entry point.
  *
- * Thin wrapper around `performUserDeleteCascade` — the cascade lives in
- * `web/lib/userDeleteCascade.server.ts` (orphan-sites guard, successor
- * validation, site ownership transfer, api-key revocation, command sweep,
- * `users/{uid}.deletedAt` write). This action core re-exports the cascade
- * via the shared action-core call shape so callers (the route shim, future
- * hoot tools, scheduled jobs) all use the same entry point.
+ * Capability USER_DELETE (superadmin), wrapper-enforced. Idempotent: an
+ * already-deleted user returns `already_deleted` with the original `deletedAt`.
  *
- * Capability: `USER_DELETE` — wrapper-enforced (superadmin only).
- *
- * Idempotency: re-issuing on an already-deleted user returns `already_deleted`
- * with the original `deletedAt`; no further side-effects.
- *
- * Authored talons: the cascade refuses to orphan the SITES a user owns, but
- * says nothing about the automations they wrote — and a talon with a hoot
- * output resolves its author's site access on every run, so soft-deleting the
- * author stops it dead. Every successful delete now reports
+ * The cascade refuses to orphan owned SITES but says nothing about authored
+ * talons — a talon with a hoot output resolves its author's site access on every
+ * run, so soft-deleting the author stops it dead. Every delete reports
  * `authoredTalonCount`, and `reassignTalons: true` hands them to the successor
- * already being named for site ownership rather than asking twice.
+ * already being named for site ownership.
  */
 
 import {
@@ -42,11 +36,9 @@ export interface DeleteUserInput {
   /** Required when the user owns sites; rejected otherwise. */
   successorUid?: string | null;
   /**
-   * Hand the talons this user authored to `successorUid` as part of the
-   * delete. Opt-in, and never implied by `successorUid` alone: an api client
-   * that has always passed a successor for site ownership must not discover
-   * that it now rewrites authorship too. The dashboard sets it only after the
-   * operator has been shown the count.
+   * Hand this user's authored talons to `successorUid`. Opt-in, never implied by
+   * `successorUid` alone: a client that has always passed a successor for site
+   * ownership must not silently start rewriting authorship too.
    */
   reassignTalons?: boolean;
   /** Inject a Firestore instance — tests pass a mock; production omits. */
@@ -78,13 +70,10 @@ export type DeleteUserResult =
     });
 
 /**
- * Move the deleted user's talons to the successor, one site at a time.
- *
- * Per-site because eligibility is per-site: an admin successor may be a member
- * of one of the departing user's sites and not another, and the store is right
- * to refuse the second. A refusal is recorded and the sweep continues — the
- * account is already deleted at this point, so aborting would only mean fewer
- * talons rescued and no way to report which.
+ * Move the deleted user's talons to the successor, one site at a time —
+ * eligibility is per-site, and the store is right to refuse a site the successor
+ * isn't a member of. A refusal is recorded and the sweep continues: the account
+ * is already deleted, so aborting would only rescue fewer talons.
  */
 async function reassignAuthoredTalons(
   db: Firestore,
@@ -147,9 +136,8 @@ export async function deleteUser(
   if (result.kind !== 'deleted') return result;
 
   // After the cascade, not before: the refusal paths (`orphan_sites`,
-  // `successor_invalid`, `already_deleted`) must not pay for a query whose
-  // answer they'd discard, and soft-deleting the author doesn't touch
-  // `createdBy`, so the answer is the same either side of it.
+  // `successor_invalid`, `already_deleted`) shouldn't pay for a query they'd
+  // discard, and the soft delete doesn't touch `createdBy`.
   const db = input.db ?? getAdminDb();
   const authored = await listTalonsAuthoredByAcrossSites(db, input.uid);
 

@@ -1,12 +1,8 @@
 /**
- * Unit tests for lib/fanoutLogic.ts (roost wave 2b.3).
- *
- * Uses Node's built-in test runner (node:test) — no new dev deps.
- * Invoke via `npm test` in functions/ after `npm run build`.
- *
- * Scope: pure decision logic. The firestore-backed handlers in
- * distributionFanout.ts are not tested here; that belongs with the
- * emulator setup promised by wave 1.6.
+ * Unit tests for lib/fanoutLogic.ts — pure decision logic only; the
+ * firestore-backed handlers in distributionFanout.ts need the emulator.
+ * Node's built-in runner (node:test): `npm test` in functions/ after
+ * `npm run build`.
  */
 
 import { describe, it } from 'node:test';
@@ -22,10 +18,6 @@ import {
   selectCanary,
   type TargetState,
 } from '../src/lib/fanoutLogic';
-
-/* --------------------------------------------------------------------- */
-/*  canarySizeFor                                                        */
-/* --------------------------------------------------------------------- */
 
 describe('canarySizeFor', () => {
   it('returns 0 for an empty fleet', () => {
@@ -61,10 +53,6 @@ describe('canarySizeFor', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  selectCanary                                                         */
-/* --------------------------------------------------------------------- */
-
 describe('selectCanary', () => {
   it('returns empty cohorts for an empty fleet', () => {
     const r = selectCanary([], 'version-a');
@@ -92,8 +80,7 @@ describe('selectCanary', () => {
   });
 
   it('produces different cohorts for different versions', () => {
-    // with 100 machines (canary size 10) the odds of two different
-    // hashes producing the exact same 10-machine cohort are negligible.
+    // 100 machines / canary 10: two hashes colliding on the same cohort is negligible.
     const ids = Array.from({ length: 100 }, (_, i) => `m${i}`);
     const a = selectCanary(ids, 'version-a').canary;
     const b = selectCanary(ids, 'version-b').canary;
@@ -101,9 +88,8 @@ describe('selectCanary', () => {
   });
 
   it('is stable to input-order shuffling', () => {
-    // the canary SET should be independent of which order the caller
-    // handed us the machine ids. output order follows input order
-    // (for UI predictability), but membership is hash-stable.
+    // Membership is hash-stable regardless of input order; output order follows
+    // input order for UI predictability.
     const forward = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'];
     const reversed = [...forward].reverse();
     const a = new Set(selectCanary(forward, 'm').canary);
@@ -120,10 +106,6 @@ describe('selectCanary', () => {
     assert.equal(all.size, ids.length);
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  evaluateWave                                                         */
-/* --------------------------------------------------------------------- */
 
 function wave(template: Record<string, number>): TargetState[] {
   // `{ succeeded: 3, failed: 1, pending: 2 }` → 6 target states
@@ -159,18 +141,15 @@ describe('evaluateWave', () => {
   });
 
   it('does not count in_progress as pending-without-report', () => {
-    // in_progress is still pending from the rollout state-machine's
-    // perspective; it hasn't settled into a terminal yet.
+    // in_progress is still pending — not a terminal state.
     const e = evaluateWave(wave({ in_progress: 2, succeeded: 1 } as any));
     assert.equal(e.pending, 2);
     assert.equal(e.settled, false);
   });
 
   it('empty wave settles vacuously (nothing left in flight), failureRate=0', () => {
-    // regression (spike 2026-08-13): this used to report settled=false,
-    // which parked every 1-machine rollout at stage "fleet" forever —
-    // the lone target is the canary, so the fleet wave is empty and an
-    // "unsettled" empty wave could never reach `complete`.
+    // Regression (spike 2026-08-13): settled=false parked every 1-machine
+    // rollout at stage "fleet" — its fleet wave is empty and never completed.
     const e = evaluateWave([]);
     assert.equal(e.total, 0);
     assert.equal(e.pending, 0);
@@ -178,10 +157,6 @@ describe('evaluateWave', () => {
     assert.equal(e.failureRate, 0);
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  abort / promote gates                                                */
-/* --------------------------------------------------------------------- */
 
 describe('canaryShouldAbort', () => {
   it('does not abort when failure rate is within threshold', () => {
@@ -197,8 +172,7 @@ describe('canaryShouldAbort', () => {
   });
 
   it('does NOT require settlement — aborts mid-wave', () => {
-    // regression: early abort is the whole point — don't wait for
-    // the rest of the canary to fail before giving up.
+    // Regression: abort early, don't wait for the rest of the canary to fail.
     const e = evaluateWave(wave({ failed: 4, pending: 6 }));
     assert.equal(e.settled, false);
     assert.equal(canaryShouldAbort(e), true);
@@ -244,10 +218,6 @@ describe('canaryShouldPromote', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  nextStage                                                            */
-/* --------------------------------------------------------------------- */
-
 describe('nextStage', () => {
   it('canary in flight → null (no transition yet)', () => {
     const e = evaluateWave(wave({ succeeded: 5, pending: 5 }));
@@ -270,9 +240,8 @@ describe('nextStage', () => {
   });
 
   it('abort takes precedence over promote', () => {
-    // contrived: impossibly high failure AND promotable success rate
-    // can't coexist in real data, but the priority ordering still
-    // matters for other edge cases (e.g. fleet wave aborting).
+    // Contrived (can't coexist in real data), but the priority ordering matters
+    // for other edge cases such as a fleet wave aborting.
     const e = evaluateWave(wave({ succeeded: 10, failed: 4 }));
     const t = nextStage('canary', e);
     assert.ok(t);
@@ -311,15 +280,10 @@ describe('nextStage', () => {
   });
 
   it('empty canary wave → no transition (never promotes on nothing)', () => {
-    // `settled` alone must not move the machine: an empty canary means
-    // selectCanary had no machines to work with, not a passing wave.
+    // An empty canary means selectCanary had no machines, not a passing wave.
     assert.equal(nextStage('canary', evaluateWave([])), null);
   });
 });
-
-/* --------------------------------------------------------------------- */
-/*  Single-machine rollouts (canary === the whole fleet)                 */
-/* --------------------------------------------------------------------- */
 
 describe('single-machine rollout', () => {
   const VERSION = 'vrs_single_machine';
@@ -342,10 +306,9 @@ describe('single-machine rollout', () => {
     assert.ok(promote);
     assert.equal(promote!.stage, 'fleet');
 
-    // 2. the fleet wave is empty, so it settles immediately — this is the
-    // transition distributionFanout.ts cascades to in the same
-    // transaction. Before the fix it returned null and the rollout was
-    // stuck at stage "fleet" with nothing left to trigger it.
+    // 2. the empty fleet wave settles immediately — the transition
+    // distributionFanout.ts cascades to in the same transaction. It used to
+    // return null, stranding the rollout at stage "fleet".
     const fleetEval = evaluateWave(
       fleet.map((machineId) => ({ machineId, status: 'pending' as const })),
     );

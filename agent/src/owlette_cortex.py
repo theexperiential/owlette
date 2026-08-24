@@ -23,7 +23,6 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Ensure agent/src is on the path (same pattern as other agent scripts)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import shared_utils
@@ -102,7 +101,6 @@ def check_singleton() -> bool:
         try:
             proc = psutil.Process(old_pid)
             if proc.is_running() and proc.status() != 'zombie':
-                # Check if it's actually a Cortex process
                 cmdline = ' '.join(proc.cmdline()).lower()
                 if 'owlette_cortex' in cmdline:
                     logger.warning(f"Another Cortex instance is running (PID {old_pid})")
@@ -160,23 +158,21 @@ class AutoGuardrails:
         """
         now = time.time()
 
-        # Concurrency cap
         if self._active_count >= MAX_CONCURRENT_INVESTIGATIONS:
             logger.info("Guardrail: max concurrent investigations reached")
             return False
 
-        # Rate limit (events per hour)
         self._hourly_events = [t for t in self._hourly_events if now - t < 3600]
         if len(self._hourly_events) >= MAX_EVENTS_PER_HOUR:
             logger.info("Guardrail: hourly event rate limit reached")
             return False
 
-        # Prune stale dedup entries to prevent unbounded growth
+        # Prune stale dedup entries — the map is otherwise unbounded.
         stale_keys = [k for k, t in self._recent_events.items() if now - t > DEDUP_COOLDOWN_SECONDS]
         for k in stale_keys:
             del self._recent_events[k]
 
-        # Dedup (same machine + process within cooldown)
+        # Dedup: same machine + process within the cooldown.
         dedup_key = f"{event.get('machineId', '')}:{event.get('processName', '')}"
         last_time = self._recent_events.get(dedup_key, 0)
         if now - last_time < DEDUP_COOLDOWN_SECONDS:
@@ -223,9 +219,8 @@ async def handle_chat_message(
 
     logger.info(f"Processing chat message: chatId={chat_id}, len={len(user_content)}, images={len(images)}")
 
-    # Build multimodal content if images are present
-    # The Agent SDK's query() accepts str for text, but for multimodal we need
-    # to send structured content blocks via the streaming message format
+    # query() takes a str for text, but multimodal needs structured content
+    # blocks sent through the streaming message format.
     if images:
         content_blocks = []
         if user_content:
@@ -249,7 +244,6 @@ async def handle_chat_message(
     try:
         async with ClaudeSDKClient(options=options) as client:
             if multimodal_content is not None:
-                # Send as structured message for multimodal (images + text)
                 async def _image_message():
                     yield {
                         "type": "user",
@@ -270,7 +264,6 @@ async def handle_chat_message(
                             firestore.write_response_chunk(full_response, parts)
                             firestore.write_cortex_status('thinking')
                         else:
-                            # Tool call or other block type
                             block_dict = block.__dict__ if hasattr(block, '__dict__') else {'type': 'unknown'}
                             parts.append(block_dict)
                             firestore.write_cortex_status('tool_call')
@@ -352,7 +345,6 @@ async def handle_autonomous_event(
     guardrails.begin(event)
     firestore.write_cortex_status('thinking')
 
-    # Write initial event to Firestore
     firestore.write_autonomous_event(event_id, {
         'machineName': event.get('machineName', socket.gethostname()),
         'processName': process_name,
@@ -378,7 +370,7 @@ async def handle_autonomous_event(
                         if isinstance(block, TextBlock):
                             full_response += block.text
                         else:
-                            # Track tool calls for the event audit trail
+                            # Audit trail for the event.
                             block_dict = block.__dict__ if hasattr(block, '__dict__') else {}
                             if hasattr(block, 'name'):
                                 actions.append({
@@ -390,7 +382,6 @@ async def handle_autonomous_event(
         needs_escalation = 'ESCALATION NEEDED' in full_response.upper()
         status = 'escalated' if needs_escalation else 'resolved'
 
-        # Update event in Firestore
         firestore.write_autonomous_event(event_id, {
             'machineName': event.get('machineName', socket.gethostname()),
             'processName': process_name,
@@ -445,12 +436,11 @@ def check_ipc_events() -> Optional[Dict[str, Any]]:
         try:
             with open(event_path, 'r', encoding='utf-8') as f:
                 event = json.load(f)
-            # Remove the file after reading
             os.remove(event_path)
             return event
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Failed to read IPC event {files[0]}: {e}")
-            # Remove corrupt file to prevent infinite retry
+            # Delete corrupt files — otherwise they are retried forever.
             try:
                 os.remove(event_path)
             except OSError:
@@ -482,32 +472,26 @@ async def main():
     logger.info(f"PID: {os.getpid()}")
     logger.info("=" * 60)
 
-    # Singleton check
     if not check_singleton():
         logger.error("Another Cortex instance is running — exiting")
         return
 
-    # Write PID file
     write_pid_file()
 
-    # Register signal handlers
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
 
-    # Read config
     config = shared_utils.read_config()
     if not config:
         logger.error("Failed to read agent config — exiting")
         remove_pid_file()
         return
 
-    # Check if Cortex is enabled
     if not config.get('cortex', {}).get('enabled', False):
         logger.info("Cortex is disabled in config — exiting")
         remove_pid_file()
         return
 
-    # Get API key
     api_key = get_cortex_api_key(config)
     if not api_key:
         logger.error("No Cortex API key provisioned — exiting")
@@ -517,9 +501,8 @@ async def main():
 
     os.environ['ANTHROPIC_API_KEY'] = api_key
 
-    # Initialize Firestore bridge
     site_id = config.get('firebase', {}).get('site_id', '')
-    project_id = config.get('firebase', {}).get('project_id', 'owlette-dev-3838a')
+    project_id = config.get('firebase', {}).get('project_id') or shared_utils.get_project_id()
     machine_id = socket.gethostname()
 
     if not site_id:
@@ -527,7 +510,7 @@ async def main():
         remove_pid_file()
         return
 
-    # Create auth manager and Firestore client (same pattern as firebase_client.py)
+    # Auth manager + Firestore client, as in firebase_client.py.
     from auth_manager import AuthManager
     api_base = config.get('firebase', {}).get('api_base') or shared_utils.get_api_base_url()
     auth_manager = AuthManager(api_base=api_base)
@@ -543,10 +526,9 @@ async def main():
     from cortex_firestore import CortexFirestore
     firestore = CortexFirestore(db=db, site_id=site_id, machine_id=machine_id)
 
-    # Resolve the Claude Code CLI. The installer ships the Agent SDK without
-    # its 241.5 MB bundled binary, so this downloads (and sha256-verifies) one
-    # on first enable. Returns None only when there is no usable CLI at all —
-    # exit cleanly rather than crash-looping under the service's relaunch.
+    # The installer ships the Agent SDK without its 241.5 MB bundled binary, so
+    # the CLI is downloaded and sha256-verified on first enable. None means no
+    # usable CLI — exit cleanly rather than crash-loop under the service.
     import cortex_cli_fetch
     cli_path = cortex_cli_fetch.ensure_cli(db)
     if not cli_path:
@@ -557,14 +539,12 @@ async def main():
         remove_pid_file()
         return
 
-    # Create MCP server with tools
     import cortex_tools
     max_tier = config.get('cortex', {}).get('maxTier', 2)
     owlette_server = cortex_tools.create_owlette_mcp_server(config, max_tier=max_tier)
 
-    # Configure Agent SDK
     from claude_agent_sdk import ClaudeAgentOptions
-    # CWD = agent root (parent of src/) — where CLAUDE.md lives
+    # agent root (parent of src/) — where CLAUDE.md lives
     agent_cwd = str(Path(__file__).parent.parent)
 
     options = ClaudeAgentOptions(
@@ -572,19 +552,16 @@ async def main():
         allowed_tools=["mcp__owlette__*"],
         setting_sources=["project"],
         cwd=agent_cwd,
-        # Explicit path short-circuits the SDK's bundled/PATH discovery entirely
-        # (subprocess_cli.py: _find_cli is only called when cli_path is None).
+        # Set explicitly: subprocess_cli.py only calls _find_cli when it is None.
         cli_path=cli_path,
         permission_mode="acceptEdits",
         max_turns=MAX_TURNS,
         max_budget_usd=MAX_BUDGET_USD,
     )
 
-    # Guardrails for autonomous mode
     guardrails = AutoGuardrails()
     autonomous_enabled = config.get('cortex', {}).get('autonomousEnabled', False)
 
-    # Mark online
     firestore.write_cortex_heartbeat()
     firestore.write_cortex_status('idle')
     logger.info("Cortex online and ready")
@@ -596,16 +573,14 @@ async def main():
         while not shutdown_requested:
             now = time.time()
 
-            # Heartbeat
             if now - last_heartbeat >= HEARTBEAT_INTERVAL:
                 firestore.write_cortex_heartbeat()
                 last_heartbeat = now
 
-            # Re-read config for hot-reload of cortex settings
+            # Hot-reload of cortex settings.
             config = shared_utils.read_config() or config
             autonomous_enabled = config.get('cortex', {}).get('autonomousEnabled', False)
 
-            # User chat
             try:
                 message = firestore.poll_for_messages()
                 if message:
@@ -613,7 +588,6 @@ async def main():
             except Exception as e:
                 logger.error(f"Chat polling error: {e}")
 
-            # Autonomous events
             if autonomous_enabled:
                 try:
                     event = check_ipc_events()
@@ -629,7 +603,6 @@ async def main():
     except Exception as e:
         logger.error(f"Main loop error: {e}")
     finally:
-        # Graceful shutdown
         logger.info("Cortex shutting down...")
         firestore.write_cortex_offline()
         remove_pid_file()

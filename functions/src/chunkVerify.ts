@@ -1,29 +1,21 @@
 /**
  * Chunk hash verification cloud function (roost wave 2b.2).
  *
- * Defense-in-depth for the CAS invariant: the filename of a chunk is
- * its sha-256. If the bytes hash to something else, the object is
- * corrupted or adversarially planted; delete it immediately and alert.
+ * Defense-in-depth for the CAS invariant: a chunk's filename IS its sha-256. If the bytes
+ * hash to anything else the object is corrupt or adversarially planted — delete and alert.
  *
- * **Trigger**: HTTPS callable. The roost plan mandates Cloudflare R2 as
- * the storage backend, which does not emit Firebase `onObjectFinalized`
- * events directly. Two wiring options for production:
+ * HTTPS callable rather than `onObjectFinalized`, because the storage backend is
+ * Cloudflare R2, which emits no Firebase storage events. Production wiring is a
+ * Cloudflare Worker webhook per successful R2 PUT (preferred), with a scheduled sweep as
+ * backstop. Callers authenticate with a firebase-admin service token so the endpoint
+ * isn't reachable from the public internet.
  *
- *   1. Cloudflare Worker fires a webhook → POST this endpoint (preferred
- *      — fires on every successful R2 PUT).
- *   2. Scheduled sweep over recently-uploaded chunks (backstop; only
- *      needed if the worker path fails).
- *
- * Callers authenticate with a firebase-admin-generated service token so
- * this endpoint can't be called from the public internet. The function
- * streams the object from R2, computes sha-256, and acts on the verdict.
- *
- * The pure decision logic (path parsing + verdict + alert payload) lives
- * in lib/chunkVerifyLogic.ts.
+ * Pure decision logic (path parsing, verdict, alert payload) lives in lib/chunkVerifyLogic.ts.
  */
 
+import { getFirestore } from 'firebase-admin/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
-import * as admin from 'firebase-admin';
+import { getAuth } from 'firebase-admin/auth';
 import { createHash } from 'crypto';
 import {
   buildAlert,
@@ -32,8 +24,7 @@ import {
   type Verdict,
 } from './lib/chunkVerifyLogic';
 
-/** Minimum surface an R2/S3-compatible client needs. Kept narrow so the
- *  handler can be tested by injecting a mock store in the future. */
+/** Minimum surface an R2/S3-compatible client needs; narrow so a mock can be injected. */
 export interface ObjectStore {
   /** Stream the object's bytes. Throws if not found. */
   getStream(objectPath: string): Promise<AsyncIterable<Uint8Array>>;
@@ -44,10 +35,6 @@ export interface ObjectStore {
 /** Signal an alert. In prod, wire this to Sentry + a Firestore audit doc. */
 type Alerter = (payload: ReturnType<typeof buildAlert>) => Promise<void>;
 
-/* --------------------------------------------------------------------- */
-/*  Pure orchestrator (testable)                                         */
-/* --------------------------------------------------------------------- */
-
 export interface VerifyResult {
   verdict: Verdict;
   deleted: boolean;
@@ -55,9 +42,8 @@ export interface VerifyResult {
 }
 
 /**
- * Orchestrate the verify-and-maybe-delete flow without any
- * firebase-specific or network-specific bindings. Callers inject the
- * store + alerter; returns what happened.
+ * Verify-and-maybe-delete with no firebase/network bindings: callers inject the store +
+ * alerter. Returns what happened.
  */
 export async function verifyAndDelete(
   objectPath: string,
@@ -65,8 +51,7 @@ export async function verifyAndDelete(
   alerter: Alerter,
   now: Date = new Date(),
 ): Promise<VerifyResult> {
-  // fast-path: if the path is malformed, no need to stream the bytes —
-  // we're deleting either way.
+  // fast-path: a malformed path is deleted either way, so don't stream the bytes.
   if (!parseChunkPath(objectPath)) {
     const v: Verdict = { ok: false, reason: 'malformed_path', parsed: null };
     const alert = buildAlert(objectPath, v, now);
@@ -78,8 +63,7 @@ export async function verifyAndDelete(
   try {
     stream = await store.getStream(objectPath);
   } catch (err) {
-    // object might already have been deleted (late-fire trigger). treat
-    // as "nothing to do" — don't alert on absence.
+    // Already deleted (late-fire trigger) — nothing to do; don't alert on absence.
     console.warn(
       `[chunkVerify] cannot read object ${objectPath}: ${(err as Error).message}`,
     );
@@ -106,20 +90,12 @@ export async function verifyAndDelete(
   return { verdict: v, deleted: true, alerted: true };
 }
 
-/* --------------------------------------------------------------------- */
-/*  HTTPS entrypoint                                                     */
-/* --------------------------------------------------------------------- */
-
 /**
- * POST /verifyChunk
+ * POST /verifyChunk — body `{ objectPath: string }`.
  *
- * Body: `{ objectPath: string }`
- *
- * Authentication: caller must present a firebase ID token via
- * `Authorization: Bearer <id-token>` whose UID is listed in the
- * service-account allowlist (env `CHUNK_VERIFY_CALLER_UIDS`, comma-
- * separated). First call with an unrecognised caller returns 401 so
- * accidentally-public endpoints fail closed.
+ * Auth: `Authorization: Bearer <firebase-id-token>` whose UID is in the allowlist env
+ * `CHUNK_VERIFY_CALLER_UIDS` (comma-separated). Unrecognised callers get 401, so an
+ * accidentally-public endpoint fails closed.
  */
 export const verifyChunk = onRequest(
   { timeoutSeconds: 120, memory: '512MiB' },
@@ -161,18 +137,10 @@ export const verifyChunk = onRequest(
   },
 );
 
-/* --------------------------------------------------------------------- */
-/*  Production wiring (R2 client injected at deploy-time)                */
-/* --------------------------------------------------------------------- */
-
 /**
- * Lazily resolve the R2 object store. Kept as a function (not a module
- * constant) so tests that import this module don't hit R2 credential
- * validation on load.
- *
- * Production deployment will wire this to an R2 S3-compatible client
- * (e.g. `@aws-sdk/client-s3` pointed at the R2 endpoint). Left as a
- * throwing stub here — wave 0.5 provisions R2 and wires this.
+ * Lazily resolve the R2 object store — a function, not a module constant, so importing
+ * this module in tests doesn't trigger R2 credential validation. Throwing stub until
+ * wave 0.5 provisions R2 and wires an S3-compatible client at the R2 endpoint.
  */
 function getDefaultStore(): ObjectStore {
   return {
@@ -192,20 +160,17 @@ function getDefaultStore(): ObjectStore {
 async function alertViaLogAndFirestore(
   payload: ReturnType<typeof buildAlert>,
 ): Promise<void> {
-  // structured stderr for monitoring/alert rules
   console.error(JSON.stringify({ severity: 'ERROR', ...payload }));
-  // append to a per-site audit collection for dashboard surfacing
+  // per-site audit collection, for dashboard surfacing
   try {
     const siteId = payload.siteId ?? '__unknown__';
-    await admin
-      .firestore()
+    await getFirestore()
       .collection('sites')
       .doc(siteId)
       .collection('chunk_verify_alerts')
       .add(payload);
   } catch (err) {
-    // logging-write failures must never break the delete path; console
-    // + structured severity is the backup channel.
+    // A logging-write failure must never break the delete path; stderr is the backup channel.
     console.error(
       `[chunkVerify] failed to persist alert: ${(err as Error).message}`,
     );
@@ -227,7 +192,7 @@ async function isAuthorizedCaller(
     return false;
   }
   try {
-    const decoded = await admin.auth().verifyIdToken(token);
+    const decoded = await getAuth().verifyIdToken(token);
     return allowlist.includes(decoded.uid);
   } catch {
     return false;

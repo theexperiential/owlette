@@ -1,21 +1,15 @@
 /**
- * hoot streaming dispatcher (api-sprint wave 3 — track 3A).
+ * hoot streaming dispatcher, shared by `/api/hoot` and
+ * `/api/hoot/conversations/{conversationId}`.
  *
- * Extracted from `/api/hoot/route.ts` so both the legacy direct-stream
- * endpoint and `/api/hoot/conversations/{conversationId}` can drive the
- * same dual-path streaming flow without duplication.
+ * Three mutually exclusive paths:
+ *   - site mode (`SITE_TARGET_ID`): server-side llm + fan-out tools
+ *   - single machine, local hoot + site-admin caller: the agent runs the llm and
+ *     streams via firestore onSnapshot
+ *   - single machine, fallback: server-side llm + tool relay
  *
- * Three paths, mutually exclusive:
- *   - site mode (`SITE_TARGET_ID` machine): server-side llm + fan-out tools
- *   - single-machine, local hoot available + caller is site-admin:
- *       agent runs the llm locally and streams via firestore onSnapshot
- *   - single-machine, fallback: server-side llm + tool-relay
- *
- * The legacy hoot route remains a thin wrapper around `runHootStream`
- * — its observable behavior (response shape, headers, error semantics) is
- * unchanged. The chat-noun route adds an `onAssistantText` tap that lets
- * us persist the final assistant message back into the conversation as
- * the stream completes.
+ * The legacy route is a thin wrapper with unchanged observable behavior; the
+ * chat-noun route adds the `onAssistantText` tap to persist the final message.
  */
 
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
@@ -47,18 +41,11 @@ export interface HootStreamRequest {
   machineName: string;
   messages: ModelMessage[];
   chatId: string;
-  /**
-   * Optional public-API cap. API-key callers are currently capped to tier 1
-   * so a chat-scoped key cannot inherit the owner's admin role and dispatch
-   * destructive machine/process/deploy tools.
-   */
+  /** Public-API cap: api-key callers are held at tier 1 so a chat-scoped key
+   *  can't inherit the owner's admin role and run destructive tools. */
   maxToolTier?: ToolTier;
-  /**
-   * Optional tap fired with the final accumulated assistant text once the
-   * stream completes. Used by the chat-noun route to append the assistant
-   * message back into the conversation. Errors thrown by the tap are caught
-   * and logged — they never break the stream contract for the client.
-   */
+  /** Fired with the accumulated assistant text at stream end. Throwing is safe:
+   *  errors are logged, never surfaced to the client. */
   onAssistantText?: (text: string) => Promise<void> | void;
 }
 
@@ -67,10 +54,8 @@ export type HootStreamResult =
   | { ok: false; status: number; error: string };
 
 /**
- * Run the hoot stream pipeline. Returns either a streaming `Response` ready
- * to be returned from the route, or a structured error payload the route can
- * shape into its preferred error envelope (problem+json for chat noun, plain
- * `{error}` for the legacy hoot endpoint).
+ * Returns either a streaming `Response` for the route to return, or a structured
+ * error the route shapes into its own envelope (problem+json vs plain `{error}`).
  */
 export async function runHootStream(
   req: HootStreamRequest,
@@ -128,14 +113,9 @@ export async function runHootStream(
     };
   }
 
-  // Non-admins are forced through the server-side LLM path so the tier cap
-  // (tier 1, read-only) is actually enforced. The local Hoot path runs
-  // tools inside the agent and does not yet honor a per-user tier cap.
-  //
-  // Additionally, when tier-3 approval is required for the site (the default),
-  // admins are kept on the server-side path so the AI SDK `needsApproval` gate
-  // can pause privileged tool calls — the local path runs tools inside the
-  // agent where the web server can't gate them. See the §6 decision in the PR.
+  // Both conditions force the server-side path, because the local path runs tools
+  // inside the agent where the web server can gate nothing: non-admins would
+  // escape the tier-1 cap, and tier-3 approval would escape `needsApproval`.
   const localPathAllowed =
     access.isSiteAdmin &&
     maxToolTier >= 3 &&
@@ -168,10 +148,6 @@ export async function runHootStream(
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Internal helpers (lifted verbatim from hoot/route.ts where possible)    */
-/* -------------------------------------------------------------------------- */
-
 async function isHootLocal(
   db: FirebaseFirestore.Firestore,
   siteId: string,
@@ -188,8 +164,7 @@ async function isHootLocal(
     if (!machineDoc.exists) return false;
 
     const data = machineDoc.data();
-    // Wire field: machines/{id}.cortexStatus.{online,lastHeartbeat} — written by
-    // the agent, so the stored name keeps its legacy spelling.
+    // Wire field keeps the legacy `cortex` spelling — the agent writes it.
     const hootStatus = data?.cortexStatus;
     if (!hootStatus?.online) return false;
 
@@ -284,9 +259,8 @@ function handleLocalHoot(
     return { role: m.role, content: '' };
   });
 
-  // Fire-and-forget the pending-message write. We don't await so the stream
-  // can begin enqueuing immediately; if this fails, the agent simply never
-  // picks up the message and we'll surface the timeout error.
+  // Unawaited so the stream can start enqueuing; a failure just means the agent
+  // never picks the message up and the timeout error surfaces.
   activeChatRef
     .set(
       {
@@ -496,15 +470,10 @@ async function runSiteWideMode(
   return result.toUIMessageStreamResponse();
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Stream tee helpers                                                        */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Tee a streaming Response so we can both forward bytes to the client and
- * accumulate assistant text for an `onAssistantText` tap. When the upstream
- * is itself a Promise (server-side LLM path) we resolve it lazily inside the
- * teed stream so the caller still receives a synchronous Response.
+ * Tee a streaming Response: forward bytes to the client while accumulating text
+ * for `onAssistantText`. A Promise upstream (server-side LLM) resolves lazily
+ * inside the teed stream so the caller still gets a synchronous Response.
  */
 function wrapWithAssistantTap(
   upstreamPromise: Response | Promise<Response>,
@@ -558,9 +527,8 @@ function wrapWithAssistantTap(
 }
 
 /**
- * Pull text content out of AI-SDK protocol frames. We only inspect `0:"..."`
- * frames (text deltas) — tool-call / finish frames are passed through to the
- * client unchanged but skipped for accumulation.
+ * Text out of AI-SDK protocol frames. Only `0:"..."` (text delta) frames count;
+ * tool-call/finish frames pass through to the client but are not accumulated.
  */
 function extractTextDeltas(chunk: string): string {
   let out = '';

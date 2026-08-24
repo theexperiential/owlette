@@ -4,19 +4,19 @@ Covers the three agent-side halves of the 2026-08-13 14:17 incident:
 
 * the desktop app was a child of the service, so NSSM's process-tree kill took
   the operator's UI down with the service (`build_detached_launch_command`);
-* NSSM's console Control-C never arrived, so nothing flushed `online: false`
-  and nothing was logged (`graceful_shutdown` + the SCM stop watcher);
+* NSSM's console Control-C never arrived, so nothing flushed `online: false` and
+  nothing was logged (`graceful_shutdown` + the SCM stop watcher);
+* the tray's connection badge lagged the real connection by ~25s because only
+  the main loop rewrote the status file (`_wire_connection_status_listener`).
 
-Both NSSM behaviours are gone in 3.0.0 — owlette-host terminates only the
-process it launched, and signals a stop by reporting STOP_PENDING, which is
-exactly what the watcher polls for. These assertions still hold the agent side
-of the contract: they are what stops a future change from going back to relying
-on a signal that may never arrive.
-* the tray's connection badge lagged the real connection by ~25s because the
-  status file was only rewritten by the main loop
-  (`_wire_connection_status_listener`).
+Both NSSM behaviours are gone in 3.0.0 — owlette-host terminates only the process
+it launched and signals a stop by reporting STOP_PENDING, exactly what the watcher
+polls for. These assertions still hold the agent side of that contract: they stop
+a future change from going back to relying on a signal that may never arrive.
 """
 
+import json
+import os
 import threading
 import time
 
@@ -26,16 +26,29 @@ import owlette_service
 import shared_utils
 
 
-# ─── the desktop app must not be in the service's process tree ──────────────
+@pytest.fixture(autouse=True)
+def shutdown_intents(monkeypatch):
+    """Capture graceful_shutdown's durable intent write instead of performing it.
+
+    session_state writes to %PROGRAMDATA%\\Owlette\\tmp\\session_state.json — a
+    test run must not stamp a shutdown intent onto the machine it runs on, where
+    the startup classifier would later read it as a real clean stop.
+    """
+    intents = []
+    monkeypatch.setattr(
+        owlette_service.session_state, 'set_intent_if_none', intents.append)
+    return intents
+
+
+# the desktop app must not be in the service's process tree
 
 class TestDetachedLaunchCommand:
     def test_hands_off_through_cmd_so_the_parent_link_dies(self):
         command = shared_utils.build_detached_launch_command(
             r'C:\ProgramData\Owlette\app\owlette-desktop.exe', ('--tray',))
 
-        # `cmd /c start` is the whole point: cmd exits immediately, so by the
-        # time anything walks the tree the app has no live parent to be found
-        # from.
+        # `cmd /c start` is the whole point: cmd exits immediately, so by the time
+        # anything walks the tree the app has no live parent to be found from.
         assert command.startswith('cmd.exe /c start ""')
         assert r'"C:\ProgramData\Owlette\app\owlette-desktop.exe"' in command
         assert command.endswith('"--tray"')
@@ -67,7 +80,7 @@ def test_the_service_no_longer_kills_the_desktop_app():
     assert not hasattr(owlette_service.OwletteService, 'terminate_tray_icon')
 
 
-# ─── graceful shutdown ──────────────────────────────────────────────────────
+# graceful shutdown
 
 class FakeFirebaseClient:
     """Records what a shutdown asked of the cloud client."""
@@ -75,11 +88,18 @@ class FakeFirebaseClient:
     def __init__(self, fail_log=False, fail_stop=False):
         self.events = []
         self.stop_calls = []
+        self.calls = []  # ordered method names — the shutdown sequence matters
+        self.shutdown_timeouts = []
         self.connected = True
         self._fail_log = fail_log
         self._fail_stop = fail_stop
 
+    def enter_shutdown_mode(self, timeout_seconds=3.0):
+        self.calls.append('enter_shutdown_mode')
+        self.shutdown_timeouts.append(timeout_seconds)
+
     def log_event(self, action, level, details=None):
+        self.calls.append('log_event')
         if self._fail_log:
             raise RuntimeError('firestore unreachable')
         self.events.append(action)
@@ -88,18 +108,36 @@ class FakeFirebaseClient:
         return self.connected
 
     def stop(self, intentional=False):
+        self.calls.append('stop')
         if self._fail_stop:
             raise RuntimeError('teardown blew up')
         self.stop_calls.append(intentional)
 
 
+def _write_sentinel(path, age_seconds=0, control='stop'):
+    """Write a stop sentinel, offsetting its mtime by `age_seconds`.
+
+    Positive ages back-date it (a survivor of the previous session); negative
+    ages post-date it (written after this process started). Explicit stamping
+    rather than sleeping: the freshness comparison is against a time.time()
+    reference whose granularity on Windows (~15.6ms) is too coarse to separate
+    two real writes reliably, which makes an unstamped "now" ambiguous.
+    """
+    stamp = time.time() - age_seconds
+    with open(path, 'w') as f:
+        json.dump({'control': control, 'written_at_ms': int(stamp * 1000)}, f)
+    os.utime(path, (stamp, stamp))
+
+
 def make_service(firebase_client=None):
     """An OwletteService with only the shutdown state __init__ would set."""
     service = object.__new__(owlette_service.OwletteService)
+    service._service_start_time = time.time()
     service.is_alive = True
     service.firebase_client = firebase_client
     service._shutdown_lock = threading.Lock()
     service._shutdown_trigger = None
+    service._scm_query_failure_logged = False
     service._connection_status_manager = None
     service._last_status_signature = None
     service._last_status_write_time = 0.0
@@ -185,10 +223,45 @@ class TestGracefulShutdown:
         assert service.is_alive is False
         assert service._status_writes == [False]
 
+    def test_records_the_clean_stop_even_when_every_cloud_call_fails(self, shutdown_intents):
+        # The intent write is what stops the next boot reporting an
+        # unexpected_reboot. It used to sit behind a Firestore log_event whose
+        # REST calls could outlast the ~5s Windows allows at OS shutdown.
+        client = FakeFirebaseClient(fail_log=True, fail_stop=True)
+        service = make_service(client)
 
-# ─── the SCM stop watcher ───────────────────────────────────────────────────
+        assert service.graceful_shutdown('scm_stop') is True
+        assert shutdown_intents == ['external_clean']
+
+    def test_records_the_clean_stop_without_a_cloud_client(self, shutdown_intents):
+        # A disconnected agent stopped cleanly is still a clean stop; the write
+        # used to be gated on having a Firebase client at all.
+        service = make_service(None)
+
+        assert service.graceful_shutdown('scm_stop') is True
+        assert shutdown_intents == ['external_clean']
+
+    def test_caps_the_firestore_timeout_before_talking_to_the_cloud(self):
+        # 30s per request outlives the shutdown window; whatever is attempted
+        # after this point has to fit inside it.
+        client = FakeFirebaseClient()
+        service = make_service(client)
+
+        service.graceful_shutdown('scm_stop')
+
+        assert client.calls[:2] == ['enter_shutdown_mode', 'log_event']
+
+
+# the SCM stop watcher
 
 class TestScmStopWatcher:
+    @pytest.fixture(autouse=True)
+    def sentinel_path(self, tmp_path, monkeypatch):
+        """Point the stop sentinel at a temp file, never the live install."""
+        path = str(tmp_path / 'stop_signal.json')
+        monkeypatch.setattr(owlette_service, 'STOP_SENTINEL_PATH', path)
+        return path
+
     def test_reads_the_live_service_without_elevation(self):
         # The watcher runs as LocalSystem in production, but SERVICE_QUERY_STATUS
         # is readable unelevated — if this ever needs rights the agent does not
@@ -245,7 +318,132 @@ class TestScmStopWatcher:
 
         assert not thread.is_alive()
         assert len(attempts) == 10
+        # Giving up is not the same as deciding the service is stopping.
         assert service._shutdown_trigger is None
+
+    def test_the_host_sentinel_fires_a_shutdown_when_the_scm_is_unreadable(
+            self, sentinel_path, monkeypatch):
+        # The whole point of the sentinel: owlette-host saw the control even
+        # though the SCM query is answering "not stopping".
+        client = FakeFirebaseClient()
+        service = make_service(client)
+        monkeypatch.setattr(owlette_service, 'SCM_STOP_POLL_INTERVAL', 0.01)
+        service._query_scm_stop_requested = lambda: False
+
+        thread = service.start_scm_stop_watcher()
+        # After the watcher starts: starting it clears a stale sentinel first.
+        _write_sentinel(sentinel_path, age_seconds=-1, control='preshutdown')
+        thread.join(timeout=5)
+
+        assert not thread.is_alive()
+        assert service._shutdown_trigger == 'scm_stop'
+        assert client.stop_calls == [False]
+
+    def test_an_unreadable_sentinel_still_counts_as_a_stop(self, sentinel_path):
+        # Existence is the signal — a half-written body must not lose the stop.
+        service = make_service(FakeFirebaseClient())
+        with open(sentinel_path, 'w') as f:
+            f.write('{"control": "sto')
+
+        assert service._read_stop_sentinel(time.time() - 60) == 'unknown'
+
+    def test_a_sentinel_older_than_this_process_is_not_a_stop(self, sentinel_path):
+        # Freshness, not existence alone: a survivor belongs to the run that
+        # wrote it.
+        service = make_service(FakeFirebaseClient())
+        _write_sentinel(sentinel_path, age_seconds=60)
+
+        assert service._read_stop_sentinel(service._service_start_time) is None
+
+    def test_a_stale_sentinel_is_cleared_before_the_watcher_starts(self, sentinel_path):
+        # A survivor from the previous stop would shut this run down immediately.
+        service = make_service(FakeFirebaseClient())
+        service.is_alive = False  # let the watcher thread exit on its first check
+        _write_sentinel(sentinel_path, age_seconds=60)
+
+        thread = service.start_scm_stop_watcher()
+        thread.join(timeout=5)
+
+        assert not os.path.exists(sentinel_path)
+        assert service._shutdown_trigger is None
+
+    def test_an_undeletable_stale_sentinel_does_not_stop_the_service(
+            self, sentinel_path, monkeypatch):
+        # An AV lock or a bad ACL used to mean the watcher obeyed a survivor
+        # 250ms after every start — the host relaunches, and that is a restart
+        # storm. Ignoring it as stale is what makes the delete best-effort.
+        client = FakeFirebaseClient()
+        service = make_service(client)
+        monkeypatch.setattr(owlette_service, 'SCM_STOP_POLL_INTERVAL', 0.01)
+        service._query_scm_stop_requested = lambda: False
+        _write_sentinel(sentinel_path, age_seconds=60)
+
+        def refuse(_path):
+            raise OSError('locked by another process')
+
+        monkeypatch.setattr(owlette_service.os, 'remove', refuse)
+
+        thread = service.start_scm_stop_watcher()
+        time.sleep(0.1)
+        service.is_alive = False
+        thread.join(timeout=5)
+
+        assert os.path.exists(sentinel_path)  # still there — the delete failed
+        assert service._shutdown_trigger is None
+        assert client.stop_calls == []
+
+    def test_a_sentinel_written_during_startup_survives_the_stale_clear(
+            self, sentinel_path, monkeypatch):
+        # The host can accept a stop while python is still starting; that
+        # sentinel is real and must not be swept away by the stale-clear.
+        client = FakeFirebaseClient()
+        service = make_service(client)
+        monkeypatch.setattr(owlette_service, 'SCM_STOP_POLL_INTERVAL', 0.01)
+        service._query_scm_stop_requested = lambda: False
+        # Written after _service_start_time, i.e. during startup.
+        _write_sentinel(sentinel_path, age_seconds=-1)
+
+        thread = service.start_scm_stop_watcher()
+        thread.join(timeout=5)
+
+        assert os.path.exists(sentinel_path)
+        assert service._shutdown_trigger == 'scm_stop'
+        assert client.stop_calls == [False]
+
+    def test_the_corroboration_window_is_anchored_on_the_last_heartbeat(self, monkeypatch):
+        # The other half of a missed stop: when the agent captured no signal,
+        # the Windows event log is asked whether the shutdown was orderly. The
+        # search window must hug the last heartbeat — anchoring its far edge on
+        # boot time would let an unrelated clean reboot hours later vouch for a
+        # crash and hide the outage in between.
+        service = object.__new__(owlette_service.OwletteService)
+        last_alive = 1_700_000_000
+        boot = last_alive + 7200  # the machine came back two hours later
+
+        monkeypatch.setattr(owlette_service.session_state, 'read_state', lambda: {
+            'schema': owlette_service.session_state.SCHEMA_VERSION,
+            'boot_time': last_alive - 3600,
+            'last_alive': last_alive,
+            'version': shared_utils.APP_VERSION,
+            'shutdown_intent': None,
+        })
+        monkeypatch.setattr(
+            owlette_service.session_state, 'init_session', lambda **_kw: True)
+        monkeypatch.setattr(owlette_service.psutil, 'boot_time', lambda: boot)
+
+        captured = {}
+
+        def fake_query(start, end):
+            captured['start'], captured['end'] = start, end
+            return False
+
+        service._clean_shutdown_in_event_log = fake_query
+        service._classify_startup_session()
+
+        assert captured['start'] == last_alive - owlette_service.SHUTDOWN_EVIDENCE_LEAD_SECONDS
+        assert captured['end'] == last_alive + owlette_service.SHUTDOWN_EVIDENCE_TRAIL_SECONDS
+        assert captured['end'] < boot
+        assert service._pending_anomaly_event[0] == 'unexpected_reboot'
 
     def test_the_poll_interval_fits_inside_the_hosts_kill_budget(self):
         # owlette-host terminates the agent CHILD_STOP_GRACE (20s) after the
@@ -255,7 +453,7 @@ class TestScmStopWatcher:
         assert owlette_service.SCM_STOP_POLL_INTERVAL <= 0.5
 
 
-# ─── the tray's connection badge ────────────────────────────────────────────
+# the tray's connection badge
 
 class FakeConnectionManager:
     def __init__(self):

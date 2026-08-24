@@ -1,21 +1,13 @@
 /**
- * SSRF-safe URL validator for user-supplied webhook endpoints.
+ * SSRF-safe URL validator for user-supplied webhook endpoints. Requires
+ * `https:` (only `http:` when ALLOW_INSECURE_WEBHOOK_URLS=1 for local smoke
+ * tests), rejects private/loopback/link-local/reserved IP literals (v4 + v6),
+ * requires DNS to resolve to public addresses only, and restricts the port to
+ * unset or standard http(s).
  *
- * Rules:
- *   - scheme MUST be `https:` (production) — `http:` allowed only when
- *     `ALLOW_INSECURE_WEBHOOK_URLS=1` to support local-dev smoke tests.
- *   - hostname MUST NOT be an IP literal in private / loopback / link-local
- *     / reserved ranges (v4 or v6).
- *   - hostname MUST resolve via DNS to at least one public address; if ANY
- *     resolved address is private, reject.
- *   - port MUST be either unset or one of the standard http(s) ports —
- *     no telnet/ssh/mail/metadata-endpoint ports.
- *
- * This is defense in depth. A malicious user who controls a public DNS
- * record pointing at an internal IP can still bypass the literal-IP check,
- * so we also resolve and re-check every A / AAAA record at create time.
- * TOCTOU remains possible between validation and dispatch — the dispatcher
- * MUST re-validate at send time (wave 6.9).
+ * DNS is re-checked because a public record can point at an internal IP and
+ * bypass the literal check. TOCTOU remains — THE DISPATCHER MUST RE-VALIDATE
+ * AT SEND TIME.
  */
 
 import { promises as dns } from 'node:dns';
@@ -80,7 +72,7 @@ export async function validateWebhookUrl(raw: unknown): Promise<WebhookUrlValida
     return { ok: false, reason: 'invalid_url', detail: 'hostname is empty' };
   }
 
-  // Reject literal IPs in private / loopback ranges before DNS.
+  // Literal IPs first — no point paying for DNS.
   const ipFamily = net.isIP(hostname);
   if (ipFamily === 4 && isPrivateIpv4(hostname)) {
     return { ok: false, reason: 'private_ip', detail: `hostname ${hostname} is a private ipv4` };
@@ -89,7 +81,6 @@ export async function validateWebhookUrl(raw: unknown): Promise<WebhookUrlValida
     return { ok: false, reason: 'private_ip', detail: `hostname ${hostname} is a private ipv6` };
   }
 
-  // Resolve and re-check.
   if (ipFamily === 0) {
     let resolved: Array<{ address: string; family: number }>;
     try {

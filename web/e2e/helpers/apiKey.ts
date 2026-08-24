@@ -1,23 +1,14 @@
 /**
- * API key minting helper for e2e specs against the public scoped API.
+ * API key minting for e2e specs that hit the public scoped API through
+ * `APIRequestContext` rather than a browser.
  *
- * The public API supports two auth modes per `web/lib/apiAuth.server.ts`:
+ * Writes `users/{uid}/api_keys/{keyId}` + the `api_keys/{keyHash}` lookup
+ * directly via the Admin SDK — the same shape `POST /api/keys` produces —
+ * bypassing that endpoint's session-cookie requirement.
  *
- *   1. Session / Firebase id-token (used by the dashboard)
- *   2. `Authorization: Bearer owk_<env>_<random>` API keys (used by SDKs / CLI)
- *
- * Most api-sprint route handlers funnel through one of the `requireXxxAuthAndScope`
- * helpers in `web/app/api/_shared.ts`. For e2e specs that hit those routes via
- * `request: APIRequestContext` (rather than driving a browser) the cleanest path
- * is to mint an api key. We do this by writing the `users/{uid}/api_keys/{keyId}`
- * record + the `api_keys/{keyHash}` lookup directly via the Admin SDK — exactly
- * the same shape `POST /api/keys` would have produced — bypassing the session
- * cookie requirement of that endpoint.
- *
- * The owner uid defaults to the canonical `superadmin` test user (`super-uid`)
- * because the `installer` and `user` resources require superadmin to mint
- * (per `SUPERADMIN_ONLY_RESOURCES` in `web/lib/apiKeyTypes.ts`); for non-platform
- * resources, callers can pass `admin-uid` instead.
+ * Owner uid defaults to `super-uid`: the `installer` and `user` resources are
+ * superadmin-only to mint (`SUPERADMIN_ONLY_RESOURCES`). Other resources can
+ * pass `admin-uid`.
  */
 import crypto from 'crypto';
 import type { APIRequestContext } from '@playwright/test';
@@ -47,11 +38,8 @@ export interface MintedApiKey {
   expiresAt: number;
 }
 
-/**
- * Mint a scoped api key directly into the emulator's Firestore. Returns the
- * raw `owk_*` key string the caller embeds in `Authorization: Bearer ...`,
- * plus the keyId for cleanup.
- */
+/** Mint a scoped api key into the emulator. Returns the raw `owk_*` string for
+ * `Authorization: Bearer ...` plus the keyId for cleanup. */
 export async function mintApiKey(opts: MintApiKeyOptions): Promise<MintedApiKey> {
   const ownerUid = opts.ownerUid ?? 'super-uid';
   const environment = opts.environment ?? 'test';
@@ -101,10 +89,7 @@ export async function mintApiKey(opts: MintApiKeyOptions): Promise<MintedApiKey>
   return { rawKey, keyId, keyHash, ownerUid, scopes: opts.scopes, expiresAt };
 }
 
-/**
- * Delete an api key from both Firestore docs. Safe to call multiple times —
- * delete() on a missing doc is a no-op.
- */
+/** Delete both docs. Idempotent — delete() on a missing doc is a no-op. */
 export async function revokeApiKey(key: MintedApiKey): Promise<void> {
   const db = getAdminDb();
   await Promise.all([
@@ -118,11 +103,8 @@ export async function revokeApiKey(key: MintedApiKey): Promise<void> {
   ]);
 }
 
-/**
- * Convenience: build an `Authorization: Bearer <rawKey>` header set with a
- * fresh `Idempotency-Key`. Pass `idempotencyKey: false` to suppress the
- * idempotency header (e.g. for GETs).
- */
+/** Bearer header + a fresh `Idempotency-Key`. `idempotencyKey: false` drops the
+ * latter (e.g. for GETs). */
 export function authHeaders(
   key: MintedApiKey,
   idempotencyKey: string | false = crypto.randomUUID(),
@@ -135,31 +117,23 @@ export function authHeaders(
   return headers;
 }
 
-/**
- * Convenience: same as authHeaders() but always emits a fresh uuid Idempotency-Key.
- * Useful when the caller wants a fresh replay-safe key per request without
- * wiring uuid generation each time.
- */
+/** authHeaders() with an always-fresh uuid Idempotency-Key. */
 export function freshHeaders(key: MintedApiKey): Record<string, string> {
   return authHeaders(key, crypto.randomUUID());
 }
 
 /**
- * Tiny helper for the few specs that want to thread the api-key through
- * Playwright's APIRequestContext without re-creating headers each call.
- * Returns a wrapper that auto-attaches the auth header on every request.
- *
- * NB: each call still spawns a fresh `Idempotency-Key` — replay tests need to
- * pass an explicit header instead.
+ * Threads the api-key through APIRequestContext without re-creating headers.
+ * Each call spawns a fresh `Idempotency-Key`, so replay tests must pass their
+ * own header instead.
  */
 export function bindRequest(
   request: APIRequestContext,
   key: MintedApiKey,
 ): APIRequestContext {
-  // We don't actually wrap — Playwright's APIRequestContext is final. Specs
-  // pass `headers: authHeaders(key)` per call. This signature exists so a
-  // future refactor (e.g. context-level extraHTTPHeaders) has a single edit
-  // point.
+  // No real wrapping: APIRequestContext is final, so specs pass
+  // `headers: authHeaders(key)` per call. This signature is the single edit
+  // point for a future context-level `extraHTTPHeaders` refactor.
   void key;
   return request;
 }

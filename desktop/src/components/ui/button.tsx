@@ -9,21 +9,17 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // No `hover:bg-*` on these variants: the .btn-sweep scrim (globals.css)
-        // supplies the hover feedback as an L→R sweep over the resting fill. A
-        // hover:bg here would cross-fade the base colour underneath the sweep
-        // and muddy it. Text/border hover states stay as ordinary utilities and
-        // transition alongside.
+        // No `hover:bg-*` here: the .btn-sweep scrim (globals.css) is the hover
+        // feedback, and a hover:bg would cross-fade the base colour underneath
+        // it and muddy the sweep. Text/border hover states stay as utilities.
         default: "bg-primary text-primary-foreground",
         destructive:
           "bg-destructive text-white focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
-        // Dark outline previously used `dark:border-input` (--input, L≈0.25)
-        // against a --card surface (L≈0.23) — a 0.02 delta, i.e. no visible
-        // edge — over a 30%-opacity fill. The result read as a stray
-        // background rather than a control. It now takes the real --border
-        // (L≈0.35, inherited from the base `* { border-border }` by simply not
-        // overriding it) and a full-strength --input fill, so the edge is what
-        // identifies it as a button.
+        // Dark outline must inherit the real --border (L≈0.35) from the base
+        // `* { border-border }` — i.e. not override it — plus a full-strength
+        // --input fill. `dark:border-input` (L≈0.25) against --card (L≈0.23)
+        // is a 0.02 delta: no visible edge, and the control reads as a stray
+        // background.
         outline:
           "border bg-background shadow-xs hover:text-secondary-foreground dark:bg-input dark:hover:text-secondary-foreground",
         secondary: "bg-secondary text-secondary-foreground",

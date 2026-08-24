@@ -18,6 +18,7 @@ import {
   setSchedules,
   setVisibility,
   uniqueCopyName,
+  uniqueDefaultName,
   updateProcess,
   visibilityOf,
   type OwletteConfig,
@@ -267,6 +268,22 @@ describe('list operations', () => {
     expect(uniqueCopyName(['td'], 'td')).toBe('td (copy)')
     expect(uniqueCopyName(['td', 'td (copy)'], 'td')).toBe('td (copy 2)')
     expect(uniqueCopyName(['td', 'td (copy)', 'td (copy 2)'], 'td')).toBe('td (copy 3)')
+  })
+
+  it('names a fresh entry something nothing else is called', () => {
+    const entries = (...names: string[]) =>
+      names.map((name, index) => createProcessEntry(`id-${index}`, name))
+
+    expect(uniqueDefaultName([])).toBe('untitled process')
+    expect(uniqueDefaultName(entries('td'))).toBe('untitled process')
+    expect(uniqueDefaultName(entries('untitled process'))).toBe('untitled process 2')
+    expect(uniqueDefaultName(entries('untitled process', 'untitled process 2'))).toBe(
+      'untitled process 3',
+    )
+    // A freed-up middle slot is reused rather than skipped past.
+    expect(uniqueDefaultName(entries('untitled process', 'untitled process 3'))).toBe(
+      'untitled process 2',
+    )
   })
 
   it('clones deeply, disarmed, and pointing at itself', () => {

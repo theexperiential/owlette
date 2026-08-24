@@ -1,18 +1,9 @@
 /**
- * api-sprint W5.4 — machine-api e2e (track 2A).
+ * machine-api e2e against POST /api/sites/{s}/machines/{m}/commands and GET .../{commandId} with a
+ * `machine=*:write|read` key. Reboot + screenshot are exercised; shutdown_machine shares the same
+ * handler, so the dispatch test covers all three branches.
  *
- * Hits the machine command queue endpoints with a `machine=*:write|read` api
- * key. Reboot + screenshot are exercised — the public allowlist also includes
- * shutdown_machine but those three share a single handler so the dispatch
- * test covers all three branches.
- *
- * Verbs covered:
- *   - POST /api/sites/{s}/machines/{m}/commands
- *   - GET  /api/sites/{s}/machines/{m}/commands/{commandId}
- *
- * Negative paths:
- *   - 409 machine_offline when the machine doc has online=false
- *   - 403 scope_insufficient when the api key lacks machine:write
+ * Negatives: 409 machine_offline (online=false), 403 scope_insufficient (no machine:write).
  */
 import crypto from 'crypto';
 import { test, expect } from '@playwright/test';
@@ -61,7 +52,7 @@ test.beforeAll(async () => {
     .doc('admin-uid')
     .update({ sites: [...new Set(['site-A', SITE_ID])] });
 
-  // Online + offline machines under the same site so we can hit both branches.
+  // Online + offline machines on one site, so both branches are reachable.
   await seedMachine(SITE_ID, MACHINE_ID);
   await seedMachine(SITE_ID, OFFLINE_MACHINE_ID);
   await db
@@ -110,7 +101,6 @@ test('POST /api/sites/{s}/machines/{m}/commands — dispatch reboot returns 202 
   expect(body.data.commandId).toMatch(/^cmd_/);
   expect(body.data.status).toBe('pending');
 
-  // Firestore side-effect: a pending command landed.
   const db = getAdminDb();
   const pendingSnap = await db
     .collection('sites')

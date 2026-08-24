@@ -1,19 +1,10 @@
 /**
- * Minimal public-api workflow:
- *   1. authenticate the token with /api/whoami
- *   2. list sites and machines
- *   3. inspect the target site and roost
- *   4. publish BUILD_DIR as a new roost version
+ * Minimal public-api workflow: whoami -> list sites and machines -> inspect the
+ * target site and roost -> publish BUILD_DIR as a new roost version.
  *
- * Required env vars:
- *   OWLETTE_TOKEN
- *   OWLETTE_SITE_ID
- *   OWLETTE_ROOST_ID
- *   BUILD_DIR defaults to ./dist
- *
- * Optional:
- *   OWLETTE_API_URL defaults to https://owlette.app
- *   OWLETTE_DEPLOY=1 queues a deploy after the publish
+ * Required: OWLETTE_TOKEN, OWLETTE_SITE_ID, OWLETTE_ROOST_ID.
+ * Optional: BUILD_DIR (./dist), OWLETTE_API_URL (https://owlette.app),
+ *           OWLETTE_DEPLOY=1 to queue a deploy after publishing.
  */
 
 import { Owlette, OwletteApiError } from '@owlette/sdk';

@@ -1,32 +1,28 @@
 /** @jest-environment node */
 
 /**
- * Tests for the device-trust library (`lib/deviceTrust.server.ts`).
+ * Tests for `lib/deviceTrust.server.ts`.
  *
- * Two layers:
- *   1. Pure helpers (mint / hash / validate / cookie options) — exercised
- *      directly with no mocks, verifying the crypto against node's own
- *      `crypto` for independence.
- *   2. Firestore I/O helpers — exercised against a mutable in-memory admin-SDK
- *      mock (the same `getAdminDb` chain-mock pattern as
- *      `__tests__/api/mfa/disable.test.ts`), covering the doc shape, expired
- *      pruning/reaping, the lastUsedAt bump, the fail-closed read propagation,
- *      and bulk revoke.
+ * Pure helpers (mint / hash / validate / cookie options) run unmocked, with
+ * the crypto checked against node's own `crypto` for independence. The
+ * Firestore helpers run against a mutable in-memory admin-SDK mock (same
+ * `getAdminDb` chain pattern as `__tests__/api/mfa/disable.test.ts`), covering
+ * doc shape, expiry pruning, the lastUsedAt bump, fail-closed read
+ * propagation, and bulk revoke.
  */
 
 import crypto from 'crypto';
 
-// --- Mutable state backing the mocked admin SDK (reset in beforeEach). ---
-// Keyed by trusted-device doc id (the token hash).
+// Mocked-SDK state, reset in beforeEach. Keyed by doc id (the token hash).
 let store: Map<string, Record<string, unknown>>;
-// When set, the next doc `.get()` rejects with this error (propagation test).
+// When set, the next doc `.get()` rejects with it (propagation test).
 let getError: Error | null;
-// When set, a doc `.set()` rejects with this error (write-failure test).
+// When set, a doc `.set()` rejects with it (write-failure test).
 let setError: Error | null;
-// When set, a `where(...).get()` rejects with this error (prune-failure test).
+// When set, a `where(...).get()` rejects with it (prune-failure test).
 let queryError: Error | null;
 
-// Plain-array spies (reset manually — these are not jest.fn()s).
+// Plain-array spies — not jest.fn()s, so reset manually.
 const setCalls: Array<{ id: string; payload: Record<string, unknown> }> = [];
 const updateCalls: Array<{ id: string; payload: Record<string, unknown> }> = [];
 const deleteCalls: string[] = [];
@@ -143,7 +139,7 @@ beforeEach(() => {
   batchCommits = 0;
 });
 
-// Fire-and-forget writes resolve on a microtask; flush before asserting them.
+// Fire-and-forget writes land on a microtask; flush before asserting.
 const flush = () => Promise.resolve();
 
 describe('deviceTrust — constants', () => {
@@ -264,7 +260,7 @@ describe('createTrustedDevice', () => {
 
     await createTrustedDevice('user-1', 'hash-new', 'UA', now);
 
-    // Both stale records deleted via the batch; the fresh + newly-minted stay.
+    // Both stale records batch-deleted; fresh + newly-minted survive.
     expect(batchDeleteCalls.sort()).toEqual(['stale-1', 'stale-2']);
     expect(batchCommits).toBe(1);
     expect(store.has('fresh')).toBe(true);
@@ -286,8 +282,8 @@ describe('createTrustedDevice', () => {
       await expect(
         createTrustedDevice('user-1', 'hash-x', 'UA', now)
       ).resolves.toBeUndefined();
-      // The authoritative record write still happened, and the prune failure
-      // was swallowed with a log rather than thrown.
+      // The record write still happened; the prune failure was logged, not
+      // thrown.
       expect(setCalls).toHaveLength(1);
       expect(setCalls[0].id).toBe('hash-x');
       expect(errSpy).toHaveBeenCalledTimes(1);
@@ -301,7 +297,6 @@ describe('createTrustedDevice', () => {
     await expect(
       createTrustedDevice('user-1', 'hash-y', 'UA', now)
     ).rejects.toThrow('set failed');
-    // The record was never persisted.
     expect(store.has('hash-y')).toBe(false);
   });
 });
@@ -377,8 +372,8 @@ describe('revokeAllTrustedDevices', () => {
   });
 
   it('chunks deletes into multiple batches when there are more than 100 docs', async () => {
-    // 250 docs > Firestore's 500-write batch ceiling would still fit, but the
-    // repo chunks at 100 — so this must split into 3 batches (100 + 100 + 50).
+    // 250 fits Firestore's 500-write ceiling, but the repo chunks at 100, so
+    // this must split 100 + 100 + 50.
     for (let i = 0; i < 250; i += 1) {
       store.set(`d${i}`, { tokenHash: `d${i}`, expiresAt: 10 });
     }

@@ -1,9 +1,6 @@
 /**
  * Shared utilities for Hoot endpoints (user chat + autonomous).
- *
- * Extracted from /api/hoot/route.ts to be reused by /api/hoot/autonomous/route.ts.
- *
- * IMPORTANT: Server-side only — never import this in client components.
+ * Server-side only — never import this from a client component.
  */
 
 import { tool, jsonSchema } from 'ai';
@@ -23,12 +20,9 @@ import { timestampToIso } from '@/lib/firestoreTime.server';
 import type { TalonStoreContext } from '@/lib/talons/store.server';
 
 /**
- * Tools that are executed server-side (query Firestore directly, not relayed to agent).
- *
- * CROSS-SIDE CONTRACT: none of these have a handler in the agent's dispatch
- * map (agent/src/mcp_tools.py `handlers`), so relaying one to a machine
- * returns `{'error': 'Unknown tool: …'}`. Every caller that builds executable
- * tools must branch on this set before falling through to an agent dispatch.
+ * Tools executed server-side (Firestore directly, never relayed to an agent).
+ * None have a handler in agent/src/mcp_tools.py `handlers`, so relaying one
+ * returns `{'error': 'Unknown tool: …'}` — branch on this set before dispatch.
  */
 export const SERVER_SIDE_TOOLS: ReadonlySet<string> = new Set([
   'get_site_logs',
@@ -47,30 +41,22 @@ export const COMMAND_POLL_INTERVAL_MS = 1500;
 export const COMMAND_TIMEOUT_MS = 30000;
 
 /**
- * Web-side cap for tool-provided `timeout_seconds` (55 minutes). Mirrors the
- * agent-side clamp (agent/src/mcp_tools.py `MAX_SCRIPT_TIMEOUT`) and stays
- * under the agent's 1-hour pending-entry GC so a command can never outlive
- * its pending entry. Longer jobs should run detached with a scheduled
- * follow-up instead.
+ * Cap for tool-provided `timeout_seconds` (55 min). Mirrors the agent-side
+ * clamp (mcp_tools.py `MAX_SCRIPT_TIMEOUT`) and stays under the agent's 1h
+ * pending-entry GC so a command can never outlive its pending entry.
  */
 export const MAX_TOOL_TIMEOUT_SECONDS = 3300;
 
 /**
- * Observability hooks for agent command dispatch + polling. Used by the turn
- * runner to record `toolCallId → commandId` recovery mappings and to keep the
- * stream doc's heartbeat fresh during long tool waits.
+ * Dispatch/poll hooks: the turn runner records `toolCallId → commandId` for
+ * recovery and keeps the stream doc's heartbeat fresh during long tool waits.
  */
 export interface AgentCommandHooks {
-  /** Fires synchronously right after the pending-command write, with the generated commandId. */
+  /** Fires synchronously right after the pending-command write. */
   onCommandQueued?: (commandId: string) => void;
-  /** Fires on each poll iteration while waiting for the agent's result. */
   onPollTick?: () => void;
-  /**
-   * Aborts the poll wait when the owning turn is superseded or stopped. When
-   * this fires, the poll loop deletes the pending command (best effort) and
-   * returns a cancelled result so the tool loop unwinds promptly instead of
-   * blocking a dead turn for the full command timeout.
-   */
+  /** Turn superseded/stopped: the poll loop deletes the pending command (best
+   *  effort) and returns cancelled rather than blocking for the full timeout. */
   abortSignal?: AbortSignal;
 }
 
@@ -93,36 +79,17 @@ function stripReservedExistingCommandKeys(params: Record<string, unknown>): Reco
 export interface BuildExecutableToolsOptions {
   userId?: string;
   userRole?: string | null;
-  /**
-   * Attributes server-side tool executions to an unattended system actor
-   * instead of a user. Set by the autonomous Hoot path
-   * (`cortex_autonomous`), which has no session behind it. When present it
-   * takes precedence over `userId` / `userRole` so the audit row reads
-   * `system:<name>` rather than inventing a phantom user.
-   */
+  /** Unattended attribution for the autonomous Hoot path (no session). Wins over
+   *  userId/userRole so the audit row reads `system:<name>`, not a phantom user. */
   systemActor?: SystemActorName;
-  /**
-   * The chat this tool loop belongs to. `buildExecutableTools` fills this in
-   * from its own positional `chatId` when the caller leaves it unset, so
-   * server-side tools that record provenance (talon creation stamps
-   * `createdVia: 'cortex'` + `chatId`) can attribute their writes to a
-   * conversation. Agent-relayed tools take the positional value directly.
-   */
+  /** Chat this tool loop belongs to; defaulted from the positional `chatId` so
+   *  server-side tools can stamp provenance (talon `createdVia` + `chatId`). */
   chatId?: string;
-  /**
-   * Whether tier-3 tools require in-chat approval. Defaults to true. When the
-   * per-site flag (`getHootRequireTier3Approval`) is off, tier-3 tools
-   * auto-run on the server-side / site-wide paths too — not just local Hoot —
-   * so the approval toggle is honored consistently everywhere.
-   */
+  /** Tier-3 in-chat approval gate; defaults true. Off means tier-3 auto-runs on
+   *  the server-side and site-wide paths too, not just local Hoot. */
   requireTier3Approval?: boolean;
-  /**
-   * Per-tool-call dispatch hooks. `onCommandQueued` receives the AI SDK
-   * toolCallId, the Firestore commandId written to `commands/pending`, and the
-   * target machineId (site-wide fan-out fires once per machine). `onPollTick`
-   * fires on every poll iteration. Server-side tools (SERVER_SIDE_TOOLS) never
-   * dispatch commands, so they never fire these.
-   */
+  /** Per-tool-call dispatch hooks; site-wide fan-out fires onCommandQueued once
+   *  per machine. SERVER_SIDE_TOOLS never dispatch, so they never fire these. */
   toolCallbacks?: {
     onCommandQueued?: (toolCallId: string, commandId: string, machineId: string) => void;
     onPollTick?: () => void;
@@ -146,9 +113,8 @@ function actionContextForHoot(
   siteId: string,
   options: BuildExecutableToolsOptions,
 ): ActionContext {
-  // Unattended callers carry no user identity — attribute the mutation to the
-  // system actor so the audit trail matches the actor the dispatch layer uses
-  // (see lib/hoot/dispatch.server.ts `actionContextFor`).
+  // Unattended callers have no user identity — attribute to the system actor so
+  // the audit trail matches lib/hoot/dispatch.server.ts `actionContextFor`.
   if (options.systemActor) {
     return {
       siteId,
@@ -198,31 +164,17 @@ function actionErrorResult(error: unknown): ProcessToolResult {
 /**
  * Resolve the LLM config belonging to ONE named user.
  *
- * ## one key, one place
+ * Keys live in exactly one place: `users/{uid}/settings/llm`. The old
+ * `sites/{siteId}/settings/llm` scope is gone — nothing could create one, so
+ * every unattended feature that required it was un-runnable.
  *
- * There is exactly one place a key can live: `users/{uid}/settings/llm`, saved
- * by that person in settings → hoot. The old `sites/{siteId}/settings/llm`
- * scope is GONE — nothing in the product could ever create one, so every
- * unattended feature that required it (talons, visual checks) was un-runnable,
- * and an operator who had already saved a personal key was told they needed a
- * second, shared one with nowhere to set it.
+ * `userId` is non-nullable with no site fallback, so unattended callers must
+ * decide whose key they spend: talons resolve their author
+ * (`lib/talons/author.server.ts`), autonomous runs the site owner
+ * (`resolveSiteKeyOwner`). No `autonomousModel` override any more.
  *
- * ## unattended runs must name whose key they spend
- *
- * `userId` is non-nullable and there is no site fallback, so an unattended
- * caller cannot compile without deciding whose key it is spending. Talons
- * resolve their AUTHOR (`talon.createdBy`, re-checked against site access on
- * every run — see `lib/talons/author.server.ts`); autonomous investigations
- * resolve the SITE OWNER, the one uid a site-wide feature can attribute itself
- * to (`resolveSiteKeyOwner`).
- *
- * The old site-doc `autonomousModel` override went with the site doc. It never
- * existed on a user doc — nothing writes that field there and no UI offers it —
- * so an unattended run now uses the same `model` the key's owner picked for
- * their own chats.
- *
- * @throws {Error} with copy an operator can act on when no key is saved or the
- *                 stored key can no longer be decrypted.
+ * @throws {Error} operator-actionable copy when no key is saved or the stored
+ *                 key no longer decrypts.
  */
 export async function resolveLlmConfig(
   db: FirebaseFirestore.Firestore,
@@ -259,10 +211,7 @@ export async function resolveLlmConfig(
 }
 
 /**
- * Assert `userId` has a usable llm key, WITHOUT handing the key back.
- *
- * For callers that only need the precondition — the talon store's create/enable
- * gate and the unattended pre-flight. Resolving through this helper means the
+ * Assert `userId` has a usable llm key without handing the key back, so the
  * decrypted key never enters a scope that could log, store, or forward it.
  */
 export async function assertLlmKeyAvailable(
@@ -273,12 +222,9 @@ export async function assertLlmKeyAvailable(
 }
 
 /**
- * The uid whose llm key a site-wide unattended run spends: the site owner.
- *
- * Autonomous investigations are triggered by a machine, not a person, so there
- * is no author to attribute them to. The owner is the one uid that is durable
- * for the life of the site and already carries its billing — and, being the
- * owner, always passes `verifyUserSiteAccess`.
+ * The uid whose llm key a site-wide unattended run spends: the site owner — the
+ * one uid durable for the life of the site that always passes
+ * `verifyUserSiteAccess`. Machine-triggered runs have no author.
  *
  * @throws {Error} when the site is gone or has no owner recorded.
  */
@@ -297,11 +243,8 @@ export async function resolveSiteKeyOwner(
 }
 
 /**
- * Resolved access level for a user against a site. Used to choose which
- * Hoot tool tier the caller is allowed to drive.
- *
- * `isSiteAdmin` mirrors the canonical client-side `isSiteAdmin(siteId)` in
- * AuthContext — superadmin, or `admin` role with ownership/assignment.
+ * A user's access level against a site; picks the Hoot tool tier they may drive.
+ * `isSiteAdmin` mirrors AuthContext's `isSiteAdmin(siteId)`.
  */
 export interface SiteAccessLevel {
   role: string | null;
@@ -311,12 +254,8 @@ export interface SiteAccessLevel {
 }
 
 /**
- * Why {@link verifyUserSiteAccess} said no.
- *
- * `user_not_found` / `user_deleted` / `no_site_access` are DETERMINISTIC — the
- * same call will say the same thing tomorrow. `site_not_found` is grouped with
- * them for completeness but is not the user's problem: a site that has gone
- * missing takes its whole talon collection with it.
+ * Why {@link verifyUserSiteAccess} said no. All four are deterministic — a retry
+ * gives the same answer, unlike a Firestore outage (a different error class).
  */
 export type SiteAccessErrorCode =
   | 'user_not_found'
@@ -325,14 +264,9 @@ export type SiteAccessErrorCode =
   | 'no_site_access';
 
 /**
- * A refusal from {@link verifyUserSiteAccess}, carrying WHICH refusal it was.
- *
- * Subclasses `Error` and keeps the original messages verbatim, so every caller
- * that only logs `error.message` is unaffected. The code exists for the one
- * caller that has to act on the distinction: an unattended talon run, which
- * disables the talon on a deterministic refusal and must NOT do so when the
- * throw was a Firestore outage (which arrives as some other error type
- * entirely — that is the whole point of narrowing on this class).
+ * A refusal from {@link verifyUserSiteAccess}, tagged with which one. Unattended
+ * talon runs disable the talon on this class but must NOT on a Firestore outage,
+ * which throws some other type. Messages kept verbatim for `.message` loggers.
  */
 export class SiteAccessError extends Error {
   readonly code: SiteAccessErrorCode;
@@ -345,15 +279,10 @@ export class SiteAccessError extends Error {
 }
 
 /**
- * Verify user has access to the target site, and return their access level.
- *
- * Access is granted iff the user is superadmin, the site owner, or listed in
- * `users/{uid}.sites[]`. Matches `assertUserHasSiteAccess` in apiAuth.server.
- * Site owners are explicitly honored so a freshly-created site's owner is not
- * locked out before the user's `sites[]` array has been updated.
- *
- * Throws on no-access. Callers use the returned access level to decide what
- * the user is allowed to do once past the gate (e.g. which tool tier to grant).
+ * Verify site access and return the caller's access level; throws on no-access.
+ * Granted iff superadmin, site owner, or listed in `users/{uid}.sites[]` — owner
+ * is honored explicitly so a fresh site's owner is not locked out before
+ * `sites[]` catches up. Matches `assertUserHasSiteAccess` in apiAuth.server.
  */
 export async function verifyUserSiteAccess(
   db: FirebaseFirestore.Firestore,
@@ -374,13 +303,9 @@ export async function verifyUserSiteAccess(
 
   const userData = userDoc.data()!;
 
-  // Reject soft-deleted users before granting any access. Legacy Hoot routes
-  // authenticate via the iron-session cookie, which is NOT invalidated
-  // server-side on soft-delete (the delete cascade clears sites[]/MFA/passkeys
-  // but the session cookie lives until it expires). Without this guard a
-  // soft-deleted superadmin — granted by role regardless of sites[] — could
-  // keep driving Hoot, including tier-3 tools, until their cookie lapses.
-  // Mirrors assertUserDataActive() in apiAuth.server.
+  // Soft-delete does not invalidate the iron-session cookie, so without this a
+  // deleted superadmin (granted by role, not sites[]) keeps driving tier-3 Hoot
+  // until the cookie lapses. Mirrors assertUserDataActive() in apiAuth.server.
   if (typeof userData.deletedAt === 'number') {
     throw new SiteAccessError('user_deleted', 'User is deleted or inactive');
   }
@@ -396,29 +321,22 @@ export async function verifyUserSiteAccess(
     throw new SiteAccessError('no_site_access', 'You do not have access to this site');
   }
 
-  // Mirrors AuthContext.isSiteAdmin: superadmin, or admin role with
-  // ownership/assignment. Members never get admin privileges.
+  // Mirrors AuthContext.isSiteAdmin; members never get admin privileges.
   const isSiteAdmin = isSuperadmin || (role === 'admin' && (isSiteOwner || isAssigned));
 
   return { role, isSuperadmin, isSiteAdmin, isSiteOwner };
 }
 
 /**
- * Resolve the maximum Hoot tool tier a caller is allowed to drive based on
- * their site access level.
- *
- * - Site admins (superadmin, or `admin` with site access) → tier 3 (full).
- * - Everyone else with site access → tier 1 (read-only). Members must not be
- *   able to trigger tier 2 (registry writes, feature installs, disk cleans)
- *   or tier 3 (run_powershell, execute_script, deploy_software, reboot, etc.).
+ * Max Hoot tool tier for an access level: site admins → 3 (full), everyone else
+ * → 1 (read-only). Members must never reach tier 2 (registry writes, installs,
+ * disk cleans) or tier 3 (run_powershell, deploy_software, reboot).
  */
 export function resolveHootMaxTier(access: SiteAccessLevel): ToolTier {
   return access.isSiteAdmin ? 3 : 1;
 }
 
-/**
- * Check if a machine is online by reading its presence document.
- */
+/** Reads the machine's presence document. */
 export async function isMachineOnline(
   db: FirebaseFirestore.Firestore,
   siteId: string,
@@ -460,18 +378,11 @@ export async function isHootEnabled(
 }
 
 /**
- * Whether tier-3 (privileged) Hoot tool calls require explicit in-chat
- * approval before they execute, for the given site.
- *
- * Stored at `sites/{siteId}/settings/cortex.requireTier3Approval`. Defaults to
- * `true` when the doc or field is absent so the safety gate is on by default —
- * an admin must deliberately opt out per site.
- *
- * When this is `true`, single-machine admin chats are forced through the
- * server-side LLM path (skipping local Hoot) so the AI SDK's `needsApproval`
- * gate can fire — see the routing decision in `runHootStream` /
- * `app/api/hoot/route.ts`. When `false`, local Hoot is allowed and the
- * gate does not apply (the agent runs tools locally; approval is not enforced).
+ * Per-site tier-3 in-chat approval gate, at
+ * `sites/{siteId}/settings/cortex.requireTier3Approval`; absent = true (fail safe).
+ * True forces single-machine admin chats through the server-side LLM path so the
+ * AI SDK `needsApproval` gate can fire; false allows local Hoot, which cannot
+ * enforce it (the agent runs tools itself).
  */
 export async function getHootRequireTier3Approval(
   db: FirebaseFirestore.Firestore,
@@ -494,9 +405,7 @@ export async function getHootRequireTier3Approval(
   }
 }
 
-/**
- * Get all online machines for a site.
- */
+/** All online machines for a site. */
 export async function getOnlineMachines(
   db: FirebaseFirestore.Firestore,
   siteId: string
@@ -518,9 +427,7 @@ export async function getOnlineMachines(
   return onlineMachines;
 }
 
-/**
- * Send an MCP tool call command to an agent via Firestore and wait for the result.
- */
+/** Queue an MCP tool call for an agent via Firestore and wait for the result. */
 export async function executeToolOnAgent(
   db: FirebaseFirestore.Firestore,
   siteId: string,
@@ -532,9 +439,7 @@ export async function executeToolOnAgent(
 ): Promise<unknown> {
   const commandId = `mcp_${Date.now()}_${toolName}`;
 
-  // Use tool-provided timeout if available, otherwise default. Clamped to
-  // MAX_TOOL_TIMEOUT_SECONDS (mirrors the agent-side clamp in
-  // agent/src/mcp_tools.py MAX_SCRIPT_TIMEOUT).
+  // Tool-provided timeout, clamped to MAX_TOOL_TIMEOUT_SECONDS.
   const toolTimeout = typeof toolParams.timeout_seconds === 'number'
     ? Math.min(toolParams.timeout_seconds, MAX_TOOL_TIMEOUT_SECONDS) * 1000
     : COMMAND_TIMEOUT_MS;
@@ -599,11 +504,8 @@ export async function executeToolOnAgent(
     const cmdResult = data?.[commandId];
 
     if (cmdResult) {
-      // CROSS-SIDE CONTRACT: the agent writes `{status: 'running', startedAt}`
-      // to the completed doc when a command starts (restart safety + progress
-      // signal — see agent/src/firebase_client.py `_mark_command_running`).
-      // Running entries are NON-terminal: skip and keep polling, and never
-      // delete them — the agent's terminal write overwrites the marker.
+      // `running` entries are non-terminal progress markers written by
+      // firebase_client.py `_mark_command_running` — skip, never delete.
       if (cmdResult.status === 'running') continue;
 
       const { FieldValue } = await import('firebase-admin/firestore');
@@ -612,9 +514,8 @@ export async function executeToolOnAgent(
       if (cmdResult.status === 'failed') {
         return { error: cmdResult.error || 'Tool execution failed' };
       }
-      // A user cancel (via /api/hoot/cancel-tool → agent) writes a terminal
-      // `cancelled` entry. Surface it as an error so the model reacts instead
-      // of falling through the success path and returning undefined.
+      // /api/hoot/cancel-tool writes a terminal `cancelled` entry; surface it as
+      // an error so the model reacts instead of returning undefined.
       if (cmdResult.status === 'cancelled') {
         return { error: cmdResult.error || 'cancelled by user' };
       }
@@ -709,9 +610,8 @@ export async function executeExistingCommand(
     const cmdResult = completedDoc.data()?.[commandId];
 
     if (cmdResult) {
-      // CROSS-SIDE CONTRACT: `{status: 'running'}` entries are non-terminal
-      // progress markers (agent/src/firebase_client.py `_mark_command_running`)
-      // — skip and keep polling; never delete them.
+      // `running` entries are non-terminal progress markers written by
+      // firebase_client.py `_mark_command_running` — skip, never delete.
       if (cmdResult.status === 'running') continue;
 
       const { FieldValue } = await import('firebase-admin/firestore');
@@ -728,13 +628,8 @@ export async function executeExistingCommand(
 }
 
 /**
- * Execute the get_site_logs tool server-side by querying Firestore directly.
- */
-/**
- * Execute the get_site_logs tool server-side by querying Firestore directly.
- *
- * Fetches more than needed and filters in-memory for level/action to avoid
- * requiring composite indexes for every filter combination.
+ * get_site_logs, server-side. Over-fetches and filters level/action in memory to
+ * avoid a composite index per filter combination.
  */
 async function executeSiteLogs(
   db: FirebaseFirestore.Firestore,
@@ -748,8 +643,6 @@ async function executeSiteLogs(
 
   const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
 
-  // Only filter by timestamp in Firestore (avoids composite index requirements).
-  // Apply level/action filters in-memory.
   const fetchLimit = (level || action) ? limit * 4 : limit;
 
   const logsQuery = db
@@ -789,9 +682,7 @@ async function executeSiteLogs(
   return { logs, count: logs.length, hours, siteId };
 }
 
-/**
- * Execute the get_system_presets tool server-side by querying Firestore directly.
- */
+/** get_system_presets, server-side. */
 async function executeGetSystemPresets(
   db: FirebaseFirestore.Firestore,
   params: Record<string, unknown>
@@ -839,10 +730,8 @@ async function executeGetSystemPresets(
 }
 
 /**
- * Execute the deploy_software tool server-side.
- *
- * Resolves preset + params, creates a deployment doc, and writes install_software
- * commands to the target machines. Returns immediately — installation runs async.
+ * deploy_software, server-side: resolve preset + params, create a deployment doc,
+ * write install_software commands. Returns immediately; installs run async.
  */
 async function executeDeploySoftware(
   db: FirebaseFirestore.Firestore,
@@ -863,7 +752,6 @@ async function executeDeploySoftware(
     return { error: 'No target machines available. The machine may be offline.' };
   }
 
-  // ── Resolve preset ──────────────────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let preset: Record<string, any> | null = null;
 
@@ -891,7 +779,7 @@ async function executeDeploySoftware(
     }
   }
 
-  // ── Merge preset with explicit overrides ────────────────────────────────
+  // Merge preset with explicit overrides.
   let installerUrl = (params.installer_url as string) || preset?.installer_url || '';
   let installerName = (params.installer_name as string) || preset?.installer_name || '';
   let silentFlags = (params.silent_flags as string) || preset?.silent_flags || '';
@@ -899,7 +787,7 @@ async function executeDeploySoftware(
   const closeProcesses = (params.close_processes as string[]) || preset?.close_processes || [];
   const timeoutSeconds = timeoutMinutes * 60;
 
-  // ── TouchDesigner version-aware overrides ───────────────────────────────
+  // TouchDesigner version-aware overrides.
   const isTD = softwareName.toLowerCase().includes('touchdesigner');
   // Auto-enable parallel install for TouchDesigner; explicit param overrides
   const parallelInstall = params.parallel_install !== undefined
@@ -927,13 +815,11 @@ async function executeDeploySoftware(
     }
   }
 
-  // ── Resolve verify_path ─────────────────────────────────────────────────
   let resolvedVerifyPath = verifyPath;
   if (version && isTD && !params.verify_path) {
     resolvedVerifyPath = `C:\\Program Files\\Derivative\\TouchDesigner.${version}`;
   }
 
-  // ── Validate ────────────────────────────────────────────────────────────
   if (!installerUrl) {
     return {
       error: `No installer URL available for "${softwareName}". Provide an installer_url or ensure a matching system preset exists with the URL configured.`,
@@ -952,7 +838,7 @@ async function executeDeploySoftware(
     };
   }
 
-  // ── Create deployment doc (mirrors useDeployments.createDeployment) ─────
+  // Mirrors useDeployments.createDeployment.
   const deploymentId = `deploy-${Date.now()}`;
   const deploymentRef = db
     .collection('sites')
@@ -989,7 +875,6 @@ async function executeDeploySoftware(
 
   await deploymentRef.set(deploymentData);
 
-  // ── Write install_software command to each machine ──────────────────────
   const commandPromises = machineIds.map(async (mid) => {
     const sanitizedDeploymentId = deploymentId.replace(/-/g, '_');
     const sanitizedMachineId = mid.replace(/-/g, '_');
@@ -1030,7 +915,6 @@ async function executeDeploySoftware(
 
   await Promise.all(commandPromises);
 
-  // Update deployment status to in_progress
   await deploymentRef.set({ status: 'in_progress' }, { merge: true });
 
   return {
@@ -1264,18 +1148,11 @@ async function executeDeleteProcessTool(
   });
 }
 
-/* -------------------------------------------------------------------------- */
-/*  talon tools                                                               */
-/* -------------------------------------------------------------------------- */
-
 /**
- * The talon store is loaded at call time rather than imported at the top.
- *
- * `@/lib/talons/store.server` imports `resolveLlmConfig` from this module, so
- * a static import here would make the two circular. Deferring it also keeps
- * every importer of this file — the chat routes, `hootStream`, the turn
- * runner — from dragging the store, the schedule maths and the billing gate
- * into their module graph merely to build a tool table.
+ * Talon store is loaded at call time: `@/lib/talons/store.server` imports
+ * `resolveLlmConfig` from this module, so a static import would be circular.
+ * Also keeps the store, schedule maths and billing gate out of every importer's
+ * module graph.
  */
 type TalonStoreModule = typeof import('@/lib/talons/store.server');
 
@@ -1284,12 +1161,9 @@ function loadTalonStore(): Promise<TalonStoreModule> {
 }
 
 /**
- * Trusted store context for a talon authored from a chat.
- *
- * The actor and the audit actor are the HUMAN driving the conversation — a
- * talon is never authored by a system actor — so the store's command-output
- * privilege gate resolves against the operator's own role and the audit row
- * names them. `via` + `chatId` record which conversation it came out of.
+ * Store context for a talon authored from a chat. The actor is the human driving
+ * the conversation (never a system actor) so the store's command-output privilege
+ * gate resolves against their own role.
  */
 function talonStoreContextForHoot(
   siteId: string,
@@ -1313,9 +1187,8 @@ function hasCommandOutput(params: Record<string, unknown>): boolean {
 }
 
 /**
- * Render a store rejection as a tool result instead of letting it throw. A
- * thrown error takes the whole turn down; a result lets the assistant explain
- * what was wrong and propose a corrected talon.
+ * Render a store rejection as a tool result — a throw takes the whole turn down,
+ * a result lets the model propose a corrected talon.
  */
 function talonErrorResult(store: TalonStoreModule, error: unknown): ProcessToolResult {
   if (error instanceof store.TalonStoreError) {
@@ -1342,11 +1215,9 @@ async function executeCreateTalonTool(
 ): Promise<unknown> {
   const ctx = talonStoreContextForHoot(siteId, options);
 
-  // A `command` output queues process control on real machines, so authoring
-  // one takes the same privilege as issuing that command by hand
-  // (`MACHINE_EXEC_COMMAND` — site admins and superadmins). The store enforces
-  // this too, against this same actor; refusing here costs no reads and hands
-  // the model something it can offer an alternative for.
+  // A `command` output queues real process control, so authoring one takes the
+  // same privilege as issuing it by hand. The store re-checks the same actor;
+  // refusing here costs no reads.
   if (hasCommandOutput(params) && !hasCapability(ctx.actor, Capability.MACHINE_EXEC_COMMAND, siteId)) {
     return {
       ok: false,
@@ -1359,9 +1230,8 @@ async function executeCreateTalonTool(
 
   const store = await loadTalonStore();
   try {
-    // `params` goes to the validator as-is: the tool schema mirrors its input
-    // shape, and unknown top-level fields must keep being rejected so a model
-    // can never stamp a server-owned field onto the document.
+    // `params` passed as-is; the validator must keep rejecting unknown top-level
+    // fields so a model can never stamp a server-owned field onto the document.
     const talon = await store.createTalon(db, ctx, params);
     return {
       ok: true,
@@ -1390,9 +1260,8 @@ async function executeListTalonsTool(
         talon_id: talon.id,
         name: talon.name,
         enabled: talon.enabled,
-        // The normalized trigger object rather than a prose summary: it is
-        // already one short object, and the exact metric / interval / event
-        // values are what the model needs to answer follow-up questions.
+        // Normalized object, not a prose summary — the model needs the exact
+        // metric/interval/event values for follow-ups.
         trigger: talon.trigger,
         outputs: talon.outputs.map((output) => output.type),
         last_run_status: talon.lastRunStatus ?? null,
@@ -1450,9 +1319,7 @@ async function executeSetTalonEnabledTool(
   }
 }
 
-/**
- * Execute a server-side tool (not relayed to agent).
- */
+/** Execute a server-side tool (never relayed to an agent). */
 export async function executeServerSideTool(
   db: FirebaseFirestore.Firestore,
   siteId: string,
@@ -1486,8 +1353,8 @@ export async function executeServerSideTool(
 }
 
 /**
- * Build AI SDK tools with execute functions that relay to agents.
- * In site mode, tool calls fan out to all online machines and aggregate results.
+ * Build AI SDK tools whose execute relays to agents. Site mode fans each call
+ * out to all online machines and aggregates the results.
  */
 export function buildExecutableTools(
   db: FirebaseFirestore.Firestore,
@@ -1499,10 +1366,8 @@ export function buildExecutableTools(
   onlineMachines: string[] = [],
   options: BuildExecutableToolsOptions = {},
 ) {
-  // Server-side tools only ever see `options`, so the positional chatId — the
-  // conversation these tools belong to — has to be folded into it. An explicit
-  // `options.chatId` still wins, so a caller can attribute a tool loop to a
-  // different chat than the one it streams into.
+  // Server-side tools only see `options`, so fold the positional chatId in. An
+  // explicit `options.chatId` wins, attributing the loop to a different chat.
   const serverSideOptions: BuildExecutableToolsOptions = {
     ...options,
     chatId: options.chatId ?? chatId,
@@ -1518,20 +1383,13 @@ export function buildExecutableTools(
     const toolConfig: any = {
       description: def.description,
       inputSchema: jsonSchema(def.parameters as Record<string, unknown>),
-      // Tier-3 tools (run_powershell, execute_script, reboot_machine, etc.)
-      // pause for explicit in-chat approval before `execute` runs. The AI SDK
-      // emits a `tool-approval-request` part instead of calling `execute`; the
-      // client surfaces approve/deny and resumes the stream once answered.
-      // Tier 1/2 keep auto-running. This is a chat-only guardrail — autonomous
-      // Hoot uses a separate `buildAutonomousTools` (no human to approve), so
-      // it is intentionally unaffected. Gated by the per-site approval flag so
-      // turning approval off disables the gate on every path, not just local.
+      // Tier-3 pauses for in-chat approval: the AI SDK emits
+      // `tool-approval-request` instead of calling `execute`. Chat-only —
+      // autonomous Hoot uses buildAutonomousTools (no human to approve).
       needsApproval: def.tier >= 3 && options.requireTier3Approval !== false,
       execute: async (params: unknown, execOptions?: { toolCallId?: string }) => {
-        // Bridge the per-turn toolCallbacks into per-dispatch AgentCommandHooks:
-        // the AI SDK passes { toolCallId } as execute's second arg; each
-        // dispatch pairs it with the commandId + target machineId (site-wide
-        // fan-out fires once per machine).
+        // Bridge per-turn toolCallbacks into per-dispatch hooks: the SDK passes
+        // { toolCallId } as execute's 2nd arg; pair it with commandId + machineId.
         const toolCallbacks = options.toolCallbacks;
         const hooksFor = (targetMachineId: string): AgentCommandHooks | undefined =>
           toolCallbacks
@@ -1543,10 +1401,8 @@ export function buildExecutableTools(
               }
             : undefined;
 
-        // Server-side tools run directly on the web server (no agent relay,
-        // no command dispatch — toolCallbacks intentionally not fired)
+        // Run on the web server: no agent relay, so toolCallbacks never fire.
         if (SERVER_SIDE_TOOLS.has(toolName)) {
-          // For deploy_software in site mode, target all online machines
           const targetMachineIds = siteMode ? onlineMachines : [machineId];
           return executeServerSideTool(
             db,
@@ -1579,7 +1435,6 @@ export function buildExecutableTools(
           return { machines: results };
         }
 
-        // Single machine mode
         const existingCmd = EXISTING_COMMAND_MAPPINGS[toolName];
         if (existingCmd) {
           const toolParams = params as Record<string, unknown>;
@@ -1591,17 +1446,14 @@ export function buildExecutableTools(
       },
     };
 
-    // For capture_screenshot: inject the image as a vision content block
-    // so the LLM can see and analyze the screenshot, not just get a URL string
+    // capture_screenshot: inject the image as a vision block, not a URL string.
     if (toolName === 'capture_screenshot') {
       type ScreenshotBlock = { type: 'text'; text: string } | { type: 'image-url'; url: string };
       toolConfig.toModelOutput = ({ output }: { output: unknown }) => {
         const result = output as Record<string, unknown> | null;
 
-        // Site-wide mode aggregates per-machine results as { machines: [...] }.
-        // Project each machine's screenshot URL as its own image block so the
-        // model sees all of them — a single top-level `url` only exists in
-        // single-machine mode.
+        // Site-wide results are { machines: [...] } — one image block each; a
+        // top-level `url` only exists in single-machine mode.
         const machines = Array.isArray(result?.machines)
           ? (result!.machines as Array<Record<string, unknown>>)
           : null;
@@ -1635,7 +1487,6 @@ export function buildExecutableTools(
             ],
           };
         }
-        // No URL (error case) — return text only
         return { type: 'text' as const, value: message };
       };
     }

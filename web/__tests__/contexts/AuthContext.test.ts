@@ -1,13 +1,9 @@
 /**
- * AuthContext role-helper unit tests
+ * The pure `computeIsSuperadmin` / `computeIsSiteAdmin` helpers, extracted from
+ * AuthContext so they test without mounting the provider and its Firebase deps.
  *
- * Tests the pure `computeIsSuperadmin` and `computeIsSiteAdmin` helpers
- * (extracted from AuthContext so they're testable without mounting the
- * full provider + its Firebase deps).
- *
- * The matrix: each of {null, member, admin, superadmin} × {site in userSites,
- * site NOT in userSites} — covering the 6 role × in-sites combinations from
- * the plan plus the null (pre-auth) case.
+ * Matrix: {null, member, admin, superadmin} x {site in userSites, site not in
+ * userSites}.
  */
 
 import { computeIsSuperadmin, computeIsSiteAdmin } from '@/contexts/AuthContext';
@@ -63,7 +59,7 @@ describe('computeIsSiteAdmin', () => {
     });
 
     it('is false for site NOT in userSites', () => {
-      // Critical invariant: admins are NOT god-mode. Unassigned sites must be denied.
+      // Admins are NOT god-mode: unassigned sites must be denied.
       expect(computeIsSiteAdmin('admin', USER_SITES, SITE_OUT)).toBe(false);
     });
 
@@ -78,8 +74,8 @@ describe('computeIsSiteAdmin', () => {
     });
 
     it('is true for site NOT in userSites (god-mode fall-through)', () => {
-      // Mirrors firestore.rules canAccessSite post-0.2.2 — superadmins access
-      // every site regardless of the sites[] array.
+      // Mirrors firestore.rules canAccessSite: superadmins reach every site
+      // regardless of sites[].
       expect(computeIsSiteAdmin('superadmin', USER_SITES, SITE_OUT)).toBe(true);
     });
 

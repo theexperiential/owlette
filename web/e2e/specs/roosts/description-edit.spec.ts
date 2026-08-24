@@ -1,15 +1,9 @@
 /**
- * Roosts — version description inline-edit (task 3.1)
+ * Roosts — the click-to-edit version description inside VersionRow: blur saves,
+ * Ctrl/⌘+Enter saves without blur, Escape cancels with no PATCH, and a saved
+ * description survives a reload.
  *
- * Exercises the click-to-edit description editor inside each VersionRow:
- *   A. blur saves              → PATCH fires + UI updates
- *   B. Ctrl/⌘+Enter saves      → PATCH fires + UI updates (no blur)
- *   C. Escape cancels          → no PATCH, UI text reverts
- *   D. saved description persists across a full page reload
- *
- * Endpoint: PATCH /api/roosts/{roostId}/versions/{versionId}
- *           body: { siteId, description }
- * Data plane: none — no push, no chunks.
+ * PATCH /api/roosts/{roostId}/versions/{versionId} — `{ siteId, description }`.
  */
 import { test, expect, type Page } from '@playwright/test';
 import { roleState } from '../../helpers/roles';
@@ -51,8 +45,8 @@ async function ensureRoostExpanded(page: Page) {
     await row.click();
   }
   await expect(historyToggle).toBeVisible();
-  // The panel may render a denormalized current-version fallback while
-  // GET /versions is still loading. v2 only exists in the real history list.
+  // The panel renders a denormalized current-version fallback while
+  // GET /versions loads; v2 only exists in the real history list.
   await expect(rowFor(page, 2)).toBeVisible();
 }
 
@@ -87,7 +81,6 @@ test('A — blur saves the edited description and the row re-renders', async ({ 
   const assertNoPageErrors = trackErrors(page);
   await expandRoost(page);
 
-  // v3 description "initial" lives inside a <button aria-label="edit description">.
   const v3 = rowFor(page, 3);
   await v3.getByRole('button', { name: 'edit description' }).click();
 
@@ -97,7 +90,6 @@ test('A — blur saves the edited description and the row re-renders', async ({ 
   await editor.fill('initial + fixed video');
 
   const responsePromise = waitPatch(page, 3);
-  // Blur without toggling the version-history section closed.
   await page.getByRole('heading', { name: 'roosts', exact: true }).click();
 
   const response = await responsePromise;
@@ -124,7 +116,7 @@ test('B — ⌘+Enter saves without a blur', async ({ page }) => {
   await editor.fill('v2 work — keyboard save');
 
   const responsePromise = waitPatch(page, 2);
-  // VersionRow checks metaKey || ctrlKey — Control+Enter works on every chromium platform.
+  // VersionRow checks metaKey || ctrlKey, so Control+Enter is portable.
   await editor.press('Control+Enter');
 
   const response = await responsePromise;
@@ -134,7 +126,6 @@ test('B — ⌘+Enter saves without a blur', async ({ page }) => {
     description: 'v2 work — keyboard save',
   });
 
-  // Editor closes, button re-renders with the new text.
   await expect(v2.locator('textarea')).toHaveCount(0);
   await expect(v2.getByRole('button', { name: 'edit description' }))
     .toContainText('v2 work — keyboard save');
@@ -146,7 +137,7 @@ test('C — Escape cancels, no PATCH fires, UI reverts', async ({ page }) => {
   const assertNoPageErrors = trackErrors(page);
   await expandRoost(page);
 
-  // Listen for every PATCH at the version endpoint — assert none fire post-Esc.
+  // Assert no PATCH fires after Esc.
   const patchUrls: string[] = [];
   page.on('request', (req) => {
     if (req.method() === 'PATCH' && req.url().includes(`/api/roosts/${ROOST_ID}/versions/`)) {
@@ -163,13 +154,12 @@ test('C — Escape cancels, no PATCH fires, UI reverts', async ({ page }) => {
 
   await editor.press('Escape');
 
-  // Editor unmounts and the static button reappears with the ORIGINAL text.
   await expect(v2.locator('textarea')).toHaveCount(0);
   const restored = v2.getByRole('button', { name: 'edit description' });
   await expect(restored).toContainText('v2 work');
   await expect(restored).not.toContainText('abandoned edit');
 
-  // Give any (incorrectly fired) PATCH a moment to land, then assert none did.
+  // Give a wrongly-fired PATCH time to land before asserting none did.
   await expect.poll(() => patchUrls.length, { timeout: 1_000 }).toBe(0);
 
   assertNoPageErrors();
@@ -189,7 +179,6 @@ test('D — edited description persists across a full page reload', async ({ pag
   await editor.press('Control+Enter');
   expect((await responsePromise).status()).toBe(200);
 
-  // Reload, re-expand, assert v3 still reads the saved description.
   await page.reload();
   await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
   await ensureRoostExpanded(page);

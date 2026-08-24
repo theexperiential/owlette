@@ -1,20 +1,16 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for the talon trigger matcher and its internal http ingress
- * (talons wave 2, task 2.3).
+ * Talon trigger matcher + its internal http ingress.
  *
- * The run engine is mocked at its module boundary — `engine.test.ts` already
- * proves what a run does, and repeating it here would only make these tests
- * slower and more fragile. What is under test is the SELECTION: which talons a
- * given signal picks out, what each selected talon is handed, and the guarantee
- * that neither a bad talon nor a dead Firestore can escape a tap into the route
- * that fired it.
+ * The run engine is mocked at its module boundary (engine.test.ts covers runs).
+ * Under test is SELECTION: which talons a signal picks out, what each is handed,
+ * and that neither a bad talon nor a dead Firestore escapes a tap into the
+ * route that fired it.
  *
- * Firestore is a small in-memory fake rather than a chain of `jest.fn()`s
- * because the query the matcher issues (`enabled == true`, capped) is part of
- * the behavior being asserted — including the cap, which a naive mock would
- * silently satisfy.
+ * Firestore is an in-memory fake, not chained `jest.fn()`s, because the query
+ * the matcher issues (`enabled == true`, capped) is part of the asserted
+ * behavior — a naive mock would silently satisfy the cap.
  */
 
 const mockRunTalon = jest.fn();
@@ -66,10 +62,6 @@ import {
 } from '@/lib/talons/matcher.server';
 import type { TalonDoc } from '@/lib/talons/types';
 import { MAX_TALONS_PER_SITE } from '@/lib/talons/validation';
-
-/* ------------------------------------------------------------------------- */
-/*  In-memory Firestore                                                       */
-/* ------------------------------------------------------------------------- */
 
 type DocData = Record<string, unknown>;
 
@@ -157,10 +149,6 @@ class FakeDocRef {
   }
 }
 
-/* ------------------------------------------------------------------------- */
-/*  Fixtures                                                                  */
-/* ------------------------------------------------------------------------- */
-
 const SITE = 'site-a';
 const TALONS_PATH = `sites/${SITE}/talons`;
 const RUNS_PATH = `sites/${SITE}/talon_runs`;
@@ -238,10 +226,6 @@ beforeEach(() => {
   mockGetAdminDb.mockReturnValue(db);
 });
 
-/* ------------------------------------------------------------------------- */
-/*  threshold matching                                                        */
-/* ------------------------------------------------------------------------- */
-
 describe('threshold signals', () => {
   it('runs the talon whose metric, operator and bound the breach satisfies', async () => {
     seedTalon('t1');
@@ -268,8 +252,7 @@ describe('threshold signals', () => {
   });
 
   it('ignores a talon watching the same metric through a different operator', async () => {
-    // `cpu_percent < 90` and `cpu_percent > 90` are opposite questions; 96
-    // answers only one of them, and the rule that fired was the other.
+    // `<90` and `>90` are opposite questions; 96 answers only one.
     seedTalon('t1', {
       trigger: { type: 'threshold', metric: 'cpu_percent', operator: '<', value: 90 },
     });
@@ -278,8 +261,7 @@ describe('threshold signals', () => {
   });
 
   it('ignores a talon whose own bound the breach value does not cross', async () => {
-    // The alert rule that produced this payload fired at 80; a talon set at 95
-    // has not been breached by 84 and must not run.
+    // The alert fired at 80; a talon set at 95 isn't breached by 84.
     seedTalon('t1', {
       trigger: { type: 'threshold', metric: 'cpu_percent', operator: '>', value: 95 },
     });
@@ -335,10 +317,6 @@ describe('threshold signals', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  event matching                                                            */
-/* ------------------------------------------------------------------------- */
-
 describe('event signals', () => {
   it('runs every talon subscribed to the event type', async () => {
     seedTalon('t1', { trigger: { type: 'event', eventTypes: ['process_crash'] } });
@@ -379,10 +357,9 @@ describe('event signals', () => {
   );
 
   it('short-circuits an event outside the catalog without reading firestore', async () => {
-    // `/api/agent/alert` taps on every alert it accepts bar display events,
-    // `connection_failure` included. No talon can subscribe to that, so it
-    // must not cost a query —
-    // the poisoned reads below would surface as a rejection if one were issued.
+    // `/api/agent/alert` taps on `connection_failure` too, which no talon can
+    // subscribe to — it must not cost a query. The poisoned reads below would
+    // reject if one were issued.
     seedTalon('t1', { trigger: { type: 'event', eventTypes: ['process_crash'] } });
     fake.failReads = true;
 
@@ -425,10 +402,6 @@ describe('event signals', () => {
     expect(ranTalonIds()).toEqual(['on']);
   });
 });
-
-/* ------------------------------------------------------------------------- */
-/*  delayed event triggers                                                    */
-/* ------------------------------------------------------------------------- */
 
 describe('delayed event triggers', () => {
   const restarted = { kind: 'event' as const, eventType: 'process_restarted', machineId: 'm1' };
@@ -482,8 +455,7 @@ describe('delayed event triggers', () => {
   it('coalesces a burst into one deferral', async () => {
     seedDelayed(3);
 
-    // A process that crash-loops eight times inside the wait is still one thing
-    // to react to.
+    // Eight crash-loops inside the wait are still one thing to react to.
     for (let index = 0; index < 8; index += 1) {
       await matchAndRunTalons(db, SITE, restarted);
     }
@@ -547,8 +519,8 @@ describe('delayed event triggers', () => {
   );
 
   it('never defers a threshold breach, whatever the trigger carries', async () => {
-    // `delayMinutes` is rejected on a threshold trigger by the validator; a
-    // hand-edited document must still not take the deferral path.
+    // The validator rejects `delayMinutes` on a threshold trigger; a hand-edited
+    // doc must still not take the deferral path.
     seedTalon('threshold-delay', {
       trigger: {
         type: 'threshold',
@@ -577,10 +549,6 @@ describe('delayed event triggers', () => {
     expect(mockLoggerError).toHaveBeenCalled();
   });
 });
-
-/* ------------------------------------------------------------------------- */
-/*  scope                                                                     */
-/* ------------------------------------------------------------------------- */
 
 describe('scope filtering', () => {
   it('matches a machine-scoped talon only on a machine in its list', async () => {
@@ -622,8 +590,7 @@ describe('scope filtering', () => {
   });
 
   it('matches ONLY unscoped talons when the event names no machine', async () => {
-    // "restart TouchDesigner on LOBBY-01" cannot be a sensible response to an
-    // event that never said which machine it happened on.
+    // A machine-scoped action can't answer an event with no machine.
     seedTalon('all', {
       trigger: { type: 'event', eventTypes: ['display_sync_lost'] },
       scope: { machineIds: null },
@@ -666,15 +633,11 @@ describe('scope filtering', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  fan-out limits and isolation                                              */
-/* ------------------------------------------------------------------------- */
-
 describe('fan-out', () => {
   it('reads no more than the per-site talon cap', async () => {
     // The create path counts before writing rather than transacting, so a race
-    // can leave a site marginally over the cap. A signal must not be the thing
-    // that discovers it by fanning out unbounded runs.
+    // can leave a site over the cap — a signal must not discover that by
+    // fanning out unbounded runs.
     for (let index = 0; index < MAX_TALONS_PER_SITE + 5; index += 1) {
       seedTalon(`t${String(index).padStart(2, '0')}`, {
         trigger: { type: 'event', eventTypes: ['process_crash'] },
@@ -712,10 +675,6 @@ describe('fan-out', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  the tap contract                                                          */
-/* ------------------------------------------------------------------------- */
-
 describe('tapTalonMatcher', () => {
   /** Let the tap's detached promise chain settle. */
   const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -752,10 +711,6 @@ describe('tapTalonMatcher', () => {
     );
   });
 });
-
-/* ------------------------------------------------------------------------- */
-/*  POST /api/talons/internal/match                                           */
-/* ------------------------------------------------------------------------- */
 
 describe('POST /api/talons/internal/match', () => {
   const SECRET = 'internal-secret-value';

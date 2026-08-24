@@ -9,6 +9,7 @@ import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDevicePrefFlag, useDevicePrefNumber } from '@/hooks/useDevicePrefFlag';
+import { useScrollFade } from '@/hooks/useScrollFade';
 
 /** Resizable sidebar bounds (lg+ expanded state only; the icon rail is fixed). */
 const SIDEBAR_MIN_W = 200;
@@ -19,29 +20,16 @@ const SIDEBAR_COLLAPSE_AT_W = 150;
 /** Below this width the nav descriptions vanish so names keep their room. */
 const SIDEBAR_COMPACT_BELOW_W = 232;
 
-/**
- * Admin Layout
- *
- * Wraps all admin pages with:
- * - Superadmin permission check (RequireSuperadmin component)
- * - Navigation sidebar for admin sections
- * - Consistent styling
- * - Mobile responsive with hamburger menu
- */
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Desktop sidebar collapse (icon-only), persisted per device. Replaces the
-  // former viewport-driven lg/xl auto-collapse with an explicit user control so
-  // the width is predictable regardless of window size. Mobile (<lg) always
-  // uses the full-width drawer, so this only governs the lg+ static sidebar.
+  // Explicit user control, not the old viewport-driven auto-collapse, so width is
+  // predictable at any window size. lg+ only; <lg always uses the drawer.
   const { value: collapsed, setValue: setCollapsed } = useDevicePrefFlag('adminSidebarCollapsed', false);
 
-  // Drag-resizable width (expanded lg+ only), persisted per device alongside
-  // the collapse flag. The pref's own 400ms debounce means drags write to
-  // Firestore once at rest, not per pointermove.
+  // The pref's 400ms debounce means a drag writes to Firestore once at rest.
   const { value: sidebarWidth, setValue: setSidebarWidth } = useDevicePrefNumber(
     'adminSidebarWidth',
     SIDEBAR_DEFAULT_W,
@@ -50,6 +38,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   );
   const [resizing, setResizing] = useState(false);
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  // on mobile the pane runs under the fixed top bar (pt-16), so it fades instead of cutting
+  const mainRef = useScrollFade<HTMLElement>();
 
   const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -60,9 +50,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const onResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!resizeRef.current) return;
     const raw = resizeRef.current.startWidth + (e.clientX - resizeRef.current.startX);
-    // Yanking well past the minimum collapses the rail, exactly like the
-    // collapse button. The width pref keeps its last clamped value, so
-    // expanding restores the width the user had before the yank.
+    // yanking past the minimum collapses; the width pref keeps its last value
     if (raw < SIDEBAR_COLLAPSE_AT_W) {
       resizeRef.current = null;
       setResizing(false);
@@ -75,8 +63,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     resizeRef.current = null;
     setResizing(false);
   };
-  // Narrow-but-expanded: drop the nav descriptions so names keep their room.
-  // lg+ only — the mobile drawer is fixed-width and keeps its descriptions.
+  // narrow-but-expanded drops descriptions so names keep their room (lg+ only)
   const compactNav = !collapsed && sidebarWidth < SIDEBAR_COMPACT_BELOW_W;
 
   const navItems = [
@@ -130,10 +117,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     },
   ];
 
-  // Read sessionStorage in a lazy initializer so the initial render already
-  // has the correct back-target — avoids a post-mount setState inside an
-  // effect (which violates react-hooks/set-state-in-effect). Guarded on
-  // `window` for SSR safety; falls back to the dashboard when unavailable.
+  // Lazy initializer, not an effect: the first render needs the right back-target
+  // and a post-mount setState trips react-hooks/set-state-in-effect.
   const [{ backLabel, backPath }] = useState(() => {
     if (typeof window === 'undefined') return { backLabel: 'go back', backPath: '/dashboard' };
     const prev = sessionStorage.getItem('owlette_pre_admin_path');
@@ -142,15 +127,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return { backLabel: `back to ${name}`, backPath: prev };
   });
 
-  // Jump directly to the pre-admin path instead of router.back() — the back-button
-  // should skip over any admin → admin internal navigation the user took on the way in.
+  // not router.back(): skip over any admin -> admin navigation taken on the way in
   const handleBack = () => {
     router.push(backPath);
   };
 
-  // Icon-only collapse control, floated in the header corner when expanded.
-  // (Expanding is handled by the owl-eye logo itself when collapsed — see the
-  // header block below — so this only ever collapses.)
+  // Only ever collapses — the owl-eye logo is the expand control when collapsed.
   const renderCollapseButton = () => (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -198,10 +180,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         {/* Sidebar Navigation */}
         <aside
-          // The width var only governs lg+ expanded; mobile stays w-64 in the
-          // drawer and the collapsed rail stays fixed at lg:w-20. Transitions
-          // are suspended mid-drag so the width tracks the pointer 1:1 instead
-          // of rubber-banding 200ms behind it.
+          // Width var is lg+ expanded only (mobile w-64, collapsed rail lg:w-20).
+          // Transitions off mid-drag so width tracks the pointer 1:1.
           style={{ '--admin-sidebar-w': `${sidebarWidth}px` } as React.CSSProperties}
           className={`
           w-64 ${collapsed ? 'lg:w-20' : 'lg:w-[var(--admin-sidebar-w)]'} bg-card border-r border-border flex flex-col
@@ -209,14 +189,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           transform ${resizing ? 'transition-none' : 'transition-all duration-200 ease-in-out'}
           ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}>
-          {/* Resize handle — lg+ expanded only. Keyboard: arrows nudge 16px,
-              double-click resets to the default width.
-
-              A *focusable* separator is a window-splitter widget, not decoration,
-              so ARIA requires aria-valuenow on it (axe `aria-required-attr`,
-              critical — it failed the a11y route smoke without it). The hook
-              clamps on set, so the reported value is always within the declared
-              range. Don't drop these when editing the handle. */}
+          {/* Resize handle, lg+ expanded only. Arrows nudge 16px, double-click resets.
+              Keep the aria-value* attrs: a focusable separator is a window-splitter
+              widget, and axe `aria-required-attr` (critical) failed the a11y route
+              smoke without aria-valuenow. */}
           {!collapsed && (
             <div
               role="separator"
@@ -238,9 +214,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               className="hidden lg:block absolute inset-y-0 -right-px w-1.5 z-50 cursor-col-resize outline-none transition-colors hover:bg-accent-cyan/40 active:bg-accent-cyan/60 focus-visible:bg-accent-cyan/50"
             />
           )}
-          {/* Header — vertical padding is held constant across states (only the
-              horizontal shrinks when collapsed) so the logo doesn't shift up or
-              down as the rail folds. */}
+          {/* Vertical padding is constant across states so the logo can't shift as the rail folds. */}
           <div className={`p-6 ${collapsed ? 'lg:px-3 lg:py-6' : 'lg:p-6'} border-b border-border`}>
             {/* Mobile Header */}
             <div className="lg:hidden mb-4">
@@ -256,15 +230,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               </div>
             </div>
 
-            {/* Desktop/Tablet Header — fixed row height + constant logo size in
-                both states, so the owl eye lands at the exact same y whether the
-                rail is expanded or collapsed (no vertical jump on toggle). */}
+            {/* Fixed row height + constant logo size, so the owl eye lands at the same y in both states. */}
             <div className={`hidden lg:flex items-center h-11 mb-4 ${collapsed ? 'justify-center' : 'relative gap-2'}`}>
               {collapsed ? (
-                /* Collapsed: the owl-eye logo doubles as the expand control —
-                   at rest it's the logo, on hover/focus it swaps to an expand
-                   icon. Folding the two together saves a row on the icon rail.
-                   Desktop only; mobile uses the drawer's own close (X). */
+                /* Collapsed: the logo doubles as the expand control (swaps to an icon on
+                   hover/focus), saving a row on the rail. Desktop only. */
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -295,9 +265,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   <div className="block pr-8">
                     <h1 className="text-xl font-bold text-foreground">admin panel</h1>
                   </div>
-                  {/* Collapse control — icon-only, floated at the row's right
-                      edge, vertically centered on the logo; the title's pr-8
-                      keeps text clear of it. */}
+                  {/* Floated right, centered on the logo; the title's pr-8 keeps text clear. */}
                   <div className="absolute right-0 top-1/2 -translate-y-1/2">
                     {renderCollapseButton()}
                   </div>
@@ -370,7 +338,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-auto pt-16 lg:pt-0">
+        <main ref={mainRef} className="flex-1 overflow-auto pt-16 lg:pt-0">
           {children}
         </main>
       </div>

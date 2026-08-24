@@ -46,15 +46,13 @@ test('admin creates a roost distribution — project_distributions doc + per-tar
   const dialog = page.getByRole('dialog', { name: /^new roost$/i });
   await expect(dialog).toBeVisible();
 
-  // activeMode='deploy' by default. sourceMode flipped to 'upload' in
-  // 7b04ad9 ("upload-first dialog UX"), so switch to the 'by url'
-  // radio before filling #project-url — the input only renders when
-  // sourceMode === 'url'.
+  // activeMode='deploy' by default. sourceMode flipped to 'upload' in 7b04ad9
+  // ("upload-first dialog UX"), so switch to the 'by url' radio first —
+  // #project-url only renders when sourceMode === 'url'.
   await dialog.locator('#distribution-name').fill(distributionName);
   await dialog.getByRole('radio', { name: /^by url$/i }).click();
   await dialog.locator('#project-url').fill(projectUrl);
 
-  // Select the seeded machine row.
   const machineRow = dialog.locator('div').filter({ hasText: new RegExp(`^${MACHINE_ID}`) }).first();
   await machineRow.click();
 

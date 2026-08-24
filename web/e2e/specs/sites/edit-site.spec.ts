@@ -1,18 +1,11 @@
 /**
- * Sites — edit-site inline rename (C2.2)
+ * Sites — inline rename in the manage-sites dialog: superadmin opens the
+ * switcher, edits a dedicated `site-to-rename` row (seeded per test so the
+ * shared site-A / site-B baseline stays untouched), saves, and the spec asserts
+ * the toast, the row leaving edit mode, and an Admin SDK read-through of
+ * sites/site-to-rename.name.
  *
- * The manage-sites dialog renders each site row with an edit button that
- * swaps the row in place into an inline editor (name + timezone). This spec
- * exercises the rename flow:
- *   - superadmin opens switcher → "manage sites"
- *   - clicks the pencil on a dedicated `site-to-rename` row (seeded in
- *     beforeAll so we don't mutate the shared site-A / site-B baseline)
- *   - clears the name, types a new one, clicks save
- *   - asserts toast + the row exits edit mode showing the new name
- *   - Admin SDK read-through: sites/site-to-rename.name matches the new value
- *
- * Edge: empty name shows a validation error and the row stays in edit mode
- * (the save button issues a toast.error, no Firestore write happens).
+ * Edge: an empty name toasts an error, stays in edit mode, and writes nothing.
  */
 
 import { test, expect } from '@playwright/test';
@@ -26,8 +19,7 @@ const RENAMEABLE_SITE_ID = 'site-to-rename';
 const ORIGINAL_NAME = 'Original Rename Target';
 
 test.beforeEach(async () => {
-  // Re-seed before every test so the previous test's rename doesn't leak.
-  // setDoc is idempotent — it overwrites whatever the prior test left.
+  // Re-seed before every test so a previous rename doesn't leak (setDoc overwrites).
   await seedSite({
     id: RENAMEABLE_SITE_ID,
     name: ORIGINAL_NAME,
@@ -52,16 +44,14 @@ test('superadmin can rename a site inline via manage-sites', async ({ page }) =>
   // Click edit on the seeded rename target — aria-label disambiguates rows.
   await dialog.getByRole('button', { name: `edit ${ORIGINAL_NAME}` }).click();
 
-  // The row swaps into edit mode — the name input is auto-focused with the
-  // current value. Clear and type the new name.
+  // The row swaps into edit mode with the name input auto-focused.
   const nameInput = dialog.getByLabel('site name');
   await expect(nameInput).toHaveValue(ORIGINAL_NAME);
   await nameInput.fill(newName);
 
   await dialog.getByRole('button', { name: /^save$/i }).click();
 
-  // Toast fires + the row exits edit mode (the edit button returns, now
-  // labeled with the new name).
+  // Toast fires and the row exits edit mode (edit button returns, new label).
   await expect(page.getByText(/updated successfully/i)).toBeVisible();
   await expect(dialog.getByRole('button', { name: `edit ${newName}` }))
     .toBeVisible({ timeout: 5_000 });
@@ -83,8 +73,7 @@ test('saving an empty name shows an error and keeps the row in edit mode', async
 
   await dialog.getByRole('button', { name: /^save$/i }).click();
 
-  // Validation toast fires and the row stays in edit mode (the save button
-  // is still visible; no "edit" affordance has reappeared).
+  // Validation toast fires and the row stays in edit mode (save still visible).
   await expect(page.getByText(/site name cannot be empty/i)).toBeVisible();
   await expect(dialog.getByRole('button', { name: /^save$/i })).toBeVisible();
 

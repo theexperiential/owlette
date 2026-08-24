@@ -1,6 +1,7 @@
+import { type Auth } from 'firebase-admin/auth';
+import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import admin from 'firebase-admin';
 import {
   assertDevProject,
   createAdminApp,
@@ -107,8 +108,8 @@ function expectStatusIn(
 }
 
 async function seedLiveData(
-  db: admin.firestore.Firestore,
-  auth: admin.auth.Auth,
+  db: Firestore,
+  auth: Auth,
   ids: ReturnType<typeof makeRunIds>,
   machineIds: string[],
 ): Promise<void> {
@@ -136,14 +137,14 @@ async function seedLiveData(
     timezone: 'UTC',
     deployQuota: 100,
     distributionQuota: 100,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
   await db.collection('users').doc(ids.uid).set({
     email: ids.email,
     role: 'admin',
     sites: [ids.siteId],
     displayName: 'W8.1 Major Flows Admin',
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
     mfaEnrolled: false,
     requiresMfaSetup: false,
   });
@@ -555,7 +556,7 @@ test('live dev API major control-plane flows stay server-mediated after lockdown
       sites: [],
       mfaEnrolled: false,
       requiresMfaSetup: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
     const superClient = await createSignedInClient(
       adminAuth,
@@ -590,7 +591,7 @@ test('live dev API major control-plane flows stay server-mediated after lockdown
       sites: [ids.siteId],
       mfaEnrolled: false,
       requiresMfaSetup: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
     const memberClient = await createSignedInClient(
       adminAuth,

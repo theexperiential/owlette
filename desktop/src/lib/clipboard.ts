@@ -1,18 +1,14 @@
 /**
- * Copying a short string to the clipboard.
+ * Copy a short string to the clipboard.
  *
- * The webview is served from `http://tauri.localhost`, which Chromium treats as
- * a potentially-trustworthy origin, so the async Clipboard API is available and
- * no clipboard plugin is needed. The `execCommand` fallback covers the case
- * where the document is not focused — a click on our own button always is, but a
- * copy triggered from a keyboard shortcut while the window is behind another one
- * is not, and silently failing there would look like the button did nothing.
+ * `http://tauri.localhost` counts as potentially-trustworthy in Chromium, so the
+ * async Clipboard API works with no plugin. The `execCommand` fallback covers an
+ * unfocused document — a keyboard-shortcut copy while the window is behind
+ * another one, where silent failure looks like a dead button.
  *
- * The legacy flow copied the pairing phrase from python
- * (`configure_site._copy_to_clipboard`, via win32clipboard). That path is
- * switched off for the desktop app — a background subprocess taking the
- * operator's clipboard without them asking is the wrong default — so this is the
- * only thing that writes to it, and only on an explicit click.
+ * The only thing in the app that writes the clipboard, and only on an explicit
+ * click: the legacy python path is off because a background subprocess taking
+ * the operator's clipboard unasked is the wrong default.
  */
 
 export async function copyText(text: string): Promise<boolean> {
@@ -28,8 +24,7 @@ export async function copyText(text: string): Promise<boolean> {
   try {
     const scratch = document.createElement('textarea')
     scratch.value = text
-    // Off-screen rather than hidden: `execCommand('copy')` needs a selectable,
-    // rendered node.
+    // Off-screen, not hidden: execCommand('copy') needs a rendered, selectable node.
     scratch.setAttribute('readonly', '')
     scratch.style.position = 'fixed'
     scratch.style.top = '-1000px'

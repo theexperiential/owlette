@@ -10,9 +10,8 @@ import {
   type McpToolDefinition,
 } from '@/lib/mcp-tools';
 
-// ─── Tool Registry ──────────────────────────────────────────────────────────
-// Single source of truth: every tool name that must exist.
-// If a tool is added/removed in mcp-tools.ts, this list must be updated.
+// Tool registry — single source of truth for every tool name that must
+// exist. Adding or removing a tool in mcp-tools.ts must update this list.
 
 const EXPECTED_TIER1 = [
   'get_site_logs',
@@ -78,7 +77,6 @@ const EXPECTED_TIER3 = [
 
 const ALL_EXPECTED = [...EXPECTED_TIER1, ...EXPECTED_TIER2, ...EXPECTED_TIER3];
 
-// ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('mcp-tools: tool definitions', () => {
   it('exports exactly the expected number of tools', () => {
@@ -275,10 +273,9 @@ describe('mcp-tools: required parameters', () => {
   });
 });
 
-// ─── Agent Parity Check ─────────────────────────────────────────────────────
-// These are the tools implemented in agent/src/mcp_tools.py execute_tool().
-// Tier 2 tools go through IPC, not mcp_tools.py — they use existing commands.
-// This test ensures the web definitions match what the agent actually handles.
+// Agent parity: the web definitions must match what
+// agent/src/mcp_tools.py execute_tool() actually handles. Tier 2 goes through
+// IPC on existing commands, not mcp_tools.py.
 
 describe('mcp-tools: agent parity', () => {
   // Tools handled directly by mcp_tools.execute_tool()

@@ -1,17 +1,12 @@
 /**
- * Geometry of the resizable process-list sidebar, including the icon rail it
- * collapses to.
+ * Geometry of the resizable process-list sidebar and the icon rail it collapses
+ * to. These numbers are mirrored in `src-tauri/src/window_state.rs`, which is the
+ * AUTHORITY — it clamps again before writing to disk.
  *
- * The numbers here are mirrored in `src-tauri/src/window_state.rs`, which is the
- * authority — it clamps again on the way to disk, so a bug on this side can make
- * the drag feel wrong but can never persist a width the divider cannot produce.
- *
- * The list has two shapes, not one range: an expanded column between the bounds
- * below, and a fixed-width rail of icons. Dragging the divider left past
- * {@link SIDEBAR_COLLAPSE_AT} snaps to the rail — the same gesture VS Code's
- * sidebar uses — and dragging back out restores the width the operator had
- * before, which is why {@link SidebarLayout} keeps that width while collapsed
- * rather than overwriting it with the rail's.
+ * Two shapes, not one range: an expanded column between the bounds below, and a
+ * fixed rail. Dragging past {@link SIDEBAR_COLLAPSE_AT} snaps to the rail;
+ * dragging back out restores the previous width, which is why
+ * {@link SidebarLayout} keeps `width` while collapsed.
  */
 
 export const SIDEBAR_MIN_WIDTH = 200
@@ -19,20 +14,13 @@ export const SIDEBAR_MAX_WIDTH = 400
 /** `w-72` — what the sidebar measured before it became resizable. */
 export const SIDEBAR_DEFAULT_WIDTH = 288
 
-/**
- * The collapsed rail: one column of 32 px icon targets with 8 px either side.
- * Wide enough for a comfortable click, narrow enough that the detail pane gets
- * effectively the whole window.
- */
+/** Collapsed rail: 32px icon targets with 8px either side. */
 export const SIDEBAR_RAIL_WIDTH = 48
 
 /**
- * Drag the divider below this and the list collapses.
- *
- * Deliberately well above the rail's own width: the snap has to happen while
- * the pointer is still travelling, so it reads as the list *choosing* to
- * collapse rather than as a column that got squashed. Below the minimum width,
- * so no ordinary resize ever crosses it by accident.
+ * Collapse threshold. Well above the rail width so the snap fires while the
+ * pointer is still moving, and below SIDEBAR_MIN_WIDTH so an ordinary resize
+ * never crosses it by accident.
  */
 export const SIDEBAR_COLLAPSE_AT = 120
 
@@ -40,22 +28,16 @@ export const SIDEBAR_COLLAPSE_AT = 120
 export const SIDEBAR_KEY_STEP = 8
 export const SIDEBAR_KEY_STEP_COARSE = 32
 
-/**
- * What the sidebar looks like: collapsed or not, and how wide it is when it is
- * not. `width` is meaningful in both states — while collapsed it is what the
- * list will expand back to.
- */
+/** `width` is meaningful in both states: while collapsed it is the expand-back
+ *  target. */
 export interface SidebarLayout {
   collapsed: boolean
   width: number
 }
 
 /**
- * Round and clamp a width into the range the expanded column offers.
- *
- * Whole pixels only: the width lands in an inline style and in a JSON file, and
- * a fractional column edge blurs the 1 px divider line on a fractional-scale
- * display.
+ * Round and clamp into the expanded column's range. Whole pixels only — a
+ * fractional edge blurs the 1px divider on a fractional-scale display.
  */
 export function clampSidebarWidth(width: number): number {
   if (!Number.isFinite(width)) return SIDEBAR_DEFAULT_WIDTH
@@ -68,30 +50,25 @@ export function sidebarColumnWidth(layout: SidebarLayout): number {
 }
 
 /**
- * The layout for a drag that began at `start` and has travelled `deltaX`.
- *
- * Measured from where the gesture started rather than accumulated per move, so
- * a pointer that runs past either end and comes back lands exactly where it
- * points instead of trailing by however far it overshot. That also makes the
- * collapse reversible inside one gesture: dragging back out past the threshold
- * expands again without letting go.
+ * Layout for a drag from `start` that has travelled `deltaX`. Measured from the
+ * gesture origin, not accumulated per move, so overshooting an end and coming
+ * back lands exactly on the pointer — and makes collapse reversible mid-gesture.
  */
 export function layoutForDrag(start: SidebarLayout, deltaX: number): SidebarLayout {
   const pointed = sidebarColumnWidth(start) + deltaX
   if (pointed < SIDEBAR_COLLAPSE_AT) {
-    // The expanded width is left as it was: it is what "expand" restores.
+    // Keep the expanded width — it is what "expand" restores.
     return { collapsed: true, width: start.width }
   }
   return { collapsed: false, width: clampSidebarWidth(pointed) }
 }
 
 /**
- * The layout after a keyboard nudge on the divider, or null for a key we do not
- * handle — the caller uses that to decide whether to swallow the event.
+ * Layout after a keyboard nudge, or null for an unhandled key (the caller uses
+ * that to decide whether to swallow the event).
  *
- * The rail is the far left of the range, so `Home` collapses and a left arrow
- * from the minimum width does too; a right arrow out of the rail restores the
- * remembered width rather than the minimum.
+ * The rail is the far left of the range: `Home` and a left arrow at minimum width
+ * both collapse; a right arrow out of the rail restores the remembered width.
  */
 export function layoutForKey(
   layout: SidebarLayout,

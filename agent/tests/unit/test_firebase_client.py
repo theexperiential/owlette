@@ -6,7 +6,7 @@ import logging
 import time
 import sys
 
-# Pre-mock Windows-specific and heavy dependencies before importing firebase_client
+# Pre-mock Windows-specific and heavy deps before importing firebase_client
 _MOCK_MODULES = {
     "win32api": MagicMock(),
     "win32con": MagicMock(),
@@ -79,6 +79,10 @@ def firebase_client(mock_auth_manager, mock_rest_client):
         mock_su.get_data_path.return_value = "/tmp/owlette"
         mock_su.get_system_metrics.return_value = {"cpu": 10, "memory": 50}
         mock_su.APP_VERSION = "2.2.1"
+        # machine_id is read straight off shared_utils in __init__; without a
+        # stub it becomes a MagicMock and every id-shaped assertion depends on
+        # whether this module was still in sys.modules when patch() resolved it.
+        mock_su.get_hostname.return_value = "TEST-MACHINE"
 
         try:
             client = FirebaseClient(
@@ -90,14 +94,12 @@ def firebase_client(mock_auth_manager, mock_rest_client):
             pytest.skip("FirebaseClient construction failed with mocks")
             return
 
-        # Override db with our mock (constructor may or may not have set it)
+        # Constructor may or may not have set db.
         client.db = mock_rest_client
         return client
 
 
-# ---------------------------------------------------------------------------
-# TestInit — verify construction with mocked dependencies
-# ---------------------------------------------------------------------------
+# TestInit — construction with mocked dependencies
 class TestInit:
     def test_can_construct(self, firebase_client):
         """FirebaseClient should be constructable with mocked deps."""
@@ -116,17 +118,13 @@ class TestInit:
         assert len(firebase_client.machine_id) > 0
 
 
-# ---------------------------------------------------------------------------
-# TestPresence — heartbeat writes to correct Firestore path
-# ---------------------------------------------------------------------------
+# TestPresence — heartbeat writes to the correct Firestore path
 class TestPresence:
     def test_update_presence_calls_firestore(self, firebase_client, mock_rest_client):
         """_update_presence should write to Firestore via collection/document chain."""
         firebase_client.running = True
-        # Ensure connected property returns True
         firebase_client.connection_manager._state = ConnectionState.CONNECTED
 
-        # Set up the mock chain: collection().document().collection().document()
         mock_doc_ref = MagicMock()
         mock_machine_coll = MagicMock()
         mock_machine_coll.document.return_value = mock_doc_ref
@@ -138,26 +136,21 @@ class TestPresence:
 
         firebase_client._update_presence(True)
 
-        # Verify the chain was called
         mock_rest_client.collection.assert_called_with("sites")
         mock_sites_coll.document.assert_called_with("test-site")
         mock_site_doc.collection.assert_called_with("machines")
         mock_doc_ref.set.assert_called_once()
-        # Verify the data includes 'online' field
         call_data = mock_doc_ref.set.call_args[0][0]
         assert call_data["online"] is True
 
 
-# ---------------------------------------------------------------------------
-# TestMetrics — _upload_metrics writes correct data structure
-# ---------------------------------------------------------------------------
+# TestMetrics — _upload_metrics writes the correct data structure
 class TestMetrics:
     def test_upload_metrics_calls_firestore(self, firebase_client, mock_rest_client):
         """_upload_metrics should update the machine document with metrics."""
         firebase_client.running = True
         firebase_client.connection_manager._state = ConnectionState.CONNECTED
 
-        # Set up the mock chain
         mock_doc_ref = MagicMock()
         mock_machine_coll = MagicMock()
         mock_machine_coll.document.return_value = mock_doc_ref
@@ -175,19 +168,15 @@ class TestMetrics:
 
         firebase_client._upload_metrics(metrics_data)
 
-        # Should have called update on the document ref
         assert mock_doc_ref.update.called
 
 
-# ---------------------------------------------------------------------------
 # TestErrorHandling — connection errors handled gracefully
-# ---------------------------------------------------------------------------
 class TestErrorHandling:
     def test_presence_skipped_when_disconnected(self, firebase_client, mock_rest_client):
         """When disconnected, _update_presence should skip without error."""
         firebase_client.connection_manager._state = ConnectionState.DISCONNECTED
 
-        # Should not raise and should not call Firestore
         firebase_client._update_presence(True)
         mock_rest_client.collection.assert_not_called()
 
@@ -196,24 +185,18 @@ class TestErrorHandling:
         firebase_client.connection_manager._state = ConnectionState.CONNECTED
         firebase_client.db = None
 
-        # Should not raise
         firebase_client._update_presence(True)
 
 
-# ---------------------------------------------------------------------------
 # TestSiteNameFromApi — GET /api/agent/site, the path that actually resolves
-# ---------------------------------------------------------------------------
 class TestSiteNameFromApi:
-    """The agent cannot read `sites/{siteId}` — the rules scope it to its own
-    machine subtree — so the display name the desktop footer shows comes from
-    `GET /api/agent/site`, which authenticates on the agent's own bearer token
-    and projects the site's name and nothing else.
+    """Site display name comes from `GET /api/agent/site` — rules scope the agent
+    to its own machine subtree, so it cannot read `sites/{siteId}`.
 
-    Two invariants are load-bearing here. The API answer must short-circuit the
-    Firestore read (that read only ever 403s, and its `timezone` field would
-    switch schedule evaluation fleet-wide if it ever landed). And an API
-    failure must not latch: the endpoint may simply not be deployed yet at this
-    agent's api_base, and the next connect has to try again.
+    Two load-bearing invariants: the API answer short-circuits the Firestore read
+    (which only 403s, and whose `timezone` would switch schedule evaluation
+    fleet-wide if it ever landed), and an API failure must not latch — the
+    endpoint may just not be deployed yet, so the next connect retries.
     """
 
     @staticmethod
@@ -236,14 +219,14 @@ class TestSiteNameFromApi:
         get.assert_called_once()
         assert get.call_args[0][0] == 'https://dev.owlette.app/api/agent/site'
         assert get.call_args[1]['headers'] == {'Authorization': 'Bearer fake-token'}
-        # The site is carried by the token, so nothing is sent with the request.
+        # The site rides on the token, so nothing is sent with the request.
         assert 'params' not in get.call_args[1]
-        # An answer from the API is the whole answer — no site-document read.
+        # An API answer is the whole answer — no site-document read.
         mock_rest_client.get_document.assert_not_called()
 
     def test_never_takes_a_timezone_from_the_endpoint(self, firebase_client):
-        # Guard on the deferral: activating site-timezone scheduling is a
-        # decision, not something a widened response body gets to make.
+        # Guards the deferral: site-timezone scheduling must not switch on just
+        # because the response body widened.
         with patch('firebase_client.shared_utils.get_api_base_url',
                    return_value='https://dev.owlette.app/api'), \
              patch('requests.get',
@@ -294,8 +277,8 @@ class TestSiteNameFromApi:
     def test_the_failure_is_warned_once_but_retried_every_time(
         self, firebase_client, mock_rest_client
     ):
-        # An undeployed endpoint is a fact about the server, not a permanent
-        # one about this agent — so the attempt repeats while the log does not.
+        # An undeployed endpoint is a server fact, not a permanent agent one —
+        # retry every connect, log once.
         mock_rest_client.get_document.return_value = None
         with patch('firebase_client.shared_utils.get_api_base_url',
                    return_value='https://dev.owlette.app/api'), \
@@ -331,18 +314,14 @@ class TestSiteNameFromApi:
         assert firebase_client.site_name == 'TEC'
 
 
-# ---------------------------------------------------------------------------
 # TestSiteMetadata — the sites/{siteId} read kept for a future rule grant
-# ---------------------------------------------------------------------------
 class TestSiteMetadata:
-    """`_fetch_site_metadata` caches the site's timezone (schedule evaluation)
-    and its display name (what the desktop app shows instead of the site id).
-    Both are optional: every consumer falls back — schedules to machine-local
-    time, the desktop app to the site id — so a site document that cannot be
-    read must leave the client usable, not raise.
+    """`_fetch_site_metadata` caches the site timezone (schedule evaluation) and
+    display name. Both optional — consumers fall back to machine-local time and
+    the site id — so an unreadable site document must not raise.
 
-    These cover the Firestore fallback, so the API lookup is made to decline
-    throughout; `TestSiteNameFromApi` covers the path it declines from.
+    Covers the Firestore fallback: the API lookup declines throughout (see
+    `TestSiteNameFromApi` for the path it declines from).
     """
 
     @pytest.fixture(autouse=True)
@@ -365,8 +344,8 @@ class TestSiteMetadata:
         mock_rest_client.get_document.assert_called_once_with('sites/test-site')
 
     def test_an_unnamed_site_leaves_the_name_unset(self, firebase_client, mock_rest_client):
-        # Sites created before the name column, or named with whitespace only:
-        # the consumer needs None, not '', so it falls back to the site id.
+        # Pre-name-column or whitespace-only sites must yield None (not ''), so
+        # the consumer falls back to the site id.
         mock_rest_client.get_document.return_value = {'timezone': 'UTC', 'name': ''}
 
         firebase_client._fetch_site_metadata()
@@ -385,10 +364,9 @@ class TestSiteMetadata:
     def test_a_denial_is_said_once_and_then_stops_being_asked(
         self, firebase_client, mock_rest_client
     ):
-        # The live failure mode: the agent's token carries no site-level read
-        # permission, so this 403s on every connection for the life of the
-        # machine. Reconnects must not re-ask — one warning, one attempt — and
-        # it must never raise, or it takes the connect path down with it.
+        # Live failure mode: the agent's token has no site-level read, so this
+        # 403s forever. One warning, one attempt, never raise — raising would take
+        # the connect path down.
         mock_rest_client.get_document.reset_mock()
         mock_rest_client.get_document.side_effect = RuntimeError(
             '403 Client Error: Forbidden for url: https://firestore.googleapis.com/…')
@@ -405,8 +383,8 @@ class TestSiteMetadata:
     def test_a_transient_failure_is_quiet_and_tried_again(
         self, firebase_client, mock_rest_client
     ):
-        # A dropped socket says nothing about permission, so the next connect
-        # asks again — and says nothing about it in the meantime.
+        # A dropped socket says nothing about permission — next connect retries,
+        # silently.
         mock_rest_client.get_document.reset_mock()
         mock_rest_client.get_document.side_effect = [
             OSError('connection reset by peer'),
@@ -431,14 +409,11 @@ class TestSiteMetadata:
         mock_rest_client.get_document.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
 # TestEnsureDisplayModesCatalogue — A3.2 cache-by-signature guard
-# ---------------------------------------------------------------------------
 class TestEnsureDisplayModesCatalogue:
-    """`_ensure_display_modes_catalogue` uploads on first call and skips
-    subsequent calls with the same signatureHash. The dashboard dispatches an
-    `enumerate_display_modes` command every time an operator opens the editor;
-    the cache-by-hash guard keeps that cheap when the topology is stable.
+    """`_ensure_display_modes_catalogue` uploads once per signatureHash. The
+    dashboard dispatches `enumerate_display_modes` every time the editor opens,
+    so the cache-by-hash guard keeps a stable topology cheap.
     """
 
     def _canned_result(self, signature_hash: str = 'hash-abc-123'):
@@ -475,7 +450,6 @@ class TestEnsureDisplayModesCatalogue:
         assert result['uploaded'] is True
         assert result['monitorCount'] == 1
         assert result['modeCount'] == 2
-        # Cache is now populated.
         assert firebase_client._cached_display_modes_hash == 'hash-abc-123'
 
     def test_second_call_with_unchanged_hardware_is_noop(
@@ -483,15 +457,14 @@ class TestEnsureDisplayModesCatalogue:
     ):
         firebase_client.connection_manager._state = ConnectionState.CONNECTED
         self._patch_enumerate(monkeypatch, self._canned_result())
-        # First call — uploads.
         firebase_client._ensure_display_modes_catalogue()
-        # Reset the mock so we can assert `set()` is NOT called on the second call.
+        # Reset so the second call can assert `set()` was NOT called.
         mock_rest_client.reset_mock()
         second = firebase_client._ensure_display_modes_catalogue()
         assert second['ok'] is True
         assert second['uploaded'] is False
         assert second['reason'] == 'unchanged'
-        # No Firestore writes went out for the redundant dispatch.
+        # No Firestore writes for the redundant dispatch.
         mock_rest_client.collection.assert_not_called()
 
     def test_force_bypasses_cache(self, firebase_client, mock_rest_client, monkeypatch):
@@ -501,18 +474,16 @@ class TestEnsureDisplayModesCatalogue:
         mock_rest_client.reset_mock()
         forced = firebase_client._ensure_display_modes_catalogue(force=True)
         assert forced['uploaded'] is True
-        # set() was invoked on the second call despite the hash being unchanged.
+        # set() ran on the second call despite an unchanged hash.
         mock_rest_client.collection.assert_called()
 
     def test_changed_hash_uploads_again(
         self, firebase_client, mock_rest_client, monkeypatch,
     ):
         firebase_client.connection_manager._state = ConnectionState.CONNECTED
-        # First call with hash A.
         self._patch_enumerate(monkeypatch, self._canned_result('hash-A'))
         firebase_client._ensure_display_modes_catalogue()
         mock_rest_client.reset_mock()
-        # Topology changes — hash B.
         self._patch_enumerate(monkeypatch, self._canned_result('hash-B'))
         second = firebase_client._ensure_display_modes_catalogue()
         assert second['uploaded'] is True
@@ -559,12 +530,9 @@ class TestEnsureDisplayModesCatalogue:
         mock_rest_client.collection.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# TestTerminalCommandStatus — completed vs failed is decided by the "Error:"
-# prefix on the handler's result. roost handlers used to return
-# "sync_pull failed: ..." with no prefix, so a refused deploy was written to
-# firestore as status:'completed'.
-# ---------------------------------------------------------------------------
+# TestTerminalCommandStatus — completed vs failed hangs on the "Error:" prefix
+# in the handler result. roost handlers once returned "sync_pull failed: ..."
+# with no prefix, so a refused deploy was stored as status:'completed'.
 class TestTerminalCommandStatus:
     @staticmethod
     def _run(firebase_client, result, monkeypatch):
@@ -597,13 +565,10 @@ class TestTerminalCommandStatus:
         client._mark_command_failed.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# TestSendDisplayAlert — the display-event funnels hand every audit action to
-# `send_display_alert`; the gate here decides which ones reach the API. Sending
-# an action with no `DISPLAY_EVENT_ROUTING` entry would land in the endpoint's
-# generic-event branch, which writes its own log document — duplicating the
-# event the agent already logged.
-# ---------------------------------------------------------------------------
+# TestSendDisplayAlert — the funnels hand every audit action to
+# `send_display_alert`; this gate decides which reach the API. An action with no
+# `DISPLAY_EVENT_ROUTING` entry hits the endpoint's generic branch, which writes
+# its own log document and duplicates what the agent already logged.
 class TestSendDisplayAlert:
     def test_routed_event_is_forwarded(self, firebase_client, monkeypatch):
         send_alert = MagicMock()
@@ -638,12 +603,9 @@ class TestSendDisplayAlert:
     def test_routing_table_parity_with_web(self):
         """`DISPLAY_ALERT_EVENT_TYPES` mirrors `DISPLAY_EVENT_ROUTING`'s keys.
 
-        The two tables live in different packages and cannot import each
-        other, so drift is only caught here. Drift is not fatal at runtime
-        (an unlisted event degrades to log-only) but it is exactly how the
-        display alerts went dormant in the first place — pin it.
-
-        Skipped when the web tree isn't present (agent checked out alone).
+        Different packages, no shared import, so drift is only caught here. Not
+        fatal at runtime (unlisted events degrade to log-only) but it is how the
+        display alerts went dormant once. Skipped when the web tree is absent.
         """
         import re
         from pathlib import Path

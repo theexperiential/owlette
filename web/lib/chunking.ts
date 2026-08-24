@@ -1,20 +1,11 @@
 /**
- * Pure chunking + SHA-256 digestion for roost version building (wave 3.2).
+ * Pure chunking + SHA-256 digestion for roost version building: slice each
+ * File into fixed 4 MiB chunks, hash with Web Crypto, emit a version entry of
+ * chunk hashes + per-file size.
  *
- * Browser uploads slice each File into fixed 4 MiB chunks, hash every
- * chunk with Web Crypto, and build a version entry listing the chunk
- * hashes + per-file total size. That's this module.
- *
- * **Why split from the worker**: the worker body is a thin message-loop
- * wrapping these functions. Extracting the logic lets Jest exercise
- * the algorithms (chunk count, boundary arithmetic, end-to-end sha-256
- * integrity) without the main-thread-offload machinery — the worker
- * is then a trivial glue layer whose only job is not-blocking-the-UI.
- *
- * The browser's `File` extends `Blob`; both have `.slice(start, end)`
- * that returns a Blob (view, not a copy) and `.arrayBuffer()` that
- * reads the bytes. We rely on those primitives only — no Node-only
- * APIs in this module.
+ * Split from the worker so Jest can exercise the algorithms (chunk count,
+ * boundary arithmetic, sha-256 integrity) without the offload machinery.
+ * Blob/File primitives only — no Node-only APIs.
  */
 
 /** Fixed chunk size for roost CAS. 4 MiB is the OCI version v1.1 default. */
@@ -27,7 +18,7 @@ export const VERSION_MEDIA_TYPE = 'application/vnd.owlette.version.v1+json';
 export interface VersionFileEntry {
   /** Relative path within the dropped folder (forward-slash separators). */
   path: string;
-  /** Total file size in bytes (sum of chunk sizes — tautology, but stated). */
+  /** Total file size in bytes. */
   size: number;
   /** Chunk descriptors in file order. */
   chunks: Array<{ hash: string; size: number }>;
@@ -65,10 +56,6 @@ export interface NamedBlob {
   blob: BlobLike;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Core: chunk + hash one file                                          */
-/* --------------------------------------------------------------------- */
-
 export interface HashOneFileOptions {
   /** For progress reporting — invoked after each chunk. */
   onChunkHashed?: (chunkSize: number) => void;
@@ -79,14 +66,10 @@ export interface HashOneFileOptions {
 }
 
 /**
- * Hash one file into a VersionFileEntry. Chunks are read and hashed
- * sequentially — parallelism within a single file would increase peak
- * memory for a very small wall-clock win (crypto.subtle is already
- * async, so the UI thread is free either way).
- *
- * Parallelism across multiple files is the caller's job (`buildVersion`
- * below processes files sequentially; the web-worker wrapper posts
- * progress after each chunk so the UI stays responsive).
+ * Hash one file into a VersionFileEntry. Sequential within the file on
+ * purpose: intra-file parallelism raises peak memory for near-zero wall-clock
+ * gain, since crypto.subtle is already async. Cross-file parallelism is the
+ * caller's call.
  */
 export async function hashOneFile(
   named: NamedBlob,
@@ -97,25 +80,16 @@ export async function hashOneFile(
   const chunks: VersionFileEntry['chunks'] = [];
 
   if (size === 0) {
-    // Zero-byte file. The version schema requires `chunks[i].size > 0`,
-    // so a zero-byte file cannot be represented. Callers must filter
-    // these out before calling us; we fail loud so silent omission
-    // never happens at this layer.
+    // The version schema requires `chunks[i].size > 0`, so a zero-byte file is
+    // unrepresentable. Fail loud rather than silently omit it.
     throw new Error(
       `chunking: file ${JSON.stringify(named.path)} is zero bytes; ` +
         `zero-byte files cannot be represented in a version — filter them out upstream`,
     );
   }
 
-  // Double-buffered read/hash pipeline: while subtle.digest is computing
-  // the hash for chunk N, we kick off the arrayBuffer() read for chunk
-  // N+1. On disk-bound workloads this halves the per-chunk wall time
-  // (read and hash overlap instead of sequencing). On compute-bound
-  // paths (hot disk cache, SSD) it's a no-op — the `await nextRead`
-  // resolves immediately.
-  //
-  // Peak memory in flight: two chunk buffers (8 MiB at the default
-  // CHUNK_SIZE_BYTES). Negligible versus typical upload sizes.
+  // Double-buffered: read chunk N+1 while hashing chunk N. Halves per-chunk
+  // wall time when disk-bound, no-op when not. Peak memory: 2 chunk buffers.
   const kickOffRead = (start: number): Promise<ArrayBuffer> | null => {
     if (start >= size) return null;
     const endLocal = Math.min(start + CHUNK_SIZE_BYTES, size);
@@ -126,12 +100,10 @@ export async function hashOneFile(
   for (let offset = 0; offset < size; offset += CHUNK_SIZE_BYTES) {
     if (opts.signal?.aborted) throw makeAbortError();
     const end = Math.min(offset + CHUNK_SIZE_BYTES, size);
-    // pendingRead is never null inside the loop — we only enter with
-    // offset < size, and kickOffRead only returns null when start >= size.
+    // Never null in the loop: we enter with offset < size, and kickOffRead
+    // only returns null for start >= size.
     const bytes = await pendingRead!;
-    // Prefetch the next chunk's bytes BEFORE starting the hash of this
-    // one. The microtask scheduler lets both operations progress
-    // concurrently inside the worker.
+    // Prefetch before hashing so read and digest overlap.
     pendingRead = kickOffRead(end);
     const digest = await subtle.digest('SHA-256', bytes);
     chunks.push({
@@ -148,10 +120,6 @@ export async function hashOneFile(
   };
 }
 
-/* --------------------------------------------------------------------- */
-/*  Bulk: build a version-entry list for a folder                        */
-/* --------------------------------------------------------------------- */
-
 export interface BuildVersionOptions {
   onProgress?: (p: VersionProgress) => void;
   subtle?: SubtleCryptoLike;
@@ -159,13 +127,9 @@ export interface BuildVersionOptions {
 }
 
 /**
- * Hash an entire folder of NamedBlobs into the `files[]` array of a
- * roost version. Files are processed sequentially; per-chunk progress
- * events fire so the UI can show a smooth bar.
- *
- * Zero-byte files are skipped (the version schema requires at least
- * one positive-size chunk per file). Empty folders are valid input —
- * returns `[]`.
+ * Hash a folder of NamedBlobs into a version's `files[]`, sequentially, with
+ * per-chunk progress. Zero-byte files are skipped (the schema needs at least
+ * one positive-size chunk); an empty folder returns `[]`.
  */
 export async function buildVersionEntries(
   files: readonly NamedBlob[],
@@ -218,10 +182,6 @@ export async function buildVersionEntries(
   return entries;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Utilities                                                            */
-/* --------------------------------------------------------------------- */
-
 /** Lowercase hex encoding of an ArrayBuffer — format the version expects. */
 export function bufferToHex(buf: ArrayBuffer): string {
   const u8 = new Uint8Array(buf);
@@ -245,8 +205,7 @@ function resolveSubtle(): SubtleCryptoLike {
 }
 
 function makeAbortError(): Error {
-  // DOMException shape; falls back to a plain Error in environments
-  // without DOMException (none in-scope, but defensive).
+  // DOMException shape, with a plain-Error fallback.
   const E =
     typeof DOMException !== 'undefined'
       ? new DOMException('aborted', 'AbortError')
@@ -254,13 +213,9 @@ function makeAbortError(): Error {
   return E as Error;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Aggregate stats (for pre-upload summary UIs)                         */
-/* --------------------------------------------------------------------- */
-
 /**
- * Summarise a version for display: total bytes, total chunks, dedup
- * estimate (unique chunk hashes / total chunk slots). Pure — derive-only.
+ * Display summary: total bytes, total chunks, and a dedup estimate (unique
+ * hashes / chunk slots). Pure.
  */
 export function summariseVersion(entries: readonly VersionFileEntry[]): {
   fileCount: number;

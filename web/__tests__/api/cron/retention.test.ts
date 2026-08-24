@@ -22,15 +22,12 @@ function docRef(id: string) {
 }
 
 /**
- * Builds a chainable query stub whose terminal `.get()` yields `docs`.
- * Each subcollection call is recorded so tests can assert the query shape.
- */
-/**
- * `docs` is a live backlog: each `.get()` serves the next page and CONSUMES it,
- * so repeated queries drain rather than returning the same page forever. The
- * original stub returned an identical page on every call, which made a
- * one-page-per-site implementation indistinguishable from a draining one — the
- * exact bug that reached dev.
+ * Chainable query stub; terminal `.get()` yields `docs` and every subcollection
+ * call is recorded so tests can assert the query shape.
+ *
+ * `docs` is a live backlog — each `.get()` CONSUMES a page, so repeated queries
+ * drain. A stub that re-served the same page made a one-page-per-site
+ * implementation indistinguishable from a draining one; that bug reached dev.
  */
 function collectionStub(name: string, backlog: Array<{ id: string }>) {
   const entry: { collection: string; where?: unknown[]; limit?: number } = { collection: name };
@@ -68,8 +65,8 @@ const mockDb = {
     if (name === 'sites') return { get: mockSitesGet };
     return collectionStub(name, []);
   },
-  // Deletion goes through BulkWriter, not db.batch() — a batched commit of 400
-  // deletes fails in real Firestore with "Transaction too big".
+  // BulkWriter, not db.batch(): a 400-delete batch fails in real Firestore with
+  // "Transaction too big".
   bulkWriter: () => ({
     delete: mockWriterDelete,
     onWriteError: mockOnWriteError,
@@ -179,9 +176,9 @@ describe('GET /api/cron/retention', () => {
     const body = await (await GET(request('cron-secret'))).json();
     const cutoff: string = body.cutoffs.metricsBucket;
 
-    // Contract from lib/metricsHistoryBuckets.ts: hourly ids are the daily id
-    // plus '-HH'. Lexicographic ordering must place the hour before the cutoff
-    // date below it, and the hour on the cutoff date at or above it.
+    // Contract from lib/metricsHistoryBuckets.ts: hourly ids are the daily id plus
+    // '-HH', so lexicographic order must sort pre-cutoff hours below the cutoff
+    // and same-day hours at or above it.
     expect(cutoff).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     const dayBefore = '2000-01-01';
     expect(`${dayBefore}-23` < cutoff).toBe(true);
@@ -201,9 +198,8 @@ describe('GET /api/cron/retention', () => {
   });
 
   it('drains a site across multiple pages in one run', async () => {
-    // 900 stale logs > one 400-doc page but < the 2000 budget, so a correct
-    // implementation clears all of them and reports truncated:false. A
-    // one-page-per-site implementation would delete 400 and still claim
+    // 900 stale logs: more than one 400-doc page, less than the 2000 budget. A
+    // one-page-per-site implementation deletes 400 and still reports
     // truncated:false — stale data left behind under an all-clear.
     siteLogs = Array.from({ length: 900 }, (_, i) => ({ id: `log${i}` }));
     mockSitesGet.mockResolvedValue({ docs: [siteDoc('site-a')] });

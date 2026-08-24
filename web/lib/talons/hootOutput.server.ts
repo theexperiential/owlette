@@ -1,75 +1,39 @@
 /**
- * The hoot output — an action-triggered headless assistant turn
- * (talons wave 3, task 3.3).
+ * The hoot output — a talon-triggered headless assistant turn. A
+ * `{ type: 'cortex', directive }` output hands its directive to the assistant
+ * with real tools and nobody in the loop, which drives everything below.
+ * ("hoot" is user-facing copy only; wire + stored fields stay `cortex`.)
  *
- * A talon output `{ type: 'cortex', directive }` hands its directive to the
- * assistant — "hoot" in user-facing copy; this file, the wire, and every stored
- * field stay `cortex` — and lets it work the problem with real tools. Nobody is
- * in the loop, which drives every decision below.
+ * Fire-time access re-resolution: the creator's site access is re-resolved on
+ * EVERY run (`resolveTalonAuthor`), never trusted from authoring time, so a
+ * departed/demoted/soft-deleted author can't keep executing at yesterday's
+ * privilege. Terminal by construction, so it carries a
+ * {@link TalonDisabledReason} that switches the talon off immediately.
  *
- * ## fire-time access re-resolution
+ * One fresh chat per run (`chats/talon_{ms}_{runId}`): the turn store holds one
+ * lock per chat, so two runs sharing a chat would race for it. The chat is also
+ * the artifact the run record points at.
  *
- * The creator's site access is re-resolved on EVERY run and never trusted from
- * authoring time (`resolveTalonAuthor`). A talon written by an admin who has
- * since left the site, been demoted, or been soft-deleted must not keep
- * executing with the privileges they held the day they wrote it. That is a hard
- * `failed`, never a degraded run — and, because no amount of retrying brings a
- * departed author back, it carries a {@link TalonDisabledReason} the engine
- * uses to switch the talon off on the spot instead of after ten silent
- * failures.
+ * Tier ceiling: set explicitly via `maxToolTier`, never by degrading `access` —
+ * `startTurn` intersects the two, so a demoted author still drops to tier 1.
+ * Default is {@link READ_ONLY_TIER}; `allowActions: true` raises it to
+ * {@link UNATTENDED_MAX_TIER} (authoring that flag costs MACHINE_EXEC_COMMAND,
+ * same as a `command` output). Tier 3 is capped out in
+ * {@link unattendedToolTier} rather than trusted to call sites: tier-3 tools
+ * can require in-chat approval, and an unattended turn has nobody to grant it,
+ * so the call would hang until declared stale.
  *
- * ## one fresh chat per run
+ * LLM key: `startTurn` always resolves the CREATOR's own key and takes no
+ * override, so it is pre-flighted here (`assertTalonAuthorLlmKey`) before any
+ * chat doc or turn lock exists — otherwise a creator who removed their key
+ * leaves an empty chat and a claimed lock behind on every firing, and the
+ * failure surfaces deep inside a detached runner. The pre-flight never
+ * receives the key itself.
  *
- * Every run creates `chats/talon_{ms}_{runId}` instead of appending to a
- * standing conversation. The turn store holds exactly ONE lock per chat, so two
- * runs sharing a chat would race for it — the loser either gets rejected or
- * supersedes a live turn mid-thought. A fresh chat also makes the work readable
- * on its own: that chat IS the artifact the run record points at.
+ * Dispatch, not completion: the runner outlives the request, so awaiting it
+ * would hold the talon run open for a full LLM tool loop.
  *
- * ## tier ceiling
- *
- * The turn's tool tier is set EXPLICITLY here (`maxToolTier`), never by
- * degrading the access object. `startTurn` intersects the ceiling with the tier
- * the re-resolved access already earns, so the ceiling can only ever lower the
- * tool set — a creator who has been demoted since authoring still drops to
- * tier 1, which is the whole point of re-resolving.
- *
- * Two ceilings, decided by the output's `allowActions` flag:
- *
- *   - default (`allowActions` absent or false) — {@link READ_ONLY_TIER}. Hoot
- *     can look at the machine and report; it cannot touch it. Talons that need
- *     to act use a `command` output.
- *   - opted in (`allowActions: true`) — {@link UNATTENDED_MAX_TIER}: process
- *     control, service management, screenshots. Authoring the flag takes
- *     `MACHINE_EXEC_COMMAND`, the same privilege a `command` output takes
- *     (`store.server.ts`), because it is the same power over the same machine.
- *
- * Tier 3 is unreachable on this path in either case, and
- * {@link unattendedToolTier} caps it rather than trusting the call sites: a
- * tier-3 tool can require an in-chat approval (`getHootRequireTier3Approval`)
- * and an unattended turn has nobody to grant one, so the call would sit there
- * until the turn was declared stale. Nothing about powershell, file writes,
- * deploys, or reboots belongs on a turn nobody is watching.
- *
- * ## llm key
- *
- * `startTurn` resolves its own config internally — `resolveLlmConfig(db,
- * userId)` — and accepts no override, so a hoot turn always runs on the
- * CREATOR's own key. There is no shared site key to fall back to any more, so
- * the key is PRE-FLIGHTED here (`assertTalonAuthorLlmKey`) before a chat doc or
- * a turn lock is created: a creator who removed their key would otherwise leave
- * an empty chat and a claimed lock behind on every firing, and the failure
- * would surface deep inside a detached runner where the talon cannot hear it.
- * The pre-flight deliberately never receives the key itself.
- *
- * ## dispatch, not completion
- *
- * Starting the turn is the deliverable. The runner is detached by design (it
- * outlives the request that started it), so awaiting it here would hold the
- * talon run open for the length of a full LLM tool loop and turn a slow model
- * into a failed talon.
- *
- * IMPORTANT: Server-side only — never import this in client components.
+ * Server-side only — never import this in client components.
  */
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type { UIMessage } from 'ai';
@@ -98,12 +62,7 @@ export interface RunHootOutputArgs {
   correlationId: string;
   /** The operator's instruction, verbatim. */
   directive: string;
-  /**
-   * The output's `allowActions` opt-in. `true` raises the ceiling from
-   * read-only to tier 2 — see the tier-ceiling note at the top of this file.
-   * Defaults to false, which is the behaviour every talon had before the flag
-   * existed.
-   */
+  /** `true` raises the ceiling from read-only to tier 2. Defaults false. */
   allowActions?: boolean;
   /** Human-readable, lowercase trigger description, e.g. `cpu_percent > 90`. */
   triggerSummary: string;
@@ -115,10 +74,8 @@ export interface RunHootOutputArgs {
 }
 
 /**
- * `sent` carries the chat the turn is running in — the observable artifact.
- * `failed` carries a stable machine-readable reason, matching the vocabulary
- * the other output executors record, plus `disabledReason` on the subset of
- * failures that retrying can never fix.
+ * `failed.detail` uses the same machine-readable vocabulary as the other output
+ * executors; `disabledReason` marks failures retrying can never fix.
  */
 export type RunHootOutputResult =
   | { status: 'sent'; chatId: string }
@@ -137,29 +94,19 @@ function errorText(error: unknown): string {
 /** Look, don't touch — every read-only tool, and nothing else. */
 export const READ_ONLY_TIER: ToolTier = 1;
 
-/**
- * The highest tier ANY unattended turn may reach, whatever it asks for. Tier 3
- * is approval-gated and there is nobody here to approve.
- */
+/** Ceiling for ANY unattended turn — tier 3 is approval-gated, nobody's here. */
 export const UNATTENDED_MAX_TIER: ToolTier = 2;
 
-/**
- * The tool ceiling for an unattended turn. `startTurn` intersects it with the
- * tier the creator's re-resolved access earns, so this is a ceiling, not a
- * grant: a non-admin author's opted-in talon still lands on tier 1.
- */
+/** A ceiling, not a grant — `startTurn` intersects it with the earned tier. */
 export function unattendedToolTier(allowActions: boolean): ToolTier {
   const requested = allowActions ? UNATTENDED_MAX_TIER : READ_ONLY_TIER;
   return Math.min(UNATTENDED_MAX_TIER, requested) as ToolTier;
 }
 
 /**
- * The synthetic user message the turn opens with: the operator's directive,
- * then the facts the assistant would otherwise have to go looking for.
- *
- * The screenshot url is included ONLY on a failed visual check, and only as a
- * url — it is a short-lived signed link (~1h), which is fine for a turn that
- * starts within seconds, and the run doc keeps the durable storage path.
+ * The synthetic opening user message: directive plus the facts the assistant
+ * would otherwise go looking for. The screenshot is a ~1h signed url (fine for
+ * a turn starting in seconds); the run doc keeps the durable storage path.
  */
 function buildDirectiveMessage(args: RunHootOutputArgs): UIMessage {
   const lines = [
@@ -195,13 +142,8 @@ function buildDirectiveMessage(args: RunHootOutputArgs): UIMessage {
 }
 
 /**
- * Fire one hoot turn for a talon run.
- *
- * Never throws — every failure is a recorded `failed` result, because the
- * engine records outputs individually and one bad output must not abort the
- * rest of the run.
- *
- * @returns `sent` once the turn is dispatched (NOT once it completes).
+ * Fire one hoot turn for a talon run. Never throws — one bad output must not
+ * abort the rest of the run. Returns `sent` on dispatch, not on completion.
  */
 export async function runHootOutput(
   db: Firestore,
@@ -209,18 +151,14 @@ export async function runHootOutput(
 ): Promise<RunHootOutputResult> {
   const { siteId, talon, runId } = args;
 
-  // Both pre-flights before ANY document is written: a creator who can no
-  // longer back this talon must not leave a chat and a turn lock behind on
-  // every firing. A `TalonAuthorError` is terminal by construction, so its
-  // reason travels up and the engine disables the talon on this run.
+  // Both pre-flights must precede ANY write, else a creator who can no longer
+  // back this talon leaves a chat + turn lock behind on every firing.
   let author: TalonAuthor;
   try {
     author = await resolveTalonAuthor(db, siteId, talon);
     await assertTalonAuthorLlmKey(db, author.userId);
   } catch (error) {
     if (error instanceof TalonAuthorError) {
-      // The reason is the readable half; the raw message goes in `error` for
-      // whoever has to diagnose it.
       return {
         status: 'failed',
         detail: error.reason,
@@ -228,8 +166,7 @@ export async function runHootOutput(
         disabledReason: error.reason,
       };
     }
-    // Anything else — a failed read, a missing site — is transient and stays on
-    // the consecutive-failure counter.
+    // Transient (failed read, missing site) — stays on the failure counter.
     return { status: 'failed', detail: 'author_check_failed', error: errorText(error) };
   }
 
@@ -239,10 +176,9 @@ export async function runHootOutput(
   const machineName = args.machineName || args.machineId || '';
   const chatId = `talon_${Date.now()}_${runId}`;
 
-  // Create the chat BEFORE the turn starts. Beyond making the artifact visible
-  // immediately, it means the runner sees an existing doc and treats the turn
-  // as a continuation — so its placeholder title never overwrites `talon: …`
-  // and the LLM categorizer is not run on a machine-authored conversation.
+  // Create the chat BEFORE the turn: the runner then sees an existing doc and
+  // treats this as a continuation, so its placeholder title can't overwrite
+  // `talon: …` and the LLM categorizer skips a machine-authored conversation.
   try {
     await db
       .collection('chats')
@@ -266,8 +202,7 @@ export async function runHootOutput(
     return { status: 'failed', detail: 'chat_create_failed', error: errorText(error) };
   }
 
-  // A brand-new chat has no prior turn, so this claim cannot collide — but it
-  // still goes through the lock, because the lock doc IS what the client
+  // Cannot collide on a brand-new chat, but the lock doc IS what the client
   // watches to render a running turn.
   const turnId = generateTurnId();
   let priorToolCommands;
@@ -292,16 +227,13 @@ export async function runHootOutput(
       source: 'talon',
     });
 
-    // CRITICAL: `startTurn` returns the HTTP branch of a tee'd stream. There is
-    // no HTTP response here, and an unread branch buffers every chunk of the
-    // turn in memory without bound. Cancelling it drops that branch only — the
-    // snapshot pump owns the other one and keeps the turn running to
-    // completion.
+    // CRITICAL: the returned HTTP tee branch has no reader here and would
+    // buffer every chunk unbounded. Cancelling drops only that branch; the
+    // snapshot pump owns the other and runs the turn to completion.
     void stream.cancel().catch(() => {});
   } catch (error) {
-    // `startTurn` is documented never to throw; this covers a synchronous
-    // failure in its stream setup, which would otherwise escape as an
-    // `output_threw` with no chat to point at.
+    // `startTurn` never throws by contract; this catches a synchronous stream
+    // setup failure, which would otherwise escape as `output_threw`.
     return { status: 'failed', detail: 'turn_start_failed', error: errorText(error) };
   }
 

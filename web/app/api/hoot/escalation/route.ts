@@ -1,14 +1,11 @@
 /**
  * POST /api/hoot/escalation
  *
- * Picks up escalation flags from Firestore cortex-events and sends
- * escalation emails via Resend. Called periodically by a cron or
- * triggered by the alert route.
+ * Picks up escalation flags from Firestore cortex-events and sends escalation emails
+ * via Resend. Called periodically by cron or triggered by the alert route; GET does the
+ * same for cron-style polling.
  *
- * Auth: internal only (hoot internal secret; deployed env var
- * CORTEX_INTERNAL_SECRET).
- *
- * Can also be called as GET for cron-style polling.
+ * Auth: internal only (CORTEX_INTERNAL_SECRET).
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -17,15 +14,12 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { escalate } from '@/lib/hoot-escalation.server';
 import { hootInternalSecret } from '@/lib/hootInternalSecret';
 
-/**
- * Process pending escalations for all sites.
- */
+/** Process pending escalations for all sites. */
 async function processEscalations(): Promise<{ processed: number; errors: number }> {
   const db = getAdminDb();
   let processed = 0;
   let errors = 0;
 
-  // Query all cortex-events with escalationPending === true
   const sitesSnapshot = await db.collection('sites').get();
 
   for (const siteDoc of sitesSnapshot.docs) {
@@ -76,7 +70,6 @@ async function processEscalations(): Promise<{ processed: number; errors: number
 }
 
 export async function POST(request: NextRequest) {
-  // Authenticate with internal secret
   const secret = hootInternalSecret();
   if (!secret) {
     return NextResponse.json(
@@ -94,10 +87,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ success: true, ...result });
 }
 
-/**
- * GET handler for cron-style polling.
- * Protected by CRON_SECRET env var.
- */
+/** GET for cron-style polling; protected by CRON_SECRET. */
 export async function GET(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const headerSecret = request.headers.get('authorization')?.replace('Bearer ', '');

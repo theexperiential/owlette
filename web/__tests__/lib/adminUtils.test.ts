@@ -3,20 +3,19 @@
 /**
  * getSiteAlertRecipients — empty-recipient ADMIN_EMAIL fallback.
  *
- * Regression for the muted-machine alert leak: when a site resolves to zero
- * real recipients (e.g. the agent-default `default_site`, which a superadmin
- * manages via god-mode without being its owner or a member), the synthetic
- * ADMIN_EMAIL fallback must carry the admin's OWN muted-machines — otherwise an
- * empty list silently defeats the per-recipient mute guard in every alert
- * sender and a muted machine still emails the admin.
+ * Regression for the muted-machine alert leak: when a site has zero real
+ * recipients (e.g. `default_site`, managed by a superadmin who is neither owner
+ * nor member), the synthetic ADMIN_EMAIL fallback must carry the admin's OWN
+ * muted machines — an empty list defeats the per-recipient mute guard in every
+ * sender and a muted machine emails the admin anyway.
  */
 
 const mockGetUserByEmail = jest.fn();
 const mockSiteDocGet = jest.fn();
 const mockUsersWhereGet = jest.fn();
 const mockUserDocGet = jest.fn();
-// Records the id passed to users.doc(...) so a regression to doc(ADMIN_EMAIL)
-// instead of doc(adminUser.uid) is caught instead of silently passing.
+// Records the id passed to users.doc(...), so a regression to doc(ADMIN_EMAIL)
+// instead of doc(adminUser.uid) fails instead of silently passing.
 const mockUsersDoc = jest.fn(() => ({ get: mockUserDocGet }));
 
 const mockDb = {
@@ -44,8 +43,7 @@ const ADMIN_EMAIL = 'admin@owlette.test';
 let getSiteAlertRecipients: typeof import('@/lib/adminUtils.server').getSiteAlertRecipients;
 
 beforeAll(async () => {
-  // ADMIN_EMAIL is read at module load from ADMIN_EMAIL_DEV (NODE_ENV=test ->
-  // not production), so it must be set before the module is imported.
+  // ADMIN_EMAIL is read at module load from ADMIN_EMAIL_DEV — set it first.
   process.env.ADMIN_EMAIL_DEV = ADMIN_EMAIL;
   ({ getSiteAlertRecipients } = await import('@/lib/adminUtils.server'));
 });
@@ -65,8 +63,7 @@ describe('getSiteAlertRecipients — ADMIN_EMAIL fallback', () => {
   it("carries the admin's own muted-machines into the fallback recipient", async () => {
     const recipients = await getSiteAlertRecipients('default_site', 'thresholdAlerts');
     expect(mockGetUserByEmail).toHaveBeenCalledWith(ADMIN_EMAIL);
-    // Must read users/{auth uid}, not users/{email} — a doc(ADMIN_EMAIL)
-    // regression would otherwise still pass against this mock.
+    // users/{auth uid}, not users/{email}: doc(ADMIN_EMAIL) must not pass here.
     expect(mockUsersDoc).toHaveBeenCalledWith('admin-uid');
     expect(recipients).toEqual([
       { userId: 'fallback', email: ADMIN_EMAIL, ccEmails: [], mutedMachines: ['TEC-A4D'] },
@@ -103,9 +100,8 @@ describe('getSiteAlertRecipients — ADMIN_EMAIL fallback', () => {
   });
 
   it('fails open (delivers, no mutes) when recipient enumeration throws — even if the admin muted the machine', async () => {
-    // A transient Firestore error during enumeration must NOT be treated as
-    // "genuinely empty": the admin's mutes are NOT applied, so the alert is
-    // delivered rather than silently suppressed.
+    // A transient enumeration error is not "genuinely empty": mutes are not
+    // applied, so the alert is delivered rather than suppressed.
     mockSiteDocGet.mockRejectedValue(new Error('firestore unavailable'));
     const recipients = await getSiteAlertRecipients('default_site', 'thresholdAlerts');
     expect(recipients).toEqual([
@@ -115,9 +111,8 @@ describe('getSiteAlertRecipients — ADMIN_EMAIL fallback', () => {
   });
 
   it('fails open when the admin-doc read throws after getUserByEmail succeeds', async () => {
-    // Enumeration succeeds and is genuinely empty, so the admin lookup runs;
-    // getUserByEmail resolves but the users/{uid} read fails -> inner catch ->
-    // empty mutes -> deliver (do not suppress on a transient admin-doc error).
+    // Genuinely empty -> admin lookup runs -> users/{uid} read fails -> inner
+    // catch -> empty mutes -> deliver.
     mockGetUserByEmail.mockResolvedValue({ uid: 'admin-uid' });
     mockUserDocGet.mockRejectedValue(new Error('admin doc read failed'));
     const recipients = await getSiteAlertRecipients('default_site', 'thresholdAlerts');
@@ -128,9 +123,8 @@ describe('getSiteAlertRecipients — ADMIN_EMAIL fallback', () => {
   });
 
   it('fails open when the OWNER doc read throws (inner catch is an enumeration failure)', async () => {
-    // Site has an owner but no array-contains members; the owner-doc read
-    // transiently fails. The owner branch's inner catch must flag enumeration
-    // as failed so the fallback does NOT apply the admin's mutes (deliver).
+    // Owner but no array-contains members, and the owner-doc read fails: the
+    // owner branch must flag enumeration failed so mutes are not applied.
     mockSiteDocGet.mockResolvedValue({ data: () => ({ owner: 'owner-uid' }) });
     mockUsersWhereGet.mockResolvedValue({ docs: [] });
     mockUserDocGet.mockRejectedValue(new Error('owner read failed'));
@@ -142,9 +136,8 @@ describe('getSiteAlertRecipients — ADMIN_EMAIL fallback', () => {
   });
 
   it('does NOT fall back when a site MEMBER exists but opted out of this alert type', async () => {
-    // A real member exists (email, not deleted) but opted out of thresholdAlerts.
-    // The empty recipient set is their deliberate choice — the fallback must NOT
-    // override it and spam the admin (this is the live default_site scenario).
+    // A real member opted out of thresholdAlerts: the empty set is deliberate and
+    // the fallback must not override it (the live default_site scenario).
     mockUsersWhereGet.mockResolvedValue({
       docs: [{ id: 'm1', data: () => ({ email: 'member@owlette.test', preferences: { thresholdAlerts: false, mutedMachines: [] } }) }],
     });
@@ -163,8 +156,8 @@ describe('getSiteAlertRecipients — ADMIN_EMAIL fallback', () => {
   });
 
   it('treats a member with NO email as orphan -> fallback still fires (honors admin mutes)', async () => {
-    // A member doc with no email can't receive alerts, so it must NOT count as a
-    // real user — the site is still orphan and the safety-net fallback must fire.
+    // A member with no email cannot receive alerts, so the site is still orphan
+    // and the fallback must fire.
     mockUsersWhereGet.mockResolvedValue({
       docs: [{ id: 'm1', data: () => ({ preferences: { mutedMachines: [] } }) }], // no email
     });

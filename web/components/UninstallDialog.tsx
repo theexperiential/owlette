@@ -53,23 +53,19 @@ export default function UninstallDialog({
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
 
-  // Auto-select all online machines when dialog opens and reset filter when it closes.
-  // Intentionally omits `onlineMachines` (array identity changes on every render) and
-  // `selectedMachines` (would retrigger the auto-select after user manually deselects).
-  // Gating on `onlineMachines.length` instead gives us "fire when set of online machines
-  // changes size" without the identity churn.
+  // Deps deliberately omit `onlineMachines` (new array identity every render)
+  // and `selectedMachines` (would re-select after a manual deselect). Gating on
+  // `onlineMachines.length` fires when the online set changes size, no churn.
   useEffect(() => {
     if (open && onlineMachines.length > 0 && selectedMachines.size === 0) {
       setSelectedMachines(new Set(onlineMachines.map(m => m.machineId)));
     }
-    // Reset filter when dialog closes
     if (!open) {
       setFilterText('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, onlineMachines.length]);
 
-  // Fetch installed software from selected machines
   useEffect(() => {
     if (!open || selectedMachines.size === 0) {
       setAvailableSoftware([]);
@@ -79,13 +75,11 @@ export default function UninstallDialog({
     const fetchSoftware = async () => {
       setLoading(true);
       try {
-        // Fetch software from Firestore for selected machines
         const { collection, getDocs } = await import('firebase/firestore');
         const { db } = await import('@/lib/firebase');
 
         const softwareMap = new Map<string, Software>();
 
-        // Fetch from each selected machine
         for (const machineId of Array.from(selectedMachines)) {
           const machine = machines.find(m => m.machineId === machineId);
           if (!machine || !machine.online) continue; // Only fetch from online machines
@@ -98,7 +92,7 @@ export default function UninstallDialog({
               const data = doc.data() as Software;
               const key = `${data.name}_${data.version}`;
 
-              // Only add if not already in map (avoid duplicates)
+              // Skip duplicates across machines.
               if (!softwareMap.has(key)) {
                 softwareMap.set(key, data);
               }
@@ -120,16 +114,14 @@ export default function UninstallDialog({
     };
 
     fetchSoftware();
-    // `machines` intentionally omitted: it's a Firestore-snapshot array whose identity
-    // changes on every heartbeat (~10s), which would refetch the software list
-    // continuously. We only need to refetch when the selected set changes.
+    // `machines` omitted on purpose: a Firestore-snapshot array whose identity
+    // changes every heartbeat (~10s), which would refetch continuously.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, selectedMachines, siteId]);
 
-  // Auto-select software and set filter if initialSoftwareName matches
   useEffect(() => {
     if (initialSoftwareName && availableSoftware.length > 0 && !selectedSoftware) {
-      // Normalize the search term - remove file extensions and special chars
+      // Strip file extensions and special chars before matching.
       const normalizeString = (str: string) => {
         return str
           .toLowerCase()
@@ -140,19 +132,16 @@ export default function UninstallDialog({
 
       const normalizedSearch = normalizeString(initialSoftwareName);
 
-      // Extract just the first word from the software name for filtering
       const firstWord = initialSoftwareName
         .replace(/\.(exe|msi|dmg|pkg)$/i, '') // Remove file extensions
         .split(/[\s\-_.]+/)[0] // Split by spaces, dashes, underscores, dots and take first word
         .trim();
 
-      // Set the filter text to help narrow down the list
       setFilterText(firstWord);
 
-      // Find best match - try exact match first, then partial match
+      // Exact match first, then bidirectional containment.
       const matchingSoftware = availableSoftware.find(s => {
         const normalizedName = normalizeString(s.name);
-        // Check if either contains the other (bidirectional matching)
         return normalizedName.includes(normalizedSearch) || normalizedSearch.includes(normalizedName);
       });
 
@@ -170,7 +159,7 @@ export default function UninstallDialog({
       newSelected.add(machineId);
     }
     setSelectedMachines(newSelected);
-    // Clear selected software and filter when machines change
+    // Changing the machine set invalidates the software list.
     setSelectedSoftware('');
     setFilterText('');
   };
@@ -192,7 +181,6 @@ export default function UninstallDialog({
   };
 
   const handleUninstall = async () => {
-    // Validation
     if (selectedMachines.size === 0) {
       toast.error('Please select at least one machine');
       return;
@@ -209,7 +197,6 @@ export default function UninstallDialog({
       return;
     }
 
-    // Show confirmation dialog
     const machineCount = selectedMachines.size;
     setPendingUninstall({ software, machineCount });
     setConfirmDialogOpen(true);
@@ -235,7 +222,6 @@ export default function UninstallDialog({
       console.log('Uninstall created successfully');
       toast.success(`Uninstall initiated for ${software.name} on ${machineCount} machine${machineCount > 1 ? 's' : ''}`);
 
-      // Close dialog and reset
       onOpenChange(false);
       setSelectedMachines(new Set());
       setSelectedSoftware('');

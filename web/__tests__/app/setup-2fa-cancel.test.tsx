@@ -4,15 +4,12 @@
  *
  * Bailing out of /setup-2fa.
  *
- * "cancel" used to be `router.back()`, and for a brand-new signup the previous
- * history entry is /register by construction. A real user (OWLETTE-WEB-46) got
- * dropped back onto the signup form they had just submitted, concluded the
- * account had not been created, filled it in again, and hit
- * auth/email-already-in-use with nowhere to go.
- *
- * So: never `back()`. Where cancel leads depends on whether 2FA setup is
- * mandatory here — /dashboard would bounce a `requiresMfaSetup` user straight
- * back (dashboard/page.tsx's 2FA guard), which is a loop, not an exit.
+ * OWLETTE-WEB-46: "cancel" was `router.back()`, and for a brand-new signup the previous
+ * history entry is /register — a real user landed back on the signup form they had just
+ * submitted, re-filled it, and hit auth/email-already-in-use with nowhere to go. So:
+ * never `back()`. Where cancel leads depends on whether setup is mandatory here;
+ * /dashboard would bounce a `requiresMfaSetup` user straight back (dashboard/page.tsx's
+ * 2FA guard) — a loop, not an exit.
  */
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
@@ -46,9 +43,12 @@ jest.mock('@/lib/toast', () => ({
   toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() },
 }));
 
-// The passkey enrolment panel is a separate concern with its own network calls.
-jest.mock('@/components/PasskeyManager', () => ({
-  PasskeyManager: () => null,
+// jsdom has no WebAuthn, so `browserSupportsWebAuthn` would hide the passkey option and
+// the chooser would half-render. Stub the module; no ceremony is started in these tests.
+jest.mock('@simplewebauthn/browser', () => ({
+  browserSupportsWebAuthn: () => true,
+  startRegistration: jest.fn(),
+  startAuthentication: jest.fn(),
 }));
 
 import Setup2FAPage from '@/app/setup-2fa/page';
@@ -56,9 +56,9 @@ import Setup2FAPage from '@/app/setup-2fa/page';
 const renderPage = async () => {
   const user = userEvent.setup();
   render(<Setup2FAPage />);
-  // The page POSTs /api/mfa/setup on mount; let that settle so the click below
-  // isn't racing a state update.
-  await screen.findByText(/step 1: scan QR code/i);
+  // The method chooser is the landing step; wait for it so the click below
+  // isn't racing the post-hydration WebAuthn-support check.
+  await screen.findByText(/choose your second factor/i);
   return user;
 };
 
@@ -124,5 +124,45 @@ describe('/setup-2fa cancel when enrolling voluntarily', () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
     expect(signOut).not.toHaveBeenCalled();
     expect(back).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The chooser itself. A beta tester with no phone couldn't finish signup while this page
+ * was a QR code and nothing else, so pin that the phone-free option is offered FIRST and
+ * that the authenticator option says out loud that a desktop app will do.
+ */
+describe('/setup-2fa method chooser', () => {
+  it('offers the passkey first and marks it recommended', async () => {
+    await renderPage();
+
+    const passkey = screen.getByRole('button', { name: /passkey/i });
+    const authenticator = screen.getByRole('button', { name: /authenticator app/i });
+
+    expect(passkey).toHaveTextContent(/recommended/i);
+    expect(passkey).toHaveTextContent(/windows hello/i);
+    expect(passkey).toHaveTextContent(/security key/i);
+    // DOCUMENT_POSITION_FOLLOWING — the passkey card precedes the TOTP one.
+    expect(passkey.compareDocumentPosition(authenticator) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+  });
+
+  it('tells people an authenticator app can live on their desktop', async () => {
+    await renderPage();
+
+    expect(screen.getByRole('button', { name: /authenticator app/i }))
+      .toHaveTextContent(/phone or desktop/i);
+  });
+
+  it('does not mint a TOTP secret until the authenticator branch is chosen', async () => {
+    const user = await renderPage();
+
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: /authenticator app/i }));
+
+    await waitFor(() =>
+      expect(global.fetch).toHaveBeenCalledWith('/api/mfa/setup', expect.anything())
+    );
   });
 });

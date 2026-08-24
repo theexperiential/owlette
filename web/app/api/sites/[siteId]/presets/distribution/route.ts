@@ -1,14 +1,12 @@
 /**
- * GET  /api/sites/{siteId}/presets/distribution
- *      → list distribution presets for a site (custom + built-in overrides
- *        as stored in firestore). Hardcoded built-in defaults are not
- *        merged here — that merge is a UI-layer concern.
+ * GET  /api/sites/{siteId}/presets/distribution — list a site's distribution
+ *      presets (custom + built-in overrides as stored in firestore). Hardcoded
+ *      built-in defaults are merged at the UI layer, not here.
+ * POST /api/sites/{siteId}/presets/distribution — create a custom preset.
+ *      Requires PRESET_MANAGE.
  *
- * POST /api/sites/{siteId}/presets/distribution
- *      → create a custom distribution preset. Requires PRESET_MANAGE.
- *
- * security-boundary-migration wave 3.7. Mirrors the schedule/reboot preset
- * routes from wave 3.6 — only the firestore path differs.
+ * security-boundary-migration wave 3.7. Mirrors the wave-3.6 schedule/reboot
+ * preset routes; only the firestore path differs.
  */
 
 import { NextResponse } from 'next/server';
@@ -30,9 +28,7 @@ type RouteParams = {
   siteId: string;
 } & Record<string, string | undefined>;
 
-/* --------------------------------------------------------------------- */
-/*  GET — list distribution presets                                      */
-/* --------------------------------------------------------------------- */
+// GET — list distribution presets
 
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'PRESET_MANAGE',
@@ -59,9 +55,7 @@ export const GET = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* --------------------------------------------------------------------- */
-/*  POST — create distribution preset                                    */
-/* --------------------------------------------------------------------- */
+// POST — create distribution preset
 
 interface CreateBody {
   name?: unknown;
@@ -82,8 +76,8 @@ export const POST = authorizedSiteHandler<RouteParams>({
     if (!parsed.ok) return parsed.response;
     const body = (parsed.body ?? {}) as CreateBody;
 
-    // shallow type sanity before delegating to the action core (which does
-    // exhaustive validation and throws DistributionPresetValidationError).
+    // Shallow shape check before the action core, which validates exhaustively
+    // and throws DistributionPresetValidationError.
     if (typeof body.name !== 'string') {
       return problemValidation('field `name` is required and must be a string', {
         'body.name': ['required string'],
@@ -119,10 +113,6 @@ export const POST = authorizedSiteHandler<RouteParams>({
     return problemFromError(err, 'sites/[siteId]/presets/distribution:POST');
   }
 });
-
-/* --------------------------------------------------------------------- */
-/*  helpers                                                              */
-/* --------------------------------------------------------------------- */
 
 interface SerializedPreset {
   id: string;

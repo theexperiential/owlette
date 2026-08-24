@@ -20,13 +20,9 @@
  *   scheduled?: { at: string, warning: string },
  * }
  *
- * Returns 202 Accepted once the rollout is queued.
- *
- * Honors the optional `Idempotency-Key` header by returning a cached
- * response shape if the same versionId rollout already exists (per-
- * version idempotency is natively provided by the rollout doc key).
- *
- * roost public api wave 3.3.
+ * 202 Accepted once queued. The optional `Idempotency-Key` header returns the
+ * cached shape when a rollout for the same versionId exists — per-version
+ * idempotency comes free from the rollout doc key.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -183,8 +179,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Resolve versionUrl for the target version. If it's the current one,
-    // roost.versionUrl is authoritative; otherwise read the versions/{id} doc.
+    // roost.versionUrl is authoritative for the current version; otherwise read
+    // versions/{id}.
     let versionUrl: string | null = null;
     if (versionId === roost.currentVersionId && typeof roost.versionUrl === 'string') {
       versionUrl = roost.versionUrl;
@@ -249,9 +245,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Idempotent re-trigger: if a rollout for this version already exists
-    // and isn't terminal, return it with alreadyRunning=true. Don't
-    // re-queue commands (the existing canary still owns that wave).
+    // Idempotent re-trigger: a non-terminal rollout for this version is returned
+    // with alreadyRunning=true and no re-queue — the existing canary owns that wave.
     const existingRollout = await rolloutRef.get();
     if (existingRollout.exists) {
       const existing = existingRollout.data() ?? {};
@@ -295,9 +290,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     });
 
     if (!scheduled) {
-      // Queue sync_pull commands for the canary wave. Matches the existing
-      // fan-out trigger's write shape so agents pick them up without
-      // protocol changes.
+      // sync_pull commands for the canary wave, in the existing fan-out trigger's
+      // write shape so agents need no protocol change.
       for (const machineId of canary) {
         const pendingRef = db
           .collection('sites')

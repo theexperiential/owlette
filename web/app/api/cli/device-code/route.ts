@@ -1,26 +1,15 @@
 /**
- * POST /api/cli/device-code
+ * POST /api/cli/device-code — CLI device-code handshake, step 1 of 3.
  *
- * CLI device-code handshake — step 1 of 3.
+ * Mints a 3-word pairing phrase + opaque device code. The CLI shows the phrase and points
+ * the user at /cli/authorize?code=<phrase>, where a signed-in user picks site, scope
+ * preset and ttl; the CLI polls `/poll` for the owk_* key.
  *
- * Generates a 3-word pairing phrase + opaque device code. The CLI
- * displays the phrase and points the user at /cli/authorize?code=<phrase>;
- * the user picks a site + scope preset + ttl in their browser (they must
- * be signed in); the CLI polls `/poll` to receive the owk_* key.
+ * Response: `{ pairPhrase, deviceCode (64-byte base64url secret), verificationUri,
+ * pairingUrl, expiresIn: 600, interval: 5 }`.
  *
- * Response:
- *   {
- *     pairPhrase: string,       // e.g. "silver-compass-drift"
- *     deviceCode: string,       // 64-byte base64url opaque secret
- *     verificationUri: string,  // https://.../cli/authorize
- *     pairingUrl: string,       // verificationUri + ?code=<phrase>
- *     expiresIn: number,        // 600 (10 min)
- *     interval: number,         // 5 (poll seconds)
- *   }
- *
- * Mirrors the agent flow at /api/agent/auth/device-code but returns an
- * api key instead of a firebase custom token. Stored in a separate
- * `cli_device_codes` firestore collection to avoid collisions.
+ * Mirrors the agent flow at /api/agent/auth/device-code but returns an api key instead of
+ * a firebase custom token, in a separate `cli_device_codes` collection to avoid collisions.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
@@ -62,10 +51,9 @@ export const POST = withRateLimit(
 
       const expiresAt = Timestamp.fromDate(new Date(Date.now() + 10 * 60 * 1000));
 
-      // `deviceCode` is the CLI's polling secret — held in CLI process
-      // memory only and never shown to the dashboard user. Stored on the
-      // doc only until authorize encrypts the api key under a key
-      // derived from it, at which point authorize wipes the field.
+      // `deviceCode` is the CLI's polling secret — process memory only, never shown to the
+      // dashboard user. It stays on the doc only until authorize encrypts the api key under a
+      // key derived from it, then wipes the field.
       await db.collection('cli_device_codes').doc(pairPhrase).set({
         deviceCodeHash,
         deviceCode, // consumed and wiped by authorize
@@ -78,8 +66,7 @@ export const POST = withRateLimit(
         authorizedAt: null,
         siteId: null,
         keyId: null,
-        // Encrypted credential bundle (HKDF + AES-256-GCM). The raw api
-        // key never lives on the doc in cleartext.
+        // Encrypted credential bundle (HKDF + AES-256-GCM); the raw api key never lands in clear.
         encryptedCredentials: null,
       });
 

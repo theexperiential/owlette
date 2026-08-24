@@ -2,10 +2,7 @@
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-/**
- * Source of a displayed timezone — used to render the explanatory tooltip
- * so the user can understand which timezone setting drives the chip.
- */
+/** Which setting drives the chip; renders the explanatory tooltip. */
 export type TimezoneChipSource = 'machine' | 'user' | 'site';
 
 interface TimezoneChipProps {
@@ -18,24 +15,16 @@ interface TimezoneChipProps {
 }
 
 /**
- * Small "times in [TZ]" chip used at the top of every dialog/panel that
- * displays or collects times. The chip names the timezone once per surface so
- * times themselves can stay clean (no `14:35 PT` redundancy on every row).
+ * "times in [TZ]" chip at the top of any surface that shows or collects times,
+ * so individual rows stay clean (no `14:35 PT` on every line).
  *
- * The chip renders the timezone *abbreviation* (PDT / PST / EDT / etc.) via
- * `Intl.DateTimeFormat` rather than the city-name segment of the IANA id.
- * Abbreviations are observance-aware — a Los Angeles agent shows `PDT` in
- * summer and `PST` in winter automatically. For zones without a stable
- * abbreviation, Intl returns `GMT±N` which is still clear.
+ * Renders the ABBREVIATION via `Intl.DateTimeFormat`, not the IANA city
+ * segment: abbreviations are observance-aware (PDT in summer, PST in winter),
+ * and zones without one fall back to a clear `GMT±N`.
  *
- * Hover tooltip carries the full IANA name + source so the user can see
- * which setting drives this surface's reference frame:
- *   - 'machine' → "this machine's local timezone (America/Los_Angeles)"
- *   - 'user'    → "your preferred timezone (America/Los_Angeles)"
- *   - 'site'    → "site timezone (America/Los_Angeles)"
- *
- * Falls back to "unknown" when `tz` is undefined (e.g. older agents that
- * have not yet deployed the IANA-aware build).
+ * The tooltip carries the full IANA name plus which setting
+ * (machine / user / site) drives this surface. "unknown" when `tz` is
+ * undefined — e.g. agents predating the IANA-aware build.
  */
 export function tzAbbreviation(tz: string): string {
   try {

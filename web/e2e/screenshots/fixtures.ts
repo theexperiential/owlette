@@ -1,32 +1,13 @@
 /**
- * Screenshot fixture helper — deterministic seed data for the marketing
- * screenshot pipeline (api-sprint wave 4.2).
+ * Deterministic Firestore seed data for the marketing screenshot pipeline.
  *
- * Every screenshot scenario must produce byte-identical Firestore state
- * across runs so the resulting PNGs are stable. To get there:
- *
- *   1. Reset the emulator before each scenario (Firestore + Auth).
- *   2. Re-seed the canonical baseline (users + sites) so role-based
- *      storageState fixtures keep working.
- *   3. Use hard-coded ids (`site-screenshot-flagship`, etc.) so URLs and
- *      visible machine-name text are stable across runs.
- *   4. Anchor every relative timestamp to FIXED_NOW_MS — this lets text
- *      like "started 2h ago" / "last restart at 03:14" render the same
- *      pixels regardless of wall-clock time.
- *   5. Drive any "random" data (sparkline series, CPU samples) from a
- *      seeded mulberry32 PRNG so re-runs match.
- *
- * The helper composes the existing primitives from `helpers/seed.ts`
- * (sites, machines, roosts, version history) rather than reinventing
- * them. Hoot chat conversations, alert rules, schedule presets, and the
- * per-frame storyboard state are written inline because no existing
- * helper exposed exactly those shapes.
- *
- * Usage from a screenshot spec:
+ * Byte-identical PNGs require: emulator reset per scenario, re-seeded baseline
+ * users/sites (role storageState depends on them), hard-coded ids, every
+ * timestamp anchored to FIXED_NOW_MS, and all "random" series from a seeded
+ * mulberry32 PRNG.
  *
  *   const ctx = await seedScreenshotFixtures('dashboard-mixed-states');
  *   await page.goto(`/dashboard?site=${ctx.siteId}`);
- *   await page.screenshot({ path: 'public/landing-screens/dashboard.png' });
  *   await ctx.cleanup();
  */
 
@@ -38,10 +19,7 @@ import {
   TEST_USERS,
   type SeedMachineOptions,
 } from '../helpers/seed';
-
-/* -------------------------------------------------------------------------- */
-/*  Public surface                                                            */
-/* -------------------------------------------------------------------------- */
+import type { TalonDoc } from '@/lib/talons/types';
 
 export type ScreenshotScenario =
   | 'dashboard-mixed-states'
@@ -51,6 +29,7 @@ export type ScreenshotScenario =
   | 'diagnose-cortex-chat'
   | 'display-layout-editor'
   | 'automate-schedule-editor'
+  | 'automate-talons-list'
   | 'display-storyboard-frame-1'
   | 'display-storyboard-frame-2'
   | 'display-storyboard-frame-3';
@@ -63,13 +42,8 @@ export interface ScreenshotFixture {
 }
 
 /**
- * Seed the firestore emulator with the deterministic state required to
- * render `scenario`. Returns the canonical ids the scenario uses plus a
- * cleanup function the caller invokes (typically in `test.afterEach`).
- *
- * Idempotent: calling twice with the same scenario yields identical state
- * because the emulator is reset before each seed and every write uses
- * fixed ids + fixed timestamps + a seeded PRNG.
+ * Seed the emulator for `scenario`; returns the canonical ids plus a cleanup fn
+ * for test.afterEach. Idempotent — reset + fixed ids/timestamps/PRNG seed.
  */
 export async function seedScreenshotFixtures(
   scenario: ScreenshotScenario,
@@ -91,6 +65,8 @@ export async function seedScreenshotFixtures(
       return seedDisplayLayoutEditor();
     case 'automate-schedule-editor':
       return seedAutomateScheduleEditor();
+    case 'automate-talons-list':
+      return seedAutomateTalonsList();
     case 'display-storyboard-frame-1':
       return seedDisplayStoryboardFrame(1);
     case 'display-storyboard-frame-2':
@@ -105,14 +81,9 @@ export async function seedScreenshotFixtures(
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Determinism helpers                                                       */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Anchor for every relative timestamp the dashboard renders. Picked to
- * fall safely outside DST transitions in common timezones so "x hours ago"
- * text doesn't shift between runs. 2026-04-15 14:30:00 UTC.
+ * Anchor for every relative timestamp. Outside DST transitions in common
+ * timezones so "x hours ago" text is stable. 2026-04-15 14:30:00 UTC.
  */
 export const FIXED_NOW_MS = Date.UTC(2026, 3, 15, 14, 30, 0);
 const FIXED_NOW_SEC = Math.floor(FIXED_NOW_MS / 1000);
@@ -122,10 +93,7 @@ function tsAgo(secondsAgo: number): Timestamp {
   return Timestamp.fromMillis(FIXED_NOW_MS - secondsAgo * 1000);
 }
 
-/**
- * Tiny seeded PRNG (mulberry32). Same seed → same sequence, so sparkline
- * data and "noise"-style metrics are deterministic across runs.
- */
+/** Seeded mulberry32 PRNG: same seed → same sequence, so series are stable. */
 function makePrng(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -138,9 +106,8 @@ function makePrng(seed: number): () => number {
 }
 
 /**
- * Pure deterministic site cleanup: removes the seeded site doc + every
- * subcollection we touch. We avoid `clearFirestoreEmulator` here because
- * specs may share emulator lifetime with other tests in the same run.
+ * Deterministic site cleanup. Not clearFirestoreEmulator — specs may share the
+ * emulator lifetime with other tests in the same run.
  */
 async function deleteSiteSubtree(siteId: string): Promise<void> {
   const db = getAdminDb();
@@ -153,15 +120,16 @@ async function deleteSiteSubtree(siteId: string): Promise<void> {
     'deployments',
     'installer_templates',
     'logs',
+    // Talon definitions and their run history — both live directly under the
+    // site, so a scenario that seeds either would otherwise leak into the next.
+    'talons',
+    'talon_runs',
   ];
 
   for (const sub of subcollectionNames) {
     const snap = await siteRef.collection(sub).listDocuments();
     for (const ref of snap) {
-      // Recursive delete of any further nested subcollections (machines have
-      // hardware/, screenshots/, etc.). recursiveDelete() is exposed on the
-      // admin `getRecursiveDeleter`-equivalent — fall back to manual recursion
-      // if not available.
+      // Machines nest hardware/, screenshots/, etc. — recurse manually.
       await deleteRecursive(ref);
     }
   }
@@ -193,18 +161,14 @@ async function deleteRecursive(
 }
 
 /**
- * Surgical per-scenario reset: drops only site-A's data. Users in firestore
- * + auth persist from global-setup. We deliberately DO NOT call seedBaseline
- * here — its `seedUser` path calls `auth.updateUser(uid, { password })`,
- * which invalidates existing refresh tokens and breaks the storageState
- * session cookies captured during global-setup. The per-site data
- * (machines, deployments, etc.) is the only thing we need to reset.
+ * Drops only site-A's data; firestore + auth users persist from global-setup.
+ * Do NOT call seedBaseline here — its seedUser path does auth.updateUser({
+ * password }), which invalidates refresh tokens and breaks the storageState
+ * session cookies captured during global-setup.
  */
 async function resetAndReseedBaseline(): Promise<void> {
   await deleteSiteSubtree('site-A');
-  // Restore the bare site-A doc (deleteSiteSubtree wiped it). Use merge so
-  // the per-scenario seedScreenshotSite call afterwards can layer name/tier
-  // on top.
+  // Restore the bare site-A doc; merge so the per-scenario seed layers on top.
   const db = getAdminDb();
   await db.collection('sites').doc('site-A').set({
     name: 'Site A (Assigned)',
@@ -213,17 +177,10 @@ async function resetAndReseedBaseline(): Promise<void> {
   }, { merge: true });
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Shared low-level writers                                                  */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Upgrade the canonical `site-A` baseline doc with the per-scenario name and
- * tier (e.g. `pro` for roost-rolling). We seed into the admin user's already-
- * assigned `site-A` instead of a separate `site-screenshot-*` so the dashboard
- * auto-selects it on load — there's no clean way to force a specific site
- * selection from the spec without races between the firestore writes and the
- * dashboard's site-pick effect.
+ * Layer per-scenario name/tier onto the canonical `site-A` rather than a fresh
+ * site: the dashboard auto-selects it. Forcing a site selection from the spec
+ * races the firestore writes against the dashboard's site-pick effect.
  */
 async function seedScreenshotSite(
   siteId: string,
@@ -231,8 +188,7 @@ async function seedScreenshotSite(
   ownerUid: string = TEST_USERS.admin.uid,
 ): Promise<void> {
   const db = getAdminDb();
-  // Merge — preserve baseline-set fields (owner, etc) and only update what
-  // this scenario needs.
+  // Merge — preserve baseline fields (owner, etc).
   await db.collection('sites').doc(siteId).set(
     {
       name,
@@ -257,10 +213,7 @@ interface MetricsSample {
   diskPct: number;
 }
 
-/**
- * Write a v2-shaped metrics doc onto the machine. Caller controls the
- * sample so each card on the dashboard renders distinct CPU/mem values.
- */
+/** v2-shaped metrics doc; caller picks the sample so each card renders distinctly. */
 async function writeMachineMetrics(
   siteId: string,
   machineId: string,
@@ -276,8 +229,7 @@ async function writeMachineMetrics(
     .doc(machineId)
     .set(
       {
-        // Mirrors useMachines' OFFLINE_HEARTBEAT_AGE_SEC (300s) so the seeded
-        // flag agrees with how the dashboard would classify this heartbeat.
+        // Mirrors useMachines' OFFLINE_HEARTBEAT_AGE_SEC (300s).
         online: heartbeatOffsetSec < 300,
         lastHeartbeat: heartbeat,
         agent_version: '3.0.0',
@@ -356,14 +308,9 @@ async function writeMachineMetrics(
     });
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Scenario: dashboard-mixed-states                                          */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Plausible fleet — 10 machines mixing running, alerting, offline, and
- * just-restarted states. CPU/mem distribution is hand-tuned (not all 99%)
- * so the screenshot looks like a real operations view.
+ * Plausible fleet — 10 machines mixing running, alerting, offline and
+ * just-restarted; CPU/mem hand-tuned so it reads as a real operations view.
  */
 async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
   const siteId = 'site-A';
@@ -404,8 +351,7 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
       sample: { cpuPct: 18, memPct: 29, memUsedGb: 9.2, gpuPct: 14, diskPct: 38 } },
   ];
 
-  // Per-machine PRNG seeds so each row's sparkline trace looks distinct
-  // rather than identical. Stable: machineId → seed.
+  // Per-machine PRNG seed (stable: machineId → seed) so traces differ per row.
   const seedFor = (id: string): number =>
     id.split('').reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 0xc0ffee00);
 
@@ -417,10 +363,8 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
     });
     await writeMachineMetrics(siteId, spec.machineId, spec.sample, heartbeatOffset);
 
-    // Seed metrics_history so each row's inline sparkline traces render —
-    // without these, every row's CPU/RAM/disk/GPU column shows just numbers
-    // and a flat baseline. Centered around each machine's current sample so
-    // the trace flows naturally into the present.
+    // metrics_history so each row's inline sparkline renders; centered on the
+    // machine's current sample so the trace flows into the present.
     if (spec.state !== 'offline') {
       await writeMetricsHistory(siteId, spec.machineId, {
         cpuBase: spec.sample.cpuPct,
@@ -432,8 +376,7 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
     }
 
     if (spec.state === 'just-restarted' && spec.secondsSinceRestart !== undefined) {
-      // Stamp a recent reboot completion so the dashboard's "just restarted"
-      // chip lights up. Mirrors the agent's post-reboot heartbeat shape.
+      // Recent reboot completion lights the "just restarted" chip.
       await getAdminDb()
         .collection('sites')
         .doc(siteId)
@@ -454,15 +397,9 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Scenario: monitor-single-machine                                          */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Multi-machine view focused on `media-server-stage`. Seeds 4 machines with
- * deterministic metrics_history buckets so each card's CPU/memory/disk/GPU
- * sparklines render. The spec opens the focus card's MetricsDetailPanel for
- * the screenshot — surrounding cards stay visible.
+ * Focus on `media-server-stage` among 4 machines; deterministic
+ * metrics_history buckets so every card's sparklines render.
  */
 async function seedMonitorSingleMachine(): Promise<ScreenshotFixture> {
   const siteId = 'site-A';
@@ -484,9 +421,8 @@ async function seedMonitorSingleMachine(): Promise<ScreenshotFixture> {
     };
   };
 
-  // Two-disk + two-NIC + named-GPU spec for the focused machine — mirrors
-  // the production chart's per-device tab discovery (one tab per disk, GPU,
-  // and NIC; disks also surface a paired I/O tab via dios[]).
+  // Two disks + two NICs + named GPU: drives the chart's per-device tab
+  // discovery (disks also surface a paired I/O tab via dios[]).
   const focusDisks: HistoryDiskSpec[] = [
     { id: 'C:', pctBase: 73, ioReadBpsBase: 3_000_000, ioWriteBpsBase: 4_000_000, maxBps: 500_000_000 },
     { id: 'D:', pctBase: 61, ioReadBpsBase: 80_000_000, ioWriteBpsBase: 12_000_000, maxBps: 3_000_000_000 },
@@ -545,27 +481,18 @@ function clamp(n: number, min: number, max: number): number {
 }
 
 /**
- * Write a metrics_history bucket the dashboard's `useSparklineData` /
- * `useAllSparklineData` / `useHistoricalMetrics` hooks consume:
- *
+ * metrics_history bucket consumed by useSparklineData / useAllSparklineData /
+ * useHistoricalMetrics:
  *   sites/{siteId}/machines/{machineId}/metrics_history/{YYYY-MM-DD}
  *     { samples: [{ t, c, m, d, g, ct, gt, ds[], gs[], n[], dios[] }, ...] }
- *
- * Sample shape mirrors the production cloud function at
- * `functions/src/metricsHistory.ts` so the chart panel auto-discovers the
- * same per-device tabs (one per disk, GPU, NIC) and overlay lines (CPU temp
- * paired with CPU usage, GPU temp paired with GPU usage, disk IO read/write
- * pairs) that production users see.
- *
- * Bucket id matches FIXED_NOW because specs `page.clock.install` before
- * navigation; `new Date().toISOString().split('T')[0]` in the page resolves
- * to this bucket.
+ * Shape mirrors functions/src/metricsHistory.ts so per-device tabs and paired
+ * overlay lines match production. Bucket id matches FIXED_NOW because specs
+ * page.clock.install before navigating.
  */
 interface HistoryDiskSpec {
   id: string;
   pctBase: number;
-  /** Bytes-per-second base values for IO read / write traces. Optional —
-   *  defaults to a small idle rate when omitted. */
+  /** Bytes-per-second base for IO read/write traces; defaults to an idle rate. */
   ioReadBpsBase?: number;
   ioWriteBpsBase?: number;
   /** Hardware-class peak bandwidth ceiling for the `_io_*_pct` lines. */
@@ -622,10 +549,8 @@ async function writeMetricsHistory(
   const rng = makePrng(seed);
   const bucketId = new Date(FIXED_NOW_MS).toISOString().split('T')[0];
 
-  // `useHistoricalMetrics` expects sample timestamps in SECONDS — it does
-  // `sample.t * 1000` when constructing chart points (see hook). Sparklines
-  // use the value directly so either unit works, but the metrics detail
-  // chart needs seconds or the line plots off-screen at year 50000+.
+  // Sample `t` must be SECONDS: useHistoricalMetrics does `sample.t * 1000`,
+  // so milliseconds plot the chart off-screen at year 50000+.
   const nowSec = Math.floor(FIXED_NOW_MS / 1000);
   type DiskSample = { i: string; p: number };
   type GpuSample = { i: string; u: number; t?: number };
@@ -705,14 +630,9 @@ async function writeMetricsHistory(
     .set({ samples });
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Scenario: control-process-restarting                                      */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Multi-machine card-view focused on `td-control-room`'s mid-restart
- * touchdesigner process. Surrounding cards have their own running process
- * sets so the screenshot reads as a populated control surface.
+ * Card view focused on `td-control-room`'s mid-restart touchdesigner process;
+ * surrounding cards carry their own running process sets.
  */
 async function seedControlProcessRestarting(): Promise<ScreenshotFixture> {
   const siteId = 'site-A';
@@ -882,14 +802,7 @@ async function seedControlProcessRestarting(): Promise<ScreenshotFixture> {
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Scenario: deploy-roost-rolling                                            */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Site with a roost mid-rollout (3 of 10 machines complete). Tier=pro so
- * the gate from siteTier resolves true.
- */
+/** Roost mid-rollout (3 of 10 complete). tier=pro so the siteTier gate passes. */
 async function seedDeployRoostRolling(): Promise<ScreenshotFixture> {
   const siteId = 'site-A';
   await seedScreenshotSite(siteId, 'flagship');
@@ -921,9 +834,7 @@ async function seedDeployRoostRolling(): Promise<ScreenshotFixture> {
     ],
   });
 
-  // Mixed-status deployment list: one in-flight (the canonical preview),
-  // one completed, one failed, one queued. The deploy spec clicks the
-  // in-progress row to expand it before screenshotting.
+  // Mixed-status deployments; the spec expands the in-flight row.
   const db = getAdminDb();
   const deploymentsRef = db.collection('sites').doc(siteId).collection('deployments');
 
@@ -1010,17 +921,7 @@ async function seedDeployRoostRolling(): Promise<ScreenshotFixture> {
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Scenario: diagnose-cortex-chat                                            */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Hoot chat with a realistic incident-investigation conversation.
- *
- * NOTE: relies on the hoot chat UI surfaces. The hoot regression
- * spec (`web/e2e/specs/hoot/hoot.spec.ts`) renders the same
- * collection (`chats/...`) so the surface is known to exist.
- */
+/** Hoot chat with a realistic incident-investigation conversation. */
 async function seedDiagnoseHootChat(): Promise<ScreenshotFixture> {
   const siteId = 'site-A';
   const machineId = 'media-server-stage';
@@ -1096,8 +997,7 @@ async function seedDiagnoseHootChat(): Promise<ScreenshotFixture> {
     updatedAt: tsAgo(60 * 30),
   });
 
-  // Sidebar fillers — a handful of recent conversations so the sidebar reads
-  // as a real working assistant, not a one-off. Lightweight (1-turn each).
+  // Sidebar fillers — 1-turn conversations so the sidebar reads as real.
   const fillerConversations: Array<{
     id: string;
     title: string;
@@ -1193,15 +1093,9 @@ async function seedDiagnoseHootChat(): Promise<ScreenshotFixture> {
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Scenario: display-layout-editor                                           */
-/* -------------------------------------------------------------------------- */
-
 /**
- * 4-monitor 2×2 mosaic layout. Profile lives under
- * `sites/{siteId}/machines/{machineId}/hardware/display`; assignment lives
- * under `config/{siteId}/machines/{machineId}.displays.assigned` per the
- * setDisplayLayout action.
+ * 4-monitor 2×2 mosaic. Profile at machines/{id}/hardware/display; assignment
+ * at config/{siteId}/machines/{id}.displays.assigned (per setDisplayLayout).
  */
 async function seedDisplayLayoutEditor(): Promise<ScreenshotFixture> {
   const siteId = 'site-A';
@@ -1217,8 +1111,7 @@ async function seedDisplayLayoutEditor(): Promise<ScreenshotFixture> {
 
   await writeFourMonitorProfile(siteId, machineId);
 
-  // Assigned layout under the config doc — what the screenshot view renders
-  // as "the layout this machine should look like".
+  // Assigned layout — what this machine should look like.
   const db = getAdminDb();
   await db
     .collection('config')
@@ -1313,20 +1206,9 @@ async function writeFourMonitorProfile(
     });
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Scenario: automate-schedule-editor                                        */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Schedule editor with reboot schedule + a couple of process schedule
- * presets, plus an alert-rule entry. Surfaces:
- *
- *   - `config/{siteId}/machines/{machineId}.rebootSchedule`
- *   - `config/{siteId}/schedule_presets/*`
- *   - `sites/{siteId}/alertRules/*`
- *
- * NOTE: alert-rule UI surface depends on `setAlertRules` action — confirmed
- * present in `web/lib/actions/setAlertRules.server.ts`.
+ * Schedule editor state: config/{siteId}/machines/{id}.rebootSchedule,
+ * config/{siteId}/schedule_presets/*, sites/{siteId}/alertRules/*.
  */
 async function seedAutomateScheduleEditor(): Promise<ScreenshotFixture> {
   const siteId = 'site-A';
@@ -1411,20 +1293,251 @@ async function seedAutomateScheduleEditor(): Promise<ScreenshotFixture> {
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Scenario: display-storyboard frames 1/2/3                                 */
-/* -------------------------------------------------------------------------- */
+/**
+ * Talons list state: seven automations under `sites/{siteId}/talons`, chosen to
+ * span every trigger kind (schedule entries, threshold, event — one of them
+ * delayed), both condition kinds, and all four output families (email, webhook,
+ * hoot, command). One talon is scoped to every machine, the rest to a subset,
+ * so the scope column reads as a real fleet rather than a demo.
+ *
+ * Ordering is not incidental: `useTalons` sorts by name client-side, so the
+ * seeded names below are already in rendered order. Client writes are denied by
+ * firestore.rules (talons are server-mediated); the Admin SDK bypasses that,
+ * which is why these are written here rather than through the api.
+ *
+ * `lastRunAt` values hang off FIXED_NOW so the "last run" column is stable under
+ * the spec's pinned clock. The wall check's last run is `skipped` on purpose —
+ * a visual-check `pass` short-circuits before the outputs run, so that IS what a
+ * healthy wall looks like in the history.
+ */
+async function seedAutomateTalonsList(): Promise<ScreenshotFixture> {
+  const siteId = 'site-A';
+  const machineId = 'lobby-wall';
+  const machineIds = [machineId, 'gallery-projector', 'media-server-stage', 'render-node-01'];
+  await seedScreenshotSite(siteId, 'flagship');
+
+  // The talons page reads `machines.length` only (to render "1 of 4 machines"),
+  // so these need no metrics and no display profile.
+  for (const id of machineIds) {
+    await seedMachine(siteId, id, { heartbeatOffsetSec: 5, monitorCount: 0 });
+  }
+
+  // Shared authorship/bookkeeping half of every talon below.
+  const authored: Pick<
+    TalonDoc,
+    'schemaVersion' | 'createdBy' | 'createdVia' | 'consecutiveFailures' | 'createdAt' | 'updatedAt'
+  > = {
+    schemaVersion: 1,
+    createdBy: TEST_USERS.admin.uid,
+    createdVia: 'ui',
+    consecutiveFailures: 0,
+    createdAt: tsAgo(60 * 60 * 24 * 45),
+    updatedAt: tsAgo(60 * 60 * 24 * 6),
+  };
+
+  const talons: Array<{ id: string; doc: TalonDoc }> = [
+    {
+      id: 'talon-doors-open',
+      doc: {
+        ...authored,
+        name: 'doors open — lobby wall is live',
+        description: 'before opening, look at the wall and make sure the show is on screen',
+        enabled: true,
+        trigger: {
+          type: 'schedule',
+          entries: [
+            { id: 'entry-doors-open', days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'], time: '09:45' },
+          ],
+        },
+        condition: {
+          type: 'visual_check',
+          expectation:
+            'the wall should be showing the content loop. it should not show the windows ' +
+            'desktop, an error dialog, or a black screen.',
+          monitor: 1,
+        },
+        outputs: [
+          {
+            type: 'cortex',
+            directive:
+              'the lobby wall is not showing the show. restart touchdesigner on it and tell ' +
+              'me what you found.',
+            allowActions: true,
+          },
+          { type: 'email' },
+        ],
+        scope: { machineIds: [machineId] },
+        cooldownMinutes: 60,
+        // 09:45 America/Los_Angeles = 16:45 UTC, the next occurrence after FIXED_NOW.
+        nextRunAt: Timestamp.fromMillis(FIXED_NOW_MS + (2 * 60 + 15) * 60 * 1000),
+        lastRunAt: tsAgo(60 * 60 * 4 + 60 * 45),
+        lastRunStatus: 'skipped',
+        lastRunId: 'run-doors-open',
+      },
+    },
+    {
+      id: 'talon-gpu-pinned',
+      doc: {
+        ...authored,
+        name: 'gpu pinned on the render node',
+        description: 'page show ops when the render machines stop keeping up',
+        enabled: true,
+        trigger: { type: 'threshold', metric: 'gpu_percent', operator: '>=', value: 95 },
+        condition: { type: 'none' },
+        outputs: [
+          { type: 'webhook', url: 'https://hooks.showops.example.com/owlette/gpu' },
+          { type: 'email' },
+        ],
+        scope: { machineIds: ['render-node-01', 'media-server-stage'] },
+        cooldownMinutes: 30,
+        lastRunAt: tsAgo(60 * 60 * 2 + 60 * 20),
+        lastRunStatus: 'succeeded',
+        lastRunId: 'run-gpu-pinned',
+      },
+    },
+    {
+      id: 'talon-nightly-restart',
+      doc: {
+        ...authored,
+        name: 'nightly restart — media servers',
+        description: 'restart the show stack at 4am so every day starts from a known state',
+        enabled: true,
+        trigger: {
+          type: 'schedule',
+          entries: [
+            { id: 'entry-nightly-restart', days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'], time: '04:00' },
+          ],
+        },
+        condition: { type: 'none' },
+        outputs: [{ type: 'command', commandType: 'restart_process', processName: 'TouchDesigner' }],
+        scope: { machineIds: ['media-server-stage', 'render-node-01'] },
+        cooldownMinutes: 720,
+        // 04:00 America/Los_Angeles = 11:00 UTC, so the next one is tomorrow.
+        nextRunAt: Timestamp.fromMillis(FIXED_NOW_MS + (20 * 60 + 30) * 60 * 1000),
+        lastRunAt: tsAgo(60 * 60 * 10 + 60 * 30),
+        lastRunStatus: 'succeeded',
+        lastRunId: 'run-nightly-restart',
+      },
+    },
+    {
+      id: 'talon-projector-offline',
+      doc: {
+        ...authored,
+        name: 'projector dropped offline',
+        description: 'give it five minutes to come back on its own, then tell the on-call tech',
+        enabled: true,
+        trigger: { type: 'event', eventTypes: ['machine_offline'], delayMinutes: 5 },
+        condition: { type: 'none' },
+        outputs: [
+          { type: 'email' },
+          { type: 'webhook', url: 'https://hooks.showops.example.com/owlette/on-call' },
+        ],
+        scope: { machineIds: ['gallery-projector'] },
+        cooldownMinutes: 15,
+        lastRunAt: tsAgo(60 * 60 * 24 * 3),
+        lastRunStatus: 'succeeded',
+        lastRunId: 'run-projector-offline',
+      },
+    },
+    {
+      id: 'talon-crash-recovery',
+      doc: {
+        ...authored,
+        name: 'touchdesigner crash recovery',
+        description: 'when the show process dies, put it back before anyone notices',
+        enabled: true,
+        trigger: { type: 'event', eventTypes: ['process_crash', 'process_start_failed'] },
+        condition: { type: 'none' },
+        outputs: [
+          { type: 'command', commandType: 'restart_process', processName: 'TouchDesigner' },
+          { type: 'email' },
+        ],
+        scope: { machineIds: null },
+        cooldownMinutes: 10,
+        lastRunAt: tsAgo(60 * 60 * 31),
+        lastRunStatus: 'succeeded',
+        lastRunId: 'run-crash-recovery',
+      },
+    },
+    {
+      id: 'talon-update-guard',
+      doc: {
+        ...authored,
+        name: 'update guard — sundays',
+        description: 're-assert the update window and the setup-screen suppression every week',
+        enabled: true,
+        trigger: {
+          type: 'schedule',
+          entries: [{ id: 'entry-update-guard', days: ['sun'], time: '07:00' }],
+        },
+        condition: { type: 'none' },
+        outputs: [
+          {
+            type: 'cortex',
+            directive:
+              're-assert the update window and suppress the windows setup screens on every ' +
+              'machine in this site.',
+            allowActions: true,
+          },
+        ],
+        scope: { machineIds: null },
+        cooldownMinutes: 1440,
+        // 07:00 America/Los_Angeles = 14:00 UTC; FIXED_NOW is a Wednesday, so
+        // the next sunday is four days out.
+        nextRunAt: Timestamp.fromMillis(FIXED_NOW_MS + (4 * 24 * 60 - 30) * 60 * 1000),
+        lastRunAt: tsAgo(60 * 60 * 24 * 3 + 60 * 30),
+        lastRunStatus: 'succeeded',
+        lastRunId: 'run-update-guard',
+      },
+    },
+    {
+      id: 'talon-weekly-health-report',
+      doc: {
+        ...authored,
+        name: 'weekly health report',
+        description: 'every monday at 9 am, hoot writes a plain-language health report',
+        enabled: true,
+        trigger: {
+          type: 'schedule',
+          entries: [{ id: 'entry-weekly-health-report', days: ['mon'], time: '09:00' }],
+        },
+        condition: { type: 'none' },
+        outputs: [
+          {
+            type: 'cortex',
+            directive:
+              'summarize how the fleet ran this week — crashes, restarts, and anything ' +
+              'trending the wrong way.',
+          },
+          { type: 'email' },
+        ],
+        scope: { machineIds: null },
+        cooldownMinutes: 1440,
+        // 09:00 America/Los_Angeles = 16:00 UTC on the coming monday (5 days out).
+        nextRunAt: Timestamp.fromMillis(FIXED_NOW_MS + (5 * 24 * 60 + 90) * 60 * 1000),
+        lastRunAt: tsAgo(60 * 60 * 24 * 2 + 60 * 60 * 5 + 60 * 30),
+        lastRunStatus: 'succeeded',
+        lastRunId: 'run-weekly-health-report',
+      },
+    },
+  ];
+
+  const talonsRef = getAdminDb().collection('sites').doc(siteId).collection('talons');
+  for (const { id, doc } of talons) {
+    await talonsRef.doc(id).set(doc);
+  }
+
+  return {
+    siteId,
+    machineId,
+    cleanup: () => deleteSiteSubtree(siteId),
+  };
+}
 
 /**
- * Three states of the same display layout for the marketing storyboard:
- *
- *   1. before-apply: drift detected, "apply" button enabled
- *   2. mid-apply:    countdown banner (rebootScheduledAt set), apply pending
- *   3. ack received: layout reapplied, drift cleared, success banner
- *
- * All three frames share the same site/machine ids so URLs are consistent
- * across screenshots; the only thing that differs is the per-frame state
- * (drift count, countdown anchor, banner field).
+ * Three frames of one display layout for the marketing storyboard:
+ * before-apply (drift detected), mid-apply (countdown banner), ack (drift
+ * cleared). Same site/machine ids across frames; only the state differs.
  */
 async function seedDisplayStoryboardFrame(
   frame: 1 | 2 | 3,
@@ -1470,9 +1583,7 @@ async function seedDisplayStoryboardFrame(
   );
 
   if (frame === 1) {
-    // Drift detected — surface the displayDriftCount on the status doc so
-    // the dashboard's drift dot lights up and the storyboard intro panel
-    // shows the "apply" CTA.
+    // Drift detected — lights the dashboard drift dot and the "apply" CTA.
     await machineRef.set(
       {
         metrics: {
@@ -1488,9 +1599,7 @@ async function seedDisplayStoryboardFrame(
     await machineRef.set(
       {
         rebooting: false,
-        // No reboot — display layout apply doesn't reboot the box. We use
-        // the storyboard-specific countdown field that the display panel
-        // listens to.
+        // Display apply doesn't reboot; storyboard-specific countdown field.
         metrics: {
           schemaVersion: 2,
           timestamp: tsAgo(2),

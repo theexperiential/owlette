@@ -10,12 +10,10 @@
  *   b05 build a rule                      ~33.2s  → create-rule dialog + presets menu
  *   b06 your personal alert preferences   ~30.7s  → account settings → alerts tab
  *
- * NOTE from the script: admin pages require superadmin. The base scenario
- * `automate-schedule-editor` does seed sites/{id}/alertRules/* but that's the
- * automation-rule schema, NOT the threshold-rule schema the /admin/alerts page
- * reads (sites/{id}/settings/alerts.rules[]). So this scene seeds the email-
- * alerts schema inline before navigating — mirrors what email-alerts.spec.ts
- * does for the docs screenshot.
+ * Admin pages need superadmin. The base scenario seeds sites/{id}/alertRules/*
+ * (automation schema), NOT the threshold schema /admin/alerts reads
+ * (sites/{id}/settings/alerts.rules[]) — so this scene seeds that inline, as
+ * email-alerts.spec.ts does.
  *
  * Run:  cd web && npm run videos -- --grep "episode 11"
  * Out:  web/e2e/.output/videos/11-team-and-alerts.mp4
@@ -40,15 +38,13 @@ import {
 test('episode 11 — team & alerts', async ({ browser }) => {
   const ctx = await seedScreenshotFixtures('automate-schedule-editor');
   try {
-    // Pin the superadmin onto the seeded site so the per-site selectors on
-    // /admin/alerts and /admin/users land on real data.
+    // Pin the superadmin to the seeded site so per-site selectors find data.
     await getAdminDb()
       .collection('users')
       .doc(TEST_USERS.superadmin.uid)
       .set({ lastSiteId: ctx.siteId }, { merge: true });
 
-    // Seed threshold-rule schema on settings/alerts — the schema /admin/alerts
-    // actually reads. Mirrors web/e2e/screenshots/email-alerts.spec.ts.
+    // Threshold-rule schema on settings/alerts — what /admin/alerts reads.
     await getAdminDb()
       .collection('sites')
       .doc(ctx.siteId)
@@ -102,13 +98,10 @@ test('episode 11 — team & alerts', async ({ browser }) => {
         await expect(
           page.getByRole('heading', { name: 'user management', exact: true }),
         ).toBeVisible();
-        // The seeded test users (member@e2e.test, admin@e2e.test, super@e2e.test)
-        // populate the table.
         await expect(page.getByText('admin@e2e.test', { exact: false }).first()).toBeVisible();
         await narrate(page, 'b01 user list — settle', 19);
 
         // [b02] assign a role and sites (~20.0s VO).
-        // Open the row menu for the member user and step into "change role...".
         const memberRow = page
           .getByRole('row')
           .filter({ hasText: 'member@e2e.test' });
@@ -119,10 +112,8 @@ test('episode 11 — team & alerts', async ({ browser }) => {
         await expect(changeRoleItem).toBeVisible();
         await clickWithCursor(page, changeRoleItem);
 
-        // Role-change dialog with the role select.
         const roleDialog = page.getByRole('dialog', { name: /change role/i });
         await expect(roleDialog).toBeVisible();
-        // Open the select to surface member/admin/superadmin options.
         const roleSelectTrigger = roleDialog.getByRole('combobox').first(); // VERIFY — first combobox = role select
         await clickWithCursor(page, roleSelectTrigger);
         await page.waitForTimeout(400);
@@ -130,16 +121,14 @@ test('episode 11 — team & alerts', async ({ browser }) => {
         await expect(adminOption).toBeVisible();
         await highlight(page, adminOption, 1600);
         await narrate(page, 'b02 role select open', 12);
-        // Pick admin so the cyan description card shows the admin scope.
         await clickWithCursor(page, adminOption);
         await narrate(page, 'b02 admin description', 4);
-        // Cancel back out — we're not actually mutating the seeded users.
+        // Cancel — never mutate the seeded users.
         await clickWithCursor(page, roleDialog.getByRole('button', { name: /^cancel$/i }));
         await expect(roleDialog).not.toBeVisible();
 
         // [b03] what each role can do (~38.8s VO).
-        // The three role-description cards live at the bottom of the page —
-        // pan slowly to them so all three are framed together.
+        // Pan slowly so all three role-description cards frame together.
         await slowScrollToBottom(page, 6);
         const memberRoleCard = page
           .locator('div')
@@ -176,22 +165,19 @@ test('episode 11 — team & alerts', async ({ browser }) => {
         const ruleDialog = page.getByRole('dialog', { name: /create alert rule/i });
         await expect(ruleDialog).toBeVisible();
 
-        // Name the rule.
         const nameInput = ruleDialog.locator('#rule-name');
         await typewrite(page, nameInput, 'GPU overheat', 45);
 
-        // Open the metric select and pick GPU temperature.
         const metricTrigger = ruleDialog.getByRole('combobox').nth(0); // VERIFY — selects: metric, operator, severity
         await clickWithCursor(page, metricTrigger);
         await page.waitForTimeout(300);
         const gpuTempOption = page.getByRole('option', { name: /GPU temperature/i });
         await clickWithCursor(page, gpuTempOption);
 
-        // Threshold value.
         const valueInput = ruleDialog.locator('#rule-value');
         await typewrite(page, valueInput, '85', 60);
 
-        // Severity → warning is the default; open + highlight to show the options.
+        // Warning is already the default; opened only to show the options.
         const severityTrigger = ruleDialog.getByRole('combobox').nth(2); // VERIFY — third combobox = severity
         await clickWithCursor(page, severityTrigger);
         await page.waitForTimeout(300);
@@ -200,7 +186,6 @@ test('episode 11 — team & alerts', async ({ browser }) => {
         await clickWithCursor(page, warningOption);
         await narrate(page, 'b05 rule body filled', 18);
 
-        // Cancel and demo the presets menu instead.
         await clickWithCursor(page, ruleDialog.getByRole('button', { name: /^cancel$/i }));
         await expect(ruleDialog).not.toBeVisible();
         const presetsBtn = page.getByRole('button', { name: /^presets$/i }).first();
@@ -209,16 +194,13 @@ test('episode 11 — team & alerts', async ({ browser }) => {
         await expect(firstPreset).toBeVisible();
         await highlight(page, firstPreset, 2000);
         await narrate(page, 'b05 presets list', 15);
-        // Dismiss the menu without applying so we don't add a duplicate rule.
+        // Dismiss without applying — would add a duplicate rule.
         await page.keyboard.press('Escape');
         await page.waitForTimeout(300);
 
         // [b06] your personal alert preferences (~30.7s VO).
-        // The admin layout (web/app/admin/layout.tsx) does NOT render PageHeader,
-        // so `user-menu-trigger` doesn't exist on /admin/alerts. Navigate back to
-        // the dashboard (which mounts PageHeader + wires onAccountSettings) before
-        // opening the avatar menu. Pattern matches account-settings specs
-        // (web/e2e/specs/account/preferences.spec.ts:45-47, etc).
+        // The admin layout renders no PageHeader, so `user-menu-trigger` doesn't
+        // exist here — go back to the dashboard before opening the avatar menu.
         await page.goto('/dashboard');
         await page.waitForTimeout(800);
         const userMenuTrigger = page.getByTestId('user-menu-trigger');
@@ -229,7 +211,6 @@ test('episode 11 — team & alerts', async ({ browser }) => {
 
         const settingsDialog = page.getByRole('dialog'); // VisuallyHidden DialogTitle, no accessible name
         await expect(settingsDialog).toBeVisible();
-        // Click the "alerts" tab in the settings sidebar.
         const alertsTab = settingsDialog.getByRole('button', { name: /^alerts$/i }).first();
         await clickWithCursor(page, alertsTab);
         await expect(
@@ -237,7 +218,6 @@ test('episode 11 — team & alerts', async ({ browser }) => {
         ).toBeVisible();
         await narrate(page, 'b06 alerts tab — toggles', 16);
 
-        // Pan to the alert email + CC recipients section near the bottom.
         const alertEmailSection = settingsDialog
           .getByText('alert email', { exact: true })
           .first();

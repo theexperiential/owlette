@@ -1,27 +1,16 @@
 'use client';
 
 /**
- * useMinuteTick Hook
+ * A counter that increments once per WALL-CLOCK minute, shared app-wide via one
+ * timer. Drives live re-renders of the per-machine local clocks.
  *
- * Subscribe to a wall-clock minute tick. Returns a number that increments
- * once per minute, on the wall-clock minute boundary, shared across the
- * entire app via a single setInterval. Used to drive live re-renders of
- * machine local clocks under each hostname.
+ * A module-level singleton owns one setTimeout (to align with the next minute
+ * boundary) then one 60s setInterval, fanned out through useSyncExternalStore.
+ * Lazy: starts on the first subscriber, stops after the last. Boundary
+ * alignment is what makes every machine row update simultaneously.
  *
- * Implementation: a module-level singleton owns ONE setTimeout (to align
- * with the next minute boundary) and then ONE setInterval (60_000ms).
- * All subscribers are notified via useSyncExternalStore. The timer is
- * lazy — it starts when the first subscriber mounts and stops when the
- * last one unmounts. Because the first fire is aligned to the wall-clock
- * minute, every machine card/row updates simultaneously when the minute
- * changes.
- *
- * Replaces the previous per-component setInterval pattern that created N
- * independent timers (one per visible machine) and used a `void clockTick;`
- * anti-pattern to suppress unused-var warnings. With 50 machines on the
- * dashboard, that was 50 unsynchronized timers — now it's just one.
- *
- * SSR-safe: returns 0 during the server render.
+ * Replaces a per-component setInterval — 50 machines meant 50 unsynchronized
+ * timers. SSR-safe: returns 0 on the server render.
  */
 
 import { useSyncExternalStore } from 'react';
@@ -37,8 +26,7 @@ function notifyAll() {
 }
 
 function startTicking() {
-  // Align the first fire to the next wall-clock minute boundary so every
-  // subscribed machine clock updates in lockstep when the minute changes.
+  // Align the first fire to the minute boundary so all clocks tick in lockstep.
   const now = new Date();
   const msUntilNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
   timeoutId = setTimeout(() => {

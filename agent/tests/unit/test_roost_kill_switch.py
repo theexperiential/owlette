@@ -1,4 +1,4 @@
-"""tests for roost_kill_switch — per-site v2 kill switch (wave 5.4)."""
+"""tests for roost_kill_switch — the per-site v2 kill switch."""
 
 import pytest
 
@@ -18,7 +18,6 @@ def _clear_cache_between_tests():
     invalidate_cache()
 
 
-# ─── is_enabled_from_doc (pure) ─────────────────────────────────────
 
 
 def test_missing_doc_is_enabled_failopen():
@@ -43,15 +42,13 @@ def test_explicit_true_enables():
 
 
 def test_non_bool_value_is_enabled_failopen():
-    # migration glitch / type confusion — we don't trust a string "false"
-    # as disabled, and we don't trust a 0 as disabled either. only explicit
-    # boolean False flips the switch.
+    # Only boolean False disables: a string "false" or a 0 (migration glitch, type confusion)
+    # must not flip the switch.
     assert is_enabled_from_doc({ROOST_ENABLED_FIELD: 'false'}) is True
     assert is_enabled_from_doc({ROOST_ENABLED_FIELD: 0}) is True
     assert is_enabled_from_doc({ROOST_ENABLED_FIELD: None}) is True
 
 
-# ─── check_enabled (cache + reader injection) ──────────────────────
 
 
 class _FakeReader:
@@ -90,9 +87,7 @@ def test_check_returns_true_on_reader_exception_failopen():
 def test_reader_error_is_not_cached_retries_on_next_call():
     reader = _ErrorReader()
     assert check_enabled('site-a', reader, now_fn=lambda: 0.0) is True
-    # a second call should attempt the read again (the error path doesn't
-    # cache). we can't observe reader.calls here since _ErrorReader has no
-    # counter — add one.
+    # The error path must not cache, so the second call reads again.
     class CountingErrorReader:
         def __init__(self):
             self.calls = 0
@@ -139,13 +134,13 @@ def test_admin_flip_propagates_within_ttl_window():
     """
     docs = {'site-a': {ROOST_ENABLED_FIELD: True}}
     reader = _FakeReader(docs)
-    # initial state: enabled, value cached at t=100
+    # enabled, cached at t=100
     assert check_enabled('site-a', reader, now_fn=lambda: 100.0) is True
     # admin flips at t=105
     docs['site-a'] = {ROOST_ENABLED_FIELD: False}
-    # within cache TTL (t=125, still within 30s) — stale True persists
+    # within the 30s TTL: stale True persists
     assert check_enabled('site-a', reader, now_fn=lambda: 125.0) is True
-    # past cache TTL (t=135 > 100 + 30) — re-read sees the new False
+    # past the TTL: re-read sees the new False
     assert check_enabled('site-a', reader, now_fn=lambda: 135.0) is False
 
 
@@ -158,10 +153,9 @@ def test_invalidate_cache_forces_reread():
     assert reader.calls == 2
 
 
-# ─── constants stability (contract with web/lib/roostKillSwitch.ts) ─
 
 
 def test_field_name_is_stable():
-    # if this ever changes, the web-side mirror file must change together.
-    # pinning the name here means a refactor breaks this test loudly.
+    # Contract with web/lib/roostKillSwitch.ts: pinning the name here makes a rename break
+    # loudly instead of silently desyncing the mirror.
     assert ROOST_ENABLED_FIELD == 'roostEnabled'

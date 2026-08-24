@@ -1,25 +1,13 @@
 /**
- * HTTP-shape tests for `owlette process …`.
- *
- * Every verb of the wave-2B public scoped process api gets covered:
- *   GET    /api/sites/:siteId/machines/:machineId/processes
- *   POST   /api/sites/:siteId/machines/:machineId/processes
- *   GET    /api/sites/:siteId/machines/:machineId/processes/:processId
- *   PATCH  .../:processId
- *   DELETE .../:processId
- *   POST   .../:processId/{kill,restart,start,stop}
- *   POST   .../:processId/schedule
- *
- * Properties asserted (in addition to plain url + method shape):
+ * HTTP-shape tests for `owlette process …` — every verb of the scoped process
+ * api. Beyond url + method, these assert:
  *   - mutations send `Idempotency-Key: cli-process-<verb>-<uuid>`
  *   - --json round-trips the server `data` field byte-identical
- *   - `duplicate_process_name` 409 surfaces the stable code + hint
- *   - `scope_insufficient` 403 surfaces the missing-scope hint
- *   - `process schedule` validates --mode + --blocks json + scheduled-mode
- *     requires non-empty blocks; the parsed blocks are forwarded as-is
- *   - `process delete` honors `--yes` (and refuses without it on non-tty)
- *   - schedule uses POST and idempotency-key (server writes through
- *     withProcessLock, no command queue)
+ *   - `duplicate_process_name` 409 / `scope_insufficient` 403 surface their
+ *     stable code + hint
+ *   - `schedule` validates --mode and --blocks json (scheduled mode needs
+ *     non-empty blocks) and forwards the parsed blocks as-is
+ *   - `delete` honors `--yes` and refuses without it on a non-tty
  */
 
 import { Command } from 'commander';
@@ -71,8 +59,8 @@ beforeEach(() => {
   process.exitCode = 0;
   jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
   jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
-  // Ensure `process delete` without --yes on a non-tty bails (we test
-  // the --yes path explicitly; non-tty + no --yes is its own assertion).
+  // `process delete` without --yes on a non-tty must bail; the --yes path has
+  // its own test.
 });
 
 afterEach(() => {
@@ -84,10 +72,6 @@ afterEach(() => {
 });
 
 const URL_PREFIX = 'https://dev.test/api/sites/site-1/machines/m-1/processes';
-
-/* -------------------------------------------------------------------- */
-/*  list / get                                                           */
-/* -------------------------------------------------------------------- */
 
 describe('owlette process list', () => {
   it('GETs the processes list with Bearer auth', async () => {
@@ -169,10 +153,6 @@ describe('owlette process get', () => {
     expect((calls[0]!.init.method ?? 'GET').toUpperCase()).toBe('GET');
   });
 });
-
-/* -------------------------------------------------------------------- */
-/*  create                                                               */
-/* -------------------------------------------------------------------- */
 
 describe('owlette process create', () => {
   it('POSTs body {name,exe_path,...} with idempotency key', async () => {
@@ -281,10 +261,6 @@ describe('owlette process create', () => {
   });
 });
 
-/* -------------------------------------------------------------------- */
-/*  update                                                               */
-/* -------------------------------------------------------------------- */
-
 describe('owlette process update', () => {
   it('PATCHes only fields the user passed (live-update of name + visibility)', async () => {
     const calls = installFetchStub({ ok: true, data: { processId: 'proc_abc' } });
@@ -330,10 +306,6 @@ describe('owlette process update', () => {
   });
 });
 
-/* -------------------------------------------------------------------- */
-/*  delete                                                               */
-/* -------------------------------------------------------------------- */
-
 describe('owlette process delete', () => {
   it('DELETEs and prints the alreadyDeleted=true no-op message', async () => {
     const calls = installFetchStub({
@@ -362,8 +334,7 @@ describe('owlette process delete', () => {
 
   it('refuses to run without --yes when stdin is not a tty', async () => {
     const calls = installFetchStub({ ok: true, data: { processId: 'proc_abc', alreadyDeleted: false } });
-    // jest's stdin is not a tty by default; assert isTTY is falsy and
-    // the cli bails before issuing fetch.
+    // jest's stdin is not a tty, so the cli must bail before fetching.
     Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false });
     const program = buildProgram();
 
@@ -376,10 +347,6 @@ describe('owlette process delete', () => {
     expect(process.exitCode).toBe(2);
   });
 });
-
-/* -------------------------------------------------------------------- */
-/*  kill / restart / start / stop                                        */
-/* -------------------------------------------------------------------- */
 
 describe.each([
   ['kill', 'kill_process'],
@@ -465,10 +432,6 @@ describe.each([
     expect(process.exitCode).toBe(1);
   });
 });
-
-/* -------------------------------------------------------------------- */
-/*  schedule                                                             */
-/* -------------------------------------------------------------------- */
 
 describe('owlette process schedule', () => {
   it('POSTs /schedule with mode + parsed blocks (mode=scheduled)', async () => {
@@ -605,10 +568,6 @@ describe('owlette process schedule', () => {
     expect(process.exitCode).toBe(2);
   });
 });
-
-/* -------------------------------------------------------------------- */
-/*  scope_insufficient                                                   */
-/* -------------------------------------------------------------------- */
 
 describe('scope_insufficient surfacing', () => {
   it('renders the missing-scope hint when the server returns 403/scope_insufficient', async () => {

@@ -2,22 +2,14 @@
  * POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry?siteId=...
  *   output: { id, webhookId, siteId, retryOf, state: 'pending', nextAttemptAt }
  *
- *   - inserts a fresh record into the `webhook_deliveries` collection
- *     with `state: 'pending'` and `nextAttemptAt: now`; the scheduled
- *     retry pump (functions/src/webhookDispatch.ts) picks it up on its
- *     next tick.
- *   - re-signs with the subscription's **current** signingSecret so
- *     a rotation since the original delivery is honored.
- *   - the public `X-owlette-Delivery-Id` header is kept identical to
- *     the original so receivers that dedup on that id see this as the
- *     same event (consistent with how the dispatcher handles automatic
- *     retries today).
- *   - fresh `attempt: 0` so the retry gets the full backoff budget
- *     even if the original exhausted it.
+ * Inserts a fresh `webhook_deliveries` record with `state: 'pending'` and
+ * `nextAttemptAt: now`; the retry pump (functions/src/webhookDispatch.ts) picks it up on
+ * its next tick. Re-signs with the subscription's CURRENT signingSecret so a rotation
+ * since the original delivery is honored. The public `X-owlette-Delivery-Id` header stays
+ * identical to the original so receivers that dedup on it see the same event, and
+ * `attempt: 0` gives the retry a full backoff budget even if the original exhausted its.
  *
- * Scope: site:<id>:write.
- *
- * roost public api wave 6.7.
+ * Scope: site:<id>:write. roost public api wave 6.7.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -152,9 +144,8 @@ export async function POST(
       });
     }
 
-    // Preserve the public delivery id (stable per content) so receivers
-    // dedup this retry against the original. Firestore doc id is suffixed
-    // to avoid collision with the original record.
+    // Keep the public delivery id (stable per content) so receivers dedup the retry against
+    // the original; the Firestore doc id is suffixed to avoid colliding with that record.
     const originalHeaders =
       original.headers && typeof original.headers === 'object'
         ? (original.headers as Record<string, string>)

@@ -27,9 +27,10 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-foreground mb-4">1. acceptance of terms</h2>
               <p>
-                by accessing or using owlette (&quot;the service&quot;), operated by The Experiential Company, LLC
-                (&quot;TEC,&quot; &quot;we,&quot; &quot;our,&quot; or &quot;us&quot;), you agree to be bound by these terms of service
-                (&quot;terms&quot;). if you do not agree to these terms, you may not use the service.
+                by accessing or using owlette (&quot;the service&quot;), operated by Tridant Inc., a
+                Delaware corporation (&quot;Tridant,&quot; &quot;we,&quot; &quot;our,&quot; or
+                &quot;us&quot;), you agree to be bound by these terms of service (&quot;terms&quot;).
+                if you do not agree to these terms, you may not use the service.
               </p>
               <p className="mt-4">
                 we reserve the right to modify these terms at any time. we will notify you of
@@ -98,7 +99,7 @@ export default function TermsPage() {
                 you may use, modify, and distribute the software for any permitted purpose — excluding competing commercial uses — in accordance with that license. each release automatically converts to Apache License 2.0 two years after it is made available.
               </p>
               <p className="mt-4">
-                the owlette name, logo, and branding are trademarks of The Experiential Company and may not be used
+                the owlette name, logo, and branding are trademarks of Tridant Inc. and may not be used
                 without our express written permission.
               </p>
               <p className="mt-4">
@@ -129,7 +130,7 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-foreground mb-4">7. limitation of liability</h2>
               <p className="uppercase font-medium">
-                to the maximum extent permitted by law, TEC shall not be liable for any indirect,
+                to the maximum extent permitted by law, Tridant shall not be liable for any indirect,
                 incidental, special, consequential, or punitive damages, or any loss of profits
                 or revenues, whether incurred directly or indirectly, or any loss of data, use,
                 goodwill, or other intangible losses resulting from:
@@ -150,7 +151,7 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-foreground mb-4">8. indemnification</h2>
               <p>
-                you agree to indemnify, defend, and hold harmless TEC and its officers, directors,
+                you agree to indemnify, defend, and hold harmless Tridant and its officers, directors,
                 employees, and agents from and against any claims, liabilities, damages, losses,
                 and expenses, including reasonable attorneys&apos; fees, arising out of or in any way
                 connected with:
@@ -197,13 +198,13 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-foreground mb-4">11. dispute resolution</h2>
               <p>
-                before filing a claim against TEC, you agree to try to resolve the dispute
+                before filing a claim against Tridant, you agree to try to resolve the dispute
                 informally by contacting us at{' '}
                 <a href="mailto:support@owlette.app" className="hl-link text-accent-cyan">
                   support@owlette.app
                 </a>
                 . we will try to resolve the dispute informally by contacting you via email.
-                if a dispute is not resolved within 30 days of submission, you or TEC may
+                if a dispute is not resolved within 30 days of submission, you or Tridant may
                 bring a formal proceeding.
               </p>
             </section>
@@ -221,7 +222,7 @@ export default function TermsPage() {
               <h2 className="text-xl font-semibold text-foreground mb-4">13. entire agreement</h2>
               <p>
                 these terms, together with our privacy policy, constitute the entire agreement
-                between you and TEC regarding the service and supersede all prior agreements
+                between you and Tridant regarding the service and supersede all prior agreements
                 and understandings.
               </p>
             </section>
@@ -238,10 +239,10 @@ export default function TermsPage() {
                 </a>
               </p>
               <p className="mt-2">
-                <strong>company:</strong> The Experiential Company, LLC
+                <strong>company:</strong> Tridant Inc., a Delaware corporation
               </p>
               <p className="mt-2">
-                <strong>location:</strong> California, USA
+                <strong>principal place of business:</strong> California, USA
               </p>
             </section>
           </div>

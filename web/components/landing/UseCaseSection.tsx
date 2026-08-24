@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Monitor, Power, Rocket, X } from 'lucide-react';
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Monitor, Power, Rocket, X, Zap } from 'lucide-react';
 import Image from 'next/image';
 import { HootIcon } from '@/components/icons/HootIcon';
 
@@ -45,10 +45,10 @@ const capabilities: { label: string; detail: string; expanded: string; preview: 
   },
   {
     label: 'automate',
-    detail: 'scheduled machine restarts, startup sequences, dependency-aware process restarts. set the rules once and stop babysitting.',
-    expanded: 'define when machines restart, the order processes start in, and the dependencies between them. owlette runs the playbook so you don\'t have to.',
+    detail: 'talons fire on a schedule, a threshold, or an event — and can look at the screen before acting.',
+    expanded: 'every talon is a trigger, an optional condition, and outputs. fire on a schedule, a metric threshold, or an event like a crash. gate it on an ai visual check of a fresh screenshot. then email, post a webhook, restart the process, or hand hoot a directive.',
     preview: '/landing-screens/preview-automate.png',
-    icon: CalendarClock,
+    icon: Zap,
   },
 ];
 

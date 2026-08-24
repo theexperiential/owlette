@@ -4,6 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { UserAvatar } from '@/components/UserAvatar';
+import { useAuth } from '@/contexts/AuthContext';
 import { OwletteEyeIcon } from './OwletteEye';
 
 type NavLinkDef = { label: string; href: string; external?: boolean; prefetch?: boolean };
@@ -15,12 +17,15 @@ const SECTION_LINKS: NavLinkDef[] = [
   { label: 'faq', href: '#faq' },
 ];
 
-// External / account links.
+// External / product links, shown to everyone.
 const UTIL_LINKS: NavLinkDef[] = [
   { label: 'docs', href: '/docs' },
   { label: 'download', href: '/download', prefetch: false },
-  { label: 'sign in', href: '/login' },
 ];
+
+// Appended only while signed out — offering "sign in" to a signed-in visitor is
+// the thing this header used to get wrong.
+const SIGN_IN_LINK: NavLinkDef = { label: 'sign in', href: '/login' };
 
 function linkEl(link: NavLinkDef, className?: string, onClick?: () => void) {
   if (link.external) {
@@ -47,6 +52,18 @@ function linkEl(link: NavLinkDef, className?: string, onClick?: () => void) {
 export function LandingHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
   const close = () => setMenuOpen(false);
+  const { user, loading } = useAuth();
+
+  /**
+   * Nothing auth-dependent renders until auth resolves. An earlier version let
+   * the signed-out markup stand while `loading`, which made a returning visitor
+   * watch "sign in" repaint into "go to dashboard" — the wrong state first, then
+   * the right one. The slot still occupies its signed-out width so the header
+   * does not reflow when the answer arrives; it is only invisible, not absent.
+   */
+  const authReady = !loading;
+  const signedIn = authReady && !!user;
+  const utilLinks = signedIn ? UTIL_LINKS : [...UTIL_LINKS, SIGN_IN_LINK];
 
   const scrollToTop = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -78,16 +95,73 @@ export function LandingHeader() {
               {linkEl(link)}
             </Button>
           ))}
-          <Button asChild size="sm" className="ml-1.5 text-background font-medium">
-            <Link href="/register">get started</Link>
-          </Button>
+          {/* Both states occupy the SAME grid cell, so the column is always as
+              wide as the wider of the two and nothing to the left of it can move
+              when auth resolves. Only opacity changes — a width swap here would
+              shift the whole nav, since the row is right-aligned. */}
+          <div className="grid items-center">
+            <div
+              aria-hidden={!signedIn}
+              className={`col-start-1 row-start-1 flex items-center transition-opacity duration-300 motion-reduce:transition-none ${
+                signedIn ? 'opacity-100' : 'pointer-events-none opacity-0'
+              }`}
+            >
+              <Button asChild size="sm" className="ml-1.5 text-background font-medium">
+                <Link href="/dashboard" tabIndex={signedIn ? undefined : -1}>go to dashboard</Link>
+              </Button>
+              <span className="ml-2 flex items-center" title={user?.email ?? undefined}>
+                <UserAvatar user={user} size="sm" />
+              </span>
+            </div>
+            <div
+              aria-hidden={signedIn || !authReady}
+              className={`col-start-1 row-start-1 flex items-center transition-opacity duration-300 motion-reduce:transition-none ${
+                authReady && !signedIn ? 'opacity-100' : 'pointer-events-none opacity-0'
+              }`}
+            >
+              <Button asChild variant="ghost" size="sm" className={ghostClass}>
+                {linkEl(SIGN_IN_LINK)}
+              </Button>
+              <Button asChild size="sm" className="ml-1.5 text-background font-medium">
+                <Link href="/register" tabIndex={authReady && !signedIn ? undefined : -1}>get started</Link>
+              </Button>
+            </div>
+          </div>
         </div>
 
         {/* Mobile / tablet: get started + hamburger */}
         <div className="flex lg:hidden items-center gap-2">
-          <Button asChild size="sm" className="text-background font-medium">
-            <Link href="/register">get started</Link>
-          </Button>
+          {/* Stacked for the same reason as the desktop slot: "dashboard" and
+              "get started" are different widths, and a swap would shove the
+              hamburger sideways. Shorter labels here — the row is narrow. */}
+          <div className="grid items-center">
+            <Button
+              asChild
+              size="sm"
+              className={`col-start-1 row-start-1 text-background font-medium transition-opacity duration-300 motion-reduce:transition-none ${
+                signedIn ? 'opacity-100' : 'pointer-events-none opacity-0'
+              }`}
+            >
+              <Link href="/dashboard" aria-hidden={!signedIn} tabIndex={signedIn ? undefined : -1}>
+                dashboard
+              </Link>
+            </Button>
+            <Button
+              asChild
+              size="sm"
+              className={`col-start-1 row-start-1 text-background font-medium transition-opacity duration-300 motion-reduce:transition-none ${
+                authReady && !signedIn ? 'opacity-100' : 'pointer-events-none opacity-0'
+              }`}
+            >
+              <Link
+                href="/register"
+                aria-hidden={signedIn || !authReady}
+                tabIndex={authReady && !signedIn ? undefined : -1}
+              >
+                get started
+              </Link>
+            </Button>
+          </div>
           <button
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
@@ -113,8 +187,14 @@ export function LandingHeader() {
               linkEl(link, 'py-3 text-base text-muted-foreground hover:text-foreground transition-colors', close),
             )}
             <span aria-hidden className="my-1 h-px w-full bg-border/50" />
-            {UTIL_LINKS.map((link) =>
+            {(authReady ? utilLinks : UTIL_LINKS).map((link) =>
               linkEl(link, 'py-3 text-base text-muted-foreground hover:text-foreground transition-colors', close),
+            )}
+            {signedIn && user && (
+              <div className="flex items-center gap-2.5 py-3 text-base text-muted-foreground">
+                <UserAvatar user={user} size="sm" />
+                <span className="truncate">{user.displayName || user.email}</span>
+              </div>
             )}
           </nav>
         </div>

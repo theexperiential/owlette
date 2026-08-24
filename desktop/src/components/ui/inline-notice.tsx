@@ -3,17 +3,12 @@ import { CircleAlertIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
- * Neutral inline notice — the non-destructive sibling of `ui/form-error`.
+ * Neutral inline notice — the non-destructive sibling of `ui/form-error`. Same doctrine (persist
+ * next to the thing the user must act on), different tone: FormError is --destructive and says
+ * "this input is wrong"; this says what happened and what to do next. A returning user who landed
+ * on /register has not made an error.
  *
- * Same doctrine as FormError: a condition the user must act on belongs next to
- * the thing they must act on, and should persist until resolved rather than
- * expire in a corner of the screen. The difference is tone. FormError is built
- * on --destructive and says "this input is wrong"; this says "here is what
- * happened and what to do next" without painting the screen red — a returning
- * user who landed on /register has not made an error.
- *
- * Takes children rather than a message string so callers can put a link in the
- * sentence, which is usually the entire point of showing one.
+ * Takes children, not a message string, so callers can put a link in the sentence.
  */
 export function InlineNotice({
   children,

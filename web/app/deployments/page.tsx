@@ -20,6 +20,7 @@ import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
+import { FallingFeather } from '@/components/FallingFeather';
 import { LoadingWord } from '@/components/LoadingWord';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { UpdateOwletteButton } from '@/components/UpdateOwletteButton';
@@ -365,9 +366,8 @@ export default function DeploymentsPage() {
   retryDeploymentRef.current = retryDeployment;
 
   // In-flight retry keys: deployment id (bulk) or `${deploymentId}:${machineId}`
-  // (per-row). Drives disabled state + spinner on retry controls — the retry
-  // endpoint may stream + hash the installer to self-heal a legacy
-  // deployment's missing checksum, which takes a while for large binaries.
+  // (per-row). Drives disabled state + spinner — the retry endpoint may stream and hash
+  // the installer to self-heal a legacy deployment's missing checksum, which is slow.
   const [retrying, setRetrying] = useState<ReadonlySet<string>>(new Set());
 
   const runRetry = useCallback(async (deployment: Deployment, machineIds?: string[]) => {
@@ -441,7 +441,8 @@ export default function DeploymentsPage() {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex min-h-screen flex-col items-center justify-center">
+        <FallingFeather />
         <p className="text-muted-foreground"><LoadingWord /></p>
       </div>
     );
@@ -454,7 +455,6 @@ export default function DeploymentsPage() {
   return (
     <TooltipProvider delayDuration={200}>
     <div className="relative min-h-screen pb-8">
-      {/* Header */}
       <PageHeader
         currentPage="deploy"
         sites={sites}
@@ -465,7 +465,6 @@ export default function DeploymentsPage() {
         actionButton={<DownloadButton />}
       />
 
-      {/* Site Management Dialogs */}
       <ManageSitesDialog
         open={manageDialogOpen}
         onOpenChange={setManageDialogOpen}
@@ -491,9 +490,7 @@ export default function DeploymentsPage() {
         onSiteCreated={(siteId) => pickSite(siteId)}
       />
 
-      {/* Main content */}
       <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
-        {/* Dialogs */}
         <DeploymentDialog
           open={deployDialogOpen}
           onOpenChange={setDeployDialogOpen}
@@ -525,7 +522,6 @@ export default function DeploymentsPage() {
           variant="destructive"
         />
 
-        {/* Section header with inline stats */}
         {(() => {
           // A site-less account has a settled, knowable answer — zero — so
           // show it rather than a permanent '--' placeholder.
@@ -599,7 +595,6 @@ export default function DeploymentsPage() {
           );
         })()}
 
-        {/* Deployments List */}
         <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
           {/* `hasNoSites` first: it is terminal and only true once the site
               list has settled. Folding it into the loading condition below
@@ -652,7 +647,6 @@ export default function DeploymentsPage() {
         </div>
       </main>
 
-      {/* Account Settings Dialog */}
       <AccountSettingsDialog
         open={accountSettingsOpen}
         onOpenChange={setAccountSettingsOpen}

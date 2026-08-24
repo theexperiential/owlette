@@ -1,13 +1,8 @@
 /**
- * Tests for BUILT_IN_TALON_PRESETS.
- *
- * Modelled on `projectDistributionDefaults.test.ts`, but these built-ins are
- * more than a shape: each `template` is fed to the real talon validator, so a
- * shipped template that could not be saved is a test failure rather than a
- * support ticket. `requires` is checked the same way — a template that claims
- * it needs a process target must actually fail on that field, and one that
- * claims nothing must pass outright. That makes "required input" a contract the
- * suite enforces, not a comment.
+ * BUILT_IN_TALON_PRESETS. Each `template` goes through the real talon validator, so a shipped
+ * template that couldn't be saved fails here instead of becoming a support ticket. `requires`
+ * is checked the same way: a template claiming it needs a process target must actually fail on
+ * that field, and one claiming nothing must pass outright.
  */
 
 import {
@@ -29,15 +24,14 @@ function commandOutputs(def: TalonTemplateDefinition): TalonOutput[] {
 describe('BUILT_IN_TALON_PRESETS', () => {
   it('ships a usable set', () => {
     expect(BUILT_IN_TALON_PRESETS.length).toBeGreaterThan(0);
-    // The site cap is 20 talons; a picker offering dozens of equally weighted
-    // options invites operators to spend half that budget on things they will
-    // never tune.
+    // Site cap is 20 talons — dozens of equally weighted options invite burning half that
+    // budget on presets nobody tunes.
     expect(BUILT_IN_TALON_PRESETS.length).toBeLessThanOrEqual(8);
   });
 
   it('derives every id from its own name', () => {
-    // `builtInId` is computed client-side from the HARDCODED name, so an id and
-    // a name that disagree would orphan every site's override of that preset.
+    // `builtInId` is derived client-side from the hardcoded name; a disagreement orphans
+    // every site's override of that preset.
     for (const def of BUILT_IN_TALON_PRESETS) {
       expect(def.id).toBe(builtInId(def.name));
     }
@@ -63,8 +57,8 @@ describe('BUILT_IN_TALON_PRESETS', () => {
       const template = def.template as unknown as Record<string, unknown>;
       expect(template.scope).toBeUndefined();
       expect(template.enabled).toBeUndefined();
-      // A process id is a per-machine config id: it does not travel to another
-      // site, and a stale one produces a talon that fails silently at run time.
+      // Process ids are per-machine config ids — they don't travel, and a stale one fails
+      // silently at run time.
       for (const output of commandOutputs(def)) {
         expect((output as unknown as Record<string, unknown>).processId).toBeUndefined();
       }
@@ -74,8 +68,7 @@ describe('BUILT_IN_TALON_PRESETS', () => {
   it.each(BUILT_IN_TALON_PRESETS)(
     'preset "$name" does not ship a hoot output pre-armed to act',
     (def: TalonTemplateDefinition) => {
-      // `allowActions` takes site admin to author and hands an unattended turn
-      // process control. Nothing ships opted in by default.
+      // `allowActions` hands an unattended turn process control — nothing ships opted in.
       for (const output of def.template.outputs) {
         expect((output as unknown as Record<string, unknown>).allowActions).toBeUndefined();
       }
@@ -101,8 +94,7 @@ describe('BUILT_IN_TALON_PRESETS', () => {
       const result = validateTalonPresetInput(def.template);
 
       if (!def.requires.includes('process_target')) {
-        // Reporting the errors rather than a bare boolean means a failure
-        // names the rule that broke instead of just saying `false !== true`.
+        // Report the errors, not a boolean, so a failure names the rule that broke.
         expect(result.ok ? [] : result.errors).toEqual([]);
         return;
       }

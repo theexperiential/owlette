@@ -1,20 +1,13 @@
 /**
- * OCI-style version body assembler used by the cli push flow.
+ * OCI-style version body assembler for the cli push flow. Matches what
+ * `app/api/roosts/[roostId]/versions/route.ts:POST` validates:
  *
- * Matches the shape the server validates in
- * `web/app/api/roosts/[roostId]/versions/route.ts:POST`:
+ *   { schemaVersion: 2, mediaType: 'application/vnd.owlette.version.v1+json',
+ *     config: {...}, files: [{ path, size, chunks: [{hash, size}] }] }
  *
- *   {
- *     schemaVersion: 2,
- *     mediaType: 'application/vnd.owlette.version.v1+json',
- *     config: { ... },
- *     files: [{ path, size, chunks: [{hash, size}, ...] }, ...]
- *   }
- *
- * `config` carries free-form metadata about the push (cli version,
- * source host). The server ignores unknown keys but writes
- * the whole object into the version body in R2 — useful for auditing
- * how a given version was produced.
+ * `config` is free-form push metadata (cli version, source host). The server
+ * ignores unknown keys but persists the whole object into the R2 version body,
+ * so it's the audit record of how a version was produced.
  */
 
 import { createHash } from 'crypto';
@@ -47,9 +40,8 @@ export function buildVersion(input: BuildVersionInput): BuiltVersion {
   if (input.platform) config.platform = input.platform;
   if (input.extra) Object.assign(config, input.extra);
 
-  // Server doesn't strictly require files to be path-sorted, but
-  // deterministic ordering makes the version digest stable across
-  // machines + across retries.
+  // Not required by the server, but deterministic ordering keeps the version
+  // digest stable across machines and retries.
   const files = [...input.files].sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
   );
@@ -62,7 +54,7 @@ export function buildVersion(input: BuildVersionInput): BuiltVersion {
   };
 }
 
-/** Canonical JSON form used by the server when deriving the content address. */
+/** Canonical JSON the server derives the content address from. */
 export function canonicalVersionJson(version: BuiltVersion): string {
   return JSON.stringify(sortForCanonical(version));
 }
@@ -72,7 +64,7 @@ export function versionIdForVersion(version: BuiltVersion): string {
   return createHash('sha256').update(canonicalVersionJson(version)).digest('hex');
 }
 
-/** Dedup the set of chunk hashes referenced by a version's files. */
+/** Deduped chunk hashes referenced by a version's files. */
 export function uniqueHashes(files: readonly ChunkedFileEntry[]): string[] {
   const set = new Set<string>();
   for (const f of files) {
@@ -81,7 +73,7 @@ export function uniqueHashes(files: readonly ChunkedFileEntry[]): string[] {
   return Array.from(set);
 }
 
-/** Quick stats for the pre-upload summary line. */
+/** Stats for the pre-upload summary line. */
 export function summariseVersion(files: readonly ChunkedFileEntry[]): {
   fileCount: number;
   totalBytes: number;

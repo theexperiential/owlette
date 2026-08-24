@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * Generate the Wave 8.0 rate-limit calibration report from observe-only data.
+ * Rate-limit calibration report from observe-only data.
  *
- * Usage:
  *   node scripts/generate-rate-limit-calibration.mjs --since=2026-04-20 --until=2026-04-27
  *
- * The script reads top-level `rate_limit_observations` documents written by
- * RATE_LIMIT_OBSERVE_ONLY=true and writes the markdown file consumed by
- * scripts/check-lockdown-ready.mjs. It exits non-zero when the report is still
- * incomplete, so it is safe to use in automation.
+ * Reads top-level `rate_limit_observations` docs written under
+ * RATE_LIMIT_OBSERVE_ONLY=true and writes the markdown that
+ * scripts/check-lockdown-ready.mjs consumes. Exits non-zero while the report is
+ * incomplete, so it is automation-safe.
  */
 
-import admin from 'firebase-admin';
+import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
 import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, join, relative } from 'path';
 import { fileURLToPath } from 'url';
@@ -103,7 +103,7 @@ function parsePositiveNumber(value, name) {
 }
 
 function initializeAdmin() {
-  if (admin.apps.length === 0) {
+  if (getApps().length === 0) {
     const projectId =
       process.env.FIREBASE_PROJECT_ID ||
       process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
@@ -115,22 +115,22 @@ function initializeAdmin() {
       Boolean(process.env.FIREBASE_AUTH_EMULATOR_HOST);
 
     if (isEmulator) {
-      admin.initializeApp({ projectId: projectId || 'demo-playwright-e2e' });
+      initializeApp({ projectId: projectId || 'demo-playwright-e2e' });
     } else if (projectId && clientEmail && privateKey) {
-      admin.initializeApp({
-        credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+      initializeApp({
+        credential: cert({ projectId, clientEmail, privateKey }),
         projectId,
       });
     } else {
       const options = {
-        credential: admin.credential.applicationDefault(),
+        credential: applicationDefault(),
       };
       if (projectId) options.projectId = projectId;
-      admin.initializeApp(options);
+      initializeApp(options);
     }
   }
 
-  return admin.firestore();
+  return getFirestore();
 }
 
 async function fetchObservations(args) {

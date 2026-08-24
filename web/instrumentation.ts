@@ -1,21 +1,15 @@
 import * as Sentry from "@sentry/nextjs";
 
 /**
- * Fail loudly when a production server boots without the distributed rate
- * limiter.
- *
- * Deliberately does NOT throw. Missing Upstash credentials degrade rate
- * limiting to a per-process in-memory fallback rather than removing it, so
- * hard-failing here would turn a partial weakening into a full outage — the
- * wrong trade for a credential rotation that went sideways at 3am. Instead we
- * make it impossible to miss: an unmissable stderr banner plus a Sentry event
- * that pages the same way any other production error does.
+ * Loud warning when production boots without the distributed rate limiter.
+ * Deliberately does NOT throw: missing Upstash creds degrade to the in-memory
+ * fallback, so hard-failing would turn a partial weakening into an outage.
  */
 async function checkRateLimitBackend() {
-  // Build-time module evaluation has no runtime env; skip it.
+  // build-time evaluation has no runtime env
   if (process.env.NEXT_PHASE === "phase-production-build") return;
   if (process.env.NODE_ENV !== "production") return;
-  // E2E runs against the emulator with rate limiting intentionally relaxed.
+  // e2e relaxes rate limiting on purpose
   if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true") return;
   if (process.env.E2E_DISABLE_RATE_LIMIT === "true") return;
 
@@ -37,13 +31,9 @@ async function checkRateLimitBackend() {
 }
 
 /**
- * Warn when a production server boots without Turnstile configured.
- *
- * Unlike the rate limiter, the request path here already fails CLOSED when
- * `TURNSTILE_SECRET` is absent in production (see lib/turnstile.server.ts) —
- * register and password-reset would start returning 403. This check exists so
- * the cause is obvious in the logs instead of being diagnosed from user
- * reports of a broken signup form.
+ * Warn when production boots without Turnstile. The request path already fails
+ * CLOSED without `TURNSTILE_SECRET` (lib/turnstile.server.ts) — register and
+ * password-reset 403 — so this just puts the cause in the logs.
  */
 function checkTurnstileConfigured() {
   if (process.env.NEXT_PHASE === "phase-production-build") return;

@@ -6,6 +6,49 @@ import type { PasskeyInfo } from '@/lib/webauthn.server';
 
 export { browserSupportsWebAuthn };
 
+/**
+ * Slug `checkMfaEnrollmentGate` returns with its 403 when the account already
+ * holds a second factor and this session hasn't proved one.
+ *
+ * Duplicated as a literal rather than imported from
+ * `lib/mfaEnrollmentGate.server.ts`, which pulls in `firebase-admin` and
+ * `next/server` — neither belongs in a client bundle. Keep in sync with
+ * `MFA_CHALLENGE_REQUIRED` there.
+ */
+export const MFA_CHALLENGE_REQUIRED = 'mfa_challenge_required';
+
+/**
+ * Error carrying the server's machine-readable `code` alongside its message.
+ *
+ * The gate's 403 body is `{ error, code }`. A bare `new Error(data.error)`
+ * strands the caller: it can't tell "verify your existing factor first"
+ * (recoverable — offer a step-up) from "passkey already registered" (not), so
+ * every gated attempt dead-ends in a toast. The slug is never shown to a human.
+ */
+export class PasskeyApiError extends Error {
+  code?: string;
+
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = 'PasskeyApiError';
+    this.code = code;
+  }
+}
+
+/** True when `err` is the enrollment gate asking for a challenge to be cleared. */
+export function isMfaChallengeRequired(err: unknown): boolean {
+  return err instanceof PasskeyApiError && err.code === MFA_CHALLENGE_REQUIRED;
+}
+
+/**
+ * Failed response -> `PasskeyApiError` carrying both legs of the body.
+ * `fallback` covers a response with no JSON at all (a proxy 502, say).
+ */
+async function passkeyApiError(res: Response, fallback: string): Promise<PasskeyApiError> {
+  const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+  return new PasskeyApiError(body.error || fallback, body.code);
+}
+
 export function usePasskeys(userId: string | undefined) {
   const [passkeys, setPasskeys] = useState<PasskeyInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,7 +84,6 @@ export function usePasskeys(userId: string | undefined) {
   const registerPasskey = useCallback(async (friendlyName?: string) => {
     if (!userId) throw new Error('Not authenticated');
 
-    // Step 1: Get registration options from server
     const optionsRes = await fetch('/api/passkeys/register/options', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -49,16 +91,15 @@ export function usePasskeys(userId: string | undefined) {
     });
 
     if (!optionsRes.ok) {
-      const data = await optionsRes.json();
-      throw new Error(data.error || 'Failed to get registration options');
+      // Gated: an account with an existing factor must clear a challenge before
+      // adding another. Callers key off `code` to offer a step-up.
+      throw await passkeyApiError(optionsRes, 'Failed to get registration options');
     }
 
     const options = await optionsRes.json();
 
-    // Step 2: Start WebAuthn registration (browser prompt)
     const credential = await startRegistration({ optionsJSON: options });
 
-    // Step 3: Verify with server
     const verifyRes = await fetch('/api/passkeys/register/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -70,11 +111,9 @@ export function usePasskeys(userId: string | undefined) {
     });
 
     if (!verifyRes.ok) {
-      const data = await verifyRes.json();
-      throw new Error(data.error || 'Failed to verify registration');
+      throw await passkeyApiError(verifyRes, 'Failed to verify registration');
     }
 
-    // Refresh list
     await refreshPasskeys();
   }, [userId, refreshPasskeys]);
 
@@ -87,11 +126,9 @@ export function usePasskeys(userId: string | undefined) {
     );
 
     if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Failed to delete passkey');
+      throw await passkeyApiError(res, 'Failed to delete passkey');
     }
 
-    // Refresh list
     await refreshPasskeys();
   }, [userId, refreshPasskeys]);
 
@@ -105,11 +142,9 @@ export function usePasskeys(userId: string | undefined) {
     });
 
     if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Failed to rename passkey');
+      throw await passkeyApiError(res, 'Failed to rename passkey');
     }
 
-    // Optimistic update
     setPasskeys((prev) =>
       prev.map((p) =>
         p.credentialId === credentialId ? { ...p, friendlyName: name } : p

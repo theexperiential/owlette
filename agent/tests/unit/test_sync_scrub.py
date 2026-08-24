@@ -1,4 +1,4 @@
-"""tests for sync_scrub — periodic on-disk integrity verification (wave 4b.7)."""
+"""tests for sync_scrub — periodic on-disk integrity verification."""
 
 import hashlib
 import json
@@ -36,9 +36,7 @@ def _mk_version_file(path: str, chunk_data_list):
 
 
 def _setup_committed_distribution(tmp_path, files_data):
-    """
-    set up: a committed distribution + on-disk files matching the version +
-    a SyncState with the right rows.
+    """Committed distribution + matching on-disk files + a SyncState.
 
     files_data: dict[path -> [chunk_bytes, ...]]
     returns: (state, dist_id, extract_root, version)
@@ -51,7 +49,6 @@ def _setup_committed_distribution(tmp_path, files_data):
     for path, chunk_data_list in files_data.items():
         f = _mk_version_file(path, chunk_data_list)
         files.append(f)
-        # write the assembled file on disk (concatenation of chunks)
         target = extract / Path(*path.split('/'))
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b''.join(chunk_data_list))
@@ -74,9 +71,6 @@ def _setup_committed_distribution(tmp_path, files_data):
     )
     state.set_distribution_state(dist_id, 'committed')
     return state, dist_id, str(extract), version
-
-
-# ─── happy path ──────────────────────────────────────────────────────
 
 
 def test_healthy_distribution_returns_no_drift(tmp_path):
@@ -111,15 +105,11 @@ def test_multi_chunk_file_healthy(tmp_path):
         state.close()
 
 
-# ─── drift detection ────────────────────────────────────────────────
-
-
 def test_missing_file_reported_as_drift(tmp_path):
     state, dist_id, extract, version = _setup_committed_distribution(
         tmp_path, {'a.toe': [b'data']}
     )
     try:
-        # delete the assembled file
         (Path(extract) / 'a.toe').unlink()
         with patch('sync_scrub.fetch_version', return_value=version):
             report = scrub_distribution(
@@ -139,7 +129,6 @@ def test_size_mismatch_reported(tmp_path):
         tmp_path, {'a.toe': [b'expected data']}
     )
     try:
-        # overwrite with wrong size
         (Path(extract) / 'a.toe').write_bytes(b'short')
         with patch('sync_scrub.fetch_version', return_value=version):
             report = scrub_distribution(
@@ -159,7 +148,6 @@ def test_silent_bit_rot_caught_by_hash(tmp_path):
         tmp_path, {'a.toe': [b'original data']}
     )
     try:
-        # overwrite with different content but SAME size
         (Path(extract) / 'a.toe').write_bytes(b'corrupted!!!!')  # same length
         with patch('sync_scrub.fetch_version', return_value=version):
             report = scrub_distribution(
@@ -182,7 +170,6 @@ def test_healthy_files_not_in_drift_list(tmp_path):
         },
     )
     try:
-        # corrupt only one
         (Path(extract) / 'bad.toe').write_bytes(b'corrupted-content')
         with patch('sync_scrub.fetch_version', return_value=version):
             report = scrub_distribution(
@@ -197,9 +184,6 @@ def test_healthy_files_not_in_drift_list(tmp_path):
         state.close()
 
 
-# ─── skip + edge cases ──────────────────────────────────────────────
-
-
 def test_files_in_failed_state_are_skipped(tmp_path):
     """already-known-failed files don't get re-checked (no point)."""
     state, dist_id, extract, version = _setup_committed_distribution(
@@ -210,9 +194,8 @@ def test_files_in_failed_state_are_skipped(tmp_path):
         },
     )
     try:
-        # mark one file as failed in state
         state.set_file_state(dist_id, 'failed.toe', 'failed', error='earlier failure')
-        # delete it on disk too — would be a drift if checked
+        # Deleted on disk too — it would be a drift if it were checked.
         (Path(extract) / 'failed.toe').unlink()
         with patch('sync_scrub.fetch_version', return_value=version):
             report = scrub_distribution(
@@ -221,7 +204,6 @@ def test_files_in_failed_state_are_skipped(tmp_path):
             )
         assert report.files_checked == 1
         assert report.files_skipped == 1
-        # only good.toe was checked; no drifts for failed.toe
         assert all(d.path != 'failed.toe' for d in report.drifts)
     finally:
         state.close()
@@ -235,8 +217,7 @@ def test_non_committed_distribution_raises(tmp_path):
             site_id='s', roost_id='f', version_id='m', version_url='u',
             files=[], chunks=[],
         )
-        # state defaults to 'pending'
-        with pytest.raises(ValueError, match="committed"):
+        with pytest.raises(ValueError, match="committed"):  # defaults to 'pending'
             scrub_distribution(dist_id, str(tmp_path), state)
     finally:
         state.close()
@@ -251,9 +232,6 @@ def test_unknown_distribution_raises(tmp_path):
         state.close()
 
 
-# ─── report persistence ─────────────────────────────────────────────
-
-
 def test_report_written_as_json(tmp_path):
     state, dist_id, extract, version = _setup_committed_distribution(
         tmp_path, {'a.toe': [b'data']}
@@ -262,7 +240,6 @@ def test_report_written_as_json(tmp_path):
     try:
         with patch('sync_scrub.fetch_version', return_value=version):
             report = scrub_distribution(dist_id, extract, state, report_dir=str(report_dir))
-        # one json file exists in report_dir
         files = list(report_dir.glob('scrub_*.json'))
         assert len(files) == 1
         loaded = json.loads(files[0].read_text())
@@ -279,25 +256,21 @@ def test_report_persistence_failure_does_not_raise(tmp_path):
         tmp_path, {'a.toe': [b'data']}
     )
     try:
-        # use a path that can't be created (a file masquerading as a dir)
+        # A file masquerading as a dir: report_dir can never be created.
         bogus_dir = tmp_path / 'not_a_dir'
         bogus_dir.write_text('this is a file')
         with patch('sync_scrub.fetch_version', return_value=version):
             report = scrub_distribution(dist_id, extract, state, report_dir=str(bogus_dir))
-        # in-memory report is still healthy
         assert report.healthy
     finally:
         state.close()
 
 
-# ─── content-store reaper ────────────────────────────────────────────
-
-
 def _put_store_chunk(store: Path, data: bytes, age_seconds: float = 0.0,
                      suffix: str = '') -> str:
-    """
-    write a content-addressed chunk into the sharded store and back-date it
-    by `age_seconds`. returns the hash.
+    """Write a chunk into the sharded store, back-dated by `age_seconds`.
+
+    Returns the hash.
     """
     h = _hash(data)
     target = store / h[:2] / (h + suffix)
@@ -340,10 +313,8 @@ def test_reaper_deletes_unreferenced_aged_chunks(tmp_path):
 
 
 def test_reaper_keeps_chunks_younger_than_the_age_threshold(tmp_path):
-    """
-    an in-flight distribution that has written blobs but not yet registered
-    its rows must not lose them — the age threshold is the guard.
-    """
+    """The age threshold guards blobs an in-flight distribution wrote before
+    registering its rows."""
     store = tmp_path / 'content'
     state = SyncState(str(tmp_path / 'state.db'))
     try:
@@ -378,10 +349,8 @@ def test_reaper_keeps_chunks_referenced_by_an_active_distribution(tmp_path):
 
 @pytest.mark.parametrize('terminal_state', ['committed', 'failed', 'cancelled'])
 def test_reaper_collects_chunks_of_terminal_distributions(tmp_path, terminal_state):
-    """
-    a distribution that ended is never resumed, so its leftovers are exactly
-    what the reaper is for (this is the failed-distribution leak).
-    """
+    """An ended distribution is never resumed, so its leftovers are the leak
+    the reaper exists for."""
     store = tmp_path / 'content'
     h = _put_store_chunk(store, b'leftover from a dead sync', age_seconds=48 * 3600)
     state = _state_with_distribution(tmp_path, f'state-{terminal_state}.db',
@@ -448,11 +417,8 @@ def test_reaper_dry_run_reports_without_deleting(tmp_path):
 
 
 def test_reaper_age_threshold_is_configurable(tmp_path):
-    """
-    the 24h default is a policy, not a law — a caller can tighten it. a chunk
-    older than the caller's threshold but far younger than the default is
-    collected only because the threshold moved.
-    """
+    """The 24h default is policy, not law: a chunk under the default but over
+    the caller's threshold is collected only because the threshold moved."""
     store = tmp_path / 'content'
     state = SyncState(str(tmp_path / 'state.db'))
     try:
@@ -481,9 +447,6 @@ def test_reaper_on_missing_content_store_is_a_noop(tmp_path):
         state.close()
 
 
-# ─── scrub-report retention ──────────────────────────────────────────
-
-
 def _write_reports(report_dir: Path, count: int, first_age_seconds: float = 0.0):
     """`count` fake scrub reports, oldest first, back-dated by 1h steps."""
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -499,10 +462,8 @@ def _write_reports(report_dir: Path, count: int, first_age_seconds: float = 0.0)
 
 
 def test_scrub_reports_are_capped_at_the_newest_n(tmp_path):
-    """
-    hourly scrubs would otherwise leave a JSON file per run forever — nothing
-    else cleans this directory.
-    """
+    """Hourly scrubs would otherwise leave a JSON per run forever — nothing
+    else cleans this directory."""
     from sync_scrub import MAX_SCRUB_REPORTS, _prune_old_reports
 
     rd = tmp_path / 'reports'
@@ -513,7 +474,7 @@ def test_scrub_reports_are_capped_at_the_newest_n(tmp_path):
     remaining = sorted(rd.glob('scrub_*.json'))
     assert deleted == 10
     assert len(remaining) == MAX_SCRUB_REPORTS
-    # the survivors are the newest ones (highest index == most recent mtime)
+    # Survivors are the newest — highest index == most recent mtime.
     assert written[-1] in remaining
     assert written[0] not in remaining
 

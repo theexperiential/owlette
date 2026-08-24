@@ -1,19 +1,14 @@
 'use client';
 
 /**
- * useDisplayModes — per-monitor catalogue of supported display modes.
+ * Per-monitor catalogue of supported display modes. Subscribes to
+ * `sites/{siteId}/machines/{machineId}/hardware/displayModes` and exposes it
+ * plus a `requestEnumerate` dispatcher that asks the agent to rebuild it. Feeds
+ * the resolution + refresh dropdowns in the display editor.
  *
- * Subscribes to `sites/{siteId}/machines/{machineId}/hardware/displayModes` and
- * exposes the cached catalogue alongside a `requestEnumerate` dispatcher that
- * asks the agent to (re-)build it. The catalogue feeds the resolution +
- * refresh-rate dropdowns in the display editor (Wave A3.4).
- *
- * Auto-trigger behaviour: when the caller passes `triggerForHash` (typically
- * the current live-profile `signatureHash`) and `enabled: true`, the hook
- * fires `enumerateDisplayModes` exactly once per (site, machine, hash) tuple
- * per tab lifetime — so entering the editor with a stale or missing cache
- * kicks a fresh enumeration, and re-entering with an up-to-date cache is a
- * pure read. Callers can also fire manually via `requestEnumerate()`.
+ * With `triggerForHash` (the live profile's `signatureHash`) and `enabled`, it
+ * fires `enumerateDisplayModes` once per (site, machine, hash) per tab
+ * lifetime: a stale or missing cache re-enumerates, a fresh one is a pure read.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -22,39 +17,28 @@ import { db } from '@/lib/firebase';
 import { useDisplayActions } from '@/hooks/useDisplayActions';
 
 export interface DisplayModeEntry {
-  /** Pixel width of the mode. */
   w: number;
-  /** Pixel height of the mode. */
   h: number;
-  /** Refresh rate in hertz. */
+  /** Hertz. */
   hz: number;
 }
 
 export interface DisplayModesEntry {
-  /**
-   * Supported `{w, h, hz}` triples for this monitor, already filtered and
-   * sorted descending by the agent (see agent-side `_enum_modes_for_monitor`).
-   */
+  /** `{w, h, hz}` triples, pre-filtered and sorted descending by the agent
+   * (`_enum_modes_for_monitor`). */
   modes: DisplayModeEntry[];
-  /**
-   * Supported DPI scale percentages for this monitor, as integer percents
-   * (e.g. [100, 125, 150, 175, 200]). Sourced from the agent's static
-   * `_DPI_SCALE_TABLE` — per-monitor valid-scale enumeration is an A3.x
-   * follow-up.
-   */
+  /** Integer DPI scale percents, from the agent's static `_DPI_SCALE_TABLE`
+   * (not yet per-monitor). */
   dpiScales: number[];
 }
 
 export interface DisplayModesCatalogue {
   /** Catalogue schema version (currently 1). */
   schemaVersion: number;
-  /**
-   * Topology hash at the time the catalogue was built. Used by the auto-
-   * trigger logic to detect staleness — compare against the live display
-   * profile's hash.
-   */
+  /** Topology hash when the catalogue was built; compared against the live
+   * profile's hash to detect staleness. */
   signatureHash: string;
-  /** Unix seconds at which the catalogue was captured on the agent. */
+  /** Unix seconds, captured on the agent. */
   capturedAt: number;
   /** Per-monitor modes keyed by the monitor's edidHash. */
   byEdidHash: Record<string, DisplayModesEntry>;
@@ -63,43 +47,27 @@ export interface DisplayModesCatalogue {
 export interface UseDisplayModesResult {
   /** Current catalogue, or null if no doc exists yet / still loading. */
   catalogue: DisplayModesCatalogue | null;
-  /**
-   * True while the subscription is waiting for its first snapshot. Resets
-   * when (siteId, machineId) change.
-   */
+  /** Waiting for the first snapshot; resets when (siteId, machineId) change. */
   loading: boolean;
   /** Any error from the Firestore subscription; null while healthy. */
   error: string | null;
-  /**
-   * Manually dispatch an `enumerate_display_modes` command. Callers rarely
-   * need this — the hook's auto-trigger covers the common case — but it's
-   * exposed for a "refresh catalogue" affordance in the UI.
-   */
+  /** Manual `enumerate_display_modes` dispatch, for a "refresh catalogue"
+   * affordance; the auto-trigger covers the common case. */
   requestEnumerate: () => Promise<string>;
 }
 
 export interface UseDisplayModesOptions {
-  /**
-   * When false, skip the subscription and return an inert result. Useful for
-   * components that only need the catalogue in edit mode (e.g. the display
-   * layout panel). Defaults to true.
-   */
+  /** False skips the subscription entirely — for components that only need the
+   * catalogue in edit mode. Default true. */
   enabled?: boolean;
-  /**
-   * When set, auto-fires `enumerateDisplayModes` if the subscribed catalogue's
-   * `signatureHash` doesn't match this value — typically the current live
-   * profile's hash. Dedup ensures the command never fires more than once per
-   * (site, machine, hash) tuple per tab lifetime.
-   */
+  /** Auto-fires `enumerateDisplayModes` when the catalogue's `signatureHash`
+   * differs. Deduped to once per (site, machine, hash) per tab lifetime. */
   triggerForHash?: string | null;
 }
 
 interface InternalState {
-  /**
-   * Tag the state with the (site, machine) it belongs to so late snapshots
-   * from a previous target can be ignored instead of leaking into the
-   * current view. Same pattern as `useDisplayState`.
-   */
+  /** Tags state with its (site, machine) so late snapshots from a previous
+   * target are discarded rather than leaking. Same as `useDisplayState`. */
   siteId: string;
   machineId: string;
   catalogue: DisplayModesCatalogue | null;
@@ -115,11 +83,8 @@ const INITIAL_STATE: InternalState = {
   error: null,
 };
 
-/**
- * Parse a Firestore snapshot into a strongly-typed `DisplayModesCatalogue`.
- * Returns null when the doc doesn't exist or the payload is malformed — we'd
- * rather surface "no catalogue yet" than crash on a partial write.
- */
+/** Null on a missing or malformed doc — "no catalogue yet" beats crashing on a
+ * partial write. */
 function parseCatalogue(data: unknown): DisplayModesCatalogue | null {
   if (!data || typeof data !== 'object') return null;
   const d = data as Record<string, unknown>;
@@ -164,25 +129,20 @@ export function useDisplayModes(
   const [state, setState] = useState<InternalState>(INITIAL_STATE);
   const actions = useDisplayActions(siteId, machineId);
 
-  // Per-session dedup: record the hash we've dispatched for so re-mounts and
-  // snapshot cascades don't fire redundant commands. A ref (not state) so
-  // the assignment doesn't itself cause a re-render.
+  // Per-session dedup so re-mounts and snapshot cascades don't re-dispatch.
+  // A ref, not state — the assignment must not cause a re-render.
   const triggeredForHashRef = useRef<string | null>(null);
-  // Track the last-seen target so we can reset the dedup when the caller
-  // swaps to a different machine without unmounting the hook.
+  // Resets the dedup when the caller swaps machines without unmounting.
   const lastTargetRef = useRef<string>('');
 
-  // Subscribe to the catalogue doc. Teardown on unmount or target change.
   useEffect(() => {
     if (!enabled || !db || !siteId || !machineId) {
       return;
     }
 
-    // Target change: clear the dedup ref so a fresh machine gets a fresh
-    // opportunity to trigger. Snapshot arrival will overwrite `loaded`.
-    // State-reset for the new target is handled in the render-time derivation
-    // below (see the `state.siteId !== siteId` guard) to avoid a setState
-    // call outside a React event handler.
+    // Target change clears the dedup so the new machine can trigger. The state
+    // reset happens in the render-time derivation below (`state.siteId !==
+    // siteId`) to avoid a setState outside a React event handler.
     const targetKey = `${siteId}:${machineId}`;
     if (lastTargetRef.current !== targetKey) {
       triggeredForHashRef.current = null;
@@ -202,10 +162,8 @@ export function useDisplayModes(
       ref,
       (snap) => {
         const next = snap.exists() ? parseCatalogue(snap.data()) : null;
-        // Stamp the snapshot with its target so a later render with a
-        // different (siteId, machineId) can discard it via the derivation
-        // guard. Unconditionally overwrite prev — stamping takes care of
-        // identity across target switches.
+        // Stamped with its target so the derivation guard can discard it after
+        // a switch; unconditional overwrite is safe because of the stamp.
         setState({
           siteId,
           machineId,
@@ -228,9 +186,8 @@ export function useDisplayModes(
     return unsubscribe;
   }, [siteId, machineId, enabled]);
 
-  // Auto-trigger: fire the command when we have a triggerForHash that doesn't
-  // match the cached catalogue. Gated on `loaded` so a missing doc triggers
-  // AFTER the first snapshot confirms "no cache", not speculatively on mount.
+  // Gated on `loaded` so a missing doc triggers only after the first snapshot
+  // confirms "no cache", not speculatively on mount.
   const enumerateDisplayModes = actions.enumerateDisplayModes;
   useEffect(() => {
     if (!enabled) return;
@@ -239,16 +196,14 @@ export function useDisplayModes(
     if (state.siteId !== siteId || state.machineId !== machineId) return;
     if (triggeredForHashRef.current === triggerForHash) return;
     if (state.catalogue?.signatureHash === triggerForHash) {
-      // Catalogue already matches — record the dedup and move on without
-      // dispatching. Future enters for the same hash become no-ops.
+      // Already matches: record the dedup, don't dispatch.
       triggeredForHashRef.current = triggerForHash;
       return;
     }
     triggeredForHashRef.current = triggerForHash;
     enumerateDisplayModes().catch((err) => {
       console.warn('Failed to dispatch enumerate_display_modes:', err);
-      // Reset the dedup ref on failure so the next edit-mode entry can retry
-      // rather than silently blocking on a transient dispatch error.
+      // Reset on failure so the next entry retries instead of silently blocking.
       if (triggeredForHashRef.current === triggerForHash) {
         triggeredForHashRef.current = null;
       }
@@ -265,14 +220,12 @@ export function useDisplayModes(
     enumerateDisplayModes,
   ]);
 
-  // Manual trigger passed through to callers — wraps `actions.enumerateDisplayModes`
-  // in a stable identity across renders so consumers can list it safely in
-  // dependency arrays.
+  // Stable identity so consumers can list it in dependency arrays.
   const requestEnumerate = useCallback(async () => {
     return enumerateDisplayModes();
   }, [enumerateDisplayModes]);
 
-  // Render-time derivation, matching useDisplayState's pattern.
+  // Render-time derivation, matching useDisplayState.
   if (!enabled) {
     return {
       catalogue: null,

@@ -74,7 +74,6 @@ def _assemble(tmp_path: Path, rel_path: str, data: bytes = b'unicode payload'):
         state.close()
 
 
-# ─── latin accents ────────────────────────────────────────────────────
 
 
 def test_french_accents(tmp_path):
@@ -93,7 +92,6 @@ def test_nordic_chars(tmp_path):
     _assemble(tmp_path, 'København/Ærø.toe')
 
 
-# ─── cjk (chinese / japanese / korean) ────────────────────────────────
 
 
 def test_chinese_simplified(tmp_path):
@@ -108,7 +106,6 @@ def test_korean_hangul(tmp_path):
     _assemble(tmp_path, '한국어/프로젝트.toe')
 
 
-# ─── rtl scripts ──────────────────────────────────────────────────────
 
 
 def test_arabic_filename(tmp_path):
@@ -119,7 +116,6 @@ def test_hebrew_filename(tmp_path):
     _assemble(tmp_path, 'פרויקט/קובץ.toe')
 
 
-# ─── emoji ────────────────────────────────────────────────────────────
 
 
 def test_emoji_in_filename(tmp_path):
@@ -131,12 +127,11 @@ def test_emoji_in_directory(tmp_path):
 
 
 def test_multi_codepoint_emoji(tmp_path):
-    # surrogate-pair / multi-codepoint emoji (family / flag) — most likely
-    # to expose utf-16 surrogate handling bugs in os.path on windows.
+    # Surrogate-pair emoji: most likely to expose utf-16 handling bugs in
+    # os.path on windows.
     _assemble(tmp_path, '👨‍👩‍👧‍👦/🇺🇸_show.toe')
 
 
-# ─── normalization (NFC vs NFD) ───────────────────────────────────────
 
 
 def test_nfc_normalized_path(tmp_path):
@@ -173,7 +168,7 @@ def test_nfd_normalized_path(tmp_path):
             content_store=str(content),
         )
         assert result.assembled == 1
-        # accept either NFC or NFD round-trip — fs may renormalize on macOS.
+        # macOS filesystems renormalize, so accept either form.
         nfc_path = extract / unicodedata.normalize('NFC', nfd)
         nfd_path = extract / nfd
         assert nfc_path.exists() or nfd_path.exists(), (
@@ -183,7 +178,6 @@ def test_nfd_normalized_path(tmp_path):
         state.close()
 
 
-# ─── mixed / pathological ─────────────────────────────────────────────
 
 
 def test_mixed_scripts_in_one_path(tmp_path):
@@ -234,7 +228,6 @@ def test_state_row_queryable_by_unicode_path(tmp_path):
         state.close()
 
 
-# ─── windows-reserved characters (sanity) ─────────────────────────────
 
 
 @pytest.mark.skipif(sys.platform != 'win32', reason='windows-only behavior')
@@ -254,7 +247,7 @@ def test_windows_reserved_chars_are_rejected(tmp_path):
         allowlist = DestinationAllowlist([str(extract)])
         data = b'reserved char test'
         _put_chunk(content, data)
-        # asterisk is one of windows' reserved chars
+        # asterisk is reserved on windows
         f = _mk_version_file('bad*name.toe', data)
 
         dist_id = state.start_distribution(

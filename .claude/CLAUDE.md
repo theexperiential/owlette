@@ -2,7 +2,7 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. Monorepo: Python Windows service (agent) + Next.js web dashboard (web) + Firebase/Firestore backend.
 
-**Version**: 3.0.1 | **License**: FSL-1.1-Apache-2.0
+**Version**: 3.1.0 | **License**: FSL-1.1-Apache-2.0
 
 ---
 
@@ -62,7 +62,7 @@ A multi-quarter rewrite of project distribution into a content-addressed sync pl
 cd web && npm install && npm run dev     # Dev server (localhost:3000)
 cd web && npm run build                  # Production build
 cd web && npm test                       # Jest unit tests
-cd web && npm run e2e                    # Playwright E2E suite (requires JDK 21 + firebase-tools@13 globally)
+cd web && npm run e2e                    # Playwright E2E suite (requires JDK 21 + firebase-tools@15 globally)
 cd web && npm run lint                   # Lint
 
 # Agent
@@ -77,7 +77,7 @@ node scripts/sync-versions.js X.Y.Z
 
 Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules` (independent). See `docs/version-management.md`.
 
-**E2E prereqs**: JDK 21 on PATH (Temurin), `npm i -g firebase-tools@13`, `npx playwright install chromium --with-deps` (once). Emulator ports: Auth :9099, Firestore :8080, Storage :9199. App runs on :3100 during E2E (not :3000). Report output: `web/e2e/.output/report/`. Full guide: `web/e2e/README.md`.
+**E2E prereqs**: JDK 21 on PATH (Temurin), `npm i -g firebase-tools@15`, `npx playwright install chromium --with-deps` (once). Emulator ports: Auth :9099, Firestore :8080, Storage :9199. App runs on :3100 during E2E (not :3000). Report output: `web/e2e/.output/report/`. Full guide: `web/e2e/README.md`.
 
 ---
 
@@ -131,6 +131,11 @@ Agents authenticate via a device code flow — no browser login on the target ma
 **Env vars** (Railway dev/prod + Vercel prod): managed via `scripts/env-manifest.json` (canonical key registry — keys + metadata, never values) and `node scripts/sync-env.mjs` (`status` / `check` / `diff` / `sync <target>`). Full workflow + the `must-match` secret rules + the Vercel read-back caveat: `.claude/skills/env-management.md`.
 
 **Failover load balancer**: `owlette.app` is fronted by a Cloudflare LB (Railway primary, Vercel standby) defined as Terraform in `infra/cloudflare/`. Health probe is `/api/health`. Apply workflow, token scope, and the origin-hostname gotchas: `.claude/skills/cf-load-balancing.md`.
+
+**Confirm live state against the API — don't infer it from the repo.** When the question is what is actually deployed or true on dev/prod (is this route shipped, what version is the latest installer, is a machine online, does this key carry that scope), query the running API. Keys are in `.claude/.env.local`: `OWLETTE_API_KEY` (dev — broad scopes) against `$OWLETTE_DEV_API_URL`, `OWLETTE_API_KEY_PROD` (**installer-scoped only** — 403 `scope_insufficient` on site/machine routes) against `$OWLETTE_PROD_API_URL`. Auth header is `x-api-key`. Use `curl`, not python `urllib` — Cloudflare bot-blocks the latter with `error code: 1010`. No-auth reads: `GET /api/health`, `GET /api/openapi` (interactive reference at `/docs/api`). Status codes alone settle "is it deployed": 401 = deployed and gated, 403 = authed but wrong scope, 404 = not deployed.
+
+- **Read-only by default.** GETs and other non-mutating calls need no approval — prefer one over asking the user to check for you.
+- **Mutating calls need an explicit ask.** Installer finalize / `setAsLatest`, remote commands to agents, config pushes, key revocation, deletes — never fire these off to confirm something. Get the user's go-ahead first, prod especially.
 
 **IMPORTANT — installer release order (do not reorder):** bump the version (`node scripts/sync-versions.js X.Y.Z`) **and** add the `## [X.Y.Z] - YYYY-MM-DD` entry to `docs/changelog.md`, then commit — *before* building. `build_installer_full.bat` bakes the version into the exe filename and binary, and an installer must never ship without a matching changelog entry.
 
@@ -202,17 +207,18 @@ Skip `/plan` for single-file tweaks or small fixes. Use `/debug` for any non-obv
 
 ---
 
-## Performance Review
+## Brevity
 
-At the end of every completed task, provide a brief performance review of the user's work. The user's goal is to impress — give them honest feedback to help them grow.
+Write as if reporting to a supervisor who has two minutes. Lead with the answer, then only the
+detail that changes a decision.
 
-**Include:**
-- What was impressive or notable (only genuine observations)
-- A rating (out of 10)
-- Suggestions for improvement, if any
-
-Be real, not flattering. If something was mid, say so. If it was genuinely great, say that too.
+- No performance reviews, no ratings, no coaching.
+- No preamble, no recap of what was just asked, no summary of what you are about to say.
+- Bad news first and plainly: what broke, what is unverified, what you assumed.
+- Prose over tables unless the data is genuinely tabular. Cut every sentence that does not carry
+  new information.
+- Length follows the question. A yes/no question gets a yes/no and one line of why.
 
 ---
 
-**Last Updated**: 2026-08-17
+**Last Updated**: 2026-08-22

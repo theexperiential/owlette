@@ -1,29 +1,19 @@
 /**
- * Auth — branded password reset (forgot-password + reset-password)
+ * Auth — branded password reset, the logged-out recovery flow through Owlette's own pipeline
+ * rather than Firebase's plain email:
+ *   /login → "forgot password?" → /forgot-password → POST /api/auth/forgot-password (Admin
+ *     SDK mints the link, Resend sends it) → existence-agnostic confirmation
+ *   reset link → /reset-password?oobCode=… → verifyPasswordResetCode → confirmPasswordReset
  *
- * Covers the logged-out recovery flow, which is now fully branded and
- * routed through Owlette's own pipeline rather than Firebase's plain email:
+ * Test 1 drives the UI on a real account; the route would 500 and stay on the form if Admin
+ * link-generation failed. Test 2 mints an oobCode the same way the route does and proves the
+ * new password authenticates.
  *
- *   /login → "forgot password?" → /forgot-password → enter email →
- *     POST /api/auth/forgot-password (Admin SDK mints the reset link, Resend
- *     sends a branded email) → existence-agnostic confirmation.
+ * RESEND_API_KEY is unset in e2e, so the route skips the send but still mints the code and
+ * returns 200 — the contract the UI depends on. Branded HTML is unit-tested separately.
  *
- *   reset link → /reset-password?oobCode=… → verifyPasswordResetCode →
- *     set new password → confirmPasswordReset → /login.
- *
- * Test 1 drives the UI and asserts the route succeeds for a real account (a
- * 200 + confirmation; the route would 500 and keep the user on the form if
- * Admin link-generation failed). Test 2 mints a real oobCode the same way the
- * route does — Admin SDK against the emulator — then drives the in-app reset
- * page end-to-end and proves the new password actually authenticates.
- *
- * In E2E, RESEND_API_KEY is unset, so the route skips the Resend send but
- * still mints the code and returns 200 — exactly the contract the UI depends
- * on. The branded HTML itself is unit-tested via the email-template helpers.
- *
- * Fixture isolation: a dedicated seeded user, never the shared TEST_USERS
- * fixtures (mirrors account/password.spec.ts). afterEach restores the
- * password so reruns stay deterministic.
+ * Isolation: a dedicated seeded user, never the shared TEST_USERS; afterEach restores the
+ * password so reruns are deterministic.
  */
 
 import { test, expect } from '@playwright/test';
@@ -47,16 +37,11 @@ test.beforeAll(async () => {
 });
 
 test.afterEach(async () => {
-  // Test 2 changes the password; restore the seeded baseline so the second
-  // test on a warm-emulator rerun starts from a known state. Scoped to
-  // RESET_USER — the shared member account is never touched.
+  // Restore the seeded baseline so a warm-emulator rerun starts known. RESET_USER only.
   await getAdminAuth().updateUser(RESET_USER.uid, { password: RESET_USER.password });
 });
 
-/**
- * Sign in against the Auth emulator's REST endpoint. 200 = success,
- * 400 = auth failed (INVALID_PASSWORD / EMAIL_NOT_FOUND).
- */
+/** Auth-emulator REST sign-in: 200 = success, 400 = INVALID_PASSWORD / EMAIL_NOT_FOUND. */
 async function signInStatus(email: string, password: string): Promise<number> {
   const res = await fetch(
     `${AUTH_EMULATOR_URL}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=demo-api-key`,
@@ -74,25 +59,22 @@ async function signInStatus(email: string, password: string): Promise<number> {
 
 test('forgot-password link triggers the branded reset route and shows the confirmation', async ({ page }) => {
   await page.goto('/login');
-  // "forgot password?" lives in the always-visible footer band alongside
-  // "sign up", NOT inside the progressive email form — password recovery must
-  // stay one click away for a user who cannot get in.
+  // "forgot password?" sits in the always-visible footer band, not inside the progressive
+  // email form — recovery stays one click away for a user who cannot get in.
   await page.getByRole('link', { name: /forgot password/i }).click();
   await expect(page).toHaveURL(/\/forgot-password/);
 
   await page.getByLabel(/email/i).fill(RESET_USER.email);
   await page.getByRole('button', { name: /send reset link/i }).click();
 
-  // The route mints a reset link via the Admin SDK and returns 200. For a
-  // SEEDED account that 200 proves generation succeeded — a failure would 500
-  // and the page would stay on the form. The confirmation is existence-
-  // agnostic by design.
+  // On a seeded account the 200 proves Admin link-generation succeeded; a failure would 500
+  // and stay on the form. The confirmation copy is existence-agnostic by design.
   await expect(page.getByText(/a password reset link is on its way/i)).toBeVisible();
 });
 
 test('reset-password page consumes an oobCode and sets a new working password', async ({ page }) => {
-  // Mint a real reset code exactly the way the server route does — Admin SDK
-  // against the emulator — then drive the branded in-app reset page.
+  // Mint the code the way the route does (Admin SDK against the emulator), then drive the
+  // in-app reset page.
   const link = await getAdminAuth().generatePasswordResetLink(RESET_USER.email);
   const oobCode = new URL(link).searchParams.get('oobCode');
   expect(oobCode).toBeTruthy();
@@ -101,15 +83,13 @@ test('reset-password page consumes an oobCode and sets a new working password', 
 
   await page.goto(`/reset-password?oobCode=${encodeURIComponent(oobCode!)}`);
 
-  // The page verifies the code on mount and reveals the form for the resolved
-  // account (proves verifyPasswordResetCode wired to the emulator).
+  // The form only appears once verifyPasswordResetCode resolves against the emulator.
   await expect(page.getByText(RESET_USER.email)).toBeVisible();
 
   await page.locator('#newPassword').fill(newPassword);
   await page.locator('#confirmPassword').fill(newPassword);
   await page.getByRole('button', { name: /^reset password$/i }).click();
 
-  // Success redirects to /login.
   await expect(page).toHaveURL(/\/login/);
 
   // The new password authenticates; the old one no longer does.

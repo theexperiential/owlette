@@ -1,18 +1,14 @@
 /**
- * Webhook signature verification — matches the server dispatcher at
- * `functions/src/webhookDispatch.ts` (which ships the stripe-style
- * `Roost-Signature: t=<unix>,v1=<hmac-sha256-hex>` format).
- *
- * Public API used by consumers:
+ * Webhook signature verification — matches the server dispatcher
+ * (`functions/src/webhookDispatch.ts`), which ships the stripe-style header
+ * `Roost-Signature: t=<unix>,v1=<hmac-sha256-hex>`.
  *
  *   import { verifySignature } from '@owlette/sdk';
  *   const ok = verifySignature(request.headers['roost-signature'], rawBody, secret);
  *
- * The verify fn is designed to be called on the raw request body
- * **before** any JSON parsing — reserialization changes byte order and
- * breaks the hash. If your framework hands you a parsed body only, use
- * a raw-body middleware (express `express.raw()`, fastify `@fastify/raw-body`)
- * to get the original bytes.
+ * Call it on the RAW body before any JSON parsing — reserialization changes byte order
+ * and breaks the hash. If your framework only hands you a parsed body, add a raw-body
+ * middleware (`express.raw()`, `@fastify/raw-body`).
  */
 
 import { createHmac, timingSafeEqual } from 'crypto';
@@ -22,9 +18,8 @@ export const DEFAULT_REPLAY_TOLERANCE_SECONDS = 5 * 60;
 
 export interface VerifySignatureOptions {
   /**
-   * Reject signatures whose `t=` is more than this many seconds in the
-   * past (or future). Default: 300s. Set to `Infinity` to skip the
-   * freshness check.
+   * Reject signatures whose `t=` is more than this many seconds in the past or future.
+   * Default 300s; `Infinity` skips the freshness check.
    */
   toleranceSeconds?: number;
   /** Current time injection for deterministic tests. Default: Date.now(). */
@@ -44,9 +39,7 @@ export interface VerifySignatureResult {
   timestamp: number | null;
 }
 
-/**
- * Parse + verify `Roost-Signature` over a raw body buffer.
- */
+/** Parse + verify `Roost-Signature` over a raw body buffer. */
 export function verifySignature(
   header: string | null | undefined,
   body: string | Buffer,
@@ -106,9 +99,8 @@ export function verifySignature(
 }
 
 /**
- * Convenience boolean form — throws away the reason. Use the full
- * `verifySignature` when you want to surface 'missing_header' vs
- * 'bad_signature' to the caller (e.g. different 401 messages).
+ * Boolean form — discards the reason. Use `verifySignature` when 'missing_header' vs
+ * 'bad_signature' should reach the caller (e.g. different 401 messages).
  */
 export function isSignatureValid(
   header: string | null | undefined,
@@ -119,10 +111,7 @@ export function isSignatureValid(
   return verifySignature(header, body, secret, opts).ok;
 }
 
-/**
- * Produce a header value with the server's canonical shape. Useful for
- * client-side tests that need to fake a signed delivery.
- */
+/** Header value in the server's canonical shape — for tests that fake a signed delivery. */
 export function signBody(
   body: string | Buffer,
   secret: string,

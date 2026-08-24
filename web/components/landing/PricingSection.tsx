@@ -1,6 +1,12 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Check } from 'lucide-react';
+import {
+  INCLUDED_STORAGE,
+  PRICING_FACTS,
+  STORAGE_OVERAGE,
+  usd,
+} from '@/lib/product-facts';
 
 interface TierFeature {
   label: string;
@@ -9,10 +15,8 @@ interface TierFeature {
 
 const coreFeatures: TierFeature[] = [
   { label: 'process monitoring & auto-recovery' },
-  { label: 'start, stop, restart, kill — every process, every machine' },
-  { label: 'software & file deployment' },
-  { label: 'display layouts with watchdog auto-revert' },
-  { label: 'hoot AI fleet assistant (BYOK)', asterisk: true },
+  { label: 'process control — start, stop, restart, kill' },
+  { label: 'display layouts' },
   { label: '1 site with role-based access' },
   { label: 'unlimited machines & members' },
   { label: 'email alerts' },
@@ -20,14 +24,17 @@ const coreFeatures: TierFeature[] = [
 ];
 
 const proFeatures: TierFeature[] = [
+  { label: 'software & file deployment' },
+  { label: 'hoot — AI fleet assistant', asterisk: true },
+  { label: 'talons — automations with AI visual checks' },
   { label: 'roost — incremental project sync with atomic deploy and rollback' },
-  { label: '1 TB included project storage per site' },
-  { label: '$0.05/GB overage' },
+  { label: `${INCLUDED_STORAGE} included project storage per site` },
+  { label: `${STORAGE_OVERAGE} overage` },
   { label: '50-version retention with 30-day rollback' },
-  { label: 'public REST API with scoped keys' },
+  { label: 'REST API' },
+  { label: 'webhooks' },
   { label: 'CLI + TypeScript SDK' },
-  { label: 'webhooks with HMAC signing' },
-  { label: 'unlimited sites with multi-site rbac' },
+  { label: 'unlimited sites' },
   { label: 'priority support' },
 ];
 
@@ -140,18 +147,19 @@ export function PricingSection() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
           <TierCard
             name="core"
-            price="$10"
+            price={usd(PRICING_FACTS.core.list)}
             unit="/machine/month"
             features={coreFeatures}
+            priceFootnote={`${usd(PRICING_FACTS.core.founders)} founders rate — first ${PRICING_FACTS.foundersCohort}`}
           />
           <TierCard
             name="pro"
-            price="$50"
+            price={usd(PRICING_FACTS.pro.list)}
             unit="/machine/month"
             features={proFeatures}
             highlighted
             preludeNote="everything in core, plus:"
-            priceFootnote="3-machine minimum"
+            priceFootnote={`${PRICING_FACTS.pro.minMachines}-machine minimum · ${usd(PRICING_FACTS.pro.founders)} founders rate — first ${PRICING_FACTS.foundersCohort}`}
           />
         </div>
 
@@ -163,6 +171,9 @@ export function PricingSection() {
             </a>
           </p>
           <p className="mt-10 text-sm text-muted-foreground/60">
+            founders pricing is the rate you keep, not an introductory period.
+          </p>
+          <p className="mt-2 text-sm text-muted-foreground/60">
             * hoot requires your own API key (OpenAI, Anthropic, or compatible)
           </p>
         </div>

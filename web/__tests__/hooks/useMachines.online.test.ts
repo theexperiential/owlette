@@ -1,22 +1,20 @@
 /**
  * @jest-environment jsdom
  *
- * Regression tests for the client-side heartbeat staleness override in
- * `useMachines`.
+ * Regression tests for the heartbeat staleness override in `useMachines`.
  *
- * Incident (2026-08-13 ~14:17): an agent service was stopped without flushing
- * `online: false`, so the machine doc stayed `online: true` with a frozen
- * `lastHeartbeat`. The dashboard kept rendering the machine as ONLINE well past
- * the 300s staleness threshold (observed at a heartbeat age of 374s).
+ * Incident 2026-08-13: a stopped agent never flushed `online: false`, leaving
+ * the doc `online: true` with a frozen `lastHeartbeat`, and the dashboard kept
+ * rendering ONLINE past the 300s threshold (observed at 374s).
  *
- * The two paths that must both call it offline with no Firestore write:
- *   1. the snapshot parse (dashboard opened while the doc is already stale), and
- *   2. the periodic re-evaluation (dashboard already open when the agent dies).
+ * Both paths must call it offline with no Firestore write: the snapshot parse
+ * (opened while already stale) and the periodic re-evaluation (open when the
+ * agent dies).
  */
 import { renderHook, act, waitFor } from '@testing-library/react';
 
-// Override the global `{ db: null }` mock from jest.setup.js — the hook
-// early-returns when db is null, which would skip the snapshot effect.
+// Override jest.setup.js's `{ db: null }` — the hook early-returns on null db
+// and would skip the snapshot effect.
 jest.mock('@/lib/firebase', () => ({ db: {} }));
 
 type SnapshotDoc = { id: string; data: () => Record<string, unknown> };
@@ -25,9 +23,8 @@ type CollectionListener = (snap: {
   forEach: (cb: (doc: SnapshotDoc) => void) => void;
 }) => void;
 
-// Collection listeners registered by the hook, keyed by slash-joined path.
-// `sites/<id>/machines` is the status listener; `config/<id>/machines` is the
-// launch-mode/restart-schedule override listener.
+// Hook listeners keyed by slash-joined path: `sites/<id>/machines` is status,
+// `config/<id>/machines` is the launch-mode/restart-schedule override.
 const collectionListeners = new Map<string, CollectionListener>();
 const unsubscribe = jest.fn();
 
@@ -43,8 +40,8 @@ jest.mock('firebase/firestore', () => ({
   })),
   getDoc: jest.fn(async () => ({ exists: () => false })),
   onSnapshot: jest.fn((ref: { __kind: string; __path: string }, onNext: CollectionListener) => {
-    // Per-machine hardware/profile doc listeners are supplementary — register
-    // them so teardown works, but never emit (no profile in these fixtures).
+    // Register per-machine profile doc listeners so teardown works, but never
+    // emit — these fixtures have no profile.
     if (ref.__kind === 'collection') collectionListeners.set(ref.__path, onNext);
     return unsubscribe;
   }),
@@ -102,7 +99,7 @@ describe('useMachines — heartbeat staleness override', () => {
   it('flips a machine to OFFLINE on its own once the heartbeat ages past 300s, with no new snapshot', async () => {
     const { result } = renderHook(() => useMachines(SITE_ID));
 
-    // Healthy machine at mount: heartbeat 10s old, agent alive.
+    // Healthy at mount: heartbeat 10s old.
     act(() => {
       emitMachines([
         machineDoc('kiosk-01', { online: true, lastHeartbeat: NOW_SEC - 10 }),
@@ -112,8 +109,8 @@ describe('useMachines — heartbeat staleness override', () => {
     await waitFor(() => expect(result.current.machines).toHaveLength(1));
     expect(result.current.machines[0].online).toBe(true);
 
-    // Agent service is killed — no further Firestore writes, no new snapshots.
-    // Wall clock advances to a heartbeat age of 374s (the observed incident age).
+    // Agent killed: no writes, no snapshots. Clock advances to the incident's
+    // observed heartbeat age of 374s.
     await act(async () => {
       jest.advanceTimersByTime(364_000);
     });
@@ -133,7 +130,7 @@ describe('useMachines — heartbeat staleness override', () => {
     await waitFor(() => expect(result.current.machines).toHaveLength(1));
     expect(result.current.machines[0].online).toBe(false);
 
-    // Agent comes back — the staleness override must not latch the machine off.
+    // The staleness override must not latch the machine off.
     act(() => {
       emitMachines([
         machineDoc('kiosk-01', { online: true, lastHeartbeat: NOW_SEC - 5 }),
@@ -146,8 +143,8 @@ describe('useMachines — heartbeat staleness override', () => {
   it('still calls a stale machine offline when the snapshot is served from cache', async () => {
     const { result } = renderHook(() => useMachines(SITE_ID));
 
-    // A cache-served snapshot on remount: the heartbeat is genuinely 374s old,
-    // so the machine must not be shown as online while we wait for the server.
+    // Cache-served on remount, heartbeat genuinely 374s old — must not read as
+    // online while waiting for the server.
     act(() => {
       emitMachines(
         [machineDoc('kiosk-01', { online: true, lastHeartbeat: NOW_SEC - 374 })],

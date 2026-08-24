@@ -1,7 +1,8 @@
+import { type App, cert, initializeApp } from 'firebase-admin/app';
+import { type Auth } from 'firebase-admin/auth';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import admin from 'firebase-admin';
 import {
   deleteApp as deleteClientApp,
   initializeApp,
@@ -121,10 +122,10 @@ export function makeRunIds(prefix = 'w8'): RunIds {
   };
 }
 
-export function createAdminApp(projectId: string, appName: string): admin.app.App {
-  return admin.initializeApp(
+export function createAdminApp(projectId: string, appName: string): App {
+  return initializeApp(
     {
-      credential: admin.credential.cert({
+      credential: cert({
         projectId,
         clientEmail: requireEnv('FIREBASE_CLIENT_EMAIL'),
         privateKey: requireEnv('FIREBASE_PRIVATE_KEY').replace(/\\n/g, '\n'),
@@ -136,7 +137,7 @@ export function createAdminApp(projectId: string, appName: string): admin.app.Ap
 }
 
 export async function createSignedInClient(
-  adminAuth: admin.auth.Auth,
+  adminAuth: Auth,
   projectId: string,
   uid: string,
   appName: string,

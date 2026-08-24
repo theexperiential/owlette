@@ -1,30 +1,16 @@
 /**
- * Centralized API route error response helper.
- *
- * Sanitizes error messages in production (hides Firebase internals, stack
- * traces, third-party API details) while preserving verbose output in
- * development for debugging.
- *
- * Returns the public API problem+json envelope. The `error` extension is
- * kept as a transitional alias for dashboard callers that still read it.
- *
- * Usage in any API route catch block:
- *   import { apiError } from '@/lib/apiErrorResponse';
- *   ...
- *   } catch (error) {
- *     return apiError(error, 'sites/machines/commands');
- *   }
+ * Centralized API error responses in the public problem+json envelope.
+ * Sanitizes messages in production (Firebase internals, stack traces,
+ * third-party details) and stays verbose in development. The `error` extension
+ * is a transitional alias for dashboard callers that still read it.
  */
 import type { NextResponse } from 'next/server';
 import { handleError } from './errorHandler';
 import { problem, ProblemType, type ProblemTypeUri } from './apiErrors';
 
 /**
- * Build a sanitized NextResponse.json error response.
- *
- * @param error   - The caught error (any type)
- * @param context - Short label for log/Sentry context (e.g. 'agent/auth/refresh')
- * @param status  - HTTP status code (default 500)
+ * @param context Short label for log/Sentry context (e.g. 'agent/auth/refresh')
+ * @param status  HTTP status code (default 500)
  */
 export function apiError(
   error: unknown,

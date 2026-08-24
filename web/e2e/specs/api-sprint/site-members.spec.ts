@@ -1,18 +1,7 @@
 /**
- * api-sprint W5.4 — site-members e2e (track 3B / site-admin half).
- *
- * Hits the per-site member-management endpoints with a `site=<id>:admin` api
- * key. The platform-scoped user endpoints (promote / demote / assign-sites /
- * etc.) live in `users.spec.ts`.
- *
- * Verbs covered (≥1 happy-path each):
- *   - GET    /api/sites/{siteId}/members
- *   - POST   /api/sites/{siteId}/members
- *   - DELETE /api/sites/{siteId}/members/{uid}
- *
- * Negative paths:
- *   - 403 when the api key holds only `site:read` (admin scope is required)
- *   - 409 cannot_remove_owner when DELETE-ing the site owner
+ * site-members e2e: GET/POST/DELETE `/api/sites/{siteId}/members` with a
+ * `site=<id>:admin` api key, plus 403 on a read-only key and 409
+ * cannot_remove_owner. Platform-scoped user endpoints live in `users.spec.ts`.
  */
 import crypto from 'crypto';
 import { test, expect } from '@playwright/test';
@@ -37,7 +26,7 @@ async function seedUser(uid: string, role: string): Promise<void> {
     createdAt: new Date(),
     mfaEnrolled: false,
     requiresMfaSetup: false,
-    passkeyEnrolled: false,
+    mfaFactors: { totp: false, passkeys: 0 },
   });
 }
 
@@ -50,9 +39,8 @@ test.beforeAll(async () => {
     timezone: 'UTC',
     createdAt: new Date(),
   });
-  // The owner needs `sites: [SITE_ID]` for membership-based site access in
-  // the route handler; the api-key path will then enforce the `admin` scope
-  // on top.
+  // The route handler needs `sites: [SITE_ID]` for membership access; the
+  // api-key path enforces the `admin` scope on top.
   await db
     .collection('users')
     .doc('admin-uid')
@@ -88,7 +76,7 @@ test('GET /api/sites/{siteId}/members — lists members + owner', async ({ reque
   expect(res.status()).toBe(200);
   const body = await res.json();
   expect(Array.isArray(body.members)).toBe(true);
-  // The owner is always surfaced even if they're not in the array-contains query.
+  // The owner surfaces even when the array-contains query misses them.
   const ownerEntry = body.members.find((m: { uid: string }) => m.uid === OWNER_UID);
   expect(ownerEntry).toBeDefined();
   expect(ownerEntry?.role).toBe('owner');
@@ -119,7 +107,6 @@ test('GET /api/sites/{siteId}/members — read-only scope rejected (admin requir
 });
 
 test('DELETE /api/sites/{siteId}/members/{uid} — removes non-owner member', async ({ request }) => {
-  // Add the member first.
   await request.post(`/api/sites/${SITE_ID}/members`, {
     headers: authHeaders(adminKey),
     data: { uid: MEMBER_UID, role: 'member' },

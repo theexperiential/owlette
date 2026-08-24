@@ -1,23 +1,11 @@
 'use client';
 
 /**
- * EmptyStateUpload — first-run onboarding for /roosts (wave 3.9).
- *
- * Rendered on the roost page when the current site has zero synced folders.
- * Branches on machine count because the natural first-run blocker is
- * "no machines paired yet" — pushing a roost CTA at a user with no
- * targets to deploy to would be a dead-end click.
- *
- *   - machineCount === 0 → "install the agent on a machine first" onboarding,
- *     primary CTA opens the add-machine flow; new-roost button is present
- *     but secondary (still clickable — some users create a roost before
- *     pairing, which is fine since distributions can be created with zero
- *     targets).
- *   - machineCount >= 1 → "create your first roost" primary CTA.
- *
- * Three-step explainer strip sits below the primary action so first-time
- * users immediately see the shape of the workflow (drop folder → pick
- * machines → deploy) without opening the dialog.
+ * First-run onboarding for /roosts, shown when the site has zero synced
+ * folders. Branches on machine count: with none paired, a roost CTA is a
+ * dead-end click, so the primary action is add-machine and new-roost drops to
+ * secondary (still clickable — a roost with zero targets is valid). With one or
+ * more machines, "create your first roost" is primary.
  */
 
 import { Button } from '@/components/ui/button';

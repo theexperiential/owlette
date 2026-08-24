@@ -1,28 +1,13 @@
 /**
- * Signed-URL helpers for the machine-api screenshot capture flow
- * (api-sprint wave 2 — track 2A).
+ * Signed-URL helpers for screenshot capture.
  *
- * Two URL kinds, two TTLs:
+ * WRITE urls (5 min) let the agent PUT straight to Storage, so a multi-MB
+ * binary never proxies through Next.js. READ urls (1 hour) are minted per
+ * request and never persisted, so expiry is always honoured.
  *
- *   - WRITE URLs (5 min) issued to the agent during a `capture_screenshot`
- *     command. The agent PUTs the captured image directly to the URL,
- *     bypassing the web tier so we never proxy a multi-MB binary through
- *     Next.js. Path: `screenshots/{siteId}/{machineId}/{timestamp}.png`.
- *
- *   - READ URLs (1 hour) re-issued every time the dashboard polls
- *     `GET /commands/{commandId}` and the underlying command has a
- *     `result.screenshot_path`. We never persist a read URL — minting per
- *     request guarantees expiry is honored.
- *
- * Retention: storage-side lifecycle rule deletes objects under
- * `screenshots/**` after 30 days. That rule lives in `storage.rules` /
- * the bucket's lifecycle policy and is intentionally out of scope here —
- * the route never has to enumerate or prune.
- *
- * Path shape: the timestamp segment is a Unix-millisecond integer
- * concatenated with a short random suffix to avoid collisions when two
- * captures land in the same ms (the agent calls upload-url once per
- * capture, so the random suffix is defense-in-depth).
+ * Paths are `screenshots/{siteId}/{machineId}/{unixMs}-{rand}.{ext}`; a
+ * bucket lifecycle rule prunes `screenshots/**` after 30 days, so nothing
+ * here enumerates or deletes.
  */
 import crypto from 'crypto';
 import { getAdminStorage } from '@/lib/firebase-admin';
@@ -42,11 +27,7 @@ export interface SignedReadUrlResult {
   expiresAt: string;
 }
 
-/**
- * Sniff the configured storage-bucket name. Mirrors the resolution path
- * used by `/api/agent/screenshot` so the two handlers always agree on
- * which bucket files land in.
- */
+/** Same resolution order as `/api/agent/screenshot`, so both pick one bucket. */
 function resolveBucketName(): string {
   const explicit =
     process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
@@ -65,15 +46,11 @@ function extForContentType(contentType: string): string {
 }
 
 /**
- * Compose the canonical storage path for a freshly-captured screenshot.
- * The extension reflects the content-type so a JPEG body never sits at a
- * `.png` URL (browsers honor content-type, but a mismatched extension is
- * a foot-gun for anything that trusts the path — downloads, CDN sniffing,
- * manual inspection).
+ * Canonical path for a new capture. The extension tracks the content-type so
+ * a JPEG never sits at a `.png` url — browsers honour the header, but
+ * downloads and CDN sniffing trust the path.
  *
- * Exposed (rather than inlined into `issueScreenshotUploadUrl`) so tests +
- * the upload-url route can independently construct the path when
- * re-issuing read URLs without round-tripping through the storage SDK.
+ * Exported so the route and tests can rebuild a path without the storage SDK.
  */
 export function buildScreenshotPath(
   siteId: string,
@@ -86,10 +63,8 @@ export function buildScreenshotPath(
 }
 
 /**
- * Issue a 5-minute v4-signed PUT URL for the agent to upload directly to
- * Firebase Storage. The agent must send `Content-Type: image/png` (or the
- * `contentType` override returned alongside) — Storage signed URLs bind
- * the content-type at signing time.
+ * 5-minute v4-signed PUT url. The agent MUST send the matching Content-Type —
+ * Storage binds it at signing time.
  */
 export async function issueScreenshotUploadUrl(
   siteId: string,
@@ -117,9 +92,8 @@ export async function issueScreenshotUploadUrl(
 }
 
 /**
- * Mint a 1-hour v4-signed GET URL for an existing storage path. Returns
- * `null` for a missing/blank path so callers can passthrough on commands
- * that have not yet completed (or that completed without a screenshot).
+ * 1-hour v4-signed GET url; `null` for a blank path so callers can pass
+ * through commands with no screenshot yet.
  */
 export async function issueScreenshotReadUrl(
   storagePath: string | null | undefined,

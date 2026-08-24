@@ -1,11 +1,10 @@
 /**
- * Browser IndexedDB adapter for the roost upload queue (wave 3.3).
+ * IndexedDB adapter for the roost upload queue.
  *
- * Split out from `./uploadQueue.ts` so the pure runner + backoff logic
- * can be fully unit-tested under Node, without fake-indexeddb machinery
- * that would only prove the fake matches itself. This file's correctness
- * depends on real IndexedDB semantics and is validated by wave 1.6's
- * browser integration tests (or operator smoke).
+ * Split from `./uploadQueue.ts` so the runner + backoff logic unit-test under
+ * Node without fake-indexeddb, which would only prove the fake matches itself.
+ * This half depends on real IndexedDB semantics and is covered by the browser
+ * integration tests.
  */
 
 import type { QueueStore, UploadTask } from './uploadQueue';
@@ -14,10 +13,7 @@ const DB_NAME = 'roost-upload-queue';
 const STORE_NAME = 'tasks';
 const DB_VERSION = 1;
 
-/**
- * Open the IndexedDB-backed QueueStore. Caller may pass a site-scoped
- * name to isolate two sites open in the same browser.
- */
+/** Pass a site-scoped `name` to isolate two sites open in one browser. */
 export function openIndexedDBStore(dbName: string = DB_NAME): QueueStore {
   const dbPromise = openDb(dbName);
 
@@ -35,7 +31,6 @@ export function openIndexedDBStore(dbName: string = DB_NAME): QueueStore {
         result.onsuccess = () => resolve(result.result as T);
         result.onerror = () => reject(result.error);
       } else {
-        // already a promise
         result.then(resolve, reject);
       }
     });

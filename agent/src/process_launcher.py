@@ -70,7 +70,6 @@ def shell_execute_ex(target, parameters=None, cwd=None, visibility='Normal'):
         cwd: Working directory for the launched process.
         visibility: Window visibility ('Normal', 'Minimized', 'Maximized', 'Hidden').
     """
-    # ShellExecuteEx structs and constants
     SEE_MASK_NOCLOSEPROCESS = 0x00000040
     SEE_MASK_FLAG_NO_UI = 0x00000400
 
@@ -143,10 +142,9 @@ def main():
         visibility = 'Hidden'
 
     try:
-        # Always launch via the configured exe_path (lpFile) with file_path as
-        # the argument (lpParameters). Never use file association (lpFile = document),
-        # which triggers the Windows "Open with" dialog and ignores the exe the
-        # user explicitly configured.
+        # exe_path is always lpFile, file_path always lpParameters. Passing the
+        # document as lpFile would use file association: an "Open with" dialog
+        # that ignores the exe the user configured.
         launch_target = exe_path
         parameters = None
 
@@ -154,17 +152,16 @@ def main():
             if os.path.isfile(file_path):
                 parameters = f'"{file_path}"'
             else:
-                # Not a file on disk — treat as CLI arguments
+                # Not a file on disk: treat as CLI arguments.
                 parameters = file_path
 
         if visibility == 'Hidden':
-            # Hidden processes don't need shell context — use subprocess directly.
+            # No shell context needed when hidden — subprocess directly.
             launch_args = []
             if file_path:
                 if os.path.isfile(file_path):
                     launch_args.append(file_path)
                 else:
-                    # Split CLI args string into list for subprocess
                     import shlex
                     launch_args = shlex.split(file_path, posix=False)
             if exe_path.lower().endswith(('.bat', '.cmd')):

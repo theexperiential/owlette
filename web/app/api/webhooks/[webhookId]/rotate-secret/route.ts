@@ -1,21 +1,12 @@
 /**
  * POST /api/webhooks/{webhookId}/rotate-secret?siteId=...
- *   output: { id, siteId, signingSecret, previousSecretValidUntil, rotatedAt }
+ * out: { id, siteId, signingSecret, previousSecretValidUntil, rotatedAt }. Scope site:<id>:write.
  *
- *   - generates a fresh `whsec_*` secret
- *   - keeps the old secret alive for a 24h grace window so in-flight
- *     receivers can verify either signature while they roll their env
- *     var. the dispatcher (wave 6.9) MUST sign with the **new** secret
- *     immediately — the grace period is so verifier-side tooling that
- *     calls `verifySignature(sig, body, OLD_SECRET)` keeps returning ok
- *     until receivers update, not so the server keeps signing with the
- *     old one.
- *   - response returns the new secret ONCE (same contract as create);
- *     the old secret is never echoed back in any form.
- *
- * Scope: site:<id>:write.
- *
- * roost public api wave 6.5.
+ * Mints a fresh `whsec_*` and keeps the old one valid for 24h. The dispatcher MUST switch to
+ * the new secret immediately — the grace window exists so receiver-side
+ * `verifySignature(sig, body, OLD_SECRET)` keeps passing until they roll their env var, NOT
+ * so the server keeps signing with the old secret. The new secret is returned ONCE (as with
+ * create); the old one is never echoed back.
  */
 
 import { randomBytes } from 'node:crypto';

@@ -1,11 +1,4 @@
-/**
- * Firebase Mock for Testing
- *
- * Provides mock implementations of Firebase services for unit testing.
- * Use these mocks in your tests to avoid real Firebase calls.
- */
-
-// Mock Firestore functions
+/** Mock Firebase services, so unit tests make no real Firebase calls. */
 export const mockCollection = jest.fn();
 export const mockDoc = jest.fn();
 export const mockGetDoc = jest.fn();
@@ -19,17 +12,14 @@ export const mockWhere = jest.fn();
 export const mockOrderBy = jest.fn();
 export const mockLimit = jest.fn();
 
-// Mock Auth functions
 export const mockSignInWithEmailAndPassword = jest.fn();
 export const mockCreateUserWithEmailAndPassword = jest.fn();
 export const mockSignOut = jest.fn();
 export const mockOnAuthStateChanged = jest.fn((_auth, _callback) => {
-  // Return unsubscribe function
   return jest.fn();
 });
 export const mockSignInWithPopup = jest.fn();
 
-// Mock Firebase services
 export const mockAuth = {
   currentUser: null,
   signInWithEmailAndPassword: mockSignInWithEmailAndPassword,
@@ -41,7 +31,6 @@ export const mockDb = {
   doc: mockDoc,
 };
 
-// Reset all mocks
 export const resetAllMocks = () => {
   mockCollection.mockClear();
   mockDoc.mockClear();
@@ -62,7 +51,6 @@ export const resetAllMocks = () => {
   mockSignInWithPopup.mockClear();
 };
 
-// Helper to create a mock Firestore document snapshot
 export const createMockDocSnapshot = (data: unknown, exists = true) => ({
   exists: () => exists,
   data: () => data,
@@ -70,7 +58,6 @@ export const createMockDocSnapshot = (data: unknown, exists = true) => ({
   ref: { id: 'mock-doc-id' },
 });
 
-// Helper to create a mock Firestore query snapshot
 export const createMockQuerySnapshot = (docs: unknown[]) => ({
   docs: docs.map((data, index) => ({
     exists: () => true,
@@ -92,7 +79,6 @@ export const createMockQuerySnapshot = (docs: unknown[]) => ({
   },
 });
 
-// Helper to create a mock Firebase user
 export const createMockUser = (uid = 'test-uid', email = 'test@example.com') => ({
   uid,
   email,

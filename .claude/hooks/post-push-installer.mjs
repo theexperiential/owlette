@@ -1,12 +1,8 @@
 /**
- * PostToolUse Hook — Remind to Build & Upload Installer After Agent Push
- *
- * After a successful `git push` that includes agent/src/ or agent/owlette_installer.iss
- * changes, injects a message telling Claude to build the installer and upload it
- * via the API.
- *
- * The actual build + upload is done by Claude (requires admin elevation + multi-step
- * API flow), not by this hook.
+ * PostToolUse hook — after a `git push` touching agent/src/ or
+ * agent/owlette_installer.iss, inject a reminder to build and upload the
+ * installer. The build itself stays with Claude: it needs admin elevation and a
+ * multi-step API flow.
  */
 
 import { readFileSync, existsSync } from 'fs'
@@ -19,7 +15,6 @@ const SESSION_FILE = join(__dirname, '..', 'session-edits.json')
 const ENV_FILE = join(__dirname, '..', '.env.local')
 const agentDir = path.resolve(process.env.CLAUDE_PROJECT_DIR || path.resolve(__dirname, '..', '..'), 'agent')
 
-// Read stdin
 let input = ''
 for await (const chunk of process.stdin) {
   input += chunk
@@ -29,35 +24,29 @@ try {
   const data = JSON.parse(input)
   const command = data.tool_input?.command || ''
 
-  // Only trigger on git push
   if (!/\bgit\s+push\b/.test(command)) {
     process.exit(0)
   }
 
-  // Check if the tool succeeded (exit code 0)
+  // FIXME: dead branch — checks for a failed push but does nothing with it.
   if (data.tool_result?.exit_code !== 0 && data.tool_result?.stdout?.includes('->')) {
-    // Push may have failed
   }
 
-  // Check session edits for agent files
   const agentFiles = getAgentFiles()
   if (agentFiles.length === 0) {
     process.exit(0)
   }
 
-  // Load env for API config
   const env = loadEnv()
   if (!env.OWLETTE_API_KEY) {
     process.stderr.write('[post-push-installer] No API key in .claude/.env.local, skipping\n')
     process.exit(0)
   }
 
-  // Determine which environment was pushed to
   const branch = getCurrentBranch()
   const apiUrl = branch === 'main' ? env.OWLETTE_PROD_API_URL : env.OWLETTE_DEV_API_URL
   const envLabel = branch === 'main' ? 'prod' : 'dev'
 
-  // Read version
   let version = 'unknown'
   try {
     version = readFileSync(join(__dirname, '..', '..', 'VERSION'), 'utf-8').trim()

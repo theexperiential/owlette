@@ -4,25 +4,18 @@ import { useCallback, useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
 
 /**
- * Minimise, maximise/restore and close, for a window with no native titlebar.
+ * Minimise, maximise/restore and close for a window with no native titlebar.
+ * Matches what Windows draws: far right, 46px wide, middle button swapping
+ * maximise/restore, close red on hover; painted from design tokens.
  *
- * The app header is the titlebar now, so these have to look and behave like the
- * ones Windows draws: far right, 46 px wide, the middle one swapping between
- * maximise and restore, and close going red on hover. Everything is painted
- * from design tokens so the light theme and any future accent change follow
- * along.
- *
- * Nothing here carries `data-tauri-drag-region` — that attribute only applies to
- * the element it is on, so the buttons sit inside the drag surface without
- * becoming part of it.
+ * Deliberately no `data-tauri-drag-region` — it applies only to the element it
+ * is on, so the buttons sit inside the drag surface without joining it.
  */
+
 /**
- * The window handle, or null when there is no Tauri bridge.
- *
- * `getCurrentWindow()` reads the bridge's metadata synchronously and throws
- * when it is absent, which is exactly the case in `npm run dev` — the browser-
- * only workflow the readme documents. Letting that throw would blank the whole
- * app during render; here it simply leaves the controls inert.
+ * The window handle, or null with no Tauri bridge. `getCurrentWindow()` throws
+ * synchronously when the bridge is absent (`npm run dev`), which would blank the
+ * app during render; here it just leaves the controls inert.
  */
 function currentWindow(): ReturnType<typeof getCurrentWindow> | null {
   try {
@@ -53,8 +46,7 @@ export function WindowControls({ className }: { className?: string }) {
     }
 
     sync()
-    // Maximising, restoring, snapping and a double-click on the drag region all
-    // land here as a resize.
+    // Maximise, restore, snap and drag-region double-click all arrive as resize.
     void appWindow
       .onResized(sync)
       .then((stop) => {

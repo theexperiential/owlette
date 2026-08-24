@@ -1,11 +1,6 @@
 'use client';
 
-/**
- * ChartTooltip Component
- *
- * Custom tooltip for Recharts that displays metric values on hover.
- * Styled to match Owlette's dark theme.
- */
+/** Recharts hover tooltip for the metric charts. */
 
 import { ArrowDown, ArrowUp, Thermometer } from 'lucide-react';
 import { formatThroughput } from '@/lib/networkUtils';
@@ -13,8 +8,7 @@ import { DISK_IO_COLORS, formatDiskIO, isDiskIOKey, parseDiskIOKey } from '@/lib
 
 export type MetricType = 'cpu' | 'memory' | 'disk' | 'gpu' | 'cpuTemp' | 'gpuTemp' | 'display';
 
-// Configuration for each metric type
-// Using explicit RGB colors because CSS variables don't work in SVG stroke attributes
+// Explicit colors: CSS variables don't resolve in SVG stroke attributes.
 export const metricConfig: Record<MetricType, { label: string; color: string; unit: string }> = {
   cpu: { label: 'CPU', color: 'oklch(0.75 0.18 195)', unit: '%' },       // cyan accent (matches --accent-cyan)
   memory: { label: 'RAM', color: 'oklch(0.65 0.25 250)', unit: '%' },    // blue (matches sidebar-primary)
@@ -25,22 +19,15 @@ export const metricConfig: Record<MetricType, { label: string; color: string; un
   display: { label: 'Displays', color: 'oklch(0.70 0.15 280)', unit: '' }, // purple — display topology (not a time-series metric)
 };
 
-/**
- * Check if a dataKey is a network metric (e.g., "Ethernet_tx_util", "Wi-Fi_rx_util")
- */
+/** e.g. "Ethernet_tx_util", "Wi-Fi_rx_util". */
 export function isNetworkMetricKey(key: string): boolean {
   return key.endsWith('_tx_util') || key.endsWith('_rx_util');
 }
 
 /**
- * Parse a per-NIC metric key. Matches both the percent (`_tx_util` /
- * `_rx_util`) and raw bytes (`_tx` / `_rx`) families — MetricsDetailPanel
- * flips between them per render via networkMode (percent when utilization
- * approaches link saturation, bytes otherwise), so the tooltip needs to
- * recognise either as the visible NIC line. `isPct` lets the caller route
- * to the percent-with-throughput-in-parens branch vs the throughput-only
- * bytes branch. Note: the `_tx_util` / `_rx_util` check must come first,
- * since those strings also end in `_tx` / `_rx`.
+ * Parse a per-NIC key from either family — percent (`_tx_util`/`_rx_util`) or
+ * raw bytes (`_tx`/`_rx`) — since MetricsDetailPanel flips between them via
+ * networkMode. Order matters: `_tx_util` also ends in `_tx`, so test it first.
  */
 function parseNetworkKey(
   key: string,
@@ -53,9 +40,8 @@ function parseNetworkKey(
 }
 
 /**
- * Check if a dataKey is a per-device disk *storage* metric (e.g., "C:_pct", "L:_pct").
- * Explicitly excludes per-volume IO activity keys (`_io_read_pct` / `_io_write_pct`)
- * which share the `_pct` suffix but route to the disk-IO tooltip branch instead.
+ * Per-device disk *storage* keys ("C:_pct"). Excludes `_io_read_pct` /
+ * `_io_write_pct`, which share the suffix but belong to the disk-IO branch.
  */
 function parseDiskKey(key: string): { diskName: string } | null {
   if (!key.endsWith('_pct')) return null;
@@ -63,9 +49,7 @@ function parseDiskKey(key: string): { diskName: string } | null {
   return { diskName: key.slice(0, -4) };
 }
 
-/**
- * Check if a dataKey is a per-device GPU metric (e.g., "GPU 0_usage", "GPU 0_temp")
- */
+/** e.g. "GPU 0_usage", "GPU 0_temp". */
 function parseGpuDeviceKey(key: string): { gpuName: string; field: 'usage' | 'temp' } | null {
   if (key.endsWith('_usage')) return { gpuName: key.slice(0, -6), field: 'usage' };
   if (key.endsWith('_temp')) return { gpuName: key.slice(0, -5), field: 'temp' };
@@ -85,14 +69,11 @@ interface ChartTooltipProps {
   label?: string | number;
   /** Optional: Override the default time formatter */
   formatTime?: (timestamp: number) => string;
-  /** Optional: UUID → friendly-name map for GPU entries. Chart keys stay
-   *  UUID-based; this map only swaps what the tooltip label displays. */
+  /** UUID -> friendly name for GPUs. Chart keys stay UUID-based; this only
+   *  changes the displayed label. */
   gpuLabels?: ReadonlyMap<string, string>;
 }
 
-/**
- * Format a timestamp for display in the tooltip
- */
 function defaultFormatTime(timestamp: number): string {
   const date = new Date(timestamp);
   const now = new Date();
@@ -118,17 +99,15 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
     return null;
   }
 
-  // The label is the timestamp in milliseconds
+  // `label` is the timestamp in ms.
   const timestamp = typeof label === 'number' ? label : parseInt(label as string, 10);
 
   return (
     <div className="bg-popover border border-border rounded-lg shadow-lg p-3 min-w-[140px]">
-      {/* Timestamp */}
       <p className="text-xs text-muted-foreground mb-2">
         {formatTime(timestamp)}
       </p>
 
-      {/* Metric values */}
       <div className="space-y-1">
         {payload.map((entry, _index) => {
           const key = String(entry.dataKey ?? '');
@@ -141,19 +120,11 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
           if (!config && !netInfo && !diskInfo && !gpuInfo && !diskIOChannel) return null;
           if (entry.value === undefined || entry.value === null) return null;
 
-          // Per-NIC network rows. The chart ships two parallel key families
-          // per (nic, direction): percent (`_tx_util` / `_rx_util`) and raw
-          // bytes (`_tx` / `_rx`). Which one is the visible line depends on
-          // networkMode; the tooltip handles both:
-          //
-          //   - Percent mode: visible is `_util`; bytes sibling is a hidden
-          //     Line present in the payload. Render "<nic> ↑  0.9% (1 MB/s)".
-          //     Dedupe: skip the raw bytes entry when its `_util` sibling is
-          //     also in the payload so each direction renders exactly once
-          //     (mirrors the disk-IO dedupe).
-          //   - Bytes   mode: visible is raw bytes, no `_util` sibling.
-          //     Render "<nic> ↑  1 MB/s" — throughput only, no percent (the
-          //     absolute value is what matters when utilization is sub-1%).
+          // Per-NIC rows. Percent mode: `_util` is visible and the bytes
+          // sibling is a hidden Line in the payload — render "0.9% (1 MB/s)"
+          // and skip the bytes entry so the direction renders once. Bytes mode:
+          // no `_util` sibling, render throughput alone (the absolute number is
+          // what matters when utilization is sub-1%).
           if (netInfo) {
             if (!netInfo.isPct && payload.some(e => String(e.dataKey) === `${key}_util`)) {
               return null;
@@ -174,7 +145,7 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
                 </div>
               );
             }
-            const throughputKey = key.replace('_util', '');  // e.g., "Ethernet_tx"
+            const throughputKey = key.replace('_util', '');  // "Ethernet_tx"
             const throughputEntry = payload.find(e => String(e.dataKey) === throughputKey);
             const throughput = typeof throughputEntry?.value === 'number' ? throughputEntry.value : 0;
             return (
@@ -194,7 +165,6 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
             );
           }
 
-          // Per-device disk metrics (e.g., "C:_pct", "L:_pct")
           if (diskInfo) {
             return (
               <div key={key} className="flex items-center justify-between gap-4">
@@ -207,9 +177,7 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
             );
           }
 
-          // Per-device GPU metrics (e.g., "GPU 0_usage", "GPU 0_temp").
-          // Temp rows append a Thermometer icon so they read as "<name> 🌡"
-          // instead of the legacy degree-suffix convention.
+          // Temp rows get a Thermometer icon rather than the legacy degree suffix.
           if (gpuInfo) {
             const unit = gpuInfo.field === 'temp' ? '°C' : '%';
             const friendly = gpuLabels?.get(gpuInfo.gpuName) ?? gpuInfo.gpuName;
@@ -228,19 +196,10 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
             );
           }
 
-          // Per-volume disk IO activity. The chart-line side ships two
-          // parallel key families per (volume, channel): bytes/sec and
-          // percent-of-max-bandwidth. The tooltip always displays bytes/sec
-          // — `formatDiskIO` picks a human-readable unit — regardless of
-          // which family happens to be the visible chart line:
-          //
-          //   - Percent mode: visible line is `_pct`; read the sibling
-          //     bytes key from the payload (hidden Line carries it).
-          //   - Bytes mode: visible line is bytes; use `entry.value` directly.
-          //
-          // Dedupe: when both siblings are in the payload (percent mode),
-          // the bytes entry would otherwise render an identical second row.
-          // Skip it so each channel shows exactly once.
+          // Per-volume disk IO. Two key families per (volume, channel):
+          // bytes/sec and percent-of-max. The tooltip always shows bytes/sec,
+          // reading the hidden sibling in percent mode. Skip the bytes entry
+          // when both are present, or the channel renders twice.
           if (diskIOChannel) {
             if (!diskIOChannel.isPct && payload.some(e => String(e.dataKey) === `${key}_pct`)) {
               return null;
@@ -266,10 +225,8 @@ export function ChartTooltip({ active, payload, label, formatTime = defaultForma
             );
           }
 
-          // Standard scalar metric row. `cpuTemp` / `gpuTemp` share their
-          // base-metric label ("CPU" / "GPU") so the Thermometer icon is the
-          // sole disambiguator — without it the tooltip would show two
-          // identical "CPU" rows.
+          // `cpuTemp`/`gpuTemp` share the base metric's label, so the
+          // Thermometer icon is the only thing preventing two "CPU" rows.
           const isTempMetric = key === 'cpuTemp' || key === 'gpuTemp';
           return (
             <div key={key} className="flex items-center justify-between gap-4">

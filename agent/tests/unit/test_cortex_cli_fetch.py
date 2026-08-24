@@ -29,9 +29,7 @@ PINNED_VERSION = '2.1.121'
 DOWNLOAD_URL = 'https://storage.googleapis.com/bucket/cortex-cli/claude.exe?X-Goog-Signature=deadbeef'
 
 
-# =============================================================================
-#  Helpers / fixtures
-# =============================================================================
+# Helpers / fixtures
 
 @pytest.fixture
 def cache_dir(tmp_path, monkeypatch):
@@ -124,9 +122,7 @@ def fake_download(payload=b'downloaded-cli', relocate_to=None):
     return _download
 
 
-# =============================================================================
-#  read_pinned_metadata
-# =============================================================================
+# read_pinned_metadata
 
 class TestReadPinnedMetadata:
     """Validation of installer_metadata/cortex_cli."""
@@ -181,9 +177,7 @@ class TestReadPinnedMetadata:
         assert result['size'] is None
 
 
-# =============================================================================
-#  Cache hit
-# =============================================================================
+# Cache hit
 
 class TestCacheHit:
     """The happy path: an already-verified binary is reused untouched."""
@@ -241,9 +235,7 @@ class TestCacheHit:
         assert cortex_cli_fetch._sidecar_binary(None, None) is None
 
 
-# =============================================================================
-#  Version mismatch → re-fetch
-# =============================================================================
+# Version mismatch → re-fetch
 
 class TestVersionMismatchRefetch:
     """A moved pin must invalidate the cache and pull the new build."""
@@ -296,9 +288,7 @@ class TestVersionMismatchRefetch:
         assert read_bytes(result) == b'relocated-cli'
 
 
-# =============================================================================
-#  Corrupt download / corrupt cache
-# =============================================================================
+# Corrupt download / corrupt cache
 
 class TestChecksumRejection:
     """Complete-but-corrupt bytes must be discarded, then retried once."""
@@ -365,9 +355,7 @@ class TestChecksumRejection:
         assert read_json(sidecar_path(cache_dir))['sha256'] == real_sha
 
 
-# =============================================================================
-#  Bundled copy
-# =============================================================================
+# Bundled copy
 
 class TestBundledCli:
     """In-place 2.x upgrades still carry the SDK's binary."""
@@ -456,9 +444,7 @@ class TestBundledCli:
             assert cortex_cli_fetch.get_bundled_cli_path() is None
 
 
-# =============================================================================
-#  Failure handling / backoff
-# =============================================================================
+# Failure handling / backoff
 
 class TestFailurePath:
     """No CLI anywhere: return None quietly and throttle the retries."""
@@ -547,9 +533,7 @@ class TestFailurePath:
             assert cortex_cli_fetch.ensure_cli(make_db(doc)) == cli_path(cache_dir)
 
 
-# =============================================================================
-#  Logging hygiene
-# =============================================================================
+# Logging hygiene
 
 class TestLoggingHygiene:
     """Signed URLs carry a signature — it must never reach cortex.log."""

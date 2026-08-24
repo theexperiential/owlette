@@ -1,30 +1,21 @@
 /**
  * GET    /api/webhooks/{webhookId}?siteId=...
- *   output: { id, url, events, description?, createdAt, updatedAt, paused,
- *             lastDeliveryAt, lastDeliveryStatus, failureCount }
+ *   -> { id, url, events, description?, createdAt, updatedAt, paused,
+ *        lastDeliveryAt, lastDeliveryStatus, failureCount }
  *
  * PATCH  /api/webhooks/{webhookId}?siteId=...
- *   body:   { url?, events?, description?, paused? }    — all fields optional
- *   output: serialized subscription (no signingSecret)
- *   - idempotency-key supported
- *   - events[] re-validated against `ROOST_WEBHOOK_EVENTS`
- *   - url re-run through SSRF guard (resolves DNS, blocks private ips)
+ *   { url?, events?, description?, paused? } -> the serialized subscription.
+ *   Idempotency-key supported. events[] is re-validated and url re-run through
+ *   the SSRF guard (DNS resolved, private ips blocked).
  *
  * DELETE /api/webhooks/{webhookId}?siteId=...
- *   output: { id, siteId, softDeleted: true, tombstoneExpiresAt }
- *   - soft delete: stamps `deletedAt` + `tombstoneExpiresAt = now + 30d`.
- *     dispatcher filters on `deletedAt` when picking subscriptions to
- *     fire, so delivery stops on the next tick.
- *   - delivery history rows are **not** deleted (stored outside this doc,
- *     queryable via the wave 6.6 endpoints for the full 30-day audit
- *     window).
+ *   -> { id, siteId, softDeleted: true, tombstoneExpiresAt }
+ *   Soft delete only: stamps `deletedAt` + a 30d tombstone. The dispatcher
+ *   filters on `deletedAt`, so delivery stops next tick, and delivery history
+ *   lives outside this doc and survives for the full 30-day audit window.
  *
  * Scope: site:<id>:read for GET, site:<id>:write for PATCH + DELETE.
- *
- * signingSecret is NEVER returned — only the create + rotate-secret
- * responses surface it.
- *
- * roost public api wave 6.2 (GET) + 6.3 (PATCH) + 6.4 (DELETE).
+ * signingSecret is NEVER returned — only create and rotate-secret surface it.
  */
 
 import type { NextRequest } from 'next/server';
@@ -105,10 +96,6 @@ export async function GET(
     return problemFromError(err, 'webhooks/[webhookId]:GET');
   }
 }
-
-/* ------------------------------------------------------------------------- */
-/*  PATCH — update                                                           */
-/* ------------------------------------------------------------------------- */
 
 interface PatchBody {
   url?: unknown;
@@ -270,10 +257,6 @@ export async function PATCH(
   }
 }
 
-/* ------------------------------------------------------------------------- */
-/*  DELETE — soft delete                                                     */
-/* ------------------------------------------------------------------------- */
-
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ webhookId: string }> },
@@ -312,8 +295,7 @@ export async function DELETE(
       return problemNotFound(`webhook ${webhookId} not found on site ${site.siteId}`);
     }
 
-    // Already soft-deleted: treat as idempotent success, re-return the
-    // original tombstone timestamp so the client sees the same answer.
+    // Idempotent: re-return the original tombstone rather than restamping.
     if (existing.deletedAt) {
       const already =
         typeof existing.tombstoneExpiresAt === 'number'

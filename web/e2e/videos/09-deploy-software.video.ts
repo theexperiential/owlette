@@ -1,29 +1,23 @@
 /**
- * Scene — episode 9, "deploy software to many machines".
+ * Scene — episode 9, "deploy software to many machines". All screen capture,
+ * no b-roll. Beats b01–b07 with VO durations
+ * (voiceover/out/09-deploy-software/, ffprobe):
+ *   b01 the use case                    ~16.6s  deployments list, mixed statuses
+ *   b02 new deployment + templates      ~19.1s  open dialog, open template select
+ *   b03 installer url + silent flags    ~24.3s  type url, type flags
+ *   b04 the options that save you grief ~28.8s  parallel + close-processes
+ *   b05 choose your targets             ~14.9s  online-only / select-all / per-row
+ *   b06 deploy and watch                ~23.0s  expand in-flight, per-target state
+ *   b07 retry the stragglers            ~23.0s  failed row → menu → "retry failed"
  *
- * Every beat in this episode is SCREEN capture (no B-ROLL). Beat list with
- * rendered VO durations (voiceover/out/09-deploy-software/, ffprobe):
- *   b01 the use case                        ~16.6s  → deployments list, mixed statuses
- *   b02 new deployment + templates          ~19.1s  → open dialog, open template select
- *   b03 installer url + silent flags        ~24.3s  → type the url, type silent flags
- *   b04 the options that save you grief     ~28.8s  → parallel + close-processes options
- *   b05 choose your targets                 ~14.9s  → online-only / select-all / per-row
- *   b06 deploy and watch                    ~23.0s  → expand in-flight, show per-target state
- *   b07 retry the stragglers                ~23.0s  → failed row → row menu → "retry failed"
+ * PRODUCT-BLOCKED (b06): the agent rejects deployments with no sha256 checksum
+ * and the dialog has no checksum field, so we never click deploy — it would
+ * put a validation toast on camera. Instead we expand the seeded
+ * `depl-stage-show-v4` row so the progress board matches the VO. Swap to a
+ * real deploy once the gap closes.
  *
- * NOTE on b06 — the script flags this as PRODUCT-BLOCKED: the agent currently
- * rejects deployments without a sha256 checksum, and the deploy dialog has no
- * checksum field, so a live "click deploy and watch it install" flow doesn't
- * work end-to-end yet. This scene therefore does NOT click the deploy button
- * (which would trigger validation errors / a toast we don't want on camera).
- * Instead it expands the already-seeded `depl-stage-show-v4` row (3 done, 1
- * installing at 64%, 6 pending) so the per-machine progress board reads as
- * the live state the VO is narrating. When the product gap closes we can swap
- * b06 to "click deploy + wait for first row to flip to installing".
- *
- * Reuses the screenshots harness verbatim: the `deploy-roost-rolling` fixture
- * (10 machines + 4 deployments at different statuses — in_progress / completed
- * / failed / scheduled) + the admin role storageState.
+ * Fixture: `deploy-roost-rolling` (10 machines, 4 deployments across statuses)
+ * plus the admin role storageState.
  *
  * Run:  cd web && npm run videos -- --grep "episode 9"
  * Out:  web/e2e/.output/videos/09-deploy-software.mp4
@@ -47,7 +41,7 @@ import {
 test('episode 9 — deploy software to many machines', async ({ browser }) => {
   const ctx = await seedScreenshotFixtures('deploy-roost-rolling');
   try {
-    // Auto-select the seeded site on load (admin is also on the baseline site-A).
+    // Auto-select the seeded site (admin is also on the baseline site-A).
     await getAdminDb()
       .collection('users')
       .doc(TEST_USERS.admin.uid)
@@ -60,9 +54,7 @@ test('episode 9 — deploy software to many machines', async ({ browser }) => {
       async (page) => {
         await openForCapture(page, '/deployments');
 
-        // [b01] the use case — settle on the deployments list (~16.6s VO).
-        // 4 seeded rows: stage show v4 (in_progress), stage show v3 (completed),
-        // touchdesigner driver bump (failed), spring content pack (scheduled).
+        // [b01] settle on the deployments list — 4 seeded rows across statuses.
         const inFlightRow = page.getByText('stage show v4', { exact: false }).first();
         await expect(inFlightRow).toBeVisible();
         await narrate(page, 'b01 use case — settle', 17);
@@ -73,11 +65,10 @@ test('episode 9 — deploy software to many machines', async ({ browser }) => {
         const dialog = page.getByRole('dialog', { name: /deploy software/i });
         await expect(dialog).toBeVisible();
 
-        // Open the template select to reveal system presets + saved templates.
         const templateTrigger = dialog.getByRole('combobox').first(); // VERIFY — first combobox = template select
         await clickWithCursor(page, templateTrigger);
         await narrate(page, 'b02 template dropdown', 13);
-        // Close it again so the rest of the dialog is visible for the next beats.
+        // Close it so the rest of the dialog is visible for the next beats.
         await page.keyboard.press('Escape');
         await page.waitForTimeout(300);
         await narrate(page, 'b02 close + reset', 6);
@@ -102,14 +93,12 @@ test('episode 9 — deploy software to many machines', async ({ browser }) => {
         await highlight(page, parallelCheckbox, 1600);
         await narrate(page, 'b04 parallel install option', 8);
 
-        // Expand the "close running processes before install" collapsible.
         const closeProcessesToggle = dialog.getByRole('button', {
           name: /close running processes before install/i,
         });
         await clickWithCursor(page, closeProcessesToggle);
         await page.waitForTimeout(400);
-        // Type a process name so the amber warning banner ("the following
-        // processes will be closed...") shows on camera.
+        // A process name is needed to put the amber warning banner on camera.
         const additionalProcesses = dialog.locator('#additional-processes');
         await typewrite(page, additionalProcesses, 'TouchDesigner.exe', 50);
         await narrate(page, 'b04 close-processes + warning', 12);
@@ -120,15 +109,9 @@ test('episode 9 — deploy software to many machines', async ({ browser }) => {
         await clickWithCursor(page, onlineOnlyBtn);
         await narrate(page, 'b05 online only clicked', 7);
 
-        // Then click the toggle-all button to show the alternate path. The
-        // button's label flips between "select all" and "deselect all"
-        // depending on whether every machine is currently selected. In the
-        // `deploy-roost-rolling` seed all 10 machines are online (see
-        // seedDeployRoostRolling in screenshots/fixtures.ts:891-905), so the
-        // preceding "online only" click selects every machine and the
-        // button reads "deselect all" — confirmed against DeploymentDialog
-        // .tsx:62, 696. Match either label so the demo stays robust to
-        // future seed tweaks where the fleet is mixed online/offline.
+        // The toggle-all label flips between "select all" and "deselect all".
+        // All 10 seeded machines are online, so after "online only" it reads
+        // "deselect all"; match either so a mixed-fleet seed can't break this.
         const toggleAllBtn = dialog.getByRole('button', { name: /^(?:de)?select all$/i });
         await clickWithCursor(page, toggleAllBtn);
         await narrate(page, 'b05 select-all toggle clicked', 8);
@@ -138,16 +121,14 @@ test('episode 9 — deploy software to many machines', async ({ browser }) => {
         await clickWithCursor(page, cancelBtn);
         await expect(dialog).not.toBeVisible();
 
-        // [b06] deploy and watch — expand the seeded in-flight row to show
-        // the live progress board (3 done, 1 installing 64%, 6 pending).
+        // [b06] expand the seeded in-flight row: 3 done, 1 installing 64%, 6 pending.
         await centerInView(page, inFlightRow);
         await clickWithCursor(page, inFlightRow);
-        // The expanded row shows targets with per-machine status badges.
         await expect(
           page.getByText('media-server-stage', { exact: false }).first(),
         ).toBeVisible();
         await narrate(page, 'b06 in-flight progress board', 23);
-        // Collapse it again before we move to the failed row.
+        // Collapse before moving to the failed row.
         await clickWithCursor(page, inFlightRow);
         await page.waitForTimeout(300);
 
@@ -158,7 +139,6 @@ test('episode 9 — deploy software to many machines', async ({ browser }) => {
         await centerInView(page, failedRow);
         await highlight(page, failedRow, 1800);
 
-        // Open that row's actions dropdown to reveal "retry failed".
         const failedRowActions = page.getByRole('button', {
           name: /deployment actions for touchdesigner 2024\.40000 driver bump/i,
         }); // VERIFY — aria-label format from DeploymentRow MoreVertical button

@@ -1,17 +1,12 @@
 /**
  * POST /api/hoot/conversations — create a Hoot conversation.
+ * `/api/chat/new` is a compatibility alias for the same handler.
  *
- * `/api/chat/new` remains a compatibility alias; `/api/hoot/conversations`
- * is the canonical public API path as of public-api Wave 2.9.
+ * Scope `chat=<siteId>:write`. Idempotent via `Idempotency-Key`.
+ * Body: `{ siteId, machineId?, title?, initial_message?: { role, content } }`
  *
- * Required scope: `chat=<siteId>:write`. Idempotent via `Idempotency-Key`.
- * Body:
- *   { siteId, machineId?, title?, initial_message?: { role, content } }
- *
- * machineId is optional: omit for site-wide conversations (server-side LLM
- * fans tools out across all online machines on the site). When provided,
- * the conversation is pinned to that machine — the send endpoint will
- * route to the same machine on every turn.
+ * Omitting `machineId` makes the conversation site-wide (tools fan out across
+ * every online machine); supplying it pins every turn to that machine.
  */
 
 import type { NextRequest } from 'next/server';

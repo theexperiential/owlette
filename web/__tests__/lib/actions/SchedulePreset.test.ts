@@ -1,17 +1,9 @@
 /** @jest-environment node */
 
 /**
- * Tests for the schedule preset action cores
- * (web/lib/actions/{create,update,delete}SchedulePreset.server.ts).
- *
- * Coverage:
- *   - createSchedulePreset: happy path + validation
- *   - updateSchedulePreset: built-in override path (setDoc + merge)
- *   - updateSchedulePreset: custom edit path (updateDoc, requires existing doc)
- *   - updateSchedulePreset: 404 for missing custom preset
- *   - deleteSchedulePreset: happy path + idempotent missing-doc delete
- *
- * security-boundary-migration wave 3.6.
+ * Schedule preset action cores (web/lib/actions/{create,update,delete}SchedulePreset.server.ts):
+ * create happy path + validation, update via built-in override (setDoc + merge) and custom
+ * edit (updateDoc, 404 when missing), delete happy path + idempotent missing-doc delete.
  */
 
 interface MockDoc {
@@ -29,7 +21,7 @@ function makeDoc(path: string) {
     get: async () => docState.get(path) ?? { exists: false, data: () => ({}) },
     set: async (payload: Record<string, unknown>, opts?: { merge?: boolean }) => {
       setCalls.push({ path, payload, merge: opts?.merge });
-      // Also update local docState so the round-trip behaves correctly.
+      // Keep local docState in sync so the round-trip behaves.
       docState.set(path, { exists: true, data: () => payload });
     },
     update: async (payload: Record<string, unknown>) => {
@@ -163,7 +155,7 @@ describe('createSchedulePreset', () => {
 
 describe('updateSchedulePreset — built-in override path', () => {
   it('uses setDoc({merge: true}) and stamps isBuiltIn:true even on first edit', async () => {
-    // No existing doc — built-ins create the override on first edit.
+    // No existing doc: built-ins create their override on first edit.
     const result = await updateSchedulePreset(ctx, 'builtin-morning-shift', {
       name: 'Morning shift (custom)',
     });

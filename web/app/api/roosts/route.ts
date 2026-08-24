@@ -5,10 +5,8 @@
  * POST /api/roosts
  *      input:  { siteId, name, targets[]?, roostId?, extractPath? }
  *      output: { roostId, siteId, name, targets, createdAt }
- *      → create a roost shell. No version is published; currentVersionId
- *        stays null until the first POST /api/roosts/{id}/versions.
- *
- * roost public api wave 3.1.
+ *      → create a roost shell; currentVersionId stays null until the first
+ *        POST /api/roosts/{id}/versions.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -50,9 +48,7 @@ async function readSiteDocForGate(siteId: string): Promise<Record<string, unknow
   return snap.exists ? (snap.data() ?? null) : null;
 }
 
-/* --------------------------------------------------------------------- */
-/*  GET — list roosts                                                    */
-/* --------------------------------------------------------------------- */
+/* GET — list roosts */
 
 export async function GET(request: NextRequest) {
   try {
@@ -134,9 +130,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/* --------------------------------------------------------------------- */
-/*  POST — create roost                                                  */
-/* --------------------------------------------------------------------- */
+/* POST — create roost */
 
 interface CreateRoostBody {
   siteId?: unknown;
@@ -232,8 +226,7 @@ export async function POST(request: NextRequest) {
           instance: `/api/roosts/${roostId}`,
         });
       }
-      // Undeleting a tombstoned roost: clear the deletion markers and
-      // overwrite the metadata with the fresh payload.
+      // Undeleting a tombstone: clear the markers and overwrite metadata with the fresh payload.
     }
 
     await roostRef.set(
@@ -283,13 +276,10 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/* --------------------------------------------------------------------- */
-/*  helpers                                                              */
-/* --------------------------------------------------------------------- */
+/* helpers */
 
 function generateRoostId(): string {
-  // 18 hex chars = 72 bits of entropy. prefix `rst_` for readability;
-  // together 22 chars, fits in 8-64 bound of RESOURCE_ID_RE.
+  // 18 hex chars = 72 bits; with the `rst_` prefix that is 22 chars, inside RESOURCE_ID_RE's 8-64.
   return `rst_${crypto.randomBytes(9).toString('hex')}`;
 }
 

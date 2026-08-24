@@ -1,19 +1,14 @@
 /**
  * POST /api/sites/{siteId}/project-distributions/{distId}/cancel
  *
- * Cancels every target on a project distribution that is still in a
- * pre-flight state (`pending` / `downloading` / `extracting`):
- *   - flips each affected target to `cancelled` on the distribution doc
- *   - purges the queued `distribute_project` command from each target
- *     machine's `commands/pending` doc
- *   - fans out a `cancel_distribution` command to short-circuit any
- *     mid-fetch agent
+ * For every target still pre-flight (`pending`/`downloading`/`extracting`):
+ * flip it to `cancelled`, purge the queued `distribute_project` from the
+ * machine's `commands/pending`, and fan out `cancel_distribution` to
+ * short-circuit a mid-fetch agent. Terminal targets are untouched.
  *
- * Targets that are already `completed` / `failed` / `cancelled` are left
- * untouched. Requires `site=<id>:write` and an `Idempotency-Key` header.
- *
- * Mirror of `/api/sites/{siteId}/deployments/{deploymentId}/cancel`.
- * Action core: `web/lib/actions/cancelDistribution.server.ts`.
+ * Requires `site=<id>:write` + `Idempotency-Key`. Mirrors
+ * `/deployments/{deploymentId}/cancel`; core is
+ * `web/lib/actions/cancelDistribution.server.ts`.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';

@@ -1,22 +1,16 @@
 //! Mutex-protected JSON reads and writes against the owlette data tree.
 //!
-//! This is the desktop side of the service↔GUI seam. The Python service and the
-//! legacy tkinter GUI coordinate every access to `config.json` /
-//! `app_states.json` through a Windows named mutex and an atomic
-//! temp-file-plus-rename write (`agent/src/shared_utils.py`: `_CrossProcessLock`
-//! at :92-115, `read_json_from_file` at :1841, `write_json_to_file` at :1892).
-//! We reimplement that contract exactly rather than inventing a new one, so the
-//! two processes stay interoperable while both are in the field.
+//! Desktop side of the service↔GUI seam: exactly reimplements the Python contract for
+//! `config.json` / `app_states.json` — Windows named mutex plus atomic temp-file-and-rename
+//! (`agent/src/shared_utils.py`: `_CrossProcessLock` :92-115, `read_json_from_file` :1841,
+//! `write_json_to_file` :1892) — so both processes stay interoperable in the field.
 //!
-//! Deliberate deviations from the Python implementation, both in the safe
-//! direction:
+//! Two deliberate deviations, both fail-safer than Python:
 //!
-//! * A read whose content will not parse is retried (a torn read during the
-//!   service's rename) and then fails, where Python returns `{}`. Returning an
-//!   empty document to a UI that then writes the file back would erase the
-//!   operator's configuration.
-//! * Temp files are unique per process and per call instead of a fixed
-//!   `<name>.tmp`, so two writers can never share a scratch file.
+//! * Unparseable content is retried then errors, where Python returns `{}` — handing a UI an
+//!   empty document that it writes back would erase the operator's configuration.
+//! * Temp files are unique per process and call, not a fixed `<name>.tmp`, so two writers can
+//!   never share a scratch file.
 
 use std::fmt;
 use std::fs::{self, File};
@@ -44,48 +38,40 @@ const MUTEX_NAME: PCWSTR = w!("Global\\OwletteJsonFileMutex");
 /// Wait budget for the mutex, mirroring `_CrossProcessLock(timeout_ms=2000)`.
 const MUTEX_WAIT_MS: u32 = 2000;
 
-/// Retry budget for the file operation itself, mirroring the Python
-/// `max_retries=3` / `initial_delay=0.1` exponential backoff (100/200 ms).
+/// Mirrors Python `max_retries=3` / `initial_delay=0.1` exponential backoff (100/200 ms).
 const MAX_ATTEMPTS: u32 = 3;
 const INITIAL_BACKOFF: Duration = Duration::from_millis(100);
 
-/// Python writes these files with `json.dump(..., indent=4)`. Matching the
-/// indent keeps the on-disk bytes stable across a mixed fleet where either
-/// process may write last.
+/// Python uses `json.dump(..., indent=4)`; matching it keeps on-disk bytes stable whichever
+/// process writes last.
 const INDENT: &[u8] = b"    ";
 
-/// Serial for temp file names, so concurrent writes in this process cannot
-/// collide on a scratch file.
+/// Serial for temp file names — concurrent writes in this process must not share a scratch file.
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// Process-wide mutex handle, created once and held for the life of the
-/// process exactly like the Python module global `_json_file_mutex`.
+/// Process-wide mutex handle, held for process lifetime like Python's `_json_file_mutex`.
 static JSON_MUTEX: OnceLock<Option<SharedMutex>> = OnceLock::new();
 
 struct SharedMutex(HANDLE);
 
-// SAFETY: a mutex HANDLE is a kernel object handle, valid process-wide and
-// usable from any thread. Ownership of the *lock* is per-thread, which is why
-// `LockGuard` below is deliberately !Send; the handle itself is not.
+// SAFETY: a mutex HANDLE is a kernel handle, valid process-wide and usable from any thread. Lock
+// *ownership* is per-thread, which is why `LockGuard` is !Send; the handle itself need not be.
 unsafe impl Send for SharedMutex {}
 unsafe impl Sync for SharedMutex {}
 
-/// How the cross-process lock behaved for one operation. Surfaced to the
-/// frontend so contention is observable instead of invisible.
+/// How the cross-process lock behaved for one operation; surfaced to the frontend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LockOutcome {
   /// The mutex was held for the whole operation.
   Acquired,
-  /// Acquired, but the previous owner died without releasing it. We own the
-  /// mutex and must release it, same as Python's `WAIT_ABANDONED` branch.
+  /// Previous owner died without releasing. We own it and must release, as Python's
+  /// `WAIT_ABANDONED` branch does.
   Abandoned,
-  /// The 2 s budget elapsed. Python proceeds unlocked here and so do we — the
-  /// write is still atomic, so the worst case is a lost update, never a torn
-  /// file.
+  /// 2 s budget elapsed. Proceeds unlocked, matching Python: the write is still atomic, so the
+  /// worst case is a lost update, never a torn file.
   Timeout,
-  /// The mutex could not be created or opened at all (the Python fallback path
-  /// sets `_json_file_mutex = False` for the same condition).
+  /// Could not be created or opened at all (Python sets `_json_file_mutex = False` here).
   Unavailable,
 }
 
@@ -146,10 +132,9 @@ impl std::error::Error for JsonIoError {
 
 /// Read a JSON document under the cross-process lock.
 ///
-/// A missing or empty file yields an empty object, matching
-/// `read_json_from_file` — the service creates `app_states.json` lazily and the
-/// UI must render before it exists. Unreadable or unparseable content is
-/// retried and then reported as an error (see the module note).
+/// Missing or empty yields `{}`, matching `read_json_from_file` — the service creates
+/// `app_states.json` lazily and the UI must render before it exists. Unreadable or unparseable
+/// content is retried, then errors (see the module note).
 pub fn read_json(path: &Path) -> Result<Value, JsonIoError> {
   let guard = acquire_lock();
   guard.warn_if_unprotected(path, "read");
@@ -166,7 +151,7 @@ pub fn read_json(path: &Path) -> Result<Value, JsonIoError> {
         match serde_json::from_str::<Value>(&text) {
           Ok(value) => return Ok(value),
           Err(err) => {
-            // Most likely a read that landed mid-rename; retry before giving up.
+            // Most likely a read landing mid-rename; retry before giving up.
             last_error = Some(JsonIoError::Parse {
               path: path.to_path_buf(),
               detail: err.to_string(),
@@ -194,10 +179,8 @@ pub fn read_json(path: &Path) -> Result<Value, JsonIoError> {
 
 /// Write a JSON document atomically under the cross-process lock.
 ///
-/// The document is serialised before the lock is taken (encoding cannot fail
-/// under contention, and holding the mutex across it would only lengthen the
-/// window the service waits on). The temp file is created in the destination
-/// directory so the rename stays on one volume and therefore atomic.
+/// Serialised before the lock is taken, to keep the window the service waits on short. The temp
+/// file lives in the destination directory so the rename stays on one volume, hence atomic.
 pub fn write_json(path: &Path, value: &Value) -> Result<WriteOutcome, JsonIoError> {
   let text = to_pretty_json(value)?;
 
@@ -238,9 +221,8 @@ pub fn write_json(path: &Path, value: &Value) -> Result<WriteOutcome, JsonIoErro
         })
       }
       Err(err) => {
-        // A failed rename leaves the scratch file behind; a failed create may
-        // have left a partial one. Either way it must not linger next to the
-        // real file, where the service's directory watcher would see it.
+        // A partial or unrenamed scratch file must not linger next to the real one, where the
+        // service's directory watcher would see it.
         let _ = fs::remove_file(&temp);
         last_error = Some(err);
       }
@@ -255,14 +237,11 @@ pub fn write_json(path: &Path, value: &Value) -> Result<WriteOutcome, JsonIoErro
   Err(last_error.expect("a failed attempt always records an error"))
 }
 
-/// Serialise with Python's `indent=4` shape so a desktop write and a service
-/// write produce the same bytes for the same document.
+/// Serialise in Python's `indent=4` shape so desktop and service writes produce identical bytes.
 ///
-/// Line endings are part of that: `write_json_to_file` opens the scratch file in
-/// text mode (`open(temp_path, 'w')`), so every `\n` `json.dump` emits reaches
-/// disk as `\r\n`. serde_json emits bare `\n`, so we translate. Nothing inside a
-/// JSON string can be a literal newline — the encoder escapes those as `\\n` —
-/// so a blanket replacement only ever touches the formatter's own breaks.
+/// Including line endings: `write_json_to_file` opens the scratch file in text mode, so every `\n`
+/// lands as `\r\n`. serde_json emits bare `\n`, so we translate. Safe as a blanket replace — the
+/// encoder escapes literal newlines inside strings as `\\n`.
 fn to_pretty_json(value: &Value) -> Result<String, JsonIoError> {
   let mut buffer = Vec::new();
   let formatter = serde_json::ser::PrettyFormatter::with_indent(INDENT);
@@ -270,8 +249,7 @@ fn to_pretty_json(value: &Value) -> Result<String, JsonIoError> {
   value
     .serialize(&mut serializer)
     .map_err(JsonIoError::Encode)?;
-  // serde_json only ever emits UTF-8, so this cannot fail for a value it just
-  // serialised.
+  // serde_json only ever emits UTF-8.
   let text = String::from_utf8(buffer).expect("serde_json emits valid utf-8");
   Ok(text.replace('\n', "\r\n"))
 }
@@ -294,23 +272,20 @@ fn write_then_rename(temp: &Path, dest: &Path, bytes: &[u8]) -> Result<(), JsonI
   {
     let mut file = File::create(temp).map_err(|err| io_err(temp, err))?;
     file.write_all(bytes).map_err(|err| io_err(temp, err))?;
-    // Flush to disk before the rename: a kiosk that loses power mid-write must
-    // never come back with a present-but-empty config.json.
+    // Flush before rename: a kiosk losing power mid-write must not come back with an empty
+    // present config.json.
     file.sync_all().map_err(|err| io_err(temp, err))?;
   }
 
-  // On Windows this is MoveFileEx(MOVEFILE_REPLACE_EXISTING) — the same atomic
-  // replace `os.replace()` performs on the Python side.
+  // On Windows: MoveFileEx(MOVEFILE_REPLACE_EXISTING), same atomic replace as Python's os.replace.
   fs::rename(temp, dest).map_err(|err| io_err(dest, err))
 }
 
 /// RAII holder for the named mutex.
 ///
-/// Not `Send` by construction: Windows mutex ownership is per-thread, so the
-/// thread that waited must be the thread that releases. Every caller runs
-/// acquire → operate → drop inside one synchronous function body, which keeps
-/// that guarantee even though the commands execute on the async runtime's
-/// worker threads.
+/// !Send by construction: Windows mutex ownership is per-thread, so the waiting thread must be the
+/// releasing thread. Every caller does acquire → operate → drop in one synchronous body, which
+/// holds even though commands run on async worker threads.
 struct LockGuard {
   /// `Some` only when we own the mutex and therefore owe a release.
   handle: Option<HANDLE>,
@@ -335,8 +310,7 @@ impl LockGuard {
 impl Drop for LockGuard {
   fn drop(&mut self) {
     if let Some(handle) = self.handle {
-      // SAFETY: we own the mutex (the wait returned owned or abandoned) and are
-      // releasing it on the acquiring thread.
+      // SAFETY: we own the mutex (wait returned owned or abandoned), released on the same thread.
       unsafe {
         let _ = ReleaseMutex(handle);
       }
@@ -356,8 +330,7 @@ fn acquire_lock() -> LockGuard {
     };
   };
 
-  // SAFETY: `handle` is a live mutex handle owned by this process for its
-  // lifetime.
+  // SAFETY: `handle` is a live mutex handle owned by this process for its lifetime.
   let result = unsafe { WaitForSingleObject(handle, MUTEX_WAIT_MS) };
   let waited = started.elapsed();
 
@@ -374,8 +347,7 @@ fn acquire_lock() -> LockGuard {
       _not_send: PhantomData,
     }
   } else {
-    // WAIT_TIMEOUT or WAIT_FAILED: we do not own the mutex, so we must not
-    // release it.
+    // WAIT_TIMEOUT or WAIT_FAILED: we do not own the mutex, so we must not release it.
     LockGuard {
       handle: None,
       outcome: LockOutcome::Timeout,
@@ -388,19 +360,16 @@ fn acquire_lock() -> LockGuard {
 fn json_mutex() -> Option<HANDLE> {
   JSON_MUTEX
     .get_or_init(|| {
-      // SAFETY: both calls take a static wide string and return either a valid
-      // handle or an error; no pointers are retained by the OS.
+      // SAFETY: both calls take a static wide string; no pointers are retained by the OS.
       unsafe {
         match CreateMutexW(None, false, MUTEX_NAME) {
           Ok(handle) => Some(SharedMutex(handle)),
           Err(create_error) => {
-            // Expected on any machine where the service got there first: it
-            // creates the object with an explicit descriptor that grants
-            // Authenticated Users exactly SYNCHRONIZE | MUTEX_MODIFY_STATE
-            // (`shared_utils._JSON_MUTEX_SDDL`), and `CreateMutexW` asks for
-            // MUTEX_ALL_ACCESS. Opening it with the two rights we actually need
-            // is the path that descriptor exists for; the python side has the
-            // same fallback.
+            // Expected when the service got there first: its descriptor
+            // (`shared_utils._JSON_MUTEX_SDDL`) grants Authenticated Users only
+            // SYNCHRONIZE | MUTEX_MODIFY_STATE while CreateMutexW asks for MUTEX_ALL_ACCESS.
+            // Opening with just those two rights is the intended path; python has the same
+            // fallback.
             match OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE | MUTEX_MODIFY_STATE, false, MUTEX_NAME) {
               Ok(handle) => Some(SharedMutex(handle)),
               Err(open_error) => {
@@ -467,16 +436,14 @@ mod tests {
   fn writes_python_compatible_formatting_and_preserves_key_order() {
     let scratch = Scratch::new("format");
     let path = scratch.path("config.json");
-    // Insertion order here is deliberately not alphabetical: serde_json's
-    // `preserve_order` feature is what stops a desktop write from reshuffling
-    // the operator's config (and the untouchable `firebase` block).
+    // Deliberately not alphabetical: serde_json's `preserve_order` is what stops a desktop write
+    // reshuffling the operator's config (and the untouchable `firebase` block).
     let document: Value =
       serde_json::from_str(r#"{"zeta":1,"alpha":{"nested":true}}"#).expect("parse");
 
     write_json(&path, &document).expect("write");
 
-    // CRLF, four-space indent, no trailing newline — byte-for-byte what
-    // `json.dump(..., indent=4)` into a text-mode file produces on Windows.
+    // CRLF, four-space indent, no trailing newline — byte-for-byte Python's text-mode json.dump.
     let text = fs::read_to_string(&path).expect("read back");
     assert_eq!(
       text,
@@ -488,8 +455,7 @@ mod tests {
   fn string_values_containing_escapes_are_not_disturbed_by_the_crlf_pass() {
     let scratch = Scratch::new("escapes");
     let path = scratch.path("config.json");
-    // A path with a newline in it is pathological but legal, and it is exactly
-    // what a naive newline translation would corrupt.
+    // Pathological but legal, and exactly what a naive newline translation would corrupt.
     let document = json!({ "note": "line one\nline two", "path": "C:\\a\\b" });
 
     write_json(&path, &document).expect("write");
@@ -562,11 +528,9 @@ mod tests {
 
   #[test]
   fn a_guard_only_holds_a_handle_when_it_owns_the_lock() {
-    // The safety invariant behind Drop: we must never release a mutex we do
-    // not own. Whether we *can* own it still depends on the machine — an agent
-    // older than the SDDL fix leaves the object with LocalSystem's default
-    // DACL, and a non-elevated app legitimately lands on Unavailable (which the
-    // write outcome reports) rather than failing.
+    // Drop's invariant: never release a mutex we do not own. Whether we *can* own it is
+    // machine-dependent — pre-SDDL-fix agents leave LocalSystem's default DACL, so a non-elevated
+    // app legitimately lands on Unavailable.
     let guard = acquire_lock();
     assert_eq!(
       guard.handle.is_some(),
@@ -581,19 +545,10 @@ mod tests {
     );
   }
 
-  /// Contention check against the real Python holder: both sides run the same
-  /// protocol, so this proves the wait/release half of the seam end to end.
+  /// Contention check against the real Python holder — proves the wait/release half of the seam
+  /// end to end. Ignored by default: needs the deployed interpreter and the live `Global\` mutex.
+  /// The holder falls back to `OpenMutex` for the same reason this module does.
   ///
-  /// Ignored by default: it needs the deployed interpreter and touches the live
-  /// `Global\` mutex, so it only means anything on a machine with the agent
-  /// installed. It no longer needs an elevated shell — the service now creates
-  /// the object with a descriptor that lets Authenticated Users wait on it.
-  ///
-  /// The holder falls back to `OpenMutex` for the same reason this module does:
-  /// `CreateMutex` asks for MUTEX_ALL_ACCESS, which that descriptor withholds
-  /// from ordinary users on purpose.
-  ///
-  /// Run with:
   /// `cargo test --lib -- --ignored --exact json_io::tests::mutex_contention_with_python_holder --nocapture`
   #[test]
   #[ignore = "needs the deployed agent interpreter and an elevated shell"]
@@ -637,7 +592,7 @@ mod tests {
       .spawn()
       .expect("spawn python holder");
 
-    // Wait for the holder to confirm it owns the mutex before we contend.
+    // Wait for the holder to own the mutex before contending.
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut holder_ready = false;
     while Instant::now() < deadline {

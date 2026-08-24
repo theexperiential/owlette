@@ -1,16 +1,9 @@
 /**
- * POST   /api/sites/{siteId}/machines/{machineId}/uninstall
- *        → Queue an `uninstall_software` command for the named package on a
- *          single machine. Not tied to any deployment — distinct from
- *          `/api/sites/{siteId}/deployments/{deploymentId}/uninstall`.
- *
- * DELETE /api/sites/{siteId}/machines/{machineId}/uninstall
- *        → Queue a `cancel_uninstall` command targeting an in-flight
- *          uninstall on the same machine.
+ * POST   — queue `uninstall_software` for one package on one machine. Not
+ *          deployment-tied; that is the deployments/{id}/uninstall route.
+ * DELETE — queue `cancel_uninstall` against an in-flight uninstall.
  *
  * Capability: `UNINSTALL_TRIGGER` (site admin grants).
- *
- * security-boundary-migration wave 3.5.
  */
 import { NextResponse } from 'next/server';
 import {
@@ -36,18 +29,11 @@ import {
 
 type RouteParams = { siteId: string; machineId: string };
 
-/* ── shared helpers ───────────────────────────────────────────────────── */
-
 function actorString(actor: { type: 'user'; userId: string }): string {
-  // The wrapper only ever yields a UserActor. Sessions/id-tokens render as
-  // `user:<uid>`; api-key callers will render the same since the wrapper's
-  // Actor union currently flattens both into UserActor (the keyContext is
-  // not propagated through `SiteHandlerContext` — capture from the request
-  // surface in a future enhancement if a richer audit trail is needed).
+  // The wrapper only yields a UserActor, so api-key callers also render as
+  // `user:<uid>` — `SiteHandlerContext` doesn't carry the keyContext.
   return `user:${actor.userId}`;
 }
-
-/* ── POST: trigger uninstall ──────────────────────────────────────────── */
 
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'UNINSTALL_TRIGGER',
@@ -133,8 +119,6 @@ export const POST = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* ── DELETE: cancel uninstall ─────────────────────────────────────────── */
-
 export const DELETE = authorizedSiteHandler<RouteParams>({
   capability: 'UNINSTALL_TRIGGER',
   siteIdParam: 'path',
@@ -151,10 +135,7 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
       });
     }
 
-    // DELETE accepts software_name from either the JSON body OR the
-    // `?software_name=` query param. Body-on-DELETE is awkward across HTTP
-    // clients (some intermediaries strip it), so we prefer the query when
-    // both are present.
+    // Query wins over body: some intermediaries strip a DELETE body.
     const queryName = request.nextUrl.searchParams.get('software_name');
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
@@ -232,8 +213,6 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
   }
 });
 
-/* ── error mappers ────────────────────────────────────────────────────── */
-
 function triggerUninstallErrorToResponse(
   err: TriggerUninstallError,
   siteId: string,
@@ -272,8 +251,7 @@ function triggerUninstallErrorToResponse(
         code: 'software_record_invalid',
       });
     default: {
-      // Exhaustiveness guard — surfaces a typed mismatch at compile time
-      // if a new error code is added without a handler here.
+      // Exhaustiveness guard: a new error code without a handler fails to compile.
       const _exhaustive: never = err.code;
       void _exhaustive;
       return problemFromError(err, 'triggerUninstall:unknownErrorCode');

@@ -1,21 +1,13 @@
 /**
- * Account — user preferences (C4.4)
+ * Account — user preferences at `users/{uid}.preferences` (setDoc merge in
+ * AuthContext's updateUserPreferences).
  *
- * Preferences live at `users/{uid}.preferences` (merged via setDoc +
- * { merge: true } inside AuthContext's updateUserPreferences). This
- * spec exercises the two enum-valued preferences that are easy to pin
- * without a complex-picker component: temperatureUnit (C ↔ F) and
- * timeFormat (12h ↔ 24h). TimezoneSelect is a bigger picker and not
- * particularly valuable to exercise when the underlying write path is
- * the same setDoc merge.
+ * Covers the two enum preferences that pin without a complex picker:
+ * temperatureUnit and timeFormat. TimezoneSelect shares the same write path.
  *
- * Load-bearing contract: any flip in the UI Select → "save changes" →
- * writes to Firestore at the EXPECTED merge key. That's the guarantee
- * agents + other dashboard components rely on when they read
- * preferences to render temperatures / timestamps.
- *
- * `afterEach` restores the seeded preferences so consecutive runs on
- * a warm emulator don't drift.
+ * Contract under test: a UI Select flip + "save changes" writes to the EXPECTED
+ * merge key — what agents and other components rely on when reading
+ * preferences. `afterEach` restores the seed so warm-emulator runs don't drift.
  */
 
 import { test, expect } from '@playwright/test';
@@ -48,20 +40,19 @@ test('member can flip temperatureUnit C→F and timeFormat 12h→24h; Firestore 
   await page.getByRole('menuitem', { name: /account settings/i }).click();
   await page.getByRole('button', { name: /^preferences$/i }).first().click();
 
-  // Temperature unit — shadcn Select with trigger id="temperatureUnit".
+  // shadcn Select, trigger id="temperatureUnit".
   await page.locator('#temperatureUnit').click();
   await page.getByRole('option', { name: 'Fahrenheit (°F)' }).click();
 
-  // Time format — trigger id="timeFormat".
   await page.locator('#timeFormat').click();
   await page.getByRole('option', { name: '24-hour' }).click();
 
   await page.getByRole('button', { name: /^save changes$/i }).click();
 
-  // AuthContext's updateUserPreferences toasts on the non-silent path.
+  // updateUserPreferences toasts on the non-silent path.
   await expect(page.getByText('Preferences Updated', { exact: true })).toBeVisible();
 
-  // Admin SDK read-through — the real contract assertion.
+  // The real contract assertion: read back through the Admin SDK.
   const db = getAdminDb();
   const snap = await db.collection('users').doc(MEMBER.uid).get();
   const prefs = snap.data()?.preferences;
@@ -77,14 +68,10 @@ test('save without any change is a no-op (toast does not fire)', async ({ page }
   await page.getByRole('menuitem', { name: /account settings/i }).click();
   await page.getByRole('button', { name: /^preferences$/i }).first().click();
 
-  // Open the dialog on preferences but change nothing, then save.
-  // handleSave checks `prefsChanged` before calling updateUserPreferences;
-  // with no diff, no write happens and no toast fires. The dialog still
-  // closes (no error path).
+  // handleSave checks `prefsChanged` first, so a no-diff save writes nothing
+  // and fires no toast — but still closes the dialog.
   await page.getByRole('button', { name: /^save changes$/i }).click();
 
-  // Assert the dialog has closed (the preferences heading is gone from DOM).
   await expect(page.getByRole('heading', { name: 'preferences', exact: true })).toHaveCount(0);
-  // Assert NO "Preferences Updated" toast appeared within a reasonable window.
   await expect(page.getByText('Preferences Updated', { exact: true })).toHaveCount(0);
 });

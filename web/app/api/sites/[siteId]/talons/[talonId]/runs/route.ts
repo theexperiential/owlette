@@ -2,19 +2,13 @@
  * GET /api/sites/{siteId}/talons/{talonId}/runs
  *   output: { runs: TalonRun[], next_page_token, nextPageToken }
  *
- * Cursor-paginated execution history for one talon, most recent first, read
- * from `sites/{siteId}/talon_runs` filtered by `talonId`. The composite index
- * (`talonId` ASC, `startedAt` DESC) is declared in firestore.indexes.json.
+ * Cursor-paginated execution history, most recent first, from `sites/{siteId}/talon_runs` filtered
+ * by `talonId`. Composite index (`talonId` ASC, `startedAt` DESC) lives in firestore.indexes.json.
  *
- * The talon is NOT required to still exist: run records are an audit surface
- * and deliberately outlive the talon they describe (see `deleteTalon`), so a
- * missing talon returns an empty page rather than 404.
- *
- * The collection stays empty until the runner ships in wave 2.
+ * The talon need NOT still exist — run records are an audit surface that outlives it (see
+ * `deleteTalon`), so a missing talon returns an empty page, not 404.
  *
  * Capability: TALON_MANAGE with read-class api-key scope (`site=<siteId>:read`).
- *
- * talons wave 1.2.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -85,7 +79,6 @@ export const GET = authorizedSiteHandler<RouteParams>({
         const snapshot = await query.get();
         return snapshot.docs;
       },
-      // The query is already exact — every doc it returns belongs on the page.
       include: () => true,
     });
 
@@ -101,9 +94,8 @@ function stringOrNull(value: unknown): string | null {
 }
 
 /**
- * Wire form of a run record. Timestamps become ISO-8601 strings and every
- * optional field becomes an explicit `null`, so a client rendering the run
- * list never has to distinguish "absent" from "not applicable".
+ * Wire form: timestamps become ISO-8601, optional fields become explicit `null`, so clients never
+ * distinguish "absent" from "not applicable".
  */
 function serializeRun(id: string, data: FirebaseFirestore.DocumentData) {
   return {
@@ -123,8 +115,7 @@ function serializeRun(id: string, data: FirebaseFirestore.DocumentData) {
     correlationId: stringOrNull(data.correlationId),
     chatId: stringOrNull(data.chatId),
     error: stringOrNull(data.error),
-    // Set only on the run that switched the talon off — the run history's own
-    // explanation of why the talon stopped.
+    // Set only on the run that switched the talon off.
     disabledReason: stringOrNull(data.disabledReason),
     manual: data.manual === true,
   };

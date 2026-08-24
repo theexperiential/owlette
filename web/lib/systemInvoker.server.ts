@@ -1,52 +1,17 @@
 /**
- * system invoker (security-boundary-migration wave 2.3).
+ * system invoker — the single entry point for acting as a system actor (hoot
+ * autonomous, hoot provisioning, scheduled jobs). Mirrors `authorizedHandler`
+ * so background work gets the same audit + rate-limit + kill-switch semantics.
  *
- * Single entry point for any code path that needs to act as a system
- * actor — hoot autonomous mode, hoot provisioning, scheduled jobs.
- * Mirrors the authorization pipeline that `authorizedHandler` enforces
- * for http requests so the same audit + rate-limit + kill-switch
- * semantics apply to background work.
+ * Order matters: validate actor → fingerprint caller → capability →
+ * rate limit → BLOCKING allow-audit → action. The allow-audit is blocking and
+ * fails closed: a privileged action with no audit record is unrecoverable
+ * forensically. Errors inside `action` get a fire-and-forget error audit and
+ * re-throw unchanged.
  *
- * Flow per call:
- *   1. Validate `actor.type === 'system'` and `actor.name` is one of the
- *      known `SystemActorName` values. Throws synchronously on a bad
- *      actor (this is a programmer error — no audit row to write).
- *   2. Capture a stack-trace fingerprint of the caller module and stamp
- *      it into `metadata.callerModule`. If the fingerprint does NOT
- *      match an expected pattern (`web/lib/hoot/`, `web/lib/jobs/`,
- *      or a test file), emit a `logger.error('UNEXPECTED_SYSTEM_INVOKER_CALLER')`
- *      so wave 8.2 monitoring can fire on this. Never throws — this is a
- *      defense-in-depth alert layered on top of the eslint + ci-scan
- *      import-graph allowlist.
- *   3. Look up `SystemCapabilityMatrix[actor.name]`. If `capability` is
- *      not in the allowlist, write a `deny` audit entry (fire-and-forget)
- *      and throw `SystemInvokerCapabilityDenied`. Respects the
- *      `capability_enforcement` kill switch — when off, the deny still
- *      gets audited with `enforcementBypassed: true` and the action
- *      proceeds.
- *   4. Run `checkRateLimit(actor, capability, siteId)` against the
- *      `'system'` bucket (selected by `bucketForActor`). On a rate-limit
- *      reject, write a `deny` audit and throw `SystemInvokerRateLimited`.
- *      Respects the `rate_limit_enforcement` kill switch.
- *   5. Generate a `correlationId` and write an `allow` audit entry using
- *      `writeAuditEntryBlocking`. If the audit write fails, throw
- *      `SystemInvokerAuditUnavailable` BEFORE invoking the action — a
- *      privileged action without an audit record is the worst-case
- *      outcome and we'd rather fail closed.
- *   6. Invoke `action({ actor, siteId, correlationId })`.
- *   7. On thrown error inside `action`, write an `error` audit entry
- *      (fire-and-forget) and re-throw. The original error surface is
- *      preserved.
- *
- * Import-graph allowlist (defense in depth):
- *   - eslint rule `no-restricted-imports` blocks importing this module
- *     from outside `web/lib/hoot/**`, `web/lib/jobs/**`, and tests.
- *   - `scripts/check-system-invoker-callers.mjs` re-checks the same
- *     allowlist at ci time using a typescript ast walk, so a stale or
- *     bypassed eslint config doesn't silently let a misuse through.
- *   - The runtime `metadata.callerModule` alert above is the third
- *     layer — even if both static checks were defeated, an unexpected
- *     caller path lights up logs at error level.
+ * Three layers keep callers honest: the `no-restricted-imports` eslint rule,
+ * `scripts/check-system-invoker-callers.mjs` at ci, and the runtime
+ * `UNEXPECTED_SYSTEM_INVOKER_CALLER` alert below if both are bypassed.
  */
 
 import {
@@ -67,10 +32,6 @@ import { securityConfig } from '@/lib/securityConfig.server';
 import logger from '@/lib/logger';
 import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
 
-/* -------------------------------------------------------------------------- */
-/*  types                                                                     */
-/* -------------------------------------------------------------------------- */
-
 export interface SystemInvokerContext {
   actor: SystemActor;
   siteId: string;
@@ -86,10 +47,6 @@ export interface SystemInvokerOptions<T> {
   metadata?: Record<string, unknown>;
   action: (ctx: SystemInvokerContext) => Promise<T>;
 }
-
-/* -------------------------------------------------------------------------- */
-/*  errors                                                                    */
-/* -------------------------------------------------------------------------- */
 
 export class SystemInvokerError extends Error {
   readonly code: string;
@@ -142,10 +99,6 @@ export class SystemInvokerInvalidActor extends SystemInvokerError {
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  caller fingerprint                                                        */
-/* -------------------------------------------------------------------------- */
-
 const KNOWN_SYSTEM_ACTOR_NAMES: ReadonlySet<string> = new Set<SystemActorName>([
   'cortex_autonomous',
   'cortex_provisioning',
@@ -154,12 +107,9 @@ const KNOWN_SYSTEM_ACTOR_NAMES: ReadonlySet<string> = new Set<SystemActorName>([
 ]);
 
 /**
- * Patterns the caller fingerprint MUST match. Anything else is logged at
- * error level via `UNEXPECTED_SYSTEM_INVOKER_CALLER` so wave 8.2 metric
- * picks it up. Match against the path-normalized fingerprint (forward
- * slashes); test-files include both `__tests__` directories and
- * `*.test.ts` filenames so unit tests running through this code path
- * don't trip the alert.
+ * Patterns the caller fingerprint must match; anything else logs
+ * `UNEXPECTED_SYSTEM_INVOKER_CALLER`. Matched against the forward-slash
+ * normalized path; test paths are listed so unit tests don't trip the alert.
  */
 const ALLOWED_CALLER_PATTERNS: readonly RegExp[] = [
   /(^|\/)web\/lib\/hoot\//,
@@ -170,19 +120,14 @@ const ALLOWED_CALLER_PATTERNS: readonly RegExp[] = [
 ];
 
 /**
- * Extract a stable, repo-relative fingerprint of the immediate caller of
- * `invokeAsSystem`. Returns `unknown` when the runtime stack trace can't
- * be parsed (e.g. minified production builds with no original sources).
- *
- * Strategy: walk `new Error().stack`, skip frames that point at this
- * file itself, and return the first one that doesn't. Strip absolute
- * path prefixes so the fingerprint is stable across machines.
+ * Repo-relative fingerprint of `invokeAsSystem`'s immediate caller: first
+ * stack frame that isn't this file, with absolute prefixes stripped so it is
+ * stable across machines. `unknown` when the stack can't be parsed (minified
+ * production builds).
  */
 export function captureCallerFingerprint(stackOverride?: string): string {
   const stack = stackOverride ?? new Error().stack ?? '';
   const lines = stack.split('\n');
-  // Skip the leading "Error" line + any frame whose source location
-  // points back at this module.
   for (const rawLine of lines) {
     const frame = parseStackFrame(rawLine);
     if (!frame) continue;
@@ -193,32 +138,22 @@ export function captureCallerFingerprint(stackOverride?: string): string {
 }
 
 /**
- * Parse one v8-style stack frame line and return the source location
- * (path + line + column) normalized to forward slashes and trimmed of
- * the absolute repo prefix.
- *
- * Handles both:
- *   "    at Foo (C:/repo/web/lib/x.ts:12:34)"
- *   "    at C:/repo/web/lib/x.ts:12:34"
+ * Source location from one v8 stack frame, forward-slashed and repo-relative.
+ * Handles both `at Foo (C:/repo/web/lib/x.ts:12:34)` and the bare-path form.
  */
 function parseStackFrame(line: string): string | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith('at ')) return null;
-  // Match "(...)" form first.
   const parenMatch = trimmed.match(/\(([^)]+)\)\s*$/);
   const loc = parenMatch ? parenMatch[1] : trimmed.slice(3); // strip "at "
   if (!loc || loc === 'native' || loc.startsWith('<anonymous>')) return null;
 
-  // Drop file:// prefix if present (esm).
-  let normalized = loc.replace(/^file:\/\/\/?/, '');
-  // Forward slashes for cross-platform stability.
+  let normalized = loc.replace(/^file:\/\/\/?/, ''); // esm file:// prefix
   normalized = normalized.replace(/\\/g, '/');
-  // Strip drive letters on windows ("C:/..." -> "/...").
-  normalized = normalized.replace(/^[A-Za-z]:\//, '/');
+  normalized = normalized.replace(/^[A-Za-z]:\//, '/'); // windows drive letter
 
-  // Strip the repo-root prefix so fingerprints are stable across machines.
-  // We can't know the repo root statically, but `web/`, `agent/`, and
-  // `scripts/` are stable suffixes — find one and trim everything before.
+  // The repo root isn't knowable statically, but `web/`, `agent/`, `scripts/`
+  // are stable suffixes — trim everything before one.
   const repoIdx = findRepoRelativeStart(normalized);
   if (repoIdx >= 0) normalized = normalized.slice(repoIdx);
 
@@ -226,8 +161,7 @@ function parseStackFrame(line: string): string | null {
 }
 
 function findRepoRelativeStart(p: string): number {
-  // Look for a known top-level repo dir; pick the rightmost occurrence so
-  // a path like `/foo/web/.../web/lib/...` resolves to the deepest match.
+  // Rightmost match, so `/foo/web/.../web/lib/...` resolves to the deepest one.
   const markers = ['/web/', '/agent/', '/scripts/', '/cli/'];
   let best = -1;
   for (const m of markers) {
@@ -239,14 +173,10 @@ function findRepoRelativeStart(p: string): number {
 
 function isAllowedCaller(fingerprint: string): boolean {
   if (fingerprint === 'unknown') return false;
-  // Strip line:column suffix before pattern matching (so /web/lib/hoot/foo.ts:12:3 still matches).
+  // Strip the line:column suffix so `/web/lib/hoot/foo.ts:12:3` still matches.
   const sourcePath = fingerprint.replace(/:\d+:\d+$/, '');
   return ALLOWED_CALLER_PATTERNS.some((re) => re.test(sourcePath));
 }
-
-/* -------------------------------------------------------------------------- */
-/*  validators                                                                */
-/* -------------------------------------------------------------------------- */
 
 function validateActor(actor: unknown): asserts actor is SystemActor {
   if (!actor || typeof actor !== 'object') {
@@ -268,16 +198,11 @@ function validateActor(actor: unknown): asserts actor is SystemActor {
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  entry point                                                               */
-/* -------------------------------------------------------------------------- */
-
 /**
  * Run `action` as a system actor with full audit + capability + rate-limit
- * mediation. See module docstring for the full pipeline; throws one of
- * `SystemInvoker*` errors on any failure that prevents the action from
- * running. Once `action` is invoked, errors from inside it are re-thrown
- * unchanged after best-effort error-audit write.
+ * mediation (pipeline in the module doc). Throws a `SystemInvoker*` error for
+ * anything that prevents the action running; errors from inside `action` are
+ * re-thrown unchanged after a best-effort error audit.
  */
 export async function invokeAsSystem<T>(
   options: SystemInvokerOptions<T>,
@@ -291,9 +216,7 @@ export async function invokeAsSystem<T>(
 
   const callerModule = captureCallerFingerprint();
   if (!isAllowedCaller(callerModule)) {
-    // Defense-in-depth runtime alert. Static checks (eslint + ci scan)
-    // are the primary gate; this fires when both have been bypassed or
-    // when an unexpected dynamic require() somehow lands here.
+    // Third layer: fires only if eslint + the ci scan were both bypassed.
     logger.error('UNEXPECTED_SYSTEM_INVOKER_CALLER', {
       context: 'systemInvoker',
       data: {
@@ -325,11 +248,8 @@ export async function invokeAsSystem<T>(
     callerModule,
   };
 
-  // Read kill-switch state once per call so capability + rate-limit
-  // checks see the same view.
+  // Read once per call so capability + rate-limit see the same kill-switch view.
   const config = await securityConfig.read();
-
-  /* -- capability check ---------------------------------------------------- */
 
   const allowedCaps = SystemCapabilityMatrix[actor.name];
   const hasCap = allowedCaps.includes(capability);
@@ -349,13 +269,9 @@ export async function invokeAsSystem<T>(
     auditMetadata.enforcement_bypassed = 'capability';
   }
 
-  /* -- rate limit ---------------------------------------------------------- */
-
-  // Belt-and-braces: bucketForActor(SystemActor) returns 'system'. The
-  // assertion here documents the intent that systemInvoker NEVER
-  // contends for user-bucket tokens.
+  // systemInvoker must never contend for user-bucket tokens. Unreachable —
+  // validateActor already enforces actor.type === 'system'.
   if (bucketForActor(actor) !== 'system') {
-    // Should be impossible — validateActor enforces actor.type === 'system'.
     throw new SystemInvokerInvalidActor('non-system actor reached rate-limit gate');
   }
 
@@ -383,8 +299,6 @@ export async function invokeAsSystem<T>(
     }
   }
 
-  /* -- allow audit (blocking) ---------------------------------------------- */
-
   const allowEntry: AuditEntryInput = {
     correlationId,
     actor: { type: 'system', name: actor.name },
@@ -398,8 +312,7 @@ export async function invokeAsSystem<T>(
   try {
     await writeAuditEntryBlocking(siteId, allowEntry);
   } catch (err) {
-    // Audit unavailable — fail closed. A privileged action without a
-    // record is unrecoverable forensically.
+    // Fail closed: a privileged action with no audit record is unrecoverable.
     logger.error('[systemInvoker] allow-audit write failed; refusing to invoke', {
       context: 'systemInvoker',
       data: {
@@ -412,13 +325,10 @@ export async function invokeAsSystem<T>(
     throw new SystemInvokerAuditUnavailable(err, correlationId);
   }
 
-  /* -- invoke -------------------------------------------------------------- */
-
   try {
     return await action({ actor, siteId, correlationId });
   } catch (err) {
-    // Best-effort error-audit. Don't await — we want the original error
-    // to surface immediately and the audit to land asynchronously.
+    // Not awaited: the original error must surface immediately.
     writeAuditEntry(siteId, {
       correlationId,
       actor: { type: 'system', name: actor.name },
@@ -434,10 +344,6 @@ export async function invokeAsSystem<T>(
     throw err;
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/*  helpers                                                                   */
-/* -------------------------------------------------------------------------- */
 
 interface DenyEntryArgs {
   correlationId: string;

@@ -12,9 +12,8 @@ import {
   SIDEBAR_MIN_WIDTH,
   SIDEBAR_RAIL_WIDTH,
 } from './sidebarWidth'
-// The host clamps again on the way to disk; these two sets of bounds have to be
-// the same numbers or the divider would offer a width that is silently rewritten
-// on the next launch.
+// The host re-clamps on the way to disk, so these bounds must match its numbers
+// or the divider offers a width that is silently rewritten next launch.
 import windowStateRs from '../../src-tauri/src/window_state.rs?raw'
 
 /** Read a `pub const NAME: f64 = 123.0;` out of the rust module. */
@@ -35,9 +34,8 @@ describe('bounds', () => {
   })
 
   it('collapses well before the rail is reached', () => {
-    // The snap has to happen while the pointer is still moving; a threshold at
-    // or below the rail width would mean dragging into a column that is already
-    // as narrow as the rail.
+    // The snap must fire while the pointer is still moving: a threshold at or
+    // below the rail width means dragging into an already-rail-narrow column.
     expect(SIDEBAR_COLLAPSE_AT).toBeGreaterThan(SIDEBAR_RAIL_WIDTH)
     expect(SIDEBAR_COLLAPSE_AT).toBeLessThan(SIDEBAR_MIN_WIDTH)
   })
@@ -91,17 +89,16 @@ describe('layoutForDrag', () => {
   })
 
   it('keeps the expanded width to come back to', () => {
-    // Collapsing is not a resize: the width the operator dragged to is what
-    // expanding restores, whether that happens now or three launches later.
+    // Collapsing is not a resize — expanding restores the dragged-to width, now or
+    // three launches later.
     const gesture = layoutForDrag(expanded(352), -1000)
     expect(gesture).toEqual(collapsed(352))
     expect(layoutForDrag(gesture, 1000)).toEqual(expanded(SIDEBAR_MAX_WIDTH))
   })
 
   it('expands again inside the same gesture', () => {
-    // Dragging out of the rail: the pointer is measured from the rail's own
-    // width, so crossing the threshold puts the column back at the minimum and
-    // it grows from there.
+    // Out of the rail: measured from the rail's own width, so crossing the
+    // threshold lands at the minimum and grows from there.
     expect(layoutForDrag(collapsed(288), SIDEBAR_COLLAPSE_AT - SIDEBAR_RAIL_WIDTH)).toEqual(
       expanded(SIDEBAR_MIN_WIDTH),
     )

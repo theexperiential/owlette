@@ -5,31 +5,16 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { apiError } from '@/lib/apiErrorResponse';
 
 /**
- * POST /api/agent/screenshot
+ * POST /api/agent/screenshot — agent uploads a base64 JPEG (Bearer agent id
+ * token; body: siteId, machineId, screenshot, agentVersion).
  *
- * Agent-authenticated endpoint to upload a screenshot (base64 JPEG).
- * Uploads to Firebase Storage and stores the public URL in Firestore.
- *
- * Request headers:
- * - Authorization: Bearer <agent-firebase-id-token>
- *
- * Request body:
- * - siteId: string
- * - machineId: string
- * - screenshot: string (base64-encoded JPEG)
- * - agentVersion: string
- *
- * Storage paths:
- *   screenshots/{siteId}/{machineId}/latest.jpg (overwritten each time)
- *   screenshots/{siteId}/{machineId}/history/{timestamp}.jpg (history, max 20 kept)
- * Firestore writes:
- *   sites/{siteId}/machines/{machineId} → lastScreenshot: { url, timestamp, sizeKB }
- *   sites/{siteId}/machines/{machineId}/screenshots/{docId} → { url, timestamp, sizeKB }
+ * Storage:  screenshots/{siteId}/{machineId}/latest.jpg (overwritten)
+ *           .../history/{timestamp}.jpg (max 20 kept)
+ * Firestore: machines/{machineId}.lastScreenshot and its screenshots/ subcollection.
  */
 export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
-      // Verify agent Bearer token
       const authHeader = request.headers.get('Authorization') || '';
       const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
@@ -45,12 +30,10 @@ export const POST = withRateLimit(
         return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
       }
 
-      // Require agent role
       if (decodedToken.role !== 'agent') {
         return NextResponse.json({ error: 'Forbidden — agent token required' }, { status: 403 });
       }
 
-      // Parse body
       const body = await request.json();
       const { siteId, machineId, screenshot } = body;
 
@@ -61,7 +44,6 @@ export const POST = withRateLimit(
         );
       }
 
-      // Verify the token's site_id matches
       if (decodedToken.site_id && decodedToken.site_id !== siteId) {
         return NextResponse.json({ error: 'site_id mismatch' }, { status: 403 });
       }
@@ -70,11 +52,9 @@ export const POST = withRateLimit(
         return NextResponse.json({ error: 'machine_id_mismatch' }, { status: 403 });
       }
 
-      // Decode base64 to buffer
       const imageBuffer = Buffer.from(screenshot, 'base64');
       const sizeKB = Math.round(imageBuffer.length / 1024);
 
-      // Reject absurdly large screenshots (> 10MB)
       if (sizeKB > 10240) {
         return NextResponse.json(
           { error: `Screenshot too large: ${sizeKB}KB (max 10MB)` },
@@ -82,7 +62,6 @@ export const POST = withRateLimit(
         );
       }
 
-      // Upload to Firebase Storage
       const storage = getAdminStorage();
       const bucketName = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
       if (!bucketName) {
@@ -105,15 +84,12 @@ export const POST = withRateLimit(
         },
       });
 
-      // Make the file publicly readable
       await file.makePublic();
 
-      // Get the public URL
       const url = `https://storage.googleapis.com/${bucket.name}/${filePath}`;
-      // Append timestamp as cache-buster so browsers don't serve stale screenshots
+      // Cache-buster: the path is fixed, so browsers would serve a stale image.
       const urlWithCacheBuster = `${url}?t=${Date.now()}`;
 
-      // Write URL reference to Firestore machine document
       const db = getAdminDb();
       const machineRef = db
         .collection('sites')
@@ -132,10 +108,7 @@ export const POST = withRateLimit(
         { merge: true }
       );
 
-      // --- Screenshot history ---
-      const captureTimestamp = Date.now(); // Used for storage path only
-
-      // Upload history copy with timestamped path
+      const captureTimestamp = Date.now(); // storage path only
       const historyPath = `screenshots/${siteId}/${machineId}/history/${captureTimestamp}.jpg`;
       const historyFile = bucket.file(historyPath);
       await historyFile.save(imageBuffer, {
@@ -148,7 +121,6 @@ export const POST = withRateLimit(
       await historyFile.makePublic();
       const historyUrl = `https://storage.googleapis.com/${bucket.name}/${historyPath}`;
 
-      // Write to screenshots subcollection
       const screenshotsCol = machineRef.collection('screenshots');
       await screenshotsCol.add({
         url: historyUrl,
@@ -156,21 +128,18 @@ export const POST = withRateLimit(
         sizeKB,
       });
 
-      // Auto-prune: keep only the 20 most recent
       const MAX_HISTORY = 20;
       const allDocs = await screenshotsCol.orderBy('timestamp', 'asc').get();
       if (allDocs.size > MAX_HISTORY) {
         const toDelete = allDocs.docs.slice(0, allDocs.size - MAX_HISTORY);
         for (const docSnap of toDelete) {
           const data = docSnap.data();
-          // Delete Storage file
           try {
             const oldPath = data.url?.split(`${bucket.name}/`)?.[1];
             if (oldPath) await bucket.file(oldPath).delete();
           } catch {
-            // Storage file may already be deleted
+            // Already gone.
           }
-          // Delete Firestore doc
           await docSnap.ref.delete();
         }
         console.log(`[agent/screenshot] Pruned ${toDelete.length} old screenshots for ${machineId}`);

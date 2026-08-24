@@ -1,23 +1,11 @@
 /**
- * Settings — webhooks list (task 5.4)
+ * Settings — webhooks list: empty state, create dialog, the one-time reveal of
+ * the raw `whsec_*` secret, clipboard copy, dismiss, list refresh, and the
+ * contract that the secret never resurfaces in a row or after reload.
  *
- * What this exercises:
- *   /settings/webhooks empty-state, the create-webhook dialog (url +
- *   3-event subscription + optional description), the one-time reveal
- *   card with the raw whsec_* signing secret, copy-to-clipboard via
- *   navigator.clipboard.readText, dismiss, list refresh with active
- *   badge + per-event badges, and the one-time-reveal contract (secret
- *   never resurfaces in the list row or after a reload).
- *
- * Data plane: none — POST /api/webhooks writes to
- * sites/{siteId}/webhooks/{id}; no chunks, no r2, no outbound dispatch.
- *
- * URL choice: the task brief specifies `https://ci.example.com/hook` but
- * the create endpoint runs `validateWebhookUrl` which does a real
- * `dns.lookup()` — `ci.example.com` is unregistered and yields NXDOMAIN
- * on most resolvers. `example.com` itself (RFC 2606 reserved + IANA-
- * operated public a/aaaa records) is the closest DNS-resolvable
- * substitute and matches the legacy admin/webhooks.spec.ts convention.
+ * URL is `example.com`, not `ci.example.com`: the create endpoint's
+ * `validateWebhookUrl` does a real `dns.lookup()` and the subdomain NXDOMAINs
+ * on most resolvers. example.com is RFC 2606 reserved with real A/AAAA records.
  */
 
 import { test, expect } from '@playwright/test';
@@ -64,13 +52,12 @@ test('create webhook reveals whsec_* once, copies to clipboard, then list shows 
     page.getByRole('heading', { name: 'webhooks', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
 
-  // Empty-state — no webhooks seeded for this site.
+  // No webhooks seeded for this site.
   await expect(page.getByText('no webhooks yet')).toBeVisible();
   await expect(
     page.getByRole('button', { name: /^create your first webhook$/i }),
   ).toBeVisible();
 
-  // Open the create dialog via the header action.
   await page.getByRole('button', { name: /^create webhook$/i }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('heading', { name: /^create webhook$/i })).toBeVisible();
@@ -80,15 +67,12 @@ test('create webhook reveals whsec_* once, copies to clipboard, then list shows 
   await dialog.getByLabel(/^description/i).fill(description);
 
   for (const evt of SUBSCRIBED_EVENTS) {
-    // Each event renders as <label><Checkbox /><span>{evt}</span></label>.
-    // Radix Checkbox is a button (no native input), so getByRole('checkbox',
-    // {name}) is unreliable — click the label, which toggles the wrapped
-    // checkbox via the implicit label association.
+    // Radix Checkbox is a button, not a native input, so getByRole('checkbox',
+    // {name}) is unreliable — click the wrapping label instead.
     await dialog.locator('label', { hasText: evt }).click();
   }
 
-  // Submit + wait for the response so the reveal card is guaranteed
-  // mounted before we read the raw secret.
+  // Wait for the response so the reveal card is mounted before reading it.
   const responsePromise = page.waitForResponse(
     (res) =>
       res.url().includes('/api/webhooks') &&
@@ -103,8 +87,7 @@ test('create webhook reveals whsec_* once, copies to clipboard, then list shows 
   expect(responseBody.signingSecret).toMatch(/^whsec_[0-9a-f]{64}$/);
   const webhookId = responseBody.id;
 
-  // Reveal card — the raw secret is rendered exactly once inside a <code>
-  // sibling of the copy button. Anchor on the one-time-reveal banner copy.
+  // The raw secret renders exactly once, in a <code> beside the copy button.
   const revealBanner = page.getByText(
     /signing secret issued — copy it now\. it will not be shown again\./i,
   );
@@ -113,22 +96,17 @@ test('create webhook reveals whsec_* once, copies to clipboard, then list shows 
   const rawSecret = (await revealCard.locator('code').innerText()).trim();
   expect(rawSecret).toBe(responseBody.signingSecret);
 
-  // Copy-to-clipboard — the reveal card has two icon-only buttons: the X
-  // (aria-label="dismiss") and the copy button (TooltipTrigger). Match the
-  // copy button by excluding the dismiss aria-label.
+  // Two icon-only buttons on the card; match copy by excluding dismiss.
   const copyButton = revealCard.locator('button:not([aria-label="dismiss"])');
   await copyButton.click();
   await expect(page.getByText('copied to clipboard')).toBeVisible();
   const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
   expect(clipboardText).toBe(rawSecret);
 
-  // Dismiss the reveal card via the X button (aria-label="dismiss").
   await revealCard.getByRole('button', { name: 'dismiss' }).click();
   await expect(revealBanner).toBeHidden();
 
-  // List now contains the new webhook card — active badge + per-event
-  // badges + url + description. Each WebhookCard is a shadcn Card
-  // (`data-slot="card"`); pick the one containing our unique url.
+  // WebhookCard is a shadcn Card (`data-slot="card"`); pick the one with our url.
   const row = page
     .locator('[data-slot="card"]')
     .filter({ has: page.locator('code', { hasText: WEBHOOK_URL }) });
@@ -139,12 +117,10 @@ test('create webhook reveals whsec_* once, copies to clipboard, then list shows 
     await expect(row.getByText(evt, { exact: true })).toBeVisible();
   }
 
-  // One-time-reveal contract — the raw secret must not appear anywhere on
-  // the page now that the reveal card is dismissed.
+  // One-time reveal: the secret must be nowhere on the page once dismissed.
   await expect(page.getByText(rawSecret, { exact: true })).toHaveCount(0);
 
-  // Firestore shape — the api stored the secret plaintext (intentional —
-  // see route.ts) but no other endpoint surfaces it.
+  // Stored plaintext on purpose (see route.ts); no other endpoint surfaces it.
   const snap = await getAdminDb()
     .collection('sites')
     .doc(SITE_ID)
@@ -158,7 +134,7 @@ test('create webhook reveals whsec_* once, copies to clipboard, then list shows 
   expect(data.paused).toBe(false);
   expect(data.signingSecret).toBe(rawSecret);
 
-  // Reload — the one-time-reveal contract holds across navigations.
+  // The contract holds across navigations.
   await page.reload();
   await expect(
     page.getByRole('heading', { name: 'webhooks', exact: true }),

@@ -1,41 +1,31 @@
 #!/usr/bin/env node
 /**
- * Hardware Profile Bootstrap Script
+ * Hardware profile bootstrap. One-shot: writes a best-effort
+ * `hardware/profile` subdoc for machines that lack one, from the legacy
+ * singular metrics fields, so the dashboard can render offline/stale machines
+ * still on pre-2.9.0 agents.
  *
- * One-shot migration that iterates `sites/{siteId}/machines/{machineId}` docs
- * and writes a best-effort `hardware/profile` subdoc for any machine that
- * doesn't already have one, using the last-known legacy singular metrics
- * fields. Gives the dashboard something renderable for offline/stale
- * machines that haven't upgraded to agent 2.9.0 yet.
+ * Mapping (mighty-roaming-kettle.md §Backward Compatibility):
+ *   metrics.cpu.name       → cpus[0]  { id: 'CPU0', model, … }
+ *   metrics.disk.total_gb  → disks[0] { id: 'C:', totalGb, label, fs }
+ *   metrics.gpu.name       → gpus[0]  { id: 'GPU-<hash>', name, vramTotalGb }
+ *   metrics.network.interfaces keys → nics [{ id, linkSpeedMbps, mac: null }]
  *
- * Bootstrap mapping (per mighty-roaming-kettle.md §Backward Compatibility):
- *   metrics.cpu.name        → cpus[0]  = { id: 'CPU0', model, ... }
- *   metrics.disk.total_gb   → disks[0] = { id: 'C:', totalGb, label: 'System', fs: 'NTFS' }
- *   metrics.gpu.name        → gpus[0]  = { id: 'GPU-<hash>', name, vramTotalGb }
- *   metrics.network.interfaces keys → nics = [{ id, linkSpeedMbps, mac: null }]
- *
- * The agent overwrites the bootstrap profile with canonical data on the next
- * startup after upgrade (2.9.0+), so this is best-effort + write-once per
- * machine — we skip machines that already have a profile doc.
+ * Agent 2.9.0+ overwrites this with canonical data on next startup, so it is
+ * write-once per machine — existing profile docs are skipped.
  *
  * Usage:
- *   node scripts/migrate-profiles.mjs --env=dev --dry-run
- *   node scripts/migrate-profiles.mjs --env=dev
- *   node scripts/migrate-profiles.mjs --env=dev --site=SITE_ID
- *   node scripts/migrate-profiles.mjs --env=prod --dry-run
+ *   node scripts/migrate-profiles.mjs --env=dev|prod [--site=<id|all>]
+ *                                     [--dry-run] [--force]
  *
- * Flags:
- *   --env=dev|prod         required — target Firebase project
- *   --site=<id|all>        optional — default 'all'; limit to one site
- *   --dry-run              optional — log intended writes without committing
- *   --force                optional — overwrite existing profile docs
- *                          (normally we skip them; use only if you know why)
+ *   --env      required, target Firebase project
+ *   --site     default 'all'
+ *   --dry-run  log intended writes without committing
+ *   --force    overwrite existing profile docs
  *
- * Credentials:
- *   Same pattern as migrate-roles.mjs — reads FIREBASE_PROJECT_ID_{DEV|PROD},
- *   FIREBASE_CLIENT_EMAIL_{DEV|PROD}, FIREBASE_PRIVATE_KEY_{DEV|PROD} with
- *   unsuffixed fallback. Auto-loads web/.env.local, .claude/.env.local, and
- *   scripts/.env.local.
+ * Credentials: FIREBASE_{PROJECT_ID,CLIENT_EMAIL,PRIVATE_KEY}_{DEV|PROD} with
+ * unsuffixed fallback; auto-loads web/.env.local, .claude/.env.local,
+ * scripts/.env.local.
  */
 
 import { createRequire } from 'module';
@@ -48,12 +38,10 @@ import readline from 'readline';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-// firebase-admin lives in web/node_modules — resolve it from there so the
-// script runs without a root-level package.json.
+// firebase-admin lives in web/node_modules; resolve from there so this runs
+// without a root-level package.json.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 const admin = require('firebase-admin');
-
-// ---- CLI parsing ------------------------------------------------------------
 
 const args = process.argv.slice(2);
 
@@ -75,8 +63,6 @@ if (env !== 'dev' && env !== 'prod') {
   );
   process.exit(1);
 }
-
-// ---- .env loading -----------------------------------------------------------
 
 function loadEnvFile(path) {
   if (!existsSync(path)) return;
@@ -101,8 +87,6 @@ function loadEnvFile(path) {
 loadEnvFile(join(ROOT, 'web', '.env.local'));
 loadEnvFile(join(ROOT, '.claude', '.env.local'));
 loadEnvFile(join(ROOT, 'scripts', '.env.local'));
-
-// ---- Credentials ------------------------------------------------------------
 
 const suffix = env === 'prod' ? '_PROD' : '_DEV';
 const projectId =
@@ -129,23 +113,20 @@ if (usingFallback) {
   console.warn(`   Verify this matches the intended ${env} project before continuing.\n`);
 }
 
-// ---- Profile builder --------------------------------------------------------
-
 function shortHash(input) {
   return createHash('sha256').update(input).digest('hex').slice(0, 16);
 }
 
 /**
- * Build a best-effort hardware/profile doc from a legacy metrics blob.
- * Returns null if there's nothing useful to bootstrap (no legacy cpu/disk
- * at minimum) — those machines stay unprofiled until their agent upgrades.
+ * Best-effort profile from a legacy metrics blob, or null when there is
+ * nothing to bootstrap — those machines stay unprofiled until the agent
+ * upgrades.
  */
 function buildBootstrapProfile(machineData) {
   const metrics = machineData?.metrics;
   if (!metrics || typeof metrics !== 'object') return null;
 
-  // If the doc is already v2, there's nothing to bootstrap from legacy data
-  // (and the agent will have written the canonical profile already). Skip.
+  // v2 docs already carry an agent-written canonical profile.
   if (metrics.schemaVersion === 2) return null;
 
   const cpus = [];
@@ -223,8 +204,6 @@ function buildBootstrapProfile(machineData) {
   };
 }
 
-// ---- Migration --------------------------------------------------------------
-
 function promptYesNo(question) {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -256,7 +235,6 @@ async function main() {
   });
   const db = admin.firestore();
 
-  // Resolve which sites to scan.
   let siteIds;
   if (siteFilter === 'all') {
     const sitesSnap = await db.collection('sites').get();

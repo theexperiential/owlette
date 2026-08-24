@@ -1,65 +1,47 @@
 /**
- * Firebase Admin SDK Configuration
+ * Firebase Admin SDK — server-only. Importing this from client code would ship the service
+ * account. Requires FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY
+ * (private key carries literal \n escape sequences).
  *
- * This is the server-side Firebase Admin SDK configuration for token generation
- * and other privileged operations. NEVER exposed to client-side code.
- *
- * SECURITY: This file should ONLY be imported in API routes (server-side).
- * The service account credentials are stored as environment variables and
- * are never sent to the client.
- *
- * Environment variables required:
- * - FIREBASE_PROJECT_ID: Firebase project ID
- * - FIREBASE_CLIENT_EMAIL: Service account email
- * - FIREBASE_PRIVATE_KEY: Service account private key (with \n escape sequences)
+ * Modular entrypoints (`firebase-admin/app`, `/auth`, `/firestore`, `/storage`) rather than
+ * the `admin.*` namespace: v14 dropped the legacy namespace entirely.
  */
 
-import admin from 'firebase-admin';
+import { cert, getApps, initializeApp } from 'firebase-admin/app';
+import { getAuth, type Auth } from 'firebase-admin/auth';
+import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { getStorage, type Storage } from 'firebase-admin/storage';
 
-/**
- * Initialize Firebase Admin SDK (singleton pattern)
- *
- * The Admin SDK provides elevated privileges for:
- * - Creating custom tokens for agent authentication
- * - Server-side Firestore operations
- * - User management
- *
- * Credentials are pulled from environment variables to avoid hardcoding secrets.
- */
-if (!admin.apps.length) {
+/** Singleton init; credentials come from env. */
+if (!getApps().length) {
   try {
-    // Emulator mode (Playwright E2E): FIREBASE_AUTH_EMULATOR_HOST / FIRESTORE_EMULATOR_HOST
-    // / FIREBASE_STORAGE_EMULATOR_HOST are set by the test runner. The Admin SDK
-    // auto-routes to the emulator when these env vars are present — BUT only if
-    // initializeApp is called without a cert credential (cert triggers real-auth
-    // flow even when verifyIdToken respects the emulator env var). Branching here
-    // prevents the subtle "verify works against emulator, writes hit prod" footgun.
+    // Emulator mode (Playwright E2E). The Admin SDK auto-routes to the emulator on the
+    // *_EMULATOR_HOST vars ONLY if initializeApp gets no cert credential — a cert forces the
+    // real-auth flow even while verifyIdToken honours the env var, giving "verify hits the
+    // emulator, writes hit prod".
     const isEmulatorMode =
       !!process.env.FIREBASE_AUTH_EMULATOR_HOST ||
       !!process.env.FIRESTORE_EMULATOR_HOST;
 
     if (isEmulatorMode) {
       const projectId = process.env.FIREBASE_PROJECT_ID || 'demo-playwright-e2e';
-      admin.initializeApp({
+      initializeApp({
         projectId,
         storageBucket: `${projectId}.firebasestorage.app`,
       });
       console.log(`Firebase Admin SDK initialized in emulator mode (project: ${projectId})`);
     } else {
-      // Parse service account credentials from environment variables
       const projectId = process.env.FIREBASE_PROJECT_ID;
       const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-      const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+      const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\n/g, '\n');
 
-      // Validate required credentials
       if (!projectId || !clientEmail || !privateKey) {
         console.error('Firebase Admin SDK: Missing required environment variables');
         console.error('Required: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY');
-        // Don't throw - allow app to start but admin features won't work
+        // Deliberately not throwing: the app boots, admin features stay dead.
       } else {
-        // Initialize Admin SDK
-        admin.initializeApp({
-          credential: admin.credential.cert({
+        initializeApp({
+          credential: cert({
             projectId,
             clientEmail,
             privateKey,
@@ -72,22 +54,21 @@ if (!admin.apps.length) {
     }
   } catch (error) {
     console.error('Failed to initialize Firebase Admin SDK:', error);
-    // Don't throw - allow app to start but admin features won't work
+    // Deliberately not throwing: the app boots, admin features stay dead.
   }
 }
 
-// Export getter functions for Admin SDK services (lazy initialization)
-// This prevents errors during Next.js build when env vars aren't available
-// These are called at runtime, not during module load
+// Lazy getters: resolved at runtime, not module load, so a Next build without env vars
+// doesn't fail.
 
-let _adminAuth: admin.auth.Auth | null = null;
-let _adminDb: admin.firestore.Firestore | null = null;
-let _adminStorage: admin.storage.Storage | null = null;
+let _adminAuth: Auth | null = null;
+let _adminDb: Firestore | null = null;
+let _adminStorage: Storage | null = null;
 
 export const adminAuth = {
   get value() {
-    if (!_adminAuth && admin.apps.length) {
-      _adminAuth = admin.auth();
+    if (!_adminAuth && getApps().length) {
+      _adminAuth = getAuth();
     }
     if (!_adminAuth) {
       throw new Error('Firebase Admin SDK not initialized. Check environment variables.');
@@ -98,8 +79,8 @@ export const adminAuth = {
 
 export const adminDb = {
   get value() {
-    if (!_adminDb && admin.apps.length) {
-      _adminDb = admin.firestore();
+    if (!_adminDb && getApps().length) {
+      _adminDb = getFirestore();
     }
     if (!_adminDb) {
       throw new Error('Firebase Admin SDK not initialized. Check environment variables.');
@@ -110,8 +91,8 @@ export const adminDb = {
 
 export const adminStorage = {
   get value() {
-    if (!_adminStorage && admin.apps.length) {
-      _adminStorage = admin.storage();
+    if (!_adminStorage && getApps().length) {
+      _adminStorage = getStorage();
     }
     if (!_adminStorage) {
       throw new Error('Firebase Admin SDK not initialized. Check environment variables.');
@@ -120,10 +101,6 @@ export const adminStorage = {
   }
 };
 
-// Helper functions for easier access
 export const getAdminAuth = () => adminAuth.value;
 export const getAdminDb = () => adminDb.value;
 export const getAdminStorage = () => adminStorage.value;
-
-// Export admin instance for advanced use cases
-export default admin;

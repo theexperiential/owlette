@@ -1,28 +1,16 @@
 /**
  * Persistent, resumable upload queue (roost wave 3.3).
  *
- * Drag-drop a folder → the version builder (wave 3.2) enqueues one
- * upload task per chunk. The queue:
+ * One task per chunk, persisted to IndexedDB so closing the tab mid-upload
+ * doesn't lose progress; N in parallel (default 4); exponential backoff +
+ * jitter on transient failures; progress callback on every state change.
  *
- *   - persists pending + in-flight tasks to IndexedDB so closing the
- *     tab mid-upload doesn't lose progress
- *   - runs N tasks in parallel (default 4)
- *   - retries transient failures with exponential backoff + jitter
- *   - surfaces a progress callback on every state change
+ * Resume: re-dropping the same folder produces identical chunk hashes (CAS),
+ * so `succeeded` entries already in the store are skipped.
  *
- * Resume flow: caller reopens the dashboard and re-drops the same
- * folder; the hashing pass produces identical chunk hashes (CAS), the
- * queue looks up `state === 'succeeded'` entries already in the store
- * and skips them. Only in-flight / pending chunks replay.
- *
- * Storage is behind a `QueueStore` interface so Jest can exercise the
- * runner + retry arithmetic against an in-memory fake without adding
- * a fake-indexeddb dev dep.
+ * Storage sits behind `QueueStore` so Jest can exercise the runner and retry
+ * arithmetic without a fake-indexeddb dev dep.
  */
-
-/* --------------------------------------------------------------------- */
-/*  Types                                                                */
-/* --------------------------------------------------------------------- */
 
 export type TaskState = 'pending' | 'in_flight' | 'succeeded' | 'failed';
 
@@ -50,10 +38,6 @@ export interface QueueStore {
   delete(id: string): Promise<void>;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Retry arithmetic (pure)                                              */
-/* --------------------------------------------------------------------- */
-
 export interface BackoffOptions {
   /** First retry delay in ms. Default 1_000. */
   baseMs?: number;
@@ -68,11 +52,8 @@ export interface BackoffOptions {
 }
 
 /**
- * Compute the delay before retry-attempt `attempt` (1-indexed).
- * `attempt === 1` is the first retry after the initial attempt failed.
- *
- * `rng` is injectable for deterministic tests — pass a fixed value to
- * snapshot-test the backoff curve.
+ * Delay before retry-attempt `attempt` (1-indexed; 1 = first retry after the
+ * initial attempt failed). `rng` is injectable for deterministic tests.
  */
 export function nextRetryDelayMs(
   attempt: number,
@@ -102,14 +83,7 @@ export function shouldGiveUp(
   return attempt >= cap;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Pure queue operations                                                */
-/* --------------------------------------------------------------------- */
-
-/**
- * Given the full set of tasks, compute a progress snapshot for the UI.
- * Pure — no side effects, no storage reads outside the input.
- */
+/** Progress snapshot for the UI. Pure — reads nothing outside its input. */
 export function summariseQueue(tasks: readonly UploadTask[]): {
   total: number;
   succeeded: number;
@@ -156,11 +130,7 @@ export function summariseQueue(tasks: readonly UploadTask[]): {
   };
 }
 
-/**
- * Decide which tasks should be launched given a concurrency budget and
- * the current in-flight count. Returns the IDs to move from `pending`
- * to `in_flight`, in stable order.
- */
+/** Pending tasks to promote to in_flight given the concurrency budget. */
 export function selectNextBatch(
   pending: readonly UploadTask[],
   inFlightCount: number,
@@ -168,13 +138,9 @@ export function selectNextBatch(
 ): UploadTask[] {
   const slots = Math.max(0, concurrency - inFlightCount);
   if (slots === 0) return [];
-  // stable slice — callers rely on FIFO ordering for predictable progress.
+  // Stable slice — callers rely on FIFO for predictable progress.
   return pending.slice(0, slots);
 }
-
-/* --------------------------------------------------------------------- */
-/*  Runner                                                               */
-/* --------------------------------------------------------------------- */
 
 /** The work function the caller supplies — does the actual HTTP PUT. */
 export type UploadFn = (task: UploadTask) => Promise<void>;
@@ -197,12 +163,9 @@ export interface RunResult {
 }
 
 /**
- * Drive the queue to completion (or abort). Respects concurrency; retries
- * transient failures with backoff; writes every state transition back to
- * the store so tab-close recovery is automatic.
- *
- * Returns when every task is terminal (succeeded | failed + max attempts)
- * or the abort signal fires.
+ * Drive the queue to completion (or abort). Every state transition is written
+ * back to the store, so tab-close recovery is automatic. Returns once all tasks
+ * are terminal (succeeded, or failed at max attempts) or the signal fires.
  */
 export async function runUploadQueue(
   store: QueueStore,
@@ -214,9 +177,8 @@ export async function runUploadQueue(
   const now = opts.now ?? (() => Date.now());
   const sleep = opts.sleep ?? defaultSleep;
 
-  // on start: any task we find in `in_flight` is a zombie from a previous
-  // tab (crash or close). demote to pending so the backoff arithmetic
-  // restarts cleanly.
+  // Any `in_flight` task at startup is a zombie from a crashed/closed tab —
+  // demote to pending so the backoff arithmetic restarts cleanly.
   for (const zombie of await store.list({ state: 'in_flight' })) {
     await store.put({ ...zombie, state: 'pending', updatedAt: now() });
   }
@@ -236,13 +198,12 @@ export async function runUploadQueue(
     }
 
     const pending = await store.list({ state: 'pending' });
-    // never terminal: wait for in-flight to finish before declaring done.
+    // Not terminal until in-flight work drains too.
     if (pending.length === 0 && inFlight.size === 0) break;
 
     const launch = selectNextBatch(pending, inFlight.size, concurrency);
     if (launch.length === 0) {
-      // waiting for in-flight — yield. the then() chain on each promise
-      // will loop back in and pick up the next pending batch.
+      // All slots busy — yield; the loop picks up the next batch.
       await sleep(10, opts.signal);
       continue;
     }
@@ -255,7 +216,7 @@ export async function runUploadQueue(
       };
       await store.put(started);
       inFlight.add(task.id);
-      // fire-and-register; don't await here so parallelism is actually parallel.
+      // Don't await — parallelism depends on it.
       void (async () => {
         try {
           await upload(started);
@@ -272,9 +233,8 @@ export async function runUploadQueue(
               error: message,
             });
           } else {
-            // back off then requeue as pending. the sleep is here (not
-            // inside the main loop) so other tasks aren't blocked while
-            // this one waits.
+            // Sleep here rather than in the main loop so other tasks aren't
+            // blocked while this one backs off.
             const delay = nextRetryDelayMs(nextAttempt, backoff);
             try {
               await sleep(delay, opts.signal);
@@ -297,7 +257,7 @@ export async function runUploadQueue(
     }
 
     await notifyProgress();
-    // give the event loop a chance to execute the fire-and-register tasks
+    // Let the event loop run the fire-and-register tasks.
     await sleep(0, opts.signal);
   }
 
@@ -335,15 +295,8 @@ function makeAbortError(): Error {
   return E as Error;
 }
 
-/* --------------------------------------------------------------------- */
-/*  IndexedDB-backed QueueStore — see ./uploadQueue.idb.ts                */
-/* --------------------------------------------------------------------- */
-
-// The browser IndexedDB adapter lives in a separate file so this module
-// can stay fully unit-testable under Node. The adapter is thin — it only
-// satisfies the `QueueStore` interface with `indexedDB.open` + tx plumbing
-// — and its correctness depends on real IndexedDB semantics, which a fake
-// would only mirror by definition. Left out of unit tests on purpose; an
-// integration test with a real browser (or fake-indexeddb, if we ever
-// allow that dep) belongs to the wave 1.6 test-infra task.
+// The IndexedDB adapter lives in a separate file so this module stays
+// unit-testable under Node. Its correctness depends on real IndexedDB semantics
+// that a fake would only mirror by definition — intentionally not unit-tested;
+// an integration test belongs to the wave 1.6 test-infra task.
 export { openIndexedDBStore } from './uploadQueue.idb';

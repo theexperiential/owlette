@@ -1,24 +1,11 @@
 /**
- * Pure logic for roost telemetry + per-tenant cost attribution (wave 2b.6).
+ * Pure logic for roost telemetry + per-tenant cost attribution.
  *
- * Cost model (Cloudflare R2, as of 2025-Q4 public pricing):
- *   - Storage         : $0.015 per GB-month
- *   - Class A (writes): $4.50 per million
- *   - Class B (reads) : $0.36 per million
- *   - Egress          : $0 (R2's signature — free egress is the whole
- *                       reason roost picked R2 over S3/GCS).
- *
- * Costs are pro-rated for the fraction of the billing month that has
- * elapsed so the dashboard can show "$X so far this month" at any time.
- *
- * Cost math is split from the handler so it's unit-testable and so the
- * dashboard can recompute projections client-side if it ever needs to
- * show what-if-you-kept-growing scenarios.
+ * Cloudflare R2 pricing as of 2025-Q4; free egress is why roost picked R2 over
+ * S3/GCS. Storage is pro-rated by elapsed month so the dashboard can show
+ * "$X so far this month" at any time. Split from the handler so it's
+ * unit-testable and the dashboard can recompute projections client-side.
  */
-
-/* --------------------------------------------------------------------- */
-/*  Pricing constants                                                    */
-/* --------------------------------------------------------------------- */
 
 /** R2 storage rate, USD per GB-month. Authoritative: Cloudflare docs 2025. */
 export const R2_STORAGE_USD_PER_GB_MONTH = 0.015;
@@ -34,13 +21,9 @@ export const R2_EGRESS_USD_PER_GB = 0;
 
 const BYTES_PER_GB = 1024 ** 3;
 
-/* --------------------------------------------------------------------- */
-/*  Types                                                                */
-/* --------------------------------------------------------------------- */
-
 /**
- * Per-tenant raw observations for a billing window. All counters are
- * cumulative within the window (not delta-since-last-poll).
+ * Per-tenant observations for a billing window. Counters are cumulative within
+ * the window, not delta-since-last-poll.
  */
 export interface UsageCounters {
   /** Peak or averaged storage usage across the window. */
@@ -66,22 +49,15 @@ export interface CostBreakdown {
 export interface CostInput {
   counters: UsageCounters;
   /**
-   * Fraction of the billing month elapsed (0 < f ≤ 1). Storage cost is
-   * pro-rated by this fraction because it's billed per GB-month. Ops
-   * are NOT pro-rated — they're counted at the time they happen.
+   * Fraction of the billing month elapsed (0 < f <= 1). Pro-rates storage only
+   * — ops accrue at the moment they happen.
    */
   monthFractionElapsed: number;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Cost math                                                            */
-/* --------------------------------------------------------------------- */
-
 /**
- * Compute the USD cost of a tenant's R2 activity for the window.
- *
- * Storage is pro-rated by `monthFractionElapsed`; ops and egress are not
- * (they accrue point-in-time). Rounding is left to the caller.
+ * USD cost of a tenant's R2 activity for the window. Storage is pro-rated by
+ * `monthFractionElapsed`; ops and egress are not. Rounding is the caller's.
  */
 export function computeCost(input: CostInput): CostBreakdown {
   const { counters, monthFractionElapsed } = input;
@@ -105,10 +81,7 @@ export function computeCost(input: CostInput): CostBreakdown {
   };
 }
 
-/**
- * Return the fraction of the calendar month already elapsed at `now`.
- * For March 15 at noon: roughly 14.5 / 31 ≈ 0.47.
- */
+/** Fraction of the calendar month elapsed at `now` (Mar 15 noon ~= 14.5/31). */
 export function monthFractionElapsed(now: Date): number {
   const year = now.getUTCFullYear();
   const month = now.getUTCMonth();
@@ -125,14 +98,9 @@ function clamp01(x: number): number {
   return x;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Event types + aggregation                                            */
-/* --------------------------------------------------------------------- */
-
 /**
- * Usage events are emitted by the web + agent sides whenever a billable
- * R2 operation completes. Aggregator rolls these up nightly into
- * `UsageCounters` per site.
+ * Emitted by web + agent whenever a billable R2 operation completes; rolled up
+ * nightly into per-site `UsageCounters`.
  */
 export type UsageEventKind =
   | 'class_a_op'        // PUT, POST, LIST, COPY
@@ -151,12 +119,9 @@ export interface UsageEvent {
 }
 
 /**
- * Fold a list of events for one site into `UsageCounters`.
- *
- * `storageBytes` is the AVERAGE of storage_snapshot observations (not
- * the latest) because R2 bills on stored bytes over time. A tenant who
- * had 100 GB for 1 hour and then deleted to 1 GB for 23 hours should
- * pay for ~5 GB-day, not 100.
+ * Fold one site's events into `UsageCounters`. `storageBytes` averages the
+ * storage_snapshot observations rather than taking the latest, because R2 bills
+ * stored bytes over time: 100 GB for 1h then 1 GB for 23h is ~5 GB-day, not 100.
  */
 export function aggregateCounters(events: readonly UsageEvent[]): UsageCounters {
   let classAOps = 0;
@@ -187,18 +152,11 @@ export function aggregateCounters(events: readonly UsageEvent[]): UsageCounters 
   return { storageBytes, classAOps, classBOps, egressBytes };
 }
 
-/* --------------------------------------------------------------------- */
-/*  OTLP log payload                                                     */
-/* --------------------------------------------------------------------- */
-
 /**
- * Shape of a single telemetry log record. Intentionally OTLP-compatible
- * so a Cloud Logging → OpenTelemetry collector sidecar can forward it
- * without field-name translation.
- *
- * This is the "exporter" surface for now: emit JSON-line records on
- * stderr. Switching to a proper OTEL SDK exporter later is a drop-in
- * for this function.
+ * One telemetry log record. OTLP-compatible on purpose, so a Cloud Logging ->
+ * OpenTelemetry collector sidecar forwards it without renaming fields. The
+ * current exporter just writes JSON lines to stderr; a real OTEL SDK exporter
+ * is a drop-in replacement.
  */
 export interface OtlpTelemetryRecord {
   /** OTLP severity: INFO, WARN, ERROR. */

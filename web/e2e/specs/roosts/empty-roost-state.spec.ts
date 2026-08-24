@@ -1,12 +1,7 @@
 /**
- * Roosts — empty-state rendering (task 1.3)
- *
- * What this exercises:
- *   A roost that exists but has zero versions must render gracefully both
- *   in the collapsed list row and the expanded VersionHistory panel — no
- *   `vNaN`, no broken layout, no JS errors.
- *
- * Data plane: none — no push, no chunks, no http to /api/chunks.
+ * Roosts — a roost with zero versions must render cleanly in both the
+ * collapsed row and the expanded VersionHistory panel: no `vNaN`, no broken
+ * layout, no JS errors. No data plane.
  */
 
 import { test, expect, type ConsoleMessage } from '@playwright/test';
@@ -27,8 +22,7 @@ function isKnownPageChromeNoise(message: string): boolean {
 
 async function cleanup() {
   const db = getAdminDb();
-  // Defensive: seedRoost writes no versions, but a prior failed run could
-  // have left sub-collection docs behind. Wipe them before the doc itself.
+  // A prior failed run can leave sub-collection docs; wipe before the doc.
   const versions = await db
     .collection('sites').doc(SITE_ID)
     .collection('roosts').doc(ROOST_ID)
@@ -48,8 +42,7 @@ test.afterEach(async () => {
 });
 
 test('roost with zero versions renders cleanly in collapsed row + expanded panel', async ({ page }) => {
-  // Capture pageerror + console.error for the test lifetime. Asserted at
-  // the end so a `vNaN` render bug surfaces even if visuals happen to pass.
+  // Asserted at the end so a `vNaN` render bug surfaces even if visuals pass.
   const pageErrors: Error[] = [];
   const consoleErrors: ConsoleMessage[] = [];
   page.on('pageerror', (e) => pageErrors.push(e));
@@ -62,30 +55,24 @@ test('roost with zero versions renders cleanly in collapsed row + expanded panel
   await page.goto('/roosts');
   await expect(page.getByRole('heading', { name: 'roosts', exact: true })).toBeVisible({ timeout: 10_000 });
 
-  // ---- Assertion A — collapsed row ----
   const row = page.locator(`[data-roost-row="${ROOST_ID}"]`);
   await expect(row).toBeVisible();
   await expect(row).toContainText(ROOST_NAME);
 
-  // The version-badge slot only renders when currentVersionNumber !== null
-  // (per app/roosts/page.tsx). With no versions, the slot must be absent.
+  // roosts/page.tsx only renders the badge when currentVersionNumber !== null.
   await expect(row.locator('[aria-label^="current version"]')).toHaveCount(0);
 
-  // Defensive: nothing in the document should ever read `vNaN`.
   await expect(page.locator('body')).not.toContainText('vNaN');
 
-  // ---- Assertion B — expanded panel ----
   await row.click();
   await expect(page.getByRole('button', { name: 'version history' })).toBeVisible();
 
-  // Empty-state copy is literal "no versions yet" (VersionHistory.tsx:124).
+  // Literal copy from VersionHistory.tsx:124.
   await expect(page.getByText('no versions yet', { exact: true })).toBeVisible();
 
-  // "+ new version" CTA inside the panel. Exact-match avoids the page-level
-  // "new roost" button.
+  // Exact-match so the page-level "new roost" button doesn't collide.
   await expect(page.getByRole('button', { name: 'new version', exact: true })).toBeVisible();
 
-  // No error boundary copy.
   await expect(page.getByText(/something went wrong/i)).toHaveCount(0);
 
   expect(pageErrors, `pageerror events: ${pageErrors.map((e) => e.message).join(' | ')}`).toHaveLength(0);

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
-import { ARG_RESTART_PROMPT, launchArgs, onSecondInstance } from '@/lib/ipc'
+import { ARG_RESTART_PROMPT } from '@/lib/ipc'
+import { useLaunchFlag } from '@/hooks/useLaunchFlag'
 
 /**
  * Whether the service is asking for the reboot prompt.
@@ -10,36 +10,11 @@ import { ARG_RESTART_PROMPT, launchArgs, onSecondInstance } from '@/lib/ipc'
  * request, and it arrives on `owlette://second-instance` when the app was
  * already running — the single-instance plugin folds the second launch into this
  * process rather than starting another one.
+ *
+ * Both routes are watched by {@link useLaunchFlag}; this only names the flag.
  */
 export function useRestartPrompt(): { armed: boolean; dismiss: () => void } {
-  const [armed, setArmed] = useState(false)
+  const { armed, dismiss } = useLaunchFlag(ARG_RESTART_PROMPT)
 
-  useEffect(() => {
-    let disposed = false
-    let stop: (() => void) | undefined
-
-    void launchArgs()
-      .then((argv) => {
-        if (!disposed && argv.includes(ARG_RESTART_PROMPT)) setArmed(true)
-      })
-      .catch(() => {
-        // No bridge (browser dev run) — nothing is asking for a reboot.
-      })
-
-    void onSecondInstance((payload) => {
-      if (payload.argv.includes(ARG_RESTART_PROMPT)) setArmed(true)
-    })
-      .then((unlisten) => {
-        if (disposed) unlisten()
-        else stop = unlisten
-      })
-      .catch(() => {})
-
-    return () => {
-      disposed = true
-      stop?.()
-    }
-  }, [])
-
-  return { armed, dismiss: useCallback(() => setArmed(false), []) }
+  return { armed, dismiss }
 }

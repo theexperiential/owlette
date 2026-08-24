@@ -1,48 +1,33 @@
 /**
- * Hoot turn runner — detached LLM loop (hoot-async-turns wave 2.2).
+ * Hoot turn runner — detached LLM loop.
  *
- * A chat turn (LLM loop + tool execution) no longer lives inside the HTTP
- * request: `startTurn` returns the live UI-message stream immediately, while
- * the turn itself keeps running server-side until the model finishes — even
- * if the HTTP response dies (proxy idle timeout, page reload, network drop).
+ * The turn outlives the HTTP request: `startTurn` returns the live UI-message
+ * stream immediately and keeps running server-side even if the response dies
+ * (proxy idle timeout, page reload, network drop).
  *
- * Plumbing per turn:
- *   - `createUIMessageStream` drives `streamText`; the resulting chunk stream
- *     is teed. One branch is returned to the route (best-effort live UX); the
- *     other is pumped through `readUIMessageStream` into throttled
- *     `writeSnapshot` calls on `chats/{chatId}/stream/current`, so a
- *     reattaching client can render the turn from Firestore alone.
- *   - A transient `data-heartbeat` part every ~20s keeps proxies from seeing
- *     an idle connection during long tool waits (transient parts never enter
- *     the message state); the same tick bumps the stream doc's `updatedAt` so
- *     a long model/tool gap isn't declared a dead runner.
- *   - Tool dispatches report `toolCallId → machineId → {commandId}` via
- *     `recordToolCommand` (the recovery index). The ~20s heartbeat alone keeps
- *     the stream doc fresh during long tool waits (well under TURN_STALE_MS of
- *     45s), so no redundant per-poll touch is needed.
- *   - Before the model call, the history is repaired: dangling tool parts
- *     from a prior dead turn get a recovery attempt against
- *     `commands/completed` using the prior stream doc's `toolCommands` index.
- *     The repaired history is persisted to `chats/{chatId}` immediately (a
- *     turnId-guarded write) so the user's just-sent message is durable before
- *     any reattach — even if the model call or a tool later fails.
- *   - A per-turn AbortController is aborted the moment the heartbeat's `touch`
- *     reports the turn no longer owns the stream doc (superseded by a newer
- *     turn, or stopped via /api/hoot/stop). That aborts `streamText` and the
- *     in-flight tool poll loops so a dead turn stops doing invisible work.
- *   - On finish the runner is the persist authority: it marks the turn
- *     terminal and writes the final message array to `chats/{chatId}`
- *     (schema mirrors the client persist in `useHoot.ts`), then triggers
- *     categorization for new conversations.
+ * - The chunk stream is teed: one branch to the route, the other pumped via
+ *   `readUIMessageStream` into throttled `writeSnapshot` calls on
+ *   `chats/{chatId}/stream/current`, so a reattaching client can render the
+ *   turn from Firestore alone.
+ * - A transient `data-heartbeat` every ~20s keeps proxies from seeing an idle
+ *   connection and bumps the stream doc's `updatedAt` (TURN_STALE_MS is 45s),
+ *   which is why tool poll loops need no per-poll touch.
+ * - History is repaired before the model call — dangling tool parts recovered
+ *   from `commands/completed` via the prior stream doc's `toolCommands` index
+ *   — then persisted immediately (turnId-guarded) so the user's message is
+ *   durable before any reattach, even if the model or a tool later fails.
+ * - A per-turn AbortController fires when `touch` reports lost ownership
+ *   (superseded, or stopped via /api/hoot/stop), killing streamText and the
+ *   in-flight tool poll loops.
+ * - On finish the runner is the persist authority: marks the turn terminal,
+ *   writes the final message array (schema mirrors `useHoot.ts`), triggers
+ *   categorization for new conversations.
  *
- * Failure discipline: `startTurn` never throws and every detached chain ends
- * in `finishTurn('error', …)`; internal failures surface as an error chunk on
- * the returned stream (via `createUIMessageStream`'s onError), so the client
- * always sees the turn terminate. turnStore writes are turnId-guarded no-ops
- * once superseded, and the final chat persist is skipped when `finishTurn`
- * reports the turn no longer owns the stream doc.
+ * `startTurn` never throws; every detached chain ends in `finishTurn('error')`
+ * and surfaces an error chunk, so the client always sees the turn terminate.
+ * turnStore writes are turnId-guarded no-ops once superseded.
  *
- * IMPORTANT: Server-side only — never import this in client components.
+ * Server-side only — never import this in client components.
  */
 
 import {
@@ -109,14 +94,10 @@ export interface StartTurnParams {
   userId: string;
   access: SiteAccessLevel;
   /**
-   * Explicit ceiling on the tool tier this turn may use. Intersected with the
-   * tier `access` already earns, so it can only ever LOWER the tool set —
-   * never raise it above what the acting user could do themselves.
-   *
-   * Omitted means "whatever `access` earns", which is the interactive
-   * `/api/hoot` behaviour. The unattended talon path sets it explicitly rather
-   * than degrading `access` itself, so fire-time access re-resolution keeps
-   * working: a demoted author still drops to tier 1 through the intersection.
+   * Ceiling on this turn's tool tier, intersected with what `access` earns so
+   * it can only LOWER the tool set. Omitted = whatever `access` earns.
+   * The talon path sets this instead of degrading `access`, so fire-time
+   * access re-resolution still demotes a demoted author to tier 1.
    */
   maxToolTier?: ToolTier;
   /** Prior turn's recovery index: `toolCallId → machineId → { commandId }`. */
@@ -128,10 +109,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Fetch process configurations from Firestore for system prompt context.
- * (Moved from /api/hoot/route.ts — the runner owns the LLM call now.)
- */
+/** Process configs from Firestore, for system-prompt context. */
 async function fetchProcessSummaries(
   db: FirebaseFirestore.Firestore,
   siteId: string,
@@ -170,11 +148,10 @@ type MachineOutcome =
   | null;
 
 /**
- * Look one machine's `commands/completed` entry up by commandId and classify it:
- *   - terminal success → `{ output }` (JSON-parsed like executeToolOnAgent)
- *   - `failed` / `cancelled` → `{ errorText }` from the entry
- *   - `running` (agent still executing) → `{ errorText: STILL_RUNNING_ERROR }`
- *   - entry absent (consumed, GC'd, or never dispatched) / read failure → `null`
+ * Classify one machine's `commands/completed` entry:
+ * success → `{ output }` (JSON-parsed like executeToolOnAgent); failed /
+ * cancelled → `{ errorText }`; running → STILL_RUNNING_ERROR; entry absent
+ * (consumed, GC'd, never dispatched) or read failure → `null`.
  */
 async function resolveMachineEntry(
   db: FirebaseFirestore.Firestore,
@@ -209,7 +186,7 @@ async function resolveMachineEntry(
       };
     }
 
-    // Terminal success — parse string results like executeToolOnAgent does.
+    // Parse string results like executeToolOnAgent does.
     const result = cmd.result;
     if (typeof result === 'string') {
       try {
@@ -226,21 +203,12 @@ async function resolveMachineEntry(
 }
 
 /**
- * Build the repair-time recovery resolver from the PRIOR turn's nested
- * `toolCommands` index (`toolCallId → machineId → { commandId }`).
- *
- * Single-machine turn (`isSiteMode === false`): there is exactly one machine
- * entry — resolve it and return the UNWRAPPED result (`{ output }` /
- * `{ errorText }`) exactly as the live single-machine path produces.
- *
- * Site-wide turn (`isSiteMode === true`): a dangling toolCallId fanned out to N
- * machines. Resolve EVERY machine entry and AGGREGATE into the site-wide shape
- * the live path produces (`buildExecutableTools` → `{ machines: [...] }`):
- * `{ output: { machines: [{ machine, ...perMachineResult }, ...] } }`, where a
- * machine's success spreads its output object, a failed/cancelled/running
- * machine contributes `{ machine, error }`, and an absent entry is skipped. If
- * NO machine entry resolves, return `null` so the repair falls back to the
- * synthesized lost-result error.
+ * Repair-time recovery resolver over the PRIOR turn's `toolCommands` index
+ * (`toolCallId → machineId → { commandId }`). Output shape must match what the
+ * live path produces: single-machine returns the unwrapped result; site mode
+ * aggregates every machine into `{ machines: [{ machine, ...result }] }` (a
+ * failure contributes `{ machine, error }`, an absent entry is skipped).
+ * `null` when nothing resolves — the repair then synthesizes a lost-result error.
  */
 function buildResolveLostResult(
   db: FirebaseFirestore.Firestore,
@@ -254,7 +222,6 @@ function buildResolveLostResult(
     if (entries.length === 0) return null;
 
     if (!isSiteMode) {
-      // Single-machine: exactly one entry — resolve + unwrap.
       const [machineId, { commandId }] = entries[0];
       const outcome = await resolveMachineEntry(db, siteId, machineId, commandId);
       if (!outcome) return null;
@@ -263,7 +230,6 @@ function buildResolveLostResult(
         : { errorText: outcome.errorText };
     }
 
-    // Site-wide: aggregate per-machine results into `{ machines: [...] }`.
     const machines: Array<Record<string, unknown>> = [];
     for (const [machineId, { commandId }] of entries) {
       const outcome = await resolveMachineEntry(db, siteId, machineId, commandId);
@@ -292,14 +258,11 @@ function firstUserText(messages: UIMessage[]): string {
 }
 
 /**
- * Persist a message array to `chats/{chatId}` — the server-side mirror of the
- * client persist in `useHoot.ts` (JSON-cloned parts; merge write). Used for
- * BOTH the turn-start persist (repaired history, so the user's message is
- * durable up front) and the final persist. `isNewConversation` is decided by
- * whether the chat doc pre-existed at turn start — NOT by message count — so a
- * superseded first turn can't permanently skip the title/createdAt stamp.
- * Title + createdAt are only written for new conversations (placeholder title
- * until the LLM categorizer replaces it; the LLM title is never overwritten).
+ * Merge-write a message array to `chats/{chatId}` — server mirror of the
+ * client persist in `useHoot.ts`. `isNewConversation` comes from chat-doc
+ * existence at turn start, NOT message count, so a superseded first turn can't
+ * permanently skip the title/createdAt stamp. Title is a placeholder until the
+ * LLM categorizer replaces it, and an LLM title is never overwritten.
  */
 async function persistChatMessages(
   db: FirebaseFirestore.Firestore,
@@ -312,7 +275,7 @@ async function persistChatMessages(
     ? firstUserText(messages).slice(0, 100) || UNTITLED_CHAT_TITLE
     : undefined;
 
-  // Serialize for Firestore — the JSON round-trip strips nested `undefined`.
+  // JSON round-trip strips nested `undefined`, which Firestore rejects.
   const serializedMessages = messages.map((m) => ({
     id: m.id,
     role: m.role,
@@ -339,14 +302,10 @@ async function persistChatMessages(
 }
 
 /**
- * Start a detached Hoot turn.
- *
- * Returns the HTTP tee branch IMMEDIATELY; all turn work continues detached
- * (the snapshot pump consumes the other branch, so the turn runs to
- * completion even if the returned stream is abandoned). NEVER throws and
- * never rejects the returned stream's consumer with an unhandled error:
- * internal failures → `finishTurn('error', msg)` + an error chunk on the
- * stream.
+ * Start a detached Hoot turn. Returns the HTTP tee branch immediately; the
+ * snapshot pump consumes the other branch, so the turn completes even if the
+ * returned stream is abandoned. Never throws and never rejects the consumer:
+ * internal failures → `finishTurn('error', msg)` + an error chunk.
  */
 export function startTurn(
   db: FirebaseFirestore.Firestore,
@@ -362,8 +321,7 @@ export function startTurn(
     }
   };
 
-  // First error wins — set by execute failures (via onError) and by
-  // streamText's own error chunks (via toUIMessageStream's onError).
+  // First error wins — set by execute failures and by streamText error chunks.
   let turnError: string | null = null;
   const noteError = (error: unknown): string => {
     const message = errorText(error);
@@ -371,42 +329,31 @@ export function startTurn(
     return message;
   };
 
-  // Set once the history repair completes — the repaired history (not the
-  // raw client history) is what gets persisted alongside the response.
+  // The repaired history (not the raw client history) is what gets persisted.
   let repairedHistory: UIMessage[] | null = null;
 
-  // Whether the chat doc already existed when this turn started. Drives
-  // new-conversation semantics (title/createdAt stamp + categorize) — decided
-  // by doc existence, NOT message count, so a superseded first turn can't
-  // permanently skip the stamp. Captured before the turn-start persist creates
-  // the doc.
+  // Drives new-conversation semantics. Captured before the turn-start persist
+  // creates the doc.
   let chatExistedAtStart = false;
 
-  // Per-turn abort: fired when the heartbeat's `touch` reports this turn no
-  // longer owns the stream doc (superseded or stopped). Aborts streamText and
-  // the in-flight tool poll loops so a dead turn stops doing invisible work.
+  // Fired when the heartbeat's `touch` reports lost ownership (superseded or
+  // stopped) — kills streamText and the in-flight tool poll loops.
   const abortController = new AbortController();
 
-  // Set by onFinish. If the stream tears down without onFinish (e.g. a chunk
-  // the state machine rejects), the pump's completion path below closes the
-  // turn as errored so the stream doc can never leak a fresh-looking
-  // 'running' state.
+  // Set by onFinish. If the stream tears down without it (e.g. a chunk the
+  // state machine rejects), the pump's finally closes the turn as errored so
+  // the stream doc can't leak a fresh-looking 'running' state.
   let turnFinished = false;
 
   const stream = createUIMessageStream<UIMessage>({
-    // Approval-resume contract: when the history ends with an assistant
-    // message carrying an approved tool call, streamText executes that tool
-    // and emits output chunks for the PRIOR turn's toolCallId. The stream's
-    // state machine can only attach those to an existing message when it is
-    // seeded with the original history — without this it throws
-    // "No tool invocation found for tool call ID" and the turn dies
-    // (pinned by asyncTurns.integration.test.ts scenario 3).
+    // Approval-resume: chunks for the PRIOR turn's toolCallId can only attach
+    // to a message the state machine already knows, so it must be seeded with
+    // the original history — otherwise "No tool invocation found for tool call
+    // ID" kills the turn (asyncTurns.integration.test.ts scenario 3).
     originalMessages: params.messages,
     execute: async ({ writer }) => {
-      // Heartbeat from the very start: transient part for the HTTP proxy,
-      // stream-doc touch so a long silent gap (model thinking, tool wait)
-      // is never mistaken for a dead runner (TURN_STALE_MS is 45s). The touch
-      // return is the ownership signal.
+      // Transient part keeps the HTTP proxy awake; the touch keeps the stream
+      // doc fresh (TURN_STALE_MS 45s) and returns the ownership signal.
       heartbeatTimer = setInterval(() => {
         try {
           writer.write({ type: 'data-heartbeat', transient: true, data: Date.now() });
@@ -414,11 +361,9 @@ export function startTurn(
           // Stream already torn down — nothing to heartbeat.
         }
         void touch(db, chatId, turnId).then((ownership) => {
-          // Abort ONLY on genuine ownership loss (`lost`): a newer turn owns
-          // the doc (supersede) or it was stopped. A transient Firestore
-          // failure (`error`) is INDETERMINATE — keep the turn alive; the next
-          // heartbeat re-checks. Aborting a healthy turn on a single blip would
-          // silently drop the user's in-flight response.
+          // Abort only on genuine loss. A Firestore `error` is indeterminate —
+          // aborting on a single blip would drop a healthy in-flight response;
+          // the next heartbeat re-checks.
           if (ownership === 'lost') {
             abortController.abort();
             clearHeartbeat();
@@ -426,17 +371,15 @@ export function startTurn(
         });
       }, timing.heartbeatMs);
 
-      // Capture doc existence BEFORE the turn-start persist creates it — this
-      // is the new-conversation signal for the whole turn.
+      // Must precede the turn-start persist, which creates the doc.
       try {
         chatExistedAtStart = (await db.collection('chats').doc(chatId).get()).exists;
       } catch {
-        // Best effort — a failed read defaults to "not new" so we never
-        // clobber an existing conversation's LLM title with a placeholder.
+        // Fail to "not new" so a read blip can't clobber an existing
+        // conversation's LLM title with a placeholder.
         chatExistedAtStart = true;
       }
 
-      // ── 1. Repair history with commandId recovery ─────────────────────
       const { messages: repairedMessages, repairedToolCallIds } =
         await repairDanglingToolParts(params.messages, {
           resolveLostResult: buildResolveLostResult(
@@ -453,23 +396,18 @@ export function startTurn(
       }
       repairedHistory = repairedMessages;
 
-      // ── 1b. Persist the repaired history NOW (turnId-guarded) ─────────
-      // Makes the user's just-sent message durable before any reattach, and
-      // survives a later model/tool failure. Persist ONLY on confirmed
-      // ownership (`owned`): a supersede (`lost`) means the newer turn owns the
-      // chat doc, and a transient failure (`error`) can't confirm ownership —
-      // in both cases skip rather than risk clobbering another turn's state.
+      // Persist the repaired history now so the user's just-sent message is
+      // durable before any reattach. Only on confirmed `owned` — `lost` and
+      // `error` both risk clobbering another turn's state.
       try {
         if ((await touch(db, chatId, turnId)) === 'owned') {
           await persistChatMessages(db, params, repairedMessages, !chatExistedAtStart);
         }
       } catch (error) {
-        // A failed start-persist is recoverable (stream doc + repair) — never
-        // let it reject into the stream machinery.
+        // Recoverable via stream doc + repair; must not reject into the stream.
         console.error(`[hoot] turn-start persist failed for chat ${chatId}:`, error);
       }
 
-      // ── 2. Tools ──────────────────────────────────────────────────────
       const isSiteMode = params.machineId === SITE_TARGET_ID;
       const onlineMachines = isSiteMode ? await getOnlineMachines(db, params.siteId) : [];
       if (isSiteMode && onlineMachines.length === 0) {
@@ -505,43 +443,34 @@ export function startTurn(
           toolCallbacks: {
             onCommandQueued: (toolCallId: string, commandId: string, machineId: string) =>
               recordToolCommand(db, chatId, turnId, toolCallId, commandId, machineId),
-            // Abort the poll loops when this turn loses ownership — the ~20s
-            // heartbeat keeps the stream doc fresh, so no per-poll touch here.
             abortSignal: abortController.signal,
           },
         },
       );
 
-      // ── 3. LLM call ───────────────────────────────────────────────────
       const result = streamText({
         model: createModel(llmConfig),
         system: isSiteMode
           ? buildSystemPrompt('', true)
           : buildSystemPrompt(params.machineName || params.machineId, false, processes),
-        // Convert with the built tools so per-tool toModelOutput hooks (e.g.
-        // capture_screenshot → image-url) project prior-turn tool outputs
-        // into model content, not just on the turn they were produced.
+        // Pass `tools` so per-tool toModelOutput hooks (e.g. capture_screenshot
+        // → image-url) also project PRIOR-turn outputs into model content.
         messages: await convertToModelMessages(repairedMessages, { tools }),
         tools,
         stopWhen: stepCountIs(10),
-        // Superseded/stopped → abort the model loop (mirrors the tool aborts).
         abortSignal: abortController.signal,
       });
 
-      // Model/tool-loop errors surface as error CHUNKS (not rejections) —
-      // capture them so onFinish records the turn as errored.
+      // Model/tool-loop errors arrive as error CHUNKS, not rejections.
       writer.merge(result.toUIMessageStream({ onError: noteError }));
     },
-    // Execute rejections become an error chunk with this text on the stream.
     onError: noteError,
     onFinish: async ({ responseMessage }) => {
       turnFinished = true;
       clearHeartbeat();
       const isNewConversation = !chatExistedAtStart;
-      // Replace-or-append: on approval-resume the SDK CONTINUES the history's
-      // trailing assistant message (same id) instead of minting a new one —
-      // appending would duplicate it. When responseMessage has no parts (e.g.
-      // an immediate model error), fall back to the base history alone.
+      // Replace-or-append: on approval-resume the SDK continues the trailing
+      // assistant message (same id), so appending would duplicate it.
       const baseHistory = repairedHistory ?? params.messages;
       const hasResponseParts =
         Array.isArray(responseMessage?.parts) && responseMessage.parts.length > 0;
@@ -553,9 +482,8 @@ export function startTurn(
 
       try {
         if (turnError !== null) {
-          // Errored turn: still mark terminal, and if we still own the doc,
-          // persist what we have (base history + any partial response) so a
-          // provider error can't erase a brand-new conversation.
+          // Still persist the partial history so a provider error can't erase
+          // a brand-new conversation.
           const stillOwned = await finishTurn(db, chatId, turnId, 'error', turnError);
           if (stillOwned) {
             await persistChatMessages(db, params, mergedMessages, isNewConversation);
@@ -563,16 +491,14 @@ export function startTurn(
           return;
         }
 
-        // finishTurn first: its turnId-guarded write is the supersede check.
-        // `false` means a newer turn owns the stream doc — its runner (and the
-        // commandId recovery index) own persistence now, so writing our final
-        // array would clobber the newer conversation state.
+        // finishTurn first — its turnId-guarded write is the supersede check.
+        // `false` means a newer turn owns persistence; writing our final array
+        // would clobber it.
         const stillOwned = await finishTurn(db, chatId, turnId, 'complete');
         if (!stillOwned) return;
 
         await persistChatMessages(db, params, mergedMessages, isNewConversation);
 
-        // Auto-title + categorize new conversations (fire-and-forget).
         const userMessage = firstUserText(mergedMessages);
         if (isNewConversation && userMessage) {
           resolveLlmConfig(db, params.userId)
@@ -582,22 +508,19 @@ export function startTurn(
             });
         }
       } catch (error) {
-        // Persist failure must not reject into the stream machinery — the
-        // turn content survives in the stream doc + repair recovers next send.
+        // Must not reject into the stream machinery; content survives in the
+        // stream doc and repair recovers it on the next send.
         console.error(`[hoot] final persist failed for chat ${chatId}:`, error);
       }
     },
   });
 
-  // Tee: one branch back to the HTTP response, the other into the Firestore
-  // snapshot pump. The pump always consumes to completion, which is what
-  // keeps the source stream (and onFinish) running after the HTTP branch dies.
+  // One branch to the HTTP response, one to the Firestore snapshot pump. The
+  // pump consumes to completion, which keeps the source stream (and onFinish)
+  // running after the HTTP branch dies.
   const [httpBranch, snapshotBranch] = stream.tee();
 
-  // Seed the pump with the trailing assistant message (if any) for the same
-  // approval-resume reason as `originalMessages` above: output chunks for a
-  // prior turn's toolCallId can only be applied to a message that contains
-  // that tool part.
+  // Seed the pump for the same approval-resume reason as `originalMessages`.
   const lastMessage = params.messages[params.messages.length - 1];
   const resumeMessage = lastMessage?.role === 'assistant' ? lastMessage : undefined;
 
@@ -615,10 +538,9 @@ export function startTurn(
       if (turnError === null) turnError = errorText(error);
     })
     .finally(async () => {
-      // Last-resort turn closure: if the stream tore down without onFinish
-      // (state-machine rejection, pump failure), close the turn as errored —
-      // otherwise the stream doc leaks 'running' and, worse, a still-armed
-      // heartbeat would keep it looking fresh, defeating stale detection.
+      // Torn down without onFinish (state-machine rejection, pump failure):
+      // close as errored, else the doc leaks 'running' and a still-armed
+      // heartbeat keeps it looking fresh, defeating stale detection.
       if (turnFinished) return;
       clearHeartbeat();
       await finishTurn(

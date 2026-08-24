@@ -28,12 +28,9 @@ interface DatePickerProps {
 const INPUT_FORMAT = "yyyy-MM-dd"
 
 /**
- * A themed date picker you can BOTH type into and pick from a calendar:
- *  - a text Input (canonical `yyyy-mm-dd`, but also tolerant of `5/24/2026`,
- *    `May 24 2026`, etc. on blur/Enter), and
- *  - a calendar-icon button that opens the shadcn Calendar in a Popover.
- * Replaces the browser-native <input type="date"> so the calendar matches the
- * app theme while keeping keyboard date entry.
+ * Typed or picked: a text Input (canonical `yyyy-mm-dd`, tolerant of `5/24/2026` /
+ * `May 24 2026` on blur/Enter) plus a calendar button opening the shadcn Calendar.
+ * Replaces <input type="date"> so the calendar is themed without losing keyboard entry.
  */
 export function DatePicker({
   value,
@@ -46,7 +43,7 @@ export function DatePicker({
   const [open, setOpen] = React.useState(false)
   const [text, setText] = React.useState(value ? format(value, INPUT_FORMAT) : "")
 
-  // Keep the text field in sync when the value changes from the calendar or parent.
+  // Sync the text field when the value changes from the calendar or the parent.
   React.useEffect(() => {
     setText(value ? format(value, INPUT_FORMAT) : "")
   }, [value])
@@ -66,7 +63,7 @@ export function DatePicker({
     if (isValid(parsed) && !disabled?.(parsed)) {
       onChange(parsed)
     } else {
-      // Unparseable / disabled — revert the text to the last valid value.
+      // Unparseable or disabled: revert to the last valid value.
       setText(value ? format(value, INPUT_FORMAT) : "")
     }
   }

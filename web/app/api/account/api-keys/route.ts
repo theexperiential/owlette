@@ -48,10 +48,8 @@ function auditActor(userId: string, keyId?: string): string {
 }
 
 /**
- * GET /api/account/api-keys
- *
- * List all active API keys for the authenticated superadmin user.
- * Returns metadata only -- never the raw key or hash.
+ * GET /api/account/api-keys — active keys for the authenticated superadmin.
+ * Metadata only; never the raw key or its hash.
  */
 export const GET = withRateLimit(
   authorizedPlatformHandler({
@@ -91,10 +89,8 @@ export const GET = withRateLimit(
 );
 
 /**
- * POST /api/account/api-keys
- *
- * Generate a new API key for the authenticated superadmin user.
- * Returns the raw key once -- only the SHA-256 hash is stored.
+ * POST /api/account/api-keys — mint a key for the authenticated superadmin.
+ * The raw key is returned once; only its SHA-256 hash is stored.
  */
 export const POST = withRateLimit(
   authorizedPlatformHandler({

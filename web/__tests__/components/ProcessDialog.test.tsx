@@ -2,18 +2,12 @@
 /**
  * @jest-environment jsdom
  *
- * ProcessDialog — the schedule is editable in EVERY launch mode.
+ * ProcessDialog — the schedule is editable in EVERY launch mode, matching the desktop app's
+ * always-available schedule pencil. Editing windows from `off` / `always on` pre-configures:
+ * blocks are written on save and the mode stays put. Only the segments change the mode.
  *
- * Platform rule (matches the desktop app's always-available schedule pencil):
- * the schedule gear is attached flush at the end of the launch-mode segmented
- * control and is offered in `off`, `always on` and `scheduled` alike. Editing
- * the windows from `off` / `always on` is pre-configuring — the blocks are
- * written on save and the launch mode stays exactly where the user left it.
- * Only the segments change the mode.
- *
- * The dashboard page renders its own inline copy of this dialog
- * (app/dashboard/page.tsx); the two are kept in sync by convention, so the
- * contract asserted here is the contract that ships.
+ * app/dashboard/page.tsx renders its own inline copy of this dialog, kept in sync by
+ * convention, so the contract asserted here is the one that ships.
  */
 
 import React, { useState } from 'react';
@@ -23,9 +17,8 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { DEFAULT_SCHEDULE } from '@/lib/scheduleDefaults';
 import { ProcessDialog, type ProcessFormData } from '@/app/dashboard/components/ProcessDialog';
 
-// jsdom has no matchMedia. `matches: false` reports a coarse pointer, which
-// puts DayPillSelector on its plain click-to-toggle path (its drag-select is
-// not what's under test here).
+// jsdom has no matchMedia. `matches: false` = coarse pointer, which puts DayPillSelector on
+// its click-to-toggle path rather than drag-select.
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
   value: jest.fn().mockImplementation((query: string) => ({
@@ -55,11 +48,8 @@ const BASE_FORM: ProcessFormData = {
   schedules: null,
 };
 
-/**
- * ProcessDialog is fully controlled, so the harness holds the form the way the
- * dashboard does and hands the *current* form to onSave — which is what the
- * save button would persist.
- */
+/** Fully controlled, so the harness holds the form like the dashboard does and hands the
+ * current form to onSave — what the save button would persist. */
 function Harness({
   initial,
   onSave,
@@ -123,8 +113,7 @@ describe('ProcessDialog — schedule availability', () => {
 
     await user.click(gear());
 
-    // DEFAULT_SCHEDULE is mon-fri — the weekday pills read as selected, the
-    // weekend ones don't, and nothing has been written to the form yet.
+    // DEFAULT_SCHEDULE is mon-fri, and nothing has been written to the form yet.
     expect(screen.getByTitle('monday')).toHaveClass('bg-blue-600');
     expect(screen.getByTitle('saturday')).not.toHaveClass('bg-blue-600');
   });

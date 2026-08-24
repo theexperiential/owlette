@@ -1,15 +1,9 @@
 /**
- * PostToolUse Hook — Auto-Deploy Agent Changes to C:\ProgramData\Owlette
+ * PostToolUse hook — mirrors an edited agent/src/*.py into
+ * C:\ProgramData\Owlette\agent\src, clears its .pyc, and restarts OwletteService.
  *
- * When an agent/src/*.py file is edited, this hook:
- * 1. Copies the changed file to C:\ProgramData\Owlette\agent\src\
- * 2. Kills the GUI if running
- * 3. Restarts the OwletteService
- *
- * Since 3.0.0 the local UI is the Tauri desktop app (desktop/, deployed as
- * owlette-desktop.exe) — agent/src has no GUI modules, so every mirrored file
- * is service-side. The service relaunches the desktop tray itself after a
- * restart; this hook never touches it.
+ * Since 3.0.0 the local UI is the Tauri desktop app, so every mirrored file is
+ * service-side; the service relaunches the tray itself after the restart.
  */
 
 import { copyFileSync, existsSync, unlinkSync, readdirSync } from 'fs'
@@ -19,7 +13,6 @@ import { execSync } from 'child_process'
 const PROG_DATA = process.env.PROGRAMDATA || 'C:\\ProgramData'
 const PROD_SRC = `${PROG_DATA}\\Owlette\\agent\\src`
 
-// Read JSON from stdin
 let input = ''
 for await (const chunk of process.stdin) {
   input += chunk
@@ -30,21 +23,17 @@ try {
   const filePath = data.tool_input?.file_path
   if (!filePath) process.exit(0)
 
-  // Normalize path separators for matching
   const normalized = filePath.replace(/\\/g, '/')
 
-  // Only act on agent/src/*.py files
   if (!normalized.includes('agent/src/') || !normalized.endsWith('.py')) {
     process.exit(0)
   }
 
-  // Skip if prod install doesn't exist
   if (!existsSync(PROD_SRC)) {
     process.stderr.write(`[deploy-agent] ${PROD_SRC} not found, skipping\n`)
     process.exit(0)
   }
 
-  // Copy file to production
   const filename = basename(filePath)
   const dest = `${PROD_SRC}\\${filename}`
   try {

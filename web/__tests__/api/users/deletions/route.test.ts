@@ -1,17 +1,13 @@
 /** @jest-environment node */
 
 /**
- * Public users-api — http-shape tests for `GET /api/users/deletions`.
+ * http-shape tests for `GET /api/users/deletions`, which reads deletion events
+ * from the platform audit log (`global/audit_log/entries`).
  *
- * Reads user-deletion events out of the platform audit log
- * (`global/audit_log/entries`). Mirrors the harness style used by
- * `users.test.ts` — path-keyed `docStore` + `collectionDocs`, mocked
- * `resolveAuth`, real `requirePlatformAuthAndScope`/`requireScope`
- * underneath so superadmin + scope gating is exercised end-to-end.
- *
- * The fake `entries` collection honors the `capability in [...]` filter and
- * `orderBy('timestamp','desc')`, with timestamps stored as Firestore-style
- * objects exposing `.toDate()`.
+ * Same harness as `users.test.ts`: path-keyed `docStore`/`collectionDocs` and a
+ * mocked `resolveAuth`, but real scope gating underneath. The fake `entries`
+ * collection honors `capability in [...]` and `orderBy('timestamp','desc')`,
+ * with Firestore-style timestamps exposing `.toDate()`.
  */
 
 import { createMockRequest } from '../../helpers/utils';
@@ -26,10 +22,6 @@ jest.mock('@/lib/auditLogClient', () => ({
   emitMutation: jest.fn(),
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
-
-/* -------------------------------------------------------------------------- */
-/*  Auth mock                                                                 */
-/* -------------------------------------------------------------------------- */
 
 const mockResolveAuth = jest.fn();
 jest.mock('@/lib/apiAuth.server', () => {
@@ -53,10 +45,7 @@ jest.mock('@/lib/securityConfig.server', () => ({
   },
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Firestore mock — keyed by collection path                                 */
-/* -------------------------------------------------------------------------- */
-
+// Firestore mock, keyed by collection path.
 interface DocStore {
   data: Record<string, unknown> | null;
 }
@@ -133,8 +122,7 @@ function makeCollectionRef(parts: string[]): unknown {
       if (_orderBy) {
         const f = _orderBy.field;
         docs.sort((a, b) => {
-          // Audit timestamps are Firestore-style objects exposing toDate();
-          // sort on their epoch-millis. Fall back to raw comparison otherwise.
+          // Sort Firestore-style timestamps on epoch-millis, else raw compare.
           const av = sortKey(a.data[f]);
           const bv = sortKey(b.data[f]);
           if (av === bv) return 0;
@@ -175,15 +163,8 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminStorage: () => ({ bucket: () => ({}) }),
 }));
 
-/* -------------------------------------------------------------------------- */
-/*  Imports come AFTER mocks                                                  */
-/* -------------------------------------------------------------------------- */
-
+// Must come after the mocks above.
 import { GET } from '@/app/api/users/deletions/route';
-
-/* -------------------------------------------------------------------------- */
-/*  Fixtures                                                                  */
-/* -------------------------------------------------------------------------- */
 
 const ENTRIES_PATH = 'global/audit_log/entries';
 
@@ -238,10 +219,6 @@ beforeEach(() => {
   for (const k of Object.keys(docStore)) delete docStore[k];
   for (const k of Object.keys(collectionDocs)) delete collectionDocs[k];
 });
-
-/* ========================================================================== */
-/*  GET /api/users/deletions                                                  */
-/* ========================================================================== */
 
 describe('GET /api/users/deletions', () => {
   it('returns deletion rows newest-first for a superadmin', async () => {
@@ -325,7 +302,7 @@ describe('GET /api/users/deletions', () => {
       target: { kind: 'user', id: 'bob' },
       tsMillis: 1000,
     });
-    // Noise: unrelated capabilities that must NOT appear.
+    // Unrelated capabilities that must NOT appear.
     seedAuditEntry('noise-role', {
       capability: 'USER_ROLE_MANAGE',
       outcome: 'allow',
@@ -355,8 +332,7 @@ describe('GET /api/users/deletions', () => {
 
   it('clamps a limit above 200 down to 200', async () => {
     authedAsSuperadminWithKey();
-    // Seed 250 deletion entries; with limit=99999 the route must clamp to 200,
-    // so the fake collection's limit() truncates the result to exactly 200.
+    // 250 entries + limit=99999: the route must clamp to 200.
     for (let i = 0; i < 250; i++) {
       seedAuditEntry(`e-${i}`, {
         capability: 'USER_DELETE',

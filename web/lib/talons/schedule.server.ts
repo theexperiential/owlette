@@ -1,31 +1,19 @@
 /**
- * Talon schedule math — "when does this trigger next fire?".
+ * Talon schedule math — the single source of truth for `nextRunAt`, used by the
+ * store (create / trigger change / re-enable) and the cron sweep (re-arm).
  *
- * The single source of truth for `nextRunAt`, shared by the store (stamped on
- * create / trigger-change / re-enable) and by the cron sweep (re-armed after
- * every run). Keeping the math in one module means a talon's next fire is
- * computed identically whether a human edited it or the runner advanced it.
+ * TIMEZONE CONTRACT: clock-time entries are wall clock in the SITE's IANA zone —
+ * "09:30 on weekdays" means 09:30 where the site is, across DST. Never use
+ * `Date.setHours()` and friends: they resolve in the PROCESS's zone (UTC on
+ * Railway). Every conversion goes through `Intl.DateTimeFormat({ timeZone })`
+ * part extraction.
  *
- * Timezone contract: fixed clock-time entries are wall-clock configuration in
- * the SITE's IANA zone — "09:30 on weekdays" means 09:30 where the site is,
- * across DST shifts, not a frozen UTC offset. `Date.setHours()` and friends
- * resolve in the *process's* zone (UTC on Railway, whatever the dev's laptop
- * says locally), so they are never used here; every conversion goes through
- * `Intl.DateTimeFormat({ timeZone })` part extraction — the same technique
- * `getNextScheduledRestart()` in `@/components/RestartScheduleDialog` uses
- * client-side, adapted to return an instant instead of a display string.
+ * DST: ambiguous times (fall-back) take the EARLIER occurrence, so the talon fires
+ * once; nonexistent times (spring-forward gap) shift forward past the gap. Firing
+ * late beats skipping a day, and neither case throws.
  *
- * DST edge cases are resolved the way IANA-aware libraries do:
- *   - ambiguous (fall-back, e.g. 01:30 twice on the US November Sunday) →
- *     the EARLIER occurrence. The later one is then in the past relative to
- *     the run that just fired, so the talon fires once, not twice.
- *   - nonexistent (spring-forward gap, e.g. 02:30 on the US March Sunday) →
- *     shifted forward by the gap (02:30 → 03:30 local). Firing late beats
- *     silently skipping a day, and it never throws.
- *
- * Pure and dependency-free — no Firestore, no clock reads. The caller passes
- * `from`, so the runner can compute a next-run relative to the run it just
- * completed rather than to "now".
+ * Pure — no Firestore, no clock reads. The caller supplies `from`, so the runner
+ * can re-arm relative to the run it just finished rather than to "now".
  */
 import type { DayKey, TalonTrigger } from './types';
 
@@ -43,10 +31,8 @@ const DAY_KEY_BY_JS_DAY: readonly DayKey[] = [
 const MS_PER_MINUTE = 60_000;
 const MS_PER_DAY = 86_400_000;
 
-/**
- * Days to scan forward. 7 is not enough: an entry whose only day is today but
- * whose time already passed fires a week later, which is `dayOffset === 7`.
- */
+/** 7 is not enough: an entry whose only day is today, already past, fires at
+ *  `dayOffset === 7`. */
 const SCAN_DAYS = 7;
 
 const FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
@@ -69,11 +55,9 @@ interface WallClock {
 }
 
 /**
- * Formatter for the site's zone, or a UTC one when the stored value is not a
- * zone `Intl` knows (an empty string, or a Windows registry name like
- * "Eastern Standard Time" — see `getMachineTimezone` in adminUtils.server).
- * Falling back beats throwing: a bad site timezone must not take the whole
- * scheduler down.
+ * Site-zone formatter, falling back to UTC when the stored value is not an Intl
+ * zone (empty, or a Windows name like "Eastern Standard Time"). A bad site
+ * timezone must not take the scheduler down.
  */
 function createZoneFormatter(timeZone: string): Intl.DateTimeFormat {
   try {
@@ -111,14 +95,11 @@ function zoneOffsetMsAt(formatter: Intl.DateTimeFormat, instantMs: number): numb
 /**
  * The instant at which the formatter's zone reads the given wall clock.
  *
- * Two passes: guess with the offset in force at the naive instant, then
- * re-guess with the offset in force at that guess. Away from a transition
- * both land on the same instant. Across one they disagree, and the disagreement
- * is exactly what identifies the case: if either guess renders back as the
- * requested wall clock the time exists (ambiguous times produce two valid
- * guesses — take the earlier), and if neither does, the wall clock falls in a
- * spring-forward gap and the later guess is the requested time shifted forward
- * past it.
+ * Two passes: guess using the offset at the naive instant, then re-guess using
+ * the offset at that guess. Away from a transition both agree. Across one they
+ * disagree, and that identifies the case — a guess that renders back as the
+ * requested wall clock means the time exists (ambiguous gives two: take the
+ * earlier); neither matching means a spring-forward gap, so take the later guess.
  */
 function zonedWallClockToUtcMs(
   formatter: Intl.DateTimeFormat,
@@ -148,15 +129,12 @@ function zonedWallClockToUtcMs(
 }
 
 /**
- * The next instant a schedule trigger fires, strictly after `from`.
+ * The next instant a schedule trigger fires, strictly after `from`. `null` for
+ * threshold and event triggers — data-driven, so they carry no `nextRunAt`.
  *
- * Returns `null` for threshold and event triggers — they are driven by
- * incoming data, not by the clock, and carry no `nextRunAt`.
- *
- * @param trigger           the talon's trigger, already normalized by `validateTalonInput`
- * @param siteTimezoneIana  IANA zone name for the site (callers pass `'UTC'` when unset)
- * @param from              the instant to search forward from — "now" for an
- *                          edit, the completed run's start for a re-arm
+ * `trigger` must already be normalized by `validateTalonInput`; callers pass
+ * `'UTC'` for `siteTimezoneIana` when the site has none. `from` is "now" for an
+ * edit, the completed run's start for a re-arm.
  */
 export function computeNextRunAt(
   trigger: TalonTrigger,
@@ -177,9 +155,8 @@ export function computeNextRunAt(
 
   const formatter = createZoneFormatter(siteTimezoneIana);
   const today = wallClockAt(formatter, fromMs);
-  // Calendar anchor: midnight UTC on the site's *local* date. Only ever used
-  // for day counting (`+ n * MS_PER_DAY`) and weekday lookup, both of which are
-  // DST-free because they never leave the UTC calendar.
+  // Midnight UTC on the site's LOCAL date. Only used for day counting and weekday
+  // lookup, both DST-free because they never leave the UTC calendar.
   const anchorMs = Date.UTC(today.year, today.month - 1, today.day);
 
   for (let dayOffset = 0; dayOffset <= SCAN_DAYS; dayOffset++) {
@@ -206,8 +183,7 @@ export function computeNextRunAt(
       if (soonestOnDay === null || candidate < soonestOnDay) soonestOnDay = candidate;
     }
 
-    // Every slot on a later calendar day is a later instant (a zone never
-    // rewinds by a whole day), so the first day with a hit holds the answer.
+    // A zone never rewinds a whole day, so the first day with a hit wins.
     if (soonestOnDay !== null) return new Date(soonestOnDay);
   }
 

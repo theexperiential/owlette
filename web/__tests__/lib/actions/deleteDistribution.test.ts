@@ -1,15 +1,10 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/actions/deleteDistribution.server.ts`
- * (security-boundary-migration wave 3.4).
- *
- * Tests cover:
- *   - 404 when the distribution doc doesn't exist
- *   - 409 (distribution_in_flight) when status is non-terminal
- *   - 409 defense-in-depth when any target is still pre-flight
- *     (even if parent status looks terminal)
- *   - happy path: delete + audit emission for every terminal status
+ * Unit tests for `web/lib/actions/deleteDistribution.server.ts`: 404 on a
+ * missing doc, 409 `distribution_in_flight` on a non-terminal status, 409
+ * defense-in-depth when a target is still pre-flight despite a terminal parent
+ * status, and the happy path (delete + audit) for every terminal status.
  */
 
 const noopBuildCollection = (): Record<string, unknown> => ({
@@ -85,9 +80,7 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-/* -------------------------------------------------------------------------- */
-/*  error paths                                                               */
-/* -------------------------------------------------------------------------- */
+// error paths
 
 describe('deleteDistribution — error paths', () => {
   it('returns not_found when distribution doc does not exist', async () => {
@@ -124,9 +117,8 @@ describe('deleteDistribution — error paths', () => {
   });
 
   it('refuses delete when parent looks terminal but a target is still pre-flight', async () => {
-    // Defense in depth — reconciler drift could leave the parent status
-    // ahead of its targets. The action should refuse rather than orphan
-    // a pending target.
+    // Defense in depth: reconciler drift can leave the parent status ahead of
+    // its targets — refuse rather than orphan a pending target.
     const { db, deletes } = buildFakeDb({
       status: 'completed',
       targets: [
@@ -147,9 +139,7 @@ describe('deleteDistribution — error paths', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  happy paths — every terminal status                                       */
-/* -------------------------------------------------------------------------- */
+// happy paths — every terminal status
 
 describe('deleteDistribution — terminal-status delete', () => {
   it.each(['completed', 'failed', 'partial', 'cancelled'])(

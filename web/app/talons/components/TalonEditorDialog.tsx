@@ -1,43 +1,24 @@
 'use client';
 
 /**
- * The talon editor — trigger | condition | outputs, left to right.
+ * Talon editor — trigger | condition | outputs. Create when `talon` is nullish
+ * (POST), else edit (PATCH).
  *
- * Create when `talon` is null/undefined (POST), edit otherwise (PATCH). Each
- * stage owns its own draft shape and its conversion to the wire form; this
- * dialog assembles the three of them, runs the SHARED validator
- * (`@/lib/talons/validation`), and submits the validator's NORMALIZED `value`
- * — never the raw form state, which still holds numbers as strings and
- * un-trimmed text.
+ * Submits the SHARED validator's normalized `value`, never raw form state
+ * (numbers are still strings, text un-trimmed). The same validator runs in
+ * `@/lib/talons/store.server`, and server rejections arrive as RFC 7807
+ * `fieldErrors` in the same `{ field, code, message }` shape, so client and
+ * server misses bind identically.
  *
- * The same validator runs server-side inside `@/lib/talons/store.server`, so
- * anything this editor accepts the store accepts. Server rejections come back
- * as RFC 7807 with a structured `fieldErrors` list in the same
- * `{ field, code, message }` shape, and are bound to inputs by the same path
- * mapping — a client-side miss and a server-side miss look identical to the
- * user.
+ * Error display invariants: (1) one place per message — `slotForField` maps a
+ * path to at most one inline slot, everything else goes to the footer summary,
+ * which skips already-slotted messages; (2) every draft setter drops the errors
+ * bound to it so corrected fields stop showing stale messages.
  *
- * Error display has two rules, both enforced here rather than by the cards:
- *   1. ONE PLACE PER MESSAGE. `slotForField` maps each validator path to at
- *      most one inline slot; anything unslotted goes to the footer summary,
- *      which skips messages a slot already shows. Nothing renders twice.
- *   2. CLEARED WHEN CORRECTED. Every draft setter is wrapped so editing a
- *      control drops the errors bound to it, instead of leaving a stale
- *      message under a field the user already fixed.
+ * Templates are create-mode only and live in the dialog header (chrome, not a
+ * field). Scope is never templated — machine ids belong to one site.
  *
- * Create mode also carries the TEMPLATE controls, in the dialog HEADER beside
- * the title: a grouped picker that hydrates the whole form from a stored
- * preset, and a disk button that cuts one back out of the current draft. They
- * live in the header because they are chrome for the form rather than fields of
- * it — as a full-width row at the top of the body they read as the most
- * important control on screen while being the most optional one. A talon is a
- * whole object, so this follows the deployment-template flow (picker + save-as,
- * no dirty overlay, no auto-detect) rather than the preset pill bar the
- * sub-field families use. Scope is the one field a template never carries —
- * machine ids belong to one site.
- *
- * Naming: automations are **talons**; the assistant is **hoot** in every piece
- * of copy here. The wire type for a hoot output stays `'cortex'`.
+ * Copy says "talons"/"hoot"; the wire type for a hoot output stays `'cortex'`.
  */
 
 import { Loader2, Pencil, Save, Trash2 } from 'lucide-react';
@@ -100,17 +81,13 @@ import {
 import { OutputsCard, newOutputDraft, outputDraftFromTalon, outputDraftToInput, type OutputDraft } from './OutputsCard';
 import { PipelineConnectors, PipelineStackConnector } from './PipelineConnectors';
 import { TriggerCard, newTriggerDraft, triggerDraftFromTalon, triggerDraftToInput, type TriggerDraft } from './TriggerCard';
-
-/* -------------------------------------------------------------------------- */
-/*  field path → DOM id                                                       */
-/* -------------------------------------------------------------------------- */
+import { useScrollFade } from '@/hooks/useScrollFade';
 
 /**
- * Maps a validator field path onto the id of the input that owns it, so
- * `useFieldError` can move the caret to the problem. Output paths carry a row
- * index and are handled separately; everything else falls back up the path
- * (`trigger.entries[0].time` → `trigger.entries` → `trigger`) until it hits a
- * mapped ancestor, which keeps unmapped leaf paths pointing somewhere useful.
+ * Validator field path → id of the input that owns it, so the caret can move to
+ * the problem. Output paths carry a row index and are handled separately;
+ * everything else walks up the path (`trigger.entries[0].time` →
+ * `trigger.entries` → `trigger`) until it hits a mapped ancestor.
  */
 const FIELD_ELEMENT_IDS: Readonly<Record<string, string>> = {
   name: 'talon-name',
@@ -172,22 +149,12 @@ function elementIdForField(field: string): string {
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  field path → error slot                                                   */
-/* -------------------------------------------------------------------------- */
-
 /**
- * The inline slot that renders a given validator path, or null when no control
- * owns one.
+ * Inline slot for a validator path, or null when no control owns one.
  *
- * Every path maps to AT MOST ONE slot, and that is what keeps a message from
- * rendering twice. The previous routing matched by prefix, so the outputs card
- * asked for `outputs` and was handed `outputs[0].directive` — printing the same
- * sentence under the textarea AND under "add output". Slots are exact.
- *
- * Paths with no slot (an output's `type`, `trigger.metric`, an unknown field
- * from the API) fall through to the footer summary, which renders ONLY those.
- * Between them the two surfaces cover every error exactly once.
+ * Matching is EXACT, never by prefix: prefix routing handed `outputs` the
+ * `outputs[0].directive` message and printed it twice. Unslotted paths fall
+ * through to the footer summary, so the two surfaces cover each error once.
  */
 function slotForField(field: string): string | null {
   const output = OUTPUT_FIELD_PATTERN.exec(field);
@@ -205,10 +172,8 @@ function slotForField(field: string): string | null {
     return 'trigger.eventTypes';
   }
   if (field === 'trigger.intervalMinutes') return 'trigger.intervalMinutes';
-  // Owned by the event branch's delay input, which is mounted whenever this
-  // error is reachable: `triggerDraftToInput` sends `delayMinutes` on the event
-  // form only, so the validator's "this only applies to event triggers" cannot
-  // be raised against anything this editor submits.
+  // Safe: `triggerDraftToInput` only sends `delayMinutes` on the event form, so
+  // the delay input is mounted whenever this error is reachable.
   if (field === 'trigger.delayMinutes') return 'trigger.delayMinutes';
   if (field === 'trigger.value') return 'trigger.value';
   if (field === 'condition.expectation') return 'condition.expectation';
@@ -224,12 +189,10 @@ function outputRowIndex(field: string): number | null {
 }
 
 /**
- * Move the caret to the first offender. Deferred a tick so it runs after the
- * re-render that applies `aria-invalid`, otherwise focus can land before the
- * field is marked and some browsers skip the announcement. (Same contract as
- * `useFieldError.fail`, which this form cannot use: that hook models ONE error
- * with one message, and rendering its message alongside the inline bindings is
- * exactly the duplication this editor had to remove.)
+ * Move the caret to the first offender. Deferred a tick so it lands after the
+ * re-render that applies `aria-invalid` — some browsers skip the announcement
+ * otherwise. (`useFieldError.fail` is unusable here: it models one error with
+ * one message, which duplicates the inline bindings.)
  */
 function focusField(elementId: string): void {
   if (!elementId || typeof window === 'undefined') return;
@@ -260,17 +223,10 @@ function isFieldErrorList(value: unknown): value is TalonFieldError[] {
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/*  templates                                                                 */
-/* -------------------------------------------------------------------------- */
-
 /**
- * What a template still needs from the operator, in the picker's own words.
- *
- * There is exactly ONE key now — the operator's own, in settings → hoot — and
- * a talon spends the key of whoever created it. So "an ai key" means the key
- * the person reading this row would be saving, which is why the unmet form
- * below can name the one screen that fixes it.
+ * What a template still needs from the operator. A talon spends the key of
+ * whoever created it, and there is only one key (settings → hoot), so the copy
+ * can name the exact screen that fixes it.
  */
 const REQUIREMENT_LABELS: Readonly<Record<TalonPresetRequirement, string>> = {
   llm_key: 'needs an ai api key — add one in settings → hoot',
@@ -278,22 +234,13 @@ const REQUIREMENT_LABELS: Readonly<Record<TalonPresetRequirement, string>> = {
 };
 
 /**
- * The requirements this operator has NOT already met.
+ * Requirements this operator has NOT met — what is still missing, not a
+ * permanent label on the template. `llm_key` is met once the user has a key;
+ * `process_target` never is, since templates carry no process by design.
  *
- * A requirement is a statement about what is still missing, not a permanent
- * label on the template. Showing "needs an ai api key" to someone who saved one
- * an hour ago reads as a bug in the product — they DID provide it — and it also
- * banished every ai template to the "needs a detail" group for the users most
- * ready to run them.
- *
- * `llm_key` is met once the signed-in user has a key. `process_target` can
- * never be met in advance: the template deliberately carries no process, so the
- * operator always picks one.
- *
- * `hasLlmKey === null` means the probe has not answered (or failed). Unknown is
- * treated as MET: a false "you need a key" is a worse error than letting
- * someone pick a template and meet the store's own rejection, which names the
- * same fix. Never claim a thing is missing on the strength of not having looked.
+ * `hasLlmKey === null` (probe failed/pending) counts as MET: never claim a
+ * thing is missing on the strength of not having looked — the store's own
+ * rejection names the same fix.
  */
 function unmetRequirements(
   requires: readonly TalonPresetRequirement[],
@@ -308,12 +255,9 @@ function unmetRequirements(
 const NO_REQUIREMENT_NOTE = '';
 
 /**
- * The annotation under a template's name in the picker.
- *
- * Requirements ANNOTATE, they never disable: an operator with no llm key can
- * still pick the visual-check template and find out at create time, with a
- * message that says exactly what to go and set. That is better discovery than
- * a greyed row with no explanation.
+ * Annotation under a template's name. Requirements annotate, never disable — a
+ * greyed row with no explanation is worse discovery than a create-time message
+ * naming the fix.
  */
 function requirementNote(
   requires: readonly TalonPresetRequirement[],
@@ -335,9 +279,6 @@ function newIdempotencyKey(): string {
   return `talon-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  dialog                                                                    */
-/* -------------------------------------------------------------------------- */
 
 interface TalonEditorDialogProps {
   open: boolean;
@@ -350,11 +291,9 @@ interface TalonEditorDialogProps {
 }
 
 /**
- * Shell only. Radix unmounts `DialogContent` while the dialog is closed, so the
- * form below is a separate component whose `useState` initializers run fresh on
- * every open — no reset effect, and no `setState` inside one. The `key` covers
- * the remaining case: swapping which talon is being edited without the dialog
- * closing in between.
+ * Shell only. Radix unmounts `DialogContent` when closed, so the form is a
+ * separate component whose `useState` initializers run fresh on every open —
+ * no reset effect. The `key` covers swapping talons without closing.
  */
 export function TalonEditorDialog({
   open,
@@ -406,6 +345,9 @@ interface TemplateFormState {
 }
 
 function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: TalonEditorFormProps) {
+  // The form dissolves under the dialog header rather than being cut by it.
+  const bodyRef = useScrollFade<HTMLDivElement>();
+
   const [name, setName] = useState(talon?.name ?? '');
   const [description, setDescription] = useState(talon?.description ?? '');
   const [trigger, setTrigger] = useState<TriggerDraft>(() =>
@@ -426,23 +368,17 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
   const [cooldownValue, setCooldownValue] = useState(() =>
     String(talon?.cooldownMinutes ?? DEFAULT_TALON_COOLDOWN_MINUTES),
   );
-  // No control renders this one: the list owns the enable toggle. It is still
-  // carried through every save — PATCH replaces the caller-owned half of the
-  // talon wholesale, and the validator defaults an omitted `enabled` to true,
-  // which would silently re-arm a paused talon.
+  // Unrendered here (the list owns the toggle) but carried through every save:
+  // PATCH replaces wholesale and an omitted `enabled` defaults to true, which
+  // would silently re-arm a paused talon.
   const enabled = talon?.enabled ?? true;
 
   const [fieldErrors, setFieldErrors] = useState<TalonFieldError[]>([]);
   const [busy, setBusy] = useState(false);
 
-  /* ---------------------------------------------------------------------- */
-  /*  templates — create mode only                                          */
-  /* ---------------------------------------------------------------------- */
-
-  // Editing an existing talon offers no picker: a template that silently
-  // replaced a live talon's every field is the "did that just overwrite my
-  // work?" question no confirm dialog answers well. `null` keeps the listener
-  // closed in that mode rather than subscribing for a row that never renders.
+  // Templates are create-mode only — silently replacing every field of a live
+  // talon is not something a confirm dialog fixes. `null` keeps the listener
+  // closed rather than subscribing for a row that never renders.
   const isCreate = talon === null;
   const {
     presets: templates,
@@ -458,17 +394,12 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
   const [pendingReplace, setPendingReplace] = useState<TalonPreset | null>(null);
   const [templateBusy, setTemplateBusy] = useState(false);
   const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState(false);
-  /**
-   * `null` = not known (the probe failed). Only `false` upgrades the llm
-   * annotation to "you have none yet" — an unknown state must not claim a key
-   * is missing.
-   */
+  /** `null` = probe failed/pending; only `false` may claim a key is missing. */
   const [hasLlmKey, setHasLlmKey] = useState<boolean | null>(null);
 
   useEffect(() => {
-    // The CURRENT USER's key, because a talon created here runs on it. Session
-    // scoped, so unlike the site-key probe it replaced this works for members
-    // too — they author talons and spend their own key exactly as admins do.
+    // The CURRENT USER's key — a talon created here runs on it. Session-scoped,
+    // so members (not just admins) get an accurate answer.
     if (!isCreate) return;
     let cancelled = false;
     void (async () => {
@@ -487,14 +418,12 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
   }, [isCreate]);
 
   const selectedTemplate = templates.find((preset) => preset.id === templateId) ?? null;
-  // Built-ins are the shipped catalog; editing or deleting one belongs on a
-  // management page, not in the middle of authoring a talon.
+  // Built-ins are the shipped catalog — editing/deleting belongs on a
+  // management page, not mid-authoring.
   const canManageSelected = selectedTemplate !== null && !selectedTemplate.isBuiltIn;
   const builtInTemplates = templates.filter((preset) => preset.isBuiltIn);
-  // Grouped by what is still MISSING for this operator, not by what the
-  // template declares: with a key saved, every ai template is ready to use, and
-  // filing them under "needs a detail" told the people best equipped to run
-  // them that they were not.
+  // Grouped by what is MISSING for this operator, not by what the template
+  // declares — with a key saved, every ai template is ready.
   const readyTemplates = builtInTemplates.filter(
     (preset) => unmetRequirements(preset.requires, hasLlmKey).length === 0,
   );
@@ -504,12 +433,8 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
   const savedTemplates = templates.filter((preset) => !preset.isBuiltIn);
 
   /**
-   * Split the error list into the inline slots and the footer summary.
-   *
-   * Slots are first-wins: two errors on one slot show the first, and the second
-   * surfaces on the next submit once the first is fixed. The summary drops any
-   * message a slot is already showing, so no sentence can appear twice on
-   * screen even when two different paths produce the same copy.
+   * Split errors into inline slots and the footer summary. Slots are first-wins;
+   * the summary drops any message a slot already shows, so nothing appears twice.
    */
   const { slotMessages, summaryMessages } = useMemo(() => {
     const slots = new Map<string, string>();
@@ -529,10 +454,7 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
 
   const errorFor = (slot: string): string | undefined => slotMessages.get(slot);
 
-  /**
-   * Drop every error whose field matches, so a corrected control stops showing
-   * a stale message the moment it changes rather than at the next submit.
-   */
+  /** Drop matching errors so a corrected control clears immediately, not at next submit. */
   function clearErrorsWhere(matches: (field: string) => boolean): void {
     setFieldErrors((prev) => {
       const next = prev.filter((entry) => !matches(entry.field));
@@ -557,8 +479,7 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
 
   function handleConditionChange(next: ConditionDraft): void {
     setCondition(next);
-    // The interval floor is a function of the condition type, so a stale
-    // "visual checks run at most every 15 minutes" goes with it.
+    // Interval floor depends on condition type — clear the stale floor message too.
     clearErrorsWhere(
       (field) =>
         field === 'condition' ||
@@ -573,9 +494,7 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
   }
 
   function handleOutputsChange(next: OutputDraft[]): void {
-    // Adding, removing or reordering shifts the indexes every output error is
-    // bound to, so the whole set is unbound — there is no honest way to keep
-    // `outputs[1].url` pointing at the row the user meant.
+    // Add/remove/reorder shifts every output index, so unbind the whole set.
     const restructured =
       next.length !== outputs.length || next.some((draft, i) => draft.key !== outputs[i].key);
     setOutputs(next);
@@ -600,12 +519,9 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
   }
 
   /**
-   * Run the SHARED validator over the current draft. Both the save button and
-   * "save as template" go through this, so a template can never hold a talon
-   * this editor would refuse to create.
-   *
-   * `''` is passed through as `NaN` rather than coerced to 0 — the validator
-   * owns the message, exactly as `TriggerCard` treats its own number fields.
+   * Run the SHARED validator over the draft. Both save and "save as template"
+   * go through it, so a template can never hold a talon create would refuse.
+   * `''` becomes `NaN`, not 0 — the validator owns the message.
    */
   function validateDraft(): TalonValidationResult {
     const cooldown = cooldownValue.trim();
@@ -671,17 +587,10 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
     }
   }
 
-  /* ---------------------------------------------------------------------- */
-  /*  template actions                                                      */
-  /* ---------------------------------------------------------------------- */
-
   /**
-   * Replace the WHOLE draft with the template's talon.
-   *
-   * Scope is the one field that never comes from a template: machine ids belong
-   * to one site, so every applied template starts at "all machines" and the
-   * operator narrows it deliberately. Errors bound to the fields just replaced
-   * would all be stale, so they go too.
+   * Replace the WHOLE draft with the template's talon. Scope is never templated
+   * (machine ids belong to one site) so it resets to "all machines"; errors
+   * bound to the replaced fields are dropped as stale.
    */
   function applyTemplate(presetId: string): void {
     setTemplateId(presetId);
@@ -805,8 +714,8 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
       return;
     }
 
-    // The name check runs against the MERGED list, so colliding with a built-in
-    // is caught too — replacing one writes the `builtin-*` override.
+    // Checked against the MERGED list so built-in collisions are caught too —
+    // replacing one writes the `builtin-*` override.
     const existing = findTalonPresetByName(templates, trimmedName);
     if (existing) {
       setPendingReplace(existing);
@@ -962,7 +871,7 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
         </div>
       </DialogHeader>
 
-      <div className="max-h-[65vh] overflow-y-auto space-y-5 pr-1">
+      <div ref={bodyRef} className="max-h-[65vh] overflow-y-auto space-y-5 pr-1">
         {isCreate && (
           <div className="space-y-2">
 

@@ -1,20 +1,13 @@
 /**
- * k6 load test: POST /api/roosts/{roostId}/versions.
+ * k6 load test: POST /api/roosts/{roostId}/versions — the transaction-heavy tail
+ * of the roost upload flow (validate body, verify chunk presence, write to R2,
+ * flip currentVersionId inside a Firestore transaction). SLO: p99 < 800 ms.
  *
- * Transaction-heavy tail of the Roost upload flow. The route validates a
- * version body, verifies chunk presence, writes the version body to R2, and
- * flips currentVersionId inside a Firestore transaction.
+ * Fixture: K6_VERSION_CHUNK_HASHES=comma,separated,64char,lowercase,hex,hashes
  *
- * SLO: p99 < 800 ms.
- *
- * Required fixture:
- *   K6_VERSION_CHUNK_HASHES=comma,separated,64char,lowercase,hex,hashes
- *
- * Scenarios:
- *   `smoke`     - single publish loop.
- *   `sustained` - light concurrent publish pressure.
- *   `race`      - 20 concurrent publishes against one expected head; exactly
- *                 one should return 201 and the rest should return 412.
+ * Scenarios: `smoke` (single publish loop), `sustained` (light concurrency),
+ * `race` (20 concurrent publishes against one expected head — exactly one 201,
+ * the rest 412).
  */
 
 import http from 'k6/http';

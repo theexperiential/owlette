@@ -1,12 +1,7 @@
 /**
- * GET /api/sites/{siteId}/machines
- *      → List all machines in a site with online status + current roost summary.
- *
- * Each row includes `currentRoosts`: the roosts whose `targets[]` include this
- * machine, with their currentVersionId so operators can see "what's this
- * machine running right now" at a glance.
- *
- * roost public api wave 3.6.
+ * GET /api/sites/{siteId}/machines — every machine in the site with online status
+ * and a `currentRoosts` summary: the roosts targeting it plus their
+ * currentVersionId, so "what is this machine running" reads at a glance.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -38,14 +33,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const db = getAdminDb();
     const siteRef = db.collection('sites').doc(siteId);
 
-    // Parallel fetch: machines + roosts. The roosts set drives the per-
-    // machine current-roost summary.
+    // Roosts drive the per-machine current-roost summary.
     const [machinesSnap, roostsSnap] = await Promise.all([
       siteRef.collection('machines').get(),
       siteRef.collection('roosts').get(),
     ]);
 
-    // Build machineId → roost summaries[] index.
+    // machineId → roost summaries[]
     const roostsByMachine = new Map<string, RoostSummary[]>();
     for (const roostDoc of roostsSnap.docs) {
       const data = roostDoc.data();

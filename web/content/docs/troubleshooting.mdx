@@ -72,7 +72,7 @@ The encrypted token file is missing or unreadable.
 
 1. Delete the token file: `del C:\ProgramData\Owlette\.tokens.enc`
 2. Run the pairing flow: `C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\configure_site.py`
-3. Authorize on the web page that opens, then restart the service
+3. The console prints a 3-word pairing phrase and the authorization link for the server this machine is bound to, then starts polling. Open that link from any device and enter the phrase — nothing opens a browser here on its own. The running service picks the new credentials up on its own; no restart is needed.
 
 ### token refresh failing
 
@@ -106,21 +106,39 @@ Check `service.log` for refresh errors. Common causes:
 
 ---
 
-## mfa issues
+## 2fa issues
 
 ### lost authenticator
 
-Use one of your **backup codes** at the MFA prompt. Each code can only be used once.
+If you also have a passkey on the account, sign in with it — a passkey clears 2FA on its own, no code needed.
+
+Otherwise use one of your **backup codes** at the 2FA prompt. Each code can only be used once.
 
 ### no backup codes
 
-Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `mfaSecret`, and `mfaBackupCodes` fields in your Firestore user document.
+Ask a superadmin to run **reset 2FA** on your account from the admin users page (`POST /api/users/{uid}/mfa-reset`). It removes every second factor — authenticator app, passkeys, and the backup codes — re-arms mandatory 2FA setup, and revokes the account's trusted devices, so the next sign-in starts enrollment from scratch.
+
+Two things it deliberately does **not** do: it does not revoke Firebase refresh tokens, so a session the user already holds elsewhere stays signed in until it expires on its own; and superadmins cannot reset themselves, so a locked-out superadmin needs a different superadmin to do it.
+
+Because a reset hands the account to whoever signs in next, confirm who you're talking to before running one.
 
 ### code not working
 
 - Ensure your device's clock is synchronized (TOTP is time-based)
 - Codes expire every 30 seconds — enter the current one
 - Verify you're using the correct account in your authenticator app
+
+### "verify a factor you already have" when adding one
+
+Adding a second factor to an account that already holds one requires the current session to have cleared a 2FA challenge — the route answers `403` with `mfa_challenge_required` otherwise. Verify with your existing passkey, or take the **use a code instead** link to `/verify-2fa`, then add the new factor.
+
+### can't regenerate backup codes
+
+Regeneration needs live proof in the same request: a current 6-digit code, an unused backup code, or your passkey. Being signed in is not enough — a fresh sheet of recovery codes could otherwise be used to turn 2FA off entirely. If you have none of the three, that's the superadmin reset above.
+
+### asked to set up 2fa again
+
+You removed your last second factor. That's allowed, but the account immediately re-arms 2FA setup, so the dashboard sends you to `/setup-2fa` to enroll a new factor — a passkey or an authenticator app — before you can use it again. Trusted devices are revoked at the same time.
 
 ---
 
@@ -139,7 +157,7 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 1. Verify `RESEND_API_KEY` environment variable is set in Railway
 2. Check that the Resend API key is valid
 3. Verify `CRON_SECRET` is configured for health check cron
-4. Check Railway cron schedule is set: `*/5 * * * *`
+4. Check the cron-job.org schedule is set: `*/5 * * * *`
 5. Send a test email from Admin Panel → Email Test
 6. Check spam/junk folders
 

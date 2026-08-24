@@ -1,12 +1,9 @@
 'use client';
 
 /**
- * useDisplayEventFeed Hook
- *
- * Subscribes to display-related events for a single machine, sourced from
- * `sites/{siteId}/logs` (the agent stamps each log doc with a `machineId`
- * field; see `agent/src/firebase_client.py` `log_event`). Returns the most
- * recent events newest-first, updated in real time.
+ * Live display events for one machine, from `sites/{siteId}/logs` (the agent
+ * stamps each doc with `machineId` — see `log_event` in firebase_client.py).
+ * Newest first.
  */
 
 import { useEffect, useState } from 'react';
@@ -39,14 +36,12 @@ const DEFAULT_LIMIT = 50;
 const EMPTY_EVENTS: DisplayEventEntry[] = [];
 
 /**
- * Every `display_*` action the agent emits — via `_emit_display_event`
- * (agent/src/owlette_service.py) and the display audit / apply paths
- * (agent/src/display_manager.py). SINGLE SOURCE OF TRUTH for "what is a display
- * event" on the web side: the events feed filters on this set server-side.
+ * Every `display_*` action the agent emits (owlette_service `_emit_display_event`
+ * and the display_manager audit/apply paths). SINGLE SOURCE OF TRUTH on the web
+ * side — the feed filters on this set server-side.
  *
- * IMPORTANT: when the agent adds a new `display_*` action, add it here too —
- * otherwise that event type silently never appears in the panel. Firestore caps
- * an `in` filter at 30 values; keep this list under that (currently 15).
+ * Add new agent actions HERE or they silently never appear. Firestore caps an
+ * `in` filter at 30 values; currently 15.
  */
 export const DISPLAY_EVENT_ACTIONS = [
   'display_monitor_added',
@@ -67,10 +62,8 @@ export const DISPLAY_EVENT_ACTIONS = [
 ] as const;
 
 /**
- * Normalize a Firestore timestamp value into epoch milliseconds. Mirrors the
- * helper in `useDisplayState` so the two hooks treat the same wire shapes
- * identically (Timestamp instance, plain `{seconds, nanoseconds}` from SSR /
- * test fixtures, raw number, or anything unrecognized -> 0).
+ * Firestore timestamp -> epoch ms. Mirrors the `useDisplayState` helper: Timestamp
+ * instance, plain `{seconds, nanoseconds}` (SSR / fixtures), raw number, else 0.
  */
 function normalizeTimestamp(value: unknown): number {
   if (typeof value === 'number') return value;
@@ -107,9 +100,8 @@ export function useDisplayEventFeed(
   const requestedLimit = options?.limit ?? DEFAULT_LIMIT;
   const demo = useDemoContext();
 
-  // State is tagged with the (siteId, machineId) it belongs to so async
-  // snapshot callbacks can discard results for a prior target without the
-  // effect having to call setState synchronously on mount/target-change.
+  // Tagged with its (siteId, machineId) so async snapshot callbacks can discard
+  // results for a prior target without a synchronous setState on target change.
   const [state, setState] = useState<InternalState>(() => ({
     siteId: '',
     machineId: '',
@@ -120,21 +112,16 @@ export function useDisplayEventFeed(
 
   useEffect(() => {
     if (!db || !siteId || !machineId || !enabled || demo) {
-      // Render path handles these cases (demo, disabled, missing target)
-      // without a state mutation here. Cleanup from the prior effect run
-      // tears down any live subscription before this no-op body executes.
+      // Demo / disabled / missing target are handled in the render path; the
+      // prior run's cleanup already tore down any live subscription.
       return;
     }
 
-    // Fetch this machine's display events newest-first, filtered to the known
-    // display action set SERVER-SIDE. Filtering by action (rather than
-    // over-fetching all logs and filtering `display_*` on the client) means a
-    // burst of unrelated logs — process crashes, commands, deploys — can never
-    // push recent display events out of the limit window. The orderBy is
-    // essential: without it Firestore returns docs in document-ID order, and log
-    // IDs are random UUIDs (see firebase_client.log_event), so the limit would
-    // slice a time-agnostic subset. Backed by the (action ASC, machineId ASC,
-    // timestamp DESC) composite index in firestore.indexes.json.
+    // Filter by action SERVER-SIDE, or a burst of unrelated logs (crashes,
+    // commands, deploys) pushes display events out of the limit window.
+    // The orderBy is essential: without it Firestore orders by document id, and
+    // log ids are random UUIDs, so the limit would slice a time-agnostic subset.
+    // Backed by the (action, machineId, timestamp DESC) composite index.
     const logsRef = collection(db, 'sites', siteId, 'logs');
     const q = query(
       logsRef,
@@ -155,8 +142,7 @@ export function useDisplayEventFeed(
           })
           .sort((a, b) => b.timestamp - a.timestamp);
 
-        // The query already restricts to DISPLAY_EVENT_ACTIONS and caps at
-        // requestedLimit, so every candidate is a display event — just map them.
+        // The query already restricts + caps, so every doc is a display event.
         for (const { docSnap, data, timestamp } of candidates) {
           const action = typeof data.action === 'string' ? data.action : '';
           next.push({
@@ -194,9 +180,8 @@ export function useDisplayEventFeed(
     };
   }, [siteId, machineId, enabled, requestedLimit, demo]);
 
-  // Demo route — synthesized display events aren't part of the demo dataset
-  // yet, so return inert. Skip the live Firestore path entirely; the demo
-  // site/machine docs don't exist and would surface a permission error.
+  // Demo route: no synthesized display events yet, and the demo site/machine docs
+  // don't exist — hitting Firestore would surface a permission error.
   if (demo) {
     return { events: EMPTY_EVENTS, loading: false, error: null };
   }
@@ -213,9 +198,8 @@ export function useDisplayEventFeed(
     return { events: EMPTY_EVENTS, loading: false, error: null };
   }
 
-  // Props changed but the subscription hasn't produced its first snapshot
-  // for the new target yet — report loading with empty events so callers
-  // never see stale values from the previous machine.
+  // New target, first snapshot still pending — report loading/empty so callers
+  // never see the previous machine's values.
   if (state.siteId !== siteId || state.machineId !== machineId) {
     return { events: EMPTY_EVENTS, loading: true, error: null };
   }

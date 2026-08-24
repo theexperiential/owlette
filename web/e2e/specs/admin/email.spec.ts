@@ -1,26 +1,11 @@
 /**
- * Admin — email page (C3.6)
+ * Admin — email page. Configuration is READ-ONLY (driven by `RESEND_API_KEY` / `ADMIN_EMAIL_*`),
+ * so the only interactive surface is the 9-template selector and the "send test email" button.
  *
- * The email admin page is READ-ONLY for configuration: provider /
- * from-address / admin-email / env are driven by `RESEND_API_KEY` +
- * `ADMIN_EMAIL_*` env vars, not user-editable. There is no "SMTP save"
- * surface to test. The interactive surface is:
- *   - a template selector (9 templates hardcoded in the page)
- *   - a "send test email" button that POSTs to /api/test-email
+ * Covers: config card read-through from /api/platform/email/config, the template selector updating
+ * its description, and /api/test-email stubbed for both success and failure panels.
  *
- * This spec:
- *   - asserts the config card renders (provider + badges + env +
- *     from/admin emails) — read-through from /api/platform/email/config
- *   - exercises the template selector (chevron-styled native <select>)
- *     and confirms the description text updates
- *   - stubs /api/test-email via Playwright's page.route() to return a
- *     deterministic success payload → asserts toast + success panel
- *     (Template / Sent to / email ID)
- *   - stubs the same route with a failure payload → asserts error
- *     toast + red error panel with details
- *
- * Stubbing (not hitting Resend) keeps the test deterministic and
- * doesn't require a live API key in the emulator env.
+ * Stubbed rather than hitting Resend — deterministic, and no live API key in the emulator env.
  */
 
 import { test, expect, type Page, type Route } from '@playwright/test';
@@ -41,18 +26,13 @@ async function stubTestEmail(page: Page, response: Record<string, unknown>, stat
 test('config card renders provider + from/admin emails + environment', async ({ page }) => {
   await page.goto('/admin/email');
 
-  // Bumped to 10s because RequireSuperadmin renders a "verifying permissions..."
-  // gate while AuthContext hydrates against the auth emulator; the default 5s
-  // expect timeout occasionally races that hydration on cold-emulator runs.
-  // Subsequent heading-readiness checks in this spec keep the same bump.
+  // 10s because RequireSuperadmin gates on AuthContext hydrating against the auth emulator, which
+  // races the default 5s timeout on cold-emulator runs. Same bump throughout this spec.
   await expect(
     page.getByRole('heading', { name: 'email', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
 
-  // Config read-through is async — wait for the provider field to populate.
-  // "Resend" is inline with the badge inside <dd>, so the <dd>'s full text
-  // is "Resend connected" rather than just "Resend" — a plain substring
-  // match is what we want here, not `exact: true`.
+  // The <dd> reads "Resend connected" — badge is inline — so substring match, not `exact: true`.
   await expect(page.getByText('Resend').first()).toBeVisible({ timeout: 5_000 });
   await expect(page.getByText('provider', { exact: true })).toBeVisible();
   await expect(page.getByText('environment', { exact: true })).toBeVisible();
@@ -63,7 +43,6 @@ test('config card renders provider + from/admin emails + environment', async ({ 
 test('template selector shows all 9 templates and updates the description', async ({ page }) => {
   await page.goto('/admin/email');
 
-  // Wait for RequireSuperadmin's spinner to clear (see top-of-file comment).
   await expect(
     page.getByRole('heading', { name: 'email', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
@@ -78,7 +57,7 @@ test('template selector shows all 9 templates and updates the description', asyn
   await select.selectOption('process_crash');
   await expect(page.getByText('monitored process stopped unexpectedly')).toBeVisible();
 
-  // Quick sanity check: all 9 template options are present.
+  // All 9 template options present.
   const optionCount = await select.locator('option').count();
   expect(optionCount).toBe(9);
 });
@@ -92,16 +71,13 @@ test('clicking "send test email" with a stubbed success response shows the succe
   });
 
   await page.goto('/admin/email');
-  // Wait for RequireSuperadmin's spinner to clear (see top-of-file comment).
   await expect(
     page.getByRole('heading', { name: 'email', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: /^send test email$/i }).click();
 
-  // Success toast.
   await expect(page.getByText('Test email sent successfully!', { exact: true })).toBeVisible();
-  // Success result panel details — scope to main so toast-description
-  // duplicates don't trigger strict-mode.
+  // Scope to main so the toast's duplicate text doesn't trip strict-mode.
   const main = page.getByRole('main');
   await expect(main.getByText('Email sent successfully', { exact: true })).toBeVisible();
   await expect(main.getByText('e2e-recipient@example.test', { exact: true })).toBeVisible();
@@ -116,16 +92,13 @@ test('clicking "send test email" with a stubbed failure surfaces the error', asy
   );
 
   await page.goto('/admin/email');
-  // Wait for RequireSuperadmin's spinner to clear (see top-of-file comment).
   await expect(
     page.getByRole('heading', { name: 'email', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: /^send test email$/i }).click();
 
-  // Error toast.
   await expect(page.getByText('Failed to send test email', { exact: true })).toBeVisible();
-  // Error panel + details — scope to main so we don't collide with the
-  // toast description, which echoes the same `error` / `details` strings.
+  // Scope to main; the toast description echoes the same `error` / `details` strings.
   const main = page.getByRole('main');
   await expect(main.getByText('Failed to send email', { exact: true })).toBeVisible();
   await expect(main.getByText('RESEND_API_KEY missing', { exact: true })).toBeVisible();

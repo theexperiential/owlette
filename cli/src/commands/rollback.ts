@@ -1,28 +1,13 @@
 /**
- * `owlette rollback <roostId>`.
+ * `owlette rollback <roostId>`: load the roost, resolve the target version
+ * (`--to <versionRef>` — numeric, `#3`/`v3`, `vrs_*`, or an alias — else
+ * `previousVersionId`), print the diff against current, confirm, then POST
+ * /rollback. The mutation sends the version id the diff resolved, so an
+ * idempotent retry replays the same body. Confirmation requires a tty; piping
+ * without `--yes` is refused rather than rolling back silently.
  *
- * Flow:
- *   1. load the roost (GET /api/roosts/{id}) → pick `current` as the
- *      "from" version.
- *   2. resolve the "to" version: `--to <versionRef>` if given, else the
- *      roost's `previousVersionId`. `<versionRef>` accepts a numeric id
- *      (`3`), `#3`/`v3`, a `vrs_*` opaque id, or alias
- *      `current`/`previous`/`first`.
- *   3. fetch the diff: GET /api/roosts/{id}/versions/{to}/diff?against={current}
- *      → print a human-readable summary. Uses the same pretty-print
- *      helpers as `roost roost diff`.
- *   4. confirm (interactive) unless `--yes`. stdin must be a tty for the
- *      prompt; otherwise `--yes` is required (no silent rollbacks from
- *      pipes).
- *   5. POST /api/roosts/{id}/rollback with { siteId, targetVersion }.
- *      The diff preview resolves number-or-id-or-alias refs first; the
- *      mutation uses that concrete version id so idempotent retries can
- *      replay the same body.
- *
- * Exit codes:
- *   0 — rollback succeeded (or user said 'no' to the prompt)
- *   1 — api call failed
- *   2 — usage / auth / no rollback target / non-tty without --yes
+ * Exit codes: 0 success or declined prompt, 1 api failure,
+ * 2 usage / auth / no target / non-tty without --yes.
  */
 
 import { Command } from 'commander';
@@ -77,7 +62,7 @@ interface RollbackResponse {
 }
 
 export function registerRollbackCommand(program: Command): void {
-  // Drop any stub left behind by earlier file-load order.
+  // drop any stub left by earlier file-load order
   const existing = program.commands.find((c) => c.name() === 'rollback');
   if (existing) {
     const list = program.commands as Command[];
@@ -112,7 +97,6 @@ export function registerRollbackCommand(program: Command): void {
       const json = globals.json === true;
       const siteId: string = opts.site;
 
-      // 1. Load the roost.
       const roost = await fetchRoost(apiUrl, token, roostId, siteId);
       if (!roost) {
         process.exitCode = 1;
@@ -127,10 +111,7 @@ export function registerRollbackCommand(program: Command): void {
         return;
       }
 
-      // 2. Resolve the rollback target. When `--to` is omitted, fall
-      // back to the roost's previous version. The flag is forwarded to
-      // the server verbatim so it can accept any of the alias / number
-      // / id forms the resolver supports.
+      // `--to` is forwarded verbatim so the server resolver handles every ref form
       const targetRef: string | null =
         (typeof opts.to === 'string' && opts.to.length > 0 ? opts.to : null) ??
         roost.previousVersionId;
@@ -141,10 +122,7 @@ export function registerRollbackCommand(program: Command): void {
         return;
       }
 
-      // 3. Fetch + print the diff. We preview the change against the
-      // current version using the operator's raw target ref — the diff
-      // endpoint runs the same resolver, so whatever `--to` accepts is
-      // safe to pipe straight through.
+      // the diff endpoint runs the same resolver, so the raw ref goes straight through
       const diff = await fetchDiff(
         apiUrl,
         token,
@@ -158,8 +136,7 @@ export function registerRollbackCommand(program: Command): void {
         return;
       }
 
-      // Refuse a no-op rollback — the diff endpoint resolved both refs
-      // and reported identical versions, so there's nothing to flip.
+      // both refs resolved to the same version: nothing to flip
       if (diff.toVersion && diff.fromVersion && diff.toVersion === diff.fromVersion) {
         usageFatal(
           `target version resolves to ${diff.toVersion}, which is already the current version. pass --to <versionRef> to a different version.`,
@@ -177,7 +154,6 @@ export function registerRollbackCommand(program: Command): void {
         process.stdout.write(roostInternals.formatDiff(diff));
       }
 
-      // 4. Confirm.
       if (!opts.yes) {
         if (!process.stdin.isTTY) {
           usageFatal(
@@ -198,7 +174,6 @@ export function registerRollbackCommand(program: Command): void {
         }
       }
 
-      // 5. Fire.
       const idempotencyKey = opts.idempotencyKey
         ? String(opts.idempotencyKey)
         : `cli-rollback-${randomUUID()}`;
@@ -239,10 +214,6 @@ export function registerRollbackCommand(program: Command): void {
       }
     });
 }
-
-/* --------------------------------------------------------------------- */
-/*  http helpers                                                         */
-/* --------------------------------------------------------------------- */
 
 async function fetchRoost(
   apiUrl: string,
@@ -312,15 +283,7 @@ async function performRollback(
   return data;
 }
 
-/* --------------------------------------------------------------------- */
-/*  prompt                                                               */
-/* --------------------------------------------------------------------- */
-
-/**
- * Minimal readline-based yes/no prompt. Defaults to "no" on empty input
- * to match the [y/N] convention — a user hitting return does NOT roll
- * back.
- */
+/** Defaults to "no" on empty input per [y/N] — return must never roll back. */
 function promptYesNo(question: string): Promise<boolean> {
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stderr });
@@ -353,7 +316,7 @@ function unconfirmedRollbackFatal(input: {
   process.exitCode = 1;
 }
 
-/** Exported for unit tests — promptYesNo uses process.stdin which is awkward to mock directly. */
+/** Exported for unit tests: promptYesNo reads process.stdin. */
 export const _internals = {
   promptYesNo,
 };

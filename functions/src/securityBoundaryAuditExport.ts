@@ -1,9 +1,8 @@
 /**
- * Scheduled managed Firestore export for W9 security-boundary audit logs.
- *
- * Cloud Scheduler cannot safely template a fresh date into the Firestore
- * Admin API request body. This scheduled function is the small wrapper that
- * generates a unique GCS prefix for each run and then starts exportDocuments.
+ * Scheduled managed Firestore export of the security-boundary audit logs.
+ * Exists because Cloud Scheduler can't template a fresh date into the Firestore
+ * Admin API body — this generates a unique GCS prefix per run, then calls
+ * exportDocuments.
  */
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
@@ -122,11 +121,9 @@ export const exportSecurityBoundaryAuditDevDaily = onSchedule(
     timeZone: 'UTC',
     timeoutSeconds: 120,
     memory: '256MiB',
-    // Dedicated SA only exists in dev (owlette-dev-3838a). In prod the
-    // function is a no-op (see guard in body) so it can run under the
-    // project's default compute SA without IAM grants. Provision a
-    // dedicated prod SA + bucket + export role and revert this to a
-    // bare assignment when prod export infra is wired up.
+    // The dedicated SA only exists in dev; in prod the function is a no-op (see
+    // the guard in the body) and runs under the default compute SA with no IAM
+    // grants. TODO: provision a prod SA + bucket + export role, then simplify.
     ...(resolveProjectId() === DEFAULT_PROJECT_ID
       ? { serviceAccount: `security-boundary-audit-export@${DEFAULT_PROJECT_ID}.iam.gserviceaccount.com` }
       : {}),

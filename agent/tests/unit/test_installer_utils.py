@@ -1,8 +1,5 @@
-"""
-Unit tests for installer_utils module
-
-Tests download, execution, verification, cleanup, and cancellation
-of software installers.
+"""Unit tests for installer_utils: download, execution, verification, cleanup
+and cancellation of software installers.
 """
 
 import pytest
@@ -15,10 +12,6 @@ import psutil
 
 import installer_utils
 
-
-# =============================================================================
-#  download_file
-# =============================================================================
 
 class TestDownloadFile:
     """Tests for download_file()"""
@@ -177,10 +170,6 @@ class TestDownloadFile:
         assert progress_values[-1] == 100
 
 
-# =============================================================================
-#  execute_installer
-# =============================================================================
-
 class TestExecuteInstaller:
     """Tests for execute_installer()"""
 
@@ -270,10 +259,6 @@ class TestExecuteInstaller:
         assert 'setup.exe' not in active
 
 
-# =============================================================================
-#  verify_checksum
-# =============================================================================
-
 class TestVerifyChecksum:
     """Tests for verify_checksum()"""
 
@@ -304,10 +289,6 @@ class TestVerifyChecksum:
             assert installer_utils.verify_checksum('/tmp/locked.exe', 'abc123') is False
 
 
-# =============================================================================
-#  verify_installation
-# =============================================================================
-
 class TestVerifyInstallation:
     """Tests for verify_installation()"""
 
@@ -321,10 +302,6 @@ class TestVerifyInstallation:
         assert installer_utils.verify_installation('C:/Program Files/App/app.exe') is False
 
 
-# =============================================================================
-#  get_temp_installer_path
-# =============================================================================
-
 class TestGetTempInstallerPath:
     """Tests for get_temp_installer_path()"""
 
@@ -336,10 +313,6 @@ class TestGetTempInstallerPath:
         assert path == os.path.join('C:/temp', 'owlette_installers', 'setup.exe')
         mock_makedirs.assert_called_once()
 
-
-# =============================================================================
-#  cleanup_installer
-# =============================================================================
 
 class TestCleanupInstaller:
     """Tests for cleanup_installer()"""
@@ -359,10 +332,6 @@ class TestCleanupInstaller:
     def test_locked_file_no_force(self, mock_remove, mock_exists):
         assert installer_utils.cleanup_installer('/tmp/setup.exe', force=False) is False
 
-
-# =============================================================================
-#  cancel_installation
-# =============================================================================
 
 class TestCancelInstallation:
     """Tests for cancel_installation()"""

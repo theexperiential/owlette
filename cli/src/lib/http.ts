@@ -1,29 +1,17 @@
 const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
 
-/**
- * Advisory header the api attaches while the account's free trial is still
- * running. Lowercase because `Headers.get()` is case-insensitive and this is
- * the form we look it up by.
- */
+/** Advisory header the api attaches during a free trial. */
 const BILLING_WARNING_HEADER = 'x-owlette-billing-warning';
 
-/**
- * Latch so the trial advisory prints **once per process invocation**, not
- * once per request. A command that pages through ten requests (`roost list`,
- * `push`, `deploy --wait`) would otherwise repeat the same line ten times.
- */
+/** Latch so the trial advisory prints once per process, not once per request. */
 let billingWarningPrinted = false;
 
 /**
- * Print the api's trial-countdown advisory to stderr, at most once per
- * process. No-op when the response carries no warning — which is the case
- * for every subscribed account, so the steady state is silent.
+ * Print the trial-countdown advisory, at most once per process. No-op without the header, so
+ * subscribed accounts stay silent. stderr, never stdout — `--json` must stay pipeable into `jq`.
  *
- * stderr, never stdout: `--json` output must stay pipeable into `jq`.
- *
- * Called for you by {@link fetchWithTimeout}; exported for the two long-lived
- * streaming call sites (`chat`, `listen`) that deliberately use a bare
- * `fetch` because a 30s timeout signal would sever the stream.
+ * Called by {@link fetchWithTimeout}; exported for `chat` and `listen`, which use a bare `fetch`
+ * because a 30s timeout signal would sever the stream.
  */
 export function noteBillingWarning(response: { headers: Headers }): void {
   if (billingWarningPrinted) return;

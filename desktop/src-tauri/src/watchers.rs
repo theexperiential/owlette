@@ -1,14 +1,12 @@
 //! Directory watchers for the three seam files the service publishes.
 //!
-//! `config.json`, `tmp/app_states.json` and `tmp/service_status.json` are never
-//! written in place — both sides write a scratch file and rename over the
-//! target (`shared_utils.write_json_to_file`). A watch registered on the file
-//! itself would therefore stop firing after the first replace, so we watch the
-//! two parent directories and filter events by path. This replaces the legacy
-//! GUI's one-second poll loop.
+//! `config.json`, `tmp/app_states.json` and `tmp/service_status.json` are never written in place —
+//! both sides scratch-write and rename over the target (`shared_utils.write_json_to_file`). A watch
+//! on the file itself stops firing after the first replace, so we watch the parent directories and
+//! filter by path. Replaces the legacy GUI's one-second poll loop.
 //!
-//! The module is deliberately free of Tauri types: it takes a sink closure, so
-//! the event plumbing can be unit tested without an app handle.
+//! Deliberately free of Tauri types — it takes a sink closure, so the plumbing is unit-testable
+//! without an app handle.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -21,10 +19,8 @@ use serde::Serialize;
 
 use crate::paths::{self, APP_STATES_REL, CONFIG_REL, SERVICE_STATUS_REL};
 
-/// Quiet period before a change is reported. One atomic replace produces
-/// several raw events (scratch file created, written, renamed over the target);
-/// coalescing on the trailing edge turns that burst into a single notification
-/// whose read is guaranteed to see the finished file.
+/// Quiet period before reporting. One atomic replace fires several raw events (create, write,
+/// rename); trailing-edge coalescing collapses them into one notification that sees a finished file.
 const DEBOUNCE: Duration = Duration::from_millis(120);
 
 /// Seam file a change refers to.
@@ -58,15 +54,13 @@ impl OwletteFile {
 #[serde(rename_all = "camelCase")]
 pub struct FileChange {
   pub file: OwletteFile,
-  /// Absolute path, so the frontend can hand it straight back to the JSON
-  /// commands without rebuilding it.
+  /// Absolute, so the frontend can hand it straight to the JSON commands.
   pub path: String,
   /// Unix milliseconds at which the change was reported.
   pub at: u64,
 }
 
-/// Keeps the watcher alive. Dropping it stops watching and joins the debounce
-/// thread.
+/// Keeps the watcher alive; dropping it stops watching and joins the debounce thread.
 pub struct WatchHandle {
   watcher: Option<RecommendedWatcher>,
   worker: Option<thread::JoinHandle<()>>,
@@ -74,10 +68,9 @@ pub struct WatchHandle {
 
 impl Drop for WatchHandle {
   fn drop(&mut self) {
-    // Order is load-bearing: the debounce thread parks on the channel the
-    // watcher holds the sender for, so the watcher must be dropped *inside*
-    // this body. Relying on field order would join a thread that has not been
-    // told to stop yet, and deadlock.
+    // Order is load-bearing: the debounce thread parks on the channel whose sender the watcher
+    // holds, so the watcher must drop INSIDE this body. Field-order drop would join a thread that
+    // was never told to stop, and deadlock.
     drop(self.watcher.take());
     if let Some(worker) = self.worker.take() {
       let _ = worker.join();
@@ -85,11 +78,9 @@ impl Drop for WatchHandle {
   }
 }
 
-/// Start watching the owlette data root, reporting changes to `sink`.
-///
-/// Both watched directories are created if missing: the desktop app can launch
-/// before the service has ever run, and `ReadDirectoryChangesW` cannot register
-/// against a directory that does not exist yet.
+/// Start watching the owlette data root, reporting changes to `sink`. Missing directories are
+/// created — the app can launch before the service ever has, and `ReadDirectoryChangesW` cannot
+/// register against a directory that does not exist.
 pub fn spawn<F>(root: &Path, sink: F) -> notify::Result<WatchHandle>
 where
   F: Fn(FileChange) + Send + 'static,
@@ -169,8 +160,7 @@ where
   })
 }
 
-/// One watched file: its absolute path and the comparison key events are
-/// matched against.
+/// One watched file: absolute path plus the key events are matched against.
 struct Target {
   file: OwletteFile,
   path: PathBuf,
@@ -224,8 +214,7 @@ mod tests {
     }
   }
 
-  /// Replace a file the way both sides of the seam do it: write a scratch file
-  /// next to the target, then rename over it.
+  /// Replace the way both sides of the seam do: scratch file next to the target, then rename.
   fn atomic_replace(path: &Path, contents: &str) {
     let temp = path.with_extension("json.tmp");
     fs::write(&temp, contents).expect("write temp");
@@ -268,7 +257,7 @@ mod tests {
     })
     .expect("spawn watcher");
 
-    // A leftover Python-style scratch file and an unrelated sibling.
+    // A leftover Python-style scratch file plus an unrelated sibling.
     fs::write(scratch.0.join("config").join("config.json.tmp"), "{}").expect("write");
     fs::write(scratch.0.join("tmp").join("cortex.pid"), "1234").expect("write");
 

@@ -40,9 +40,7 @@ function sampleEvent(overrides: Partial<AuditEvent> = {}): AuditEvent {
   };
 }
 
-/* --------------------------------------------------------------------- */
-/*  canonicaliseEvent                                                    */
-/* --------------------------------------------------------------------- */
+// canonicaliseEvent
 
 describe('canonicaliseEvent', () => {
   it('accepts a well-formed event', () => {
@@ -130,9 +128,7 @@ describe('canonicaliseEvent', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  canonicalJson                                                        */
-/* --------------------------------------------------------------------- */
+// canonicalJson
 
 describe('canonicalJson', () => {
   it('sorts keys recursively so insertion order does not matter', () => {
@@ -154,9 +150,7 @@ describe('canonicalJson', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  computeChainHash / buildAuditRecord / verifyChain                    */
-/* --------------------------------------------------------------------- */
+// computeChainHash / buildAuditRecord / verifyChain
 
 describe('chain', () => {
   it('GENESIS_HASH is 64 zero chars', () => {
@@ -238,8 +232,7 @@ describe('chain', () => {
   });
 
   it('verifyChain catches a deletion (r1 removed)', () => {
-    // If a middle record is deleted, r2's previousHash won't match r0's
-    // hash.
+    // A deleted middle record leaves r2's previousHash not matching r0's hash.
     const r0 = buildAuditRecord(sampleEvent(), GENESIS_HASH, 1);
     const r1 = buildAuditRecord(
       sampleEvent({ occurredAt: 2 }),
@@ -275,9 +268,7 @@ describe('chain', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  appendAudit (orchestrator)                                           */
-/* --------------------------------------------------------------------- */
+// appendAudit (orchestrator)
 
 function makeStore(initial: AuditRecord[] = []): AuditStore & {
   all: AuditRecord[];
@@ -380,9 +371,7 @@ describe('appendAudit', () => {
   });
 });
 
-/* --------------------------------------------------------------------- */
-/*  exportAllSites                                                       */
-/* --------------------------------------------------------------------- */
+// exportAllSites
 
 describe('exportAllSites', () => {
   it('exports every record via batched calls', async () => {

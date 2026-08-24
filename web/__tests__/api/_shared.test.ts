@@ -1,20 +1,15 @@
 /**
  * @jest-environment node
  *
- * tests for the shared helpers in web/app/api/v2/_shared.ts.
- *
- * the auth-mapping branches in particular were silently broken in round 1
- * (used `err.statusCode` instead of `err.status` from ApiAuthError) — this
- * file catches that class of regression.
+ * Shared helpers in web/app/api/_shared.ts. The auth-mapping branches were once silently
+ * broken by reading `err.statusCode` instead of ApiAuthError's `err.status`; this file catches
+ * that class of regression.
  */
 import { NextRequest } from 'next/server';
 
-// mock auth helpers BEFORE importing the module under test, so the module's
-// `import { ApiAuthError, requireAdminOrIdToken, assertUserHasSiteAccess }`
-// resolves to our controllable versions.
+// Mock the auth helpers BEFORE importing the module under test so its imports bind to these.
 jest.mock('@/lib/apiAuth.server', () => {
-  // declare ApiAuthError exactly as the real module does — `status` field,
-  // not `statusCode`.
+  // Must match the real module: `status`, not `statusCode`.
   class ApiAuthError extends Error {
     status: number;
     code?: string;
@@ -80,11 +75,6 @@ describe('_shared.ts (v2 route helpers)', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  // (checkAcceptHeader was removed when the API dropped URL+header dual
-  // versioning. there is no /api/v2/ prefix anymore — the routes ARE the
-  // API. tests deleted along with the helper.)
-
-  // ─── requireAuthOrProblem ─────────────────────────────────────────
 
   describe('requireAuthOrProblem', () => {
     it('returns ok with userId when auth succeeds', async () => {
@@ -96,8 +86,7 @@ describe('_shared.ts (v2 route helpers)', () => {
     });
 
     it('maps ApiAuthError(403) → 403 problemForbidden (NOT 401)', async () => {
-      // round-1 regression: used err.statusCode (undefined) → fell through
-      // to 401. this test would have caught it.
+      // Regression: err.statusCode (undefined) fell through to 401.
       mockedRequireAuth.mockRejectedValueOnce(new ApiAuthError(403, 'forbidden'));
       const req = makeRequest();
       const result = await requireAuthOrProblem(req);
@@ -148,7 +137,6 @@ describe('_shared.ts (v2 route helpers)', () => {
     });
   });
 
-  // ─── requireSiteScope ─────────────────────────────────────────────
 
   describe('requireSiteScope', () => {
     it('returns null when the user has access', async () => {
@@ -172,14 +160,13 @@ describe('_shared.ts (v2 route helpers)', () => {
     });
 
     it('collapses 403 (forbidden) → 404 problemNotFound (anti-enumeration)', async () => {
-      // round-1 regression: 403 fell through to problemForbidden(err.message)
-      // — leaking message AND failing the anti-enumeration design.
+      // Regression: 403 fell through to problemForbidden(err.message), leaking the message
+      // and breaking anti-enumeration.
       mockedAssertSite.mockRejectedValueOnce(new ApiAuthError(403, 'forbidden — siteId site_xyz'));
       const result = await requireSiteScope('user-1', 'site_abc');
       expect(result).not.toBeNull();
       expect(result!.status).toBe(404);
       const body = await result!.json();
-      // verify no info leak
       expect(JSON.stringify(body)).not.toContain('site_xyz');
     });
 
@@ -198,9 +185,7 @@ describe('_shared.ts (v2 route helpers)', () => {
     });
   });
 
-  // ─── requireBillingOrProblem ──────────────────────────────────────
 
-  // ─── validateResourceId ──────────────────────────────────────────
 
   describe('validateResourceId', () => {
     it('accepts valid 8-64 char ids', () => {
@@ -224,7 +209,6 @@ describe('_shared.ts (v2 route helpers)', () => {
     });
   });
 
-  // ─── validateSiteIdBody ──────────────────────────────────────────
 
   describe('validateSiteIdBody', () => {
     it('accepts valid siteId strings', () => {
@@ -254,7 +238,6 @@ describe('_shared.ts (v2 route helpers)', () => {
     });
   });
 
-  // ─── validateHashList ────────────────────────────────────────────
 
   describe('validateHashList', () => {
     const validHash = 'a'.repeat(64);
@@ -292,7 +275,6 @@ describe('_shared.ts (v2 route helpers)', () => {
     });
   });
 
-  // ─── parseJsonBody ──────────────────────────────────────────────
 
   describe('parseJsonBody', () => {
     it('parses valid json body', async () => {

@@ -1,18 +1,14 @@
 //! The two pid markers the service reads to see what the operator has open.
 //!
-//! * `tmp/tray.pid` — written for the life of the process. The service polls it
-//!   from `_is_tray_alive()` and only spawns `owlette-desktop.exe --tray` when
-//!   nothing is there, so a stale or missing marker costs a duplicate launch
-//!   (which the single-instance plugin folds straight back in).
-//! * `tmp/gui.pid` — written only while the main window is on screen. The
-//!   service raises its metrics cadence to 5 s while an operator is watching
-//!   (`firebase_client._metrics_loop`), which used to be a python-image scan for
-//!   `owlette_gui.py` and could never match a native executable. Tying it to the
-//!   window rather than the process matters now that the app lives in the tray:
-//!   a process-lifetime marker would pin the fleet at the 5 s cadence forever.
+//! * `tmp/tray.pid` — process lifetime. `_is_tray_alive()` polls it and only
+//!   spawns `owlette-desktop.exe --tray` when it's absent, so a stale marker
+//!   costs a duplicate launch (which single-instance folds back in).
+//! * `tmp/gui.pid` — WINDOW lifetime, not process lifetime. The service raises
+//!   its metrics cadence to 5 s while this exists; now that the app lives in
+//!   the tray, a process-lifetime marker would pin the fleet at 5 s forever.
 //!
-//! Format matches Cortex exactly (`owlette_cortex.write_pid_file`, :71-86) — the
-//! decimal pid, no trailing newline — so one reader works on any of them.
+//! Format matches `owlette_cortex.write_pid_file`: decimal pid, no trailing
+//! newline, so one reader works on any of them.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,9 +20,8 @@ pub fn write(root: &Path, relative: &str) -> std::io::Result<PathBuf> {
     fs::create_dir_all(parent)?;
   }
 
-  // Written through a scratch file and renamed: a reader that catches us
-  // mid-write would otherwise parse a truncated PID and conclude the wrong
-  // process is alive.
+  // Write-then-rename: a reader catching a partial write would parse a
+  // truncated PID and conclude the wrong process is alive.
   let file_name = path
     .file_name()
     .map(|name| name.to_string_lossy().into_owned())
@@ -44,11 +39,9 @@ pub fn write(root: &Path, relative: &str) -> std::io::Result<PathBuf> {
   Ok(path)
 }
 
-/// Remove `relative` under `root`, if it is ours to remove.
-///
-/// A stale file left by a crash is claimed by the next launch's [`write`], so
-/// removing another instance's marker here would only create a window where a
-/// live UI looks closed.
+/// Remove `relative` under `root`, only if it is ours. A crash-stale file is
+/// claimed by the next launch's [`write`]; removing another instance's marker
+/// would only create a window where a live UI looks closed.
 pub fn remove(root: &Path, relative: &str) {
   let path = root.join(relative);
   match fs::read_to_string(&path) {

@@ -4,14 +4,13 @@
  *
  * /register and /login when the visitor is already signed in.
  *
- * proxy.ts has this rule, but it only sees requests that reach the server. A
- * client-side history pop replays the page out of the App Router cache with no
- * round trip — which is how the OWLETTE-WEB-46 user, having cancelled out of
- * /setup-2fa, ended up re-submitting a signup form while authenticated.
+ * proxy.ts has this rule but only sees requests that reach the server; a client-side
+ * history pop replays the page from the App Router cache with no round trip — how the
+ * OWLETTE-WEB-46 user, having cancelled out of /setup-2fa, re-submitted a signup form
+ * while authenticated.
  *
- * The interesting case is the second one in each block: the guard must not fire
- * during a sign-in THIS page is performing, or it would beat the handler's own
- * navigation and send a brand-new signup to /dashboard instead of /setup-2fa.
+ * The guard must not fire during a sign-in THIS page is performing, or it beats the
+ * handler's own navigation and sends a brand-new signup to /dashboard, not /setup-2fa.
  */
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
@@ -119,10 +118,9 @@ describe('/login', () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
   });
 
-  // The proxy bounces an unauthenticated request to /login?redirect=<path>. If
-  // the session cookie lands a moment later, this page is where the user is
-  // sitting — and sending them to /dashboard would silently drop the path they
-  // actually asked for.
+  // The proxy bounces an unauthenticated request to /login?redirect=<path>. If the
+  // session cookie lands a moment later the user is sitting here, and /dashboard would
+  // silently drop the path they asked for.
   it('honours the redirect param rather than the default landing', async () => {
     authUser = { uid: 'already-signed-in' };
     search = 'redirect=%2Froost';

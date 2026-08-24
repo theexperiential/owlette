@@ -1,22 +1,18 @@
 /**
- * computeInstallerChecksum action core.
+ * Streams an installer from a user-supplied https URL and returns its SHA-256, so
+ * the dashboard can pin a checksum at authoring time. Agents since 9dccd12 refuse
+ * `install_software` without `sha256_checksum`, so every UI-authored
+ * deployment/template/preset goes through here.
  *
- * Streams an installer binary from a user-supplied https URL and returns its
- * SHA-256 digest, so the dashboard can pin a checksum at authoring time
- * without the user hashing files by hand. Agents (>= the 9dccd12 hardening)
- * refuse `install_software` commands without `sha256_checksum`, so every
- * deployment/template/preset authored in the UI runs through this.
+ * SSRF: the URL runs through `validateWebhookUrl` (https-only, private/loopback/
+ * metadata IPs rejected, DNS-resolved addresses re-checked) and redirects are
+ * followed manually with every hop re-validated, so a public URL cannot bounce
+ * the fetch inward. The body is hashed in-stream — never buffered or written to
+ * disk — and capped at `MAX_INSTALLER_BYTES`.
  *
- * Security: the URL goes through the same SSRF guard as webhook endpoints
- * (`validateWebhookUrl` — https-only, private/loopback/metadata IPs rejected,
- * DNS-resolved addresses re-checked). Redirects are followed manually and
- * every hop is re-validated, so a public URL cannot bounce the fetch into an
- * internal address. The body is hashed in-stream — never buffered whole or
- * written to disk — and capped at `MAX_INSTALLER_BYTES`.
- *
- * Pure action — does not touch HTTP. Route shims:
- *   - POST /api/sites/{siteId}/deployments/checksum  (DEPLOYMENT_MANAGE)
- *   - POST /api/platform/installer-checksum          (SYSTEM_PRESET_MANAGE)
+ * Pure action; route shims are POST /api/sites/{siteId}/deployments/checksum
+ * (DEPLOYMENT_MANAGE) and POST /api/platform/installer-checksum
+ * (SYSTEM_PRESET_MANAGE).
  */
 
 import { createHash } from 'node:crypto';

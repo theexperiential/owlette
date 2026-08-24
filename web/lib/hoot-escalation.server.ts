@@ -1,10 +1,8 @@
 /**
- * Hoot autonomous escalation system.
+ * When autonomous Hoot can't resolve an issue it emails site admins with what
+ * it investigated and attempted.
  *
- * When autonomous Hoot cannot resolve an issue, it escalates to site admins
- * via email with details of what was investigated and attempted.
- *
- * IMPORTANT: Server-side only — never import this in client components.
+ * Server-side only — never import this in client components.
  */
 
 import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.server';
@@ -12,9 +10,6 @@ import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { getResend, FROM_EMAIL, ENV_LABEL, isProduction } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, escapeHtml, safeEmailSubject } from '@/lib/emailTemplates.server';
 
-/**
- * Send an escalation email to site admins when autonomous Hoot cannot resolve an issue.
- */
 export async function escalate(
   siteId: string,
   eventId: string,
@@ -40,7 +35,6 @@ export async function escalate(
 
   let anySent = false;
   for (const recipient of recipients) {
-    // Skip if user has muted this machine
     if (recipient.mutedMachines.includes(machineName)) continue;
 
     const unsubscribeUrl = recipient.userId !== 'fallback'
@@ -78,12 +72,10 @@ function buildEscalationEmail(
   options: { unsubscribeUrl?: string; timezone?: string } = {}
 ): string {
   const { unsubscribeUrl, timezone } = options;
-  // Truncate Hoot response for email (keep it readable)
   const truncatedResponse = hootResponse.length > 2000
     ? hootResponse.slice(0, 2000) + '\n\n... (truncated)'
     : hootResponse;
 
-  // Escape HTML in the response
   const escapedResponse = truncatedResponse
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

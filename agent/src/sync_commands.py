@@ -1,42 +1,28 @@
 """
 sync_commands — roost (project distribution v2) command handlers.
 
-registers `sync_pull`, `cancel_sync`, `rollback_to_version` with the
-CommandRouter so they're dispatched by `OwletteService.handle_firebase_command`.
-each handler runs on the `_slow_command_worker` thread (NOT the main
-10-second loop) so blocking sync ops don't stall monitoring.
+Registers `sync_pull`, `cancel_sync`, `rollback_to_version` with the
+CommandRouter. Handlers run on `_slow_command_worker`, NOT the main 10-second
+loop, so blocking sync ops don't stall monitoring.
 
-handler responsibilities:
-- parse + validate the command payload
-- validate the destination BEFORE any egress (fail-fast allowlist check)
-- fetch the version (sync_version)
-- diff against local cache to compute chunk + file delta
-- download missing chunks (sync_downloader)
-- assemble files atomically (sync_assembler)
-- update SyncState throughout so progress survives crash/restart
-- report status back to firestore via service.firebase_client
+Pure orchestration: validate payload, check the destination BEFORE any egress,
+fetch the version, diff against the local cache, download chunks, assemble
+atomically, and keep SyncState + firestore updated throughout. The IO modules
+(sync_version / sync_downloader / sync_assembler / destination_allowlist) own
+their own logic and tests.
 
-design:
-- handlers are pure orchestration: every IO module they touch lives in
-  its own file with its own tests. this keeps the integration shallow.
-- cancellation: each in-flight sync registers its threading.Event first by
-  (site_id, roost_id, version_id), then by distribution_id once state exists.
-  cancel_sync fires the event through whichever key is currently available.
-- FAILURE REPORTING: a handler that could not do what it was asked returns
-  a string starting with `Error:` (see `_failure()`), matching every other
-  command handler in owlette_service. firebase_client._execute_command
-  keys off that prefix to write status:'failed' instead of
-  status:'completed' — a returned string without it is recorded as a
-  SUCCESS, which is how refused deploys used to show up green. every such
-  return is also logged locally at ERROR so the machine's own service.log
-  explains the failure without a firestore round trip.
-- terminal failures release the distribution's cached chunks; cancellations
-  deliberately do not (a cancelled sync resumes from them).
+Cancellation: an in-flight sync registers its threading.Event first by
+(site_id, roost_id, version_id), then by distribution_id once state exists;
+cancel_sync fires through whichever key is available.
 
-NOT this module's job:
-- the actual sync engine logic (downloader / assembler / version)
-- security floor (destination_allowlist)
-- HTTP signed-URL issuance (web/api routes)
+FAILURE REPORTING: a handler that could not do its job MUST return a string
+starting with `Error:` (see `_failure()`). firebase_client._execute_command
+keys off that prefix for status:'failed' — without it the run is recorded as a
+SUCCESS, which is how refused deploys used to show up green. Failures are also
+logged locally at ERROR so service.log explains them without a firestore trip.
+
+Terminal failures release cached chunks; cancellations deliberately do not, so
+a cancelled sync can resume from them.
 """
 
 from __future__ import annotations
@@ -60,11 +46,9 @@ except ImportError:  # pragma: no cover — only hit in isolated unit-test envs
 
 logger = logging.getLogger(__name__)
 
-# process-global registries of in-flight distributions. allow cancel_sync
-# to reach into a running sync and fire its cancel_event.
-# Before start_distribution returns, the distribution_id is not known, so
-# setup-phase syncs are keyed by the command's natural identity.
-# (site_id, roost_id, version_id) -> threading.Event
+# Process-global registries so cancel_sync can fire a running sync's
+# cancel_event. distribution_id is unknown until start_distribution returns, so
+# setup-phase syncs are keyed by (site_id, roost_id, version_id) instead.
 _SyncCancelKey = Tuple[str, str, str]
 _setup_cancels: Dict[_SyncCancelKey, threading.Event] = {}
 _setup_cancel_refcounts: Dict[_SyncCancelKey, int] = {}
@@ -155,9 +139,7 @@ def register_handlers(router: CommandRouter) -> None:
     )
 
 
-# ─── handlers ────────────────────────────────────────────────────────
-
-
+# handlers
 def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
     """
     pull a version + download missing chunks + atomically assemble files.
@@ -195,11 +177,9 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         if cancelled:
             return cancelled
 
-        # Wave 5.4 — kill-switch check. Admin sets sites/{siteId}.roostEnabled=false
-        # to halt all new roost work on this site. In-flight distributions are
-        # NOT cancelled here (cancel_sync handler owns that). Fail-open: a
-        # firestore read error treats the flag as enabled so a transient network
-        # blip doesn't pause deploys. See agent/src/roost_kill_switch.py.
+        # Kill switch: sites/{siteId}.roostEnabled=false halts NEW roost work.
+        # In-flight distributions are cancel_sync's job. Fail-open, so a
+        # transient firestore blip can't pause deploys.
         try:
             if not _roost_is_enabled(site_id, _firestore_reader_for(service)):
                 cancelled = _cancelled_before_distribution('kill-switch check')
@@ -211,9 +191,7 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
                 )
                 return f"sync_pull skipped: roost kill-switch engaged for site {site_id}"
         except Exception as e:
-            # defensive: the check itself should fail-open internally, but if
-            # something above it throws, keep going rather than silently
-            # declining commands.
+            # The check fails open internally; this covers a throw above it.
             logger.warning(
                 f"sync_pull: roost kill-switch check errored ({type(e).__name__}: {e}) — "
                 f"proceeding fail-open"
@@ -226,12 +204,9 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         state = _state_for(service)
         allowlist = _allowlist_for(service)
 
-        # FAIL-FAST destination check. The assembler validates extract_root
-        # again before it writes anything (defense in depth, and it owns the
-        # per-file checks), but doing it here means a misconfigured deploy
-        # costs zero egress: no version body, no chunks, no signed-URL
-        # requests. Before this, a refused deploy still pulled the entire
-        # project down first and only then declined to write it.
+        # Fail-fast so a misconfigured deploy costs ZERO egress — no version
+        # body, no chunks, no signed-URL requests. The assembler re-validates
+        # extract_root before writing (defense in depth + per-file checks).
         try:
             allowlist.validate(extract_root)
         except DestinationNotAllowedError as e:
@@ -254,20 +229,18 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         if cancelled:
             return cancelled
 
-        # Report 'pending' the instant we accept the command so the web UI can
-        # surface "target queued" before version fetch even starts.
+        # 'pending' on accept, so the UI shows "target queued" before the
+        # version fetch starts.
         _report_target_state(service, site_id, roost_id, version_id, 'pending')
 
         cancelled = _cancelled_before_distribution('pending report')
         if cancelled:
             return cancelled
 
-        # Mint a fresh signed GET URL. `version_url` in the command payload
-        # is either unsigned (the stored object URL — not fetchable from a
-        # private bucket) or expired (15-min TTL), so ignore it and request
-        # a fresh URL right before the fetch. If minting fails, fall back to
-        # the payload URL on the thin chance it was still valid — no reason
-        # to turn a transient API blip into a hard failure.
+        # The payload's `version_url` is either unsigned (unfetchable from a
+        # private bucket) or past its 15-min TTL, so mint a fresh signed GET
+        # right before the fetch. Fall back to the payload URL if minting
+        # fails, rather than turning an API blip into a hard failure.
         fetch_url = version_url
         fb = getattr(service, 'firebase_client', None)
         if fb is not None and hasattr(fb, 'get_version_download_url'):
@@ -378,26 +351,17 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
             chunks_total=len(version.chunks),
         )
 
-        # Pass the FULL chunk set to download_all, not just diff.chunks_to_fetch.
-        # Post-commit cleanup (sync_assembler._cleanup_content_store) deletes
-        # chunks after successful assembly, so chunks from a prior version
-        # we'd normally consider "unchanged" may not actually be on disk
-        # anymore. download_all does its own has_chunk() presence check per
-        # chunk and skips ones already present — so passing the full set
-        # is correct + covers the dedup case without trusting the diff to
-        # predict content-store state.
-        #
-        # The diff's `chunks_to_fetch` is kept for reporting/metrics only —
-        # it tells the operator "what's NEW vs the prior version". That's
-        # different from "what the agent actually needs to download", which
-        # is a function of the local content store, not version deltas.
+        # FULL chunk set, not diff.chunks_to_fetch: post-commit cleanup
+        # (sync_assembler._cleanup_content_store) deletes chunks after
+        # assembly, so "unchanged" chunks may not be on disk. download_all
+        # does its own has_chunk() check and skips what's present.
+        # `chunks_to_fetch` is reporting-only — what's NEW vs the prior
+        # version, not what this agent actually needs.
         url_provider = _make_chunk_url_provider(service, site_id)
-        # Throttled progress reporter for the download phase. Firing a
-        # firestore write per-chunk on a 3739-chunk upload would be a
-        # cost + rate-limit nightmare, so we emit at most once per ~2s
-        # OR every 5% progress change (whichever comes first). The very
-        # first call (triggered by download_all's initial emit) always
-        # goes through so the UI sees a real number immediately.
+        # Throttled: a firestore write per chunk would be a cost and
+        # rate-limit problem on a 3739-chunk upload. At most once per ~2s or
+        # per 5% change; the first call always goes through so the UI gets a
+        # real number immediately.
         _last_emit = {'ts': 0.0, 'fetched': -1}
 
         def _download_progress(done: int, total: int) -> None:
@@ -558,9 +522,7 @@ def _handle_rollback_to_version(cmd_data: dict, cmd_id: str, service: Any) -> st
     return _handle_sync_pull(cmd_data, cmd_id, service)
 
 
-# ─── helpers ─────────────────────────────────────────────────────────
-
-
+# helpers
 def _failure(message: str) -> str:
     """
     format a handler failure the way every other owlette command handler
@@ -634,15 +596,14 @@ def _firestore_reader_for(service: Any) -> Any:
     if reader is not None:
         return reader
 
-    # if the service itself quacks like a reader (tests, MockService), use it.
+    # Tests / MockService can quack like a reader themselves.
     if hasattr(service, 'get_site_doc'):
         service._roost_site_reader = service
         return service
 
     client = getattr(service, 'firebase_client', None)
     if client is None:
-        # no client wired yet (very early boot) — return a stub that
-        # returns None, which check_enabled treats as fail-open.
+        # No client yet (early boot) — a None-returning stub is fail-open.
         class _NullReader:
             def get_site_doc(self, _site_id: str):
                 return None
@@ -656,8 +617,7 @@ def _firestore_reader_for(service: Any) -> Any:
                 try:
                     return self._fc.get_document(f'sites/{site_id}')
                 except Exception:
-                    # check_enabled handles exceptions at a higher level,
-                    # but returning None here is a cleaner contract.
+                    # check_enabled catches higher up, but None is cleaner.
                     return None
         reader = _FirebaseSiteReader(client)
 
@@ -672,8 +632,7 @@ def _allowlist_for(service: Any) -> DestinationAllowlist:
     """
     allowlist = getattr(service, '_destination_allowlist', None)
     if allowlist is None:
-        # defer the import to avoid pulling shared_utils at module load
-        # (test isolation — sync_state + sync_version don't need it).
+        # Deferred: keeps shared_utils out of module load for test isolation.
         import shared_utils
         config = shared_utils.read_config() or {}
         allowlist = DestinationAllowlist.from_config(config)
@@ -690,10 +649,8 @@ def _load_prior_version(
     for diffing.
     """
     state = _state_for(service)
-    # we don't currently store version_url separately — only the cached
-    # file matters for diff. caller's cache lookup keyed by version_id.
-    # simplification: only look at the immediately prior committed dist.
-    # (more sophisticated lineage walk is a v3 concern.)
+    # Only the immediately prior committed distribution is considered; a real
+    # lineage walk is a v3 concern.
     with state._lock:  # type: ignore[attr-defined]
         assert state._conn is not None
         cur = state._conn.execute(
@@ -707,11 +664,9 @@ def _load_prior_version(
     if row is None:
         return None
     prior_id = row['version_id']
-    # Prefer a fresh signed URL. The stored `version_url` in the local
-    # sqlite row is the one handed over in the original sync_pull command
-    # (unsigned or long-expired), so relying on it would only work when
-    # the local version cache still has the file. Requesting a fresh
-    # URL lets us recover even after cache eviction.
+    # The sqlite row's `version_url` came from the original sync_pull command
+    # (unsigned or long-expired), so mint fresh — that recovers even after the
+    # local version cache has been evicted.
     prior_url = row['version_url']
     fb = getattr(service, 'firebase_client', None)
     if fb is not None and hasattr(fb, 'get_version_download_url'):
@@ -725,8 +680,7 @@ def _load_prior_version(
     try:
         return fetch_version(prior_url, expected_version_id=prior_id)
     except VersionError as e:
-        # prior version unfetchable (cache evicted + url expired);
-        # treat as "no prior" so the diff includes everything.
+        # Prior version unfetchable — treat as "no prior" and diff everything.
         logger.warning(
             f"sync_commands: prior version {prior_id} unfetchable: {e}; "
             f"diffing against nothing"
@@ -765,8 +719,7 @@ def _report_target_state(
     except Exception:
         machine_id = None
     if not machine_id:
-        # no identity → nothing coherent to write. Skip silently; lower layers
-        # will have already logged the root cause.
+        # No identity → nothing coherent to write; lower layers already logged.
         return
 
     payload: Dict[str, Any] = {
@@ -775,8 +728,7 @@ def _report_target_state(
         'updatedAt': SERVER_TIMESTAMP,
     }
     if error:
-        # Truncate to keep the Firestore doc small — full error stays in the
-        # agent log + local SyncState row.
+        # Truncated for doc size; the full error is in the agent log + SyncState.
         payload['error'] = error[:500]
     for k, v in metrics.items():
         if v is not None:

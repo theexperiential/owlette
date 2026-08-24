@@ -1,15 +1,11 @@
 /**
- * Screenshot — deploy capability card preview (api-sprint wave 4.3).
+ * Screenshot -> `web/public/landing-screens/preview-deploy.png`, used by the
+ * landing page's deploy capability card.
  *
- * Output: `web/public/landing-screens/preview-deploy.png`
- * Used by: the landing page deploy capability card (wired up by wave 4.5).
- *
- * Drives the deployments page into the `deploy-roost-rolling` scenario:
- * a roost with 4 versions, an in-flight rollout where 3 of 10 targets have
- * completed and 1 is installing, plus three sibling deployments at
- * different statuses (completed / failed / scheduled) so the list reads as
- * an active deployment surface. The in-flight row is expanded to show its
- * per-target progress before capture.
+ * Drives the deployments page into `deploy-roost-rolling`: a 4-version roost
+ * mid-rollout (3 of 10 targets done, 1 installing) alongside completed, failed
+ * and scheduled siblings, so the list reads as an active surface. The in-flight
+ * row is expanded before capture.
  */
 import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
@@ -28,23 +24,19 @@ test('deploy capability card preview', async ({ page }) => {
       .doc(TEST_USERS.admin.uid)
       .set({ lastSiteId: ctx.siteId }, { merge: true });
 
-    // Pin the clock BEFORE goto so any "started Xm ago" timestamps and the
-    // rollout's createdAt-relative copy resolve against FIXED_NOW.
+    // BEFORE goto, so "started Xm ago" copy resolves against FIXED_NOW.
     await page.clock.install({ time: FIXED_NOW_MS });
 
     await page.goto('/deployments');
 
-    // Wait for the seeded in-flight deployment row to render. The deployment
-    // name `stage show v4` is rendered as plain text inside each row.
+    // The deployment name renders as plain text inside the row.
     const inFlightRow = page.getByText('stage show v4', { exact: false });
     await expect(inFlightRow).toBeVisible();
 
-    // Expand the in-flight row so the per-target progress (3 completed,
-    // 1 installing at 64%, 6 pending) is visible — the user wanted to see
-    // the deployment "expanded" to show it actively rolling out.
+    // Expanded so per-target progress (3 done, 1 at 64%, 6 pending) shows.
     await inFlightRow.click();
 
-    // dashboard has persistent firestore websockets — network never idles. wait for paint instead.
+    // Persistent firestore websockets mean the network never idles; wait for paint.
     await page.waitForTimeout(1500);
 
     await page.addStyleTag({
@@ -60,8 +52,7 @@ test('deploy capability card preview', async ({ page }) => {
 
     await page.clock.setFixedTime(FIXED_NOW_MS);
 
-    // Progress bars / per-target status pills can paint a frame after the
-    // deployment row mounts; let them settle before capture.
+    // Progress bars and status pills paint a frame after the row mounts.
     await page.waitForTimeout(500);
 
     await page.screenshot({

@@ -1,20 +1,42 @@
 /**
- * WebAuthn (Passkey) Server Configuration & Firestore Helpers
+ * WebAuthn RP config, challenge storage, and credential persistence.
+ * Server-only — never import from a client component.
  *
- * Centralized configuration for WebAuthn registration and authentication.
- * Handles challenge storage, credential persistence, and RP configuration.
- *
- * IMPORTANT: This file should only be imported in server components/API routes.
+ * RETIRED FIELD `users/{uid}.passkeyEnrolled`: a non-transactional boolean that could
+ * disagree with the subcollection it summarized. The authoritative count is
+ * `users/{uid}.mfaFactors.passkeys`, recounted transactionally by `applyMfaFactorChange`
+ * (lib/mfaFactors.server.ts). Old user docs still carry the field; a stale value is inert.
+ * Do not reintroduce a writer for it.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
 import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
 
-// ── RP (Relying Party) Configuration ────────────────────────────────────
-
 const RP_NAME = 'Owlette';
 
+/**
+ * E2E override for the relying-party identity. Checked BEFORE the production branch on
+ * purpose — do NOT collapse it into the dev fall-through: the Playwright harness serves a
+ * production Next build (`next({ dev: false })`, NODE_ENV inlined at build time), so without
+ * it getRpId() returns 'owlette.app' and no loopback ceremony can verify.
+ *
+ * Gated on OWLETTE_E2E === '1' (set only by playwright.config.ts) and only when a value is
+ * supplied, so a run that forgets the vars falls through instead of running with an empty
+ * origin allowlist.
+ */
+function e2eRpOverride(name: 'WEBAUTHN_RP_ID' | 'WEBAUTHN_ORIGINS'): string | null {
+  if (process.env.OWLETTE_E2E !== '1') {
+    return null;
+  }
+  const value = process.env[name]?.trim();
+  return value ? value : null;
+}
+
 export function getRpId(): string {
+  const e2eRpId = e2eRpOverride('WEBAUTHN_RP_ID');
+  if (e2eRpId) {
+    return e2eRpId;
+  }
   if (process.env.NODE_ENV === 'production') {
     return 'owlette.app';
   }
@@ -22,6 +44,14 @@ export function getRpId(): string {
 }
 
 export function getExpectedOrigins(): string[] {
+  // Comma-separated: a spec may need more than one loopback origin.
+  const e2eOrigins = e2eRpOverride('WEBAUTHN_ORIGINS')
+    ?.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (e2eOrigins && e2eOrigins.length > 0) {
+    return e2eOrigins;
+  }
   if (process.env.NODE_ENV === 'production') {
     return ['https://owlette.app', 'https://dev.owlette.app'];
   }
@@ -31,8 +61,6 @@ export function getExpectedOrigins(): string[] {
 export function getRpName(): string {
   return RP_NAME;
 }
-
-// ── Types ───────────────────────────────────────────────────────────────
 
 export interface StoredPasskey {
   credentialId: string;
@@ -62,8 +90,6 @@ interface StoredChallenge {
   createdAt: Date;
   expiresAt: Date;
 }
-
-// ── Challenge Management ────────────────────────────────────────────────
 
 const CHALLENGE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -96,10 +122,9 @@ export async function getAndDeleteChallenge(
 
   const data = doc.data() as StoredChallenge;
 
-  // Delete challenge (single-use)
+  // Single-use.
   await docRef.delete();
 
-  // Check expiry
   const expiresAt = data.expiresAt instanceof Date
     ? data.expiresAt
     : new Date((data.expiresAt as { _seconds: number })._seconds * 1000);
@@ -110,8 +135,6 @@ export async function getAndDeleteChallenge(
 
   return data;
 }
-
-// ── Passkey CRUD ────────────────────────────────────────────────────────
 
 export async function getUserPasskeys(userId: string): Promise<StoredPasskey[]> {
   const db = getAdminDb();
@@ -150,16 +173,17 @@ export async function storePasskey(
   friendlyName: string
 ): Promise<void> {
   const db = getAdminDb();
-  const batch = db.batch();
 
-  // Store credential in passkeys subcollection
+  // Credential document only. The factor tally belongs to
+  // `applyMfaFactorChange({ recountPasskeys: true })`, which the caller runs next and which
+  // counts this subcollection in a transaction — a summary flag written here could not be.
   const passkeyRef = db
     .collection('users')
     .doc(userId)
     .collection('passkeys')
     .doc(credential.credentialId);
 
-  batch.set(passkeyRef, {
+  await passkeyRef.set({
     credentialPublicKey: credential.credentialPublicKey,
     counter: credential.counter,
     transports: credential.transports ?? [],
@@ -169,12 +193,6 @@ export async function storePasskey(
     createdAt: new Date(),
     lastUsedAt: new Date(),
   });
-
-  // Set passkeyEnrolled flag on user document
-  const userRef = db.collection('users').doc(userId);
-  batch.update(userRef, { passkeyEnrolled: true });
-
-  await batch.commit();
 }
 
 export async function deletePasskey(
@@ -183,25 +201,15 @@ export async function deletePasskey(
 ): Promise<void> {
   const db = getAdminDb();
 
-  // Delete the passkey document
+  // Document only. Whether this was the last passkey is decided by the caller's
+  // `applyMfaFactorChange({ recountPasskeys })`, which owns the zero-case consequences
+  // (re-arming requiresMfaSetup, revoking trusted devices).
   await db
     .collection('users')
     .doc(userId)
     .collection('passkeys')
     .doc(credentialId)
     .delete();
-
-  // Check if any passkeys remain
-  const remaining = await db
-    .collection('users')
-    .doc(userId)
-    .collection('passkeys')
-    .limit(1)
-    .get();
-
-  if (remaining.empty) {
-    await db.collection('users').doc(userId).update({ passkeyEnrolled: false });
-  }
 }
 
 export async function updatePasskeyCounter(

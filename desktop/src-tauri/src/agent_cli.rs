@@ -1,26 +1,22 @@
 //! Running the agent's python CLI and streaming its progress.
 //!
-//! Three things the desktop app must be able to do — pair with a site, leave
-//! one, and file a bug report — need the agent's cloud client and its encrypted
-//! token store. Neither is reimplemented here. The token crypto stays in
-//! `agent/src/secure_storage.py`, the Firestore REST client stays in
-//! `agent/src/firestore_rest_client.py`, and this module spawns the bundled
-//! interpreter against `agent/src/configure_site.py` instead:
+//! Pairing with a site, leaving one, and filing a bug report all need the agent's
+//! cloud client and encrypted token store. Neither is reimplemented here: token
+//! crypto stays in `agent/src/secure_storage.py`, the Firestore REST client in
+//! `agent/src/firestore_rest_client.py`. This module spawns the bundled
+//! interpreter against `agent/src/configure_site.py`:
 //!
 //! ```text
 //! %PROGRAMDATA%\Owlette\python\python.exe
 //!   %PROGRAMDATA%\Owlette\agent\src\configure_site.py --json-progress
 //! ```
 //!
-//! That script writes one JSON object per line to stdout (see its "Headless
-//! modes" section). Every line is forwarded to the frontend as an
-//! [`EVENT_AGENT_CLI`] event, tagged with the run it belongs to, followed by
-//! exactly one `exit` event carrying the process's exit code. Parsing is the
-//! frontend's job — the host stays a pipe.
+//! That script writes one JSON object per line to stdout. Every line is forwarded
+//! as an [`EVENT_AGENT_CLI`] event tagged with its run, then exactly one `exit`
+//! event carrying the exit code. Parsing is the frontend's job — the host is a pipe.
 //!
-//! The mode is not a command line. The frontend names one of [`MODES`] and this
-//! module builds the argv, so nothing the webview can say becomes an argument to
-//! the interpreter.
+//! The frontend names one of [`MODES`] and this module builds the argv, so
+//! nothing the webview can say becomes an argument to the interpreter.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
@@ -59,21 +55,19 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// How often a running child is checked for having exited.
 const REAP_INTERVAL: Duration = Duration::from_millis(150);
 
-/// Longest line forwarded from the child. A pairing phrase is 30 characters and
-/// an error message a few hundred; anything approaching this is a runaway
-/// traceback, and truncating it keeps one bad run from filling the webview.
+/// Longest line forwarded from the child. Anything approaching this is a runaway
+/// traceback; truncating keeps one bad run from filling the webview.
 const MAX_LINE_BYTES: usize = 64 * 1024;
 
-/// Modes the frontend may run, and the argv each one becomes.
-///
-/// The second element is what `configure_site.py` is actually given. Adding a
-/// mode here is the only way to add one to the frontend's reach.
+/// Modes the frontend may run, and the argv each becomes. Adding a mode here is
+/// the only way to add one to the frontend's reach.
 const MODES: &[(&str, &str)] = &[
-  // Pair this machine with a site: emits `phrase`, then `status` while polling,
-  // then `authorized`.
+  // Pair with a site: emits `phrase`, then `status` while polling, then `authorized`.
+  // May additionally carry `--server dev|prod` to name the cloud the pairing
+  // runs against; without one the agent keeps the config's current environment.
   ("join", "--json-progress"),
-  // Leave the current site: disable cloud sync, drop the cached config, stop the
-  // service, delete the machine document, start the service.
+  // Leave: disable cloud sync, drop cached config, stop service, delete the
+  // machine document, start the service.
   ("leave", "--leave"),
   // File a feedback report. Requires a payload.
   ("report-issue", "--report-issue"),
@@ -85,6 +79,13 @@ const MODES: &[(&str, &str)] = &[
 
 /// The mode that carries a JSON payload rather than running bare.
 const MODE_REPORT_ISSUE: &str = "report-issue";
+
+/// The mode that may name the cloud it pairs against.
+const MODE_JOIN: &str = "join";
+
+/// The clouds `join` may be pointed at. An argv token, so the frontend's string
+/// is matched against this list rather than interpolated.
+const SERVERS: &[&str] = &["dev", "prod"];
 
 /// One line of output, or the child's exit.
 #[derive(Clone, Debug, Serialize)]
@@ -119,9 +120,8 @@ fn flag_for(mode: &str) -> Result<&'static str, String> {
 
 /// Write a feedback payload into the owlette tree and return its path.
 ///
-/// The file is created with a per-run name so two reports cannot share one, and
-/// the script deletes it after reading — the operator's description is not left
-/// on disk.
+/// Per-run filename so two reports cannot collide, and the script deletes it
+/// after reading — the operator's description is not left on disk.
 fn stage_payload(root: &Path, run: &str, payload: &Value) -> Result<PathBuf, String> {
   let dir = root.join(REPORT_DIR_REL);
   std::fs::create_dir_all(&dir)
@@ -134,12 +134,47 @@ fn stage_payload(root: &Path, run: &str, payload: &Value) -> Result<PathBuf, Str
   Ok(path)
 }
 
+/// Build the interpreter's argv for one run.
+///
+/// Pure, so what each mode runs — and which tokens it refuses — is asserted in
+/// tests without spawning anything.
+fn build_arguments(
+  script: &Path,
+  flag: &str,
+  mode: &str,
+  payload_path: Option<&Path>,
+  server: Option<&str>,
+) -> Result<Vec<String>, String> {
+  let mut arguments: Vec<String> = vec![script.to_string_lossy().into_owned(), flag.to_string()];
+
+  if let Some(payload_path) = payload_path {
+    arguments.push(payload_path.to_string_lossy().into_owned());
+  }
+
+  match (mode == MODE_JOIN, server) {
+    (true, Some(server)) => {
+      if !SERVERS.contains(&server) {
+        return Err(format!("unknown server: {server}"));
+      }
+      arguments.push("--server".to_string());
+      arguments.push(server.to_string());
+    }
+    (false, Some(_)) => return Err(format!("the {mode} mode takes no server")),
+    (_, None) => {}
+  }
+
+  Ok(arguments)
+}
+
 /// Spawn one agent CLI run and start streaming it. Returns the run id.
+///
+/// `server` names the cloud a `join` pairs against; every other mode refuses one.
 pub fn start(
   app: &AppHandle,
   runs: &Runs,
   mode: &str,
   payload: Option<Value>,
+  server: Option<&str>,
 ) -> Result<String, String> {
   let flag = flag_for(mode)?;
   let root = paths::data_root();
@@ -161,16 +196,14 @@ pub fn start(
 
   let run = format!("{mode}-{}", runs.next.fetch_add(1, Ordering::Relaxed));
 
-  let mut arguments: Vec<String> = vec![script.to_string_lossy().into_owned(), flag.to_string()];
-  match (mode == MODE_REPORT_ISSUE, payload) {
-    (true, Some(payload)) => {
-      let staged = stage_payload(&root, &run, &payload)?;
-      arguments.push(staged.to_string_lossy().into_owned());
-    }
+  let staged = match (mode == MODE_REPORT_ISSUE, payload) {
+    (true, Some(payload)) => Some(stage_payload(&root, &run, &payload)?),
     (true, None) => return Err("a feedback report needs a payload".to_string()),
     (false, Some(_)) => return Err(format!("the {mode} mode takes no payload")),
-    (false, None) => {}
-  }
+    (false, None) => None,
+  };
+
+  let arguments = build_arguments(&script, flag, mode, staged.as_deref(), server)?;
 
   let mut child = Command::new(&python)
     .args(&arguments)
@@ -208,9 +241,8 @@ pub fn start(
 
 /// Kill a running child. `false` when the run had already finished.
 ///
-/// Cancelling a pairing run is the operator closing the dialog: the device code
-/// is simply abandoned and expires server-side ten minutes later, which is why
-/// there is nothing to tell the server here.
+/// Cancelling a pairing run just abandons the device code; it expires
+/// server-side ten minutes later, so there is nothing to tell the server.
 pub fn cancel(runs: &Runs, run: &str) -> Result<bool, String> {
   let child = runs
     .children
@@ -373,6 +405,84 @@ mod tests {
   fn report_issue_is_the_only_mode_that_carries_a_payload() {
     assert!(flag_for(MODE_REPORT_ISSUE).is_ok());
     assert_eq!(flag_for(MODE_REPORT_ISSUE).unwrap(), "--report-issue");
+  }
+
+  /// Stand-in for the installed script; `build_arguments` never touches disk.
+  fn script() -> &'static Path {
+    Path::new(r"C:\ProgramData\Owlette\agent\src\configure_site.py")
+  }
+
+  #[test]
+  fn join_carries_a_dev_server_through_to_the_argv() {
+    let arguments =
+      build_arguments(script(), "--json-progress", MODE_JOIN, None, Some("dev")).expect("dev");
+    assert_eq!(
+      arguments,
+      vec![
+        script().to_string_lossy().into_owned(),
+        "--json-progress".to_string(),
+        "--server".to_string(),
+        "dev".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn join_carries_a_prod_server_through_to_the_argv() {
+    let arguments =
+      build_arguments(script(), "--json-progress", MODE_JOIN, None, Some("prod")).expect("prod");
+    assert_eq!(
+      arguments,
+      vec![
+        script().to_string_lossy().into_owned(),
+        "--json-progress".to_string(),
+        "--server".to_string(),
+        "prod".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn join_without_a_server_runs_the_argv_it_always_did() {
+    // The tray's "join site" path: no server named, so the agent re-pairs
+    // against whatever environment the config already carries.
+    let flag = flag_for(MODE_JOIN).expect("join is a mode");
+    let arguments = build_arguments(script(), flag, MODE_JOIN, None, None).expect("bare join");
+    assert_eq!(
+      arguments,
+      vec![
+        script().to_string_lossy().into_owned(),
+        "--json-progress".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn an_unvetted_server_never_becomes_an_argv_entry() {
+    for attempt in ["staging", "", "dev prod", "--leave", "DEV", "dev;whoami"] {
+      let refused = build_arguments(script(), "--json-progress", MODE_JOIN, None, Some(attempt));
+      assert_eq!(
+        refused,
+        Err(format!("unknown server: {attempt}")),
+        "{attempt} should be refused"
+      );
+    }
+  }
+
+  #[test]
+  fn every_mode_but_join_refuses_a_server() {
+    for (mode, flag) in MODES {
+      if *mode == MODE_JOIN {
+        continue;
+      }
+      let payload = (*mode == MODE_REPORT_ISSUE).then(|| Path::new(r"C:\staged.json"));
+      let refused = build_arguments(script(), flag, mode, payload, Some("dev"));
+      assert_eq!(
+        refused,
+        Err(format!("the {mode} mode takes no server")),
+        "{mode} should refuse a server"
+      );
+    }
   }
 
   #[test]

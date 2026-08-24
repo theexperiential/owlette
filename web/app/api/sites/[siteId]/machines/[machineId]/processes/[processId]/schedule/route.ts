@@ -1,13 +1,9 @@
 /**
- * `POST /api/sites/{siteId}/machines/{machineId}/processes/{processId}/schedule`
+ * POST …/processes/{processId}/schedule — update a process's `schedule` field.
+ * No command queue: the agent picks it up on its next monitoring loop.
  *
- * Update the `schedule` field on a process. Does NOT use the command queue —
- * the agent reads the schedule on its next monitoring loop.
- *
- * Body shape (per api-surface):
- *   { mode: 'off' | 'always' | 'scheduled', blocks: ScheduleBlock[]? }
- *
- * `blocks` is required when mode === 'scheduled'.
+ * Body: `{ mode: 'off' | 'always' | 'scheduled', blocks?: ScheduleBlock[] }`;
+ * `blocks` is required when mode is 'scheduled'.
  */
 
 import { NextRequest, NextResponse } from 'next/server';

@@ -1,20 +1,13 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/actions/createDistribution.server.ts`
- * (security-boundary-migration wave 3.4).
+ * `web/lib/actions/createDistribution.server.ts` — validation codes, per-site
+ * quota, distribution doc shape (firestore.rules required fields),
+ * `distribute_project` fan-out, and the parent-status flip to `in_progress`.
  *
- * The action is the single source of truth for project-distribution
- * create logic. Tests cover:
- *   - validation (every failure code surfaces correctly)
- *   - per-site quota enforcement
- *   - distribution doc shape (firestore.rules required fields)
- *   - fan-out with `distribute_project` commands
- *   - parent-status flip to `in_progress`
- *
- * Mocks the firebase-admin Firestore at the doc-ref level — same pattern
- * `fanOut.test.ts` uses — so we can assert exact paths + payloads without
- * the emulator. `emitMutation` is mocked to a no-op (fire-and-forget).
+ * Firestore is mocked at the doc-ref level (same pattern as fanOut.test.ts) so
+ * exact paths and payloads are assertable without the emulator; `emitMutation`
+ * is a no-op.
  */
 
 import { Timestamp } from 'firebase-admin/firestore';
@@ -62,9 +55,8 @@ interface RecordedUpdate {
 }
 
 /**
- * Build a fake Firestore that records every `.set()` / `.update()` call
- * and exposes the exact paths so tests can assert what was written. The
- * site doc snapshot for the quota lookup is configured per test.
+ * Fake Firestore recording every `.set()` / `.update()` with its exact path. The
+ * site-doc snapshot backing the quota lookup is configured per test.
  */
 function buildFakeDb(siteData: Record<string, unknown> | null = null) {
   const sets: RecordedSet[] = [];
@@ -84,8 +76,7 @@ function buildFakeDb(siteData: Record<string, unknown> | null = null) {
             updates.push({ path: docPath, payload });
           }),
           get: jest.fn(async () => {
-            // Site doc lookup is the only `.get()` callsite the action makes
-            // outside of fan-out (fan-out doesn't read).
+            // The only `.get()` the action makes outside fan-out (which never reads).
             if (
               docPath.length === 2 &&
               docPath[0] === 'sites' &&
@@ -130,9 +121,7 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-/* -------------------------------------------------------------------------- */
-/*  validation                                                                */
-/* -------------------------------------------------------------------------- */
+/* validation */
 
 describe('createDistribution — validation', () => {
   it('rejects missing name', async () => {
@@ -238,9 +227,7 @@ describe('createDistribution — validation', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  quota                                                                     */
-/* -------------------------------------------------------------------------- */
+/* quota */
 
 describe('createDistribution — quota', () => {
   it('uses the default quota when sites doc is missing', async () => {
@@ -293,9 +280,7 @@ describe('createDistribution — quota', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  happy path / fan-out                                                      */
-/* -------------------------------------------------------------------------- */
+/* happy path / fan-out */
 
 describe('createDistribution — happy path', () => {
   it('writes the distribution doc with required fields', async () => {

@@ -31,52 +31,40 @@ export function MachineStatusPill({
   onCancel,
   isSiteAdmin,
 }: MachineStatusPillProps) {
-  // Tick every second so the countdown and isActive check stay live.
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
 
-  // The pill is active when EITHER the agent has flipped the boolean flag OR
-  // the dashboard/agent has set a future scheduled instant. Treating a future
-  // scheduledAt as "active" means the countdown shows up the moment the
-  // listener sees the doc — no waiting for the boolean flag to round-trip
-  // through Firestore separately.
+  // Active on EITHER the boolean flag or a future scheduledAt, so the countdown appears the moment
+  // the listener sees the doc rather than waiting for the flag to round-trip separately.
   const hasUpcomingRestart = !!(rebootScheduledAt && rebootScheduledAt > now);
   const hasUpcomingShutdown = !!(shutdownScheduledAt && shutdownScheduledAt > now);
   const showRestartMode = !!rebooting || hasUpcomingRestart;
-  // A shutdown's terminal state is "offline". The agent sets `shuttingDown`
-  // before issuing the OS shutdown but can never clear it afterwards (the box
-  // is powered off), so the latch stays set in Firestore indefinitely. Treat
-  // "latch set but machine offline" as a completed shutdown and fall through to
-  // the offline pill rather than pulsing "shutting down…" forever. A still-
-  // future scheduled shutdown keeps its countdown regardless of online state.
-  // (Restart deliberately stays active across the offline reboot gap — its
-  // terminal state is back-online, and the agent clears the flag on next boot.)
+  // The agent sets `shuttingDown` before the OS shutdown and can never clear it (box is off), so
+  // "latch set + offline" means completed — fall through to the offline pill instead of pulsing
+  // forever. A still-future scheduled shutdown keeps its countdown either way. Restart stays
+  // active across the reboot gap on purpose: its terminal state is back-online.
   const showShutdownMode = (!!shuttingDown && online) || hasUpcomingShutdown;
   const isActive = showRestartMode || showShutdownMode;
   const scheduledAt = showRestartMode ? rebootScheduledAt : showShutdownMode ? shutdownScheduledAt : undefined;
   const actionLabel = showShutdownMode ? 'shutting down' : 'restarting';
-  // Compact icon for the active pill. The status column is a fixed 72px cell
-  // (the list view is table-layout:fixed), so we render an icon + countdown that
-  // fits rather than the full label — which would overflow into the cpu column.
-  // The words are exposed via title/aria-label instead.
+  // The status column is a fixed 72px cell (list view is table-layout:fixed), so icon + countdown
+  // rather than the full label, which would overflow into cpu. Words go on title/aria-label.
   const ActionIcon = showShutdownMode ? Power : RotateCw;
 
   useEffect(() => {
     if (!isActive) return;
-    // No sync setNow before the interval — that tripped
-    // react-hooks/set-state-in-effect. `now` starts at the mount value and
-    // the first interval tick catches it up within 1s of activation.
+    // No sync setNow before the interval — trips react-hooks/set-state-in-effect. `now` starts at
+    // the mount value and the first tick catches up within 1s.
     const interval = setInterval(() => {
       setNow(Math.floor(Date.now() / 1000));
     }, 1000);
     return () => clearInterval(interval);
   }, [isActive]);
 
-  // Optimistic cancelling state — derived so it auto-clears when parent flips
-  // rebooting/shuttingDown back to false (no effect needed).
+  // Derived, so it auto-clears when the parent flips rebooting/shuttingDown back to false.
   const [userCancelling, setUserCancelling] = useState(false);
   const cancelling = isActive && userCancelling;
 
-  // Idle state: original online/offline pill, no interactivity
+  // Idle: plain online/offline pill.
   if (!isActive) {
     return (
       <Badge className={`text-xs select-none ${online ? 'bg-green-600' : 'bg-red-600'}`}>
@@ -85,15 +73,13 @@ export function MachineStatusPill({
     );
   }
 
-  // Active state: compact red pulsing icon pill (+ live countdown). scheduledAt is
-  // the TARGET restart/shutdown instant in Unix seconds; remaining is (target - now).
-  // The agent writes scheduledAt for both scheduled restarts (announce phase) and
-  // dashboard-initiated restarts (optimistic write).
+  // Active: pulsing icon pill + countdown. scheduledAt is the TARGET instant in UNIX SECONDS,
+  // written by the agent for scheduled restarts (announce phase) and dashboard-initiated ones.
   const remaining = scheduledAt
     ? Math.max(0, scheduledAt - now)
     : null;
 
-  // Graceful degradation: legacy/missing timestamp → icon-only pulsing pill, no countdown.
+  // Legacy/missing timestamp → icon-only pulsing pill.
   if (remaining === null) {
     return (
       <Badge
@@ -107,7 +93,6 @@ export function MachineStatusPill({
     );
   }
 
-  // Cancelling in flight — spinner.
   if (cancelling) {
     return (
       <Badge
@@ -123,7 +108,7 @@ export function MachineStatusPill({
 
   const canCancel = isSiteAdmin && !!onCancel && remaining > CANCEL_LOCKOUT_THRESHOLD;
 
-  // Final 5 seconds OR non-admin OR no cancel handler: icon + countdown, no interaction.
+  // Final 5s, non-admin, or no cancel handler: no interaction.
   if (!canCancel) {
     return (
       <Badge
@@ -138,7 +123,6 @@ export function MachineStatusPill({
     );
   }
 
-  // Clickable icon + countdown with hover swap to "cancel".
   const handleClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setUserCancelling(true);

@@ -10,28 +10,17 @@ import { apiError } from '@/lib/apiErrorResponse';
 import { hootInternalSecret } from '@/lib/hootInternalSecret';
 
 /**
- * POST /api/alerts/trigger
+ * POST /api/alerts/trigger — internal endpoint the Cloud Function calls on a
+ * breached threshold rule; sends email and/or webhook notifications.
  *
- * Internal endpoint called by the Cloud Function when a threshold alert rule
- * is breached. Sends email and/or webhook notifications.
+ * Auth: `x-internal-secret` matching the hoot internal secret (env var
+ * CORTEX_INTERNAL_SECRET — see lib/hootInternalSecret.ts).
  *
- * Authentication: x-internal-secret header matching the hoot internal secret
- * (deployed env var: CORTEX_INTERNAL_SECRET — see lib/hootInternalSecret.ts).
- *
- * Request body:
- * - siteId: string
- * - machineId: string
- * - ruleName: string
- * - metric: string
- * - value: number (current metric value)
- * - threshold: number (rule threshold)
- * - operator: string (>, <, >=, <=)
- * - severity: string (info, warning, critical)
- * - channels: string[] (email, webhook)
+ * Body: siteId, machineId, ruleName, metric, value, threshold, operator
+ * (>, <, >=, <=), severity (info|warning|critical), channels[] (email|webhook).
  */
 export async function POST(request: NextRequest) {
   try {
-    // Verify internal secret
     const secret = request.headers.get('x-internal-secret');
     const expectedSecret = hootInternalSecret();
 
@@ -39,7 +28,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Parse and validate body
     const body = await request.json();
     const {
       siteId,
@@ -64,7 +52,6 @@ export async function POST(request: NextRequest) {
     let emailSent = false;
     let webhooksFired = 0;
 
-    // Send email notification
     if (channels.includes('email')) {
       const resendClient = getResend();
       if (resendClient) {
@@ -126,7 +113,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Fire webhook notifications
     if (channels.includes('webhook')) {
       const siteDoc = await db.collection('sites').doc(siteId).get();
       const siteName = siteDoc.data()?.name || siteId;
@@ -144,10 +130,9 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Talon tap: the only place a threshold breach enters the system, so it is
-    // the only place a threshold talon can be matched. Fire-and-forget by
-    // contract — a talon run can capture a screenshot and call a vision model,
-    // and the cloud function calling us is waiting on this response.
+    // The only entry point for a threshold breach, so the only place a
+    // threshold talon can match. Fire-and-forget by contract: a talon run can
+    // capture a screenshot and call a vision model, and the caller is waiting.
     tapTalonMatcher(db, siteId, { kind: 'threshold', metric, operator, value, machineId });
 
     console.log(
@@ -164,10 +149,6 @@ export async function POST(request: NextRequest) {
     return apiError(error, 'alerts/trigger');
   }
 }
-
-/* ------------------------------------------------------------------ */
-/*  Email template                                                     */
-/* ------------------------------------------------------------------ */
 
 function buildThresholdAlertEmail(params: {
   siteLabel: string;

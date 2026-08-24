@@ -1,11 +1,8 @@
 /**
- * Dispatch — shutdown flow (D2.2)
+ * Dispatch — shutdown flow. Same shape as the reboot spec with a different
+ * command type and schedule field.
  *
- * Same shape as D2.1's reboot spec — different command type
- * (`shutdown_machine`), different schedule field (`shutdownScheduledAt`),
- * same write-pair pattern + cancel-pill UI contract.
- *
- * Contract (from useFirestore.ts::shutdownMachine):
+ * Contract (useFirestore.ts::shutdownMachine):
  *   1. `sendMachineCommand` writes `shutdown_machine_{Date.now()}` to
  *      `commands/pending`.
  *   2. `updateDoc` sets `{ shutdownScheduledAt: now+30s, configChangeFlag: true }`
@@ -48,19 +45,15 @@ test('admin can dispatch shutdown — command written + shutdownScheduledAt popu
   await expect(confirmDialog).toBeVisible();
   await confirmDialog.getByRole('button', { name: /^shutdown$/i }).click();
 
-  // Wait for the dispatch handler to settle — same waiting discipline as
-  // D2.1: clicking the confirm button returns immediately while the
-  // Promise.all writes are still in flight (button shows "sending..."),
-  // so reading Firestore before this toast races the writes.
+  // Confirm returns immediately while the Promise.all writes are in flight, so
+  // reading Firestore before this toast races them.
   await expect(page.getByText('Shutdown command sent to', { exact: false })).toBeVisible({ timeout: 10_000 });
 
-  // UI: cancel-countdown pill renders for shutdownScheduledAt > now too.
+  // The cancel-countdown pill renders for shutdownScheduledAt > now too.
   await expect(card.getByTestId('machine-status-cancel-pill')).toBeVisible({ timeout: 5_000 });
 
-  // Admin SDK read-through.
   const db = getAdminDb();
-  // rebootScheduledAt MUST stay clear — shutdown isn't a reboot.
-  // Pending commands has exactly one shutdown_machine_* entry.
+  // Exactly one shutdown_machine_* entry; rebootScheduledAt stays clear.
   const pendingSnap = await db
     .collection('sites').doc(SITE_ID)
     .collection('machines').doc(MACHINE_ID)

@@ -2,20 +2,14 @@
 
 /**
  * One row of a talon's execution history:
- *
  *   stateIcon | trigger / verdict summary | outputs | duration | when
  *
- * The status icon vocabulary is deliberately the deployments page's
- * (`app/deployments/page.tsx:28-81`) so a green check, a red cross, and a cyan
- * spinner mean the same thing on both surfaces. `skipped` reads as
- * `cancelled` (orange), `missed` as `partial` (yellow) — both are "the run did
- * not happen", not "the run failed".
+ * Status icons deliberately reuse the deployments page's vocabulary so a green check, red
+ * cross and cyan spinner mean the same on both surfaces. `skipped` reads as `cancelled`
+ * (orange) and `missed` as `partial` (yellow) — "did not happen", not "failed".
  *
- * A delayed event trigger also contributes non-execution rows: `pending` while
- * it waits out its delay and `fired` once it has handed off. See
- * `TalonRunDoc` — those crumbs live in the same collection.
- *
- * talons wave 4.2.
+ * A delayed event trigger also writes non-execution crumbs into the same collection:
+ * `pending` while it waits out its delay, `fired` once it hands off.
  */
 
 import Link from 'next/link';
@@ -38,12 +32,8 @@ import {
   type TalonTimestamp,
 } from '@/lib/talons/types';
 
-/**
- * A run as the client sees it. Every field beyond the id is optional or
- * loosely typed on purpose: these documents are streamed straight out of
- * Firestore, so a record written by an older engine build (or mid-write, with
- * `completedAt` still missing) has to render rather than crash.
- */
+/** Everything past the id is optional on purpose: these stream straight out of Firestore, so
+ * an older engine build's record — or a mid-write one missing `completedAt` — must render. */
 export interface TalonRunListItem {
   id: string;
   talonId?: string;
@@ -124,11 +114,8 @@ function formatDuration(run: TalonRunListItem): string {
   return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
 }
 
-/**
- * The shared run-status glyph. Exported so the talon row's `last run` column
- * speaks the same visual language as the history it expands into — one status
- * vocabulary, defined once.
- */
+/** Shared run-status glyph, exported so the `last run` column matches the history it expands
+ * into. */
 export function talonStatusIcon(status: string | null | undefined) {
   switch (status) {
     case 'succeeded':
@@ -141,9 +128,8 @@ export function talonStatusIcon(status: string | null | undefined) {
       return <AlertTriangle className="h-3.5 w-3.5 text-yellow-500" />;
     case 'running':
       return <Loader2 className="h-3.5 w-3.5 animate-spin text-accent-cyan" />;
-    // Deferral crumbs. `pending` is still waiting out its delay — a live clock,
-    // not the muted one the default returns for "never run". `fired` handed off
-    // to a real run, which carries the outcome and its own icon.
+    // Deferral crumbs: `pending` is still counting down (live clock, not the muted "never
+    // run" default); `fired` handed off to a real run that carries the outcome.
     case 'pending':
       return <Clock className="h-3.5 w-3.5 text-accent-cyan" />;
     case 'fired':
@@ -185,9 +171,8 @@ export function TalonRunRow({ run }: TalonRunRowProps) {
   const summary = run.triggerSummary || run.triggerType || 'talon run';
   const statusTooltip = STATUS_TOOLTIP[status];
   const outputSummary = outputs.length > 0 ? outputsSummary(outputs) : null;
-  // The run that cost the talon its enabled state says so in words. It outranks
-  // `error` on this line: the raw error is a diagnostic string, and this is the
-  // one sentence that explains why the talon has stopped running at all.
+  // Outranks `error` here: the raw error is a diagnostic, this is the sentence that explains
+  // why the talon stopped running at all.
   const disabledReason = describeTalonDisabledReason(run.disabledReason);
 
   return (

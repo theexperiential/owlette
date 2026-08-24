@@ -1,13 +1,12 @@
 'use client';
 
 /**
- * AllowlistEditor — admin-facing mock for the roost destination allowlist
- * (wave 1.7). Presentation-only scaffolding; no firestore persistence yet.
+ * AllowlistEditor — admin-facing mock for the roost destination allowlist.
+ * Presentation only; no firestore persistence yet.
  *
- * Authoritative enforcement lives on the agent
- * (agent/src/destination_allowlist.py). Empty/missing list is fail-closed:
- * the agent rejects every extraction. This UI must surface that state loudly
- * so an operator can't silently lock the machine out of receiving deploys.
+ * Enforcement is the agent's (agent/src/destination_allowlist.py) and an
+ * empty list is FAIL-CLOSED — every extraction is rejected. This UI must
+ * surface that loudly or an operator silently locks the machine out of deploys.
  */
 
 import { useMemo, useState } from 'react';
@@ -20,11 +19,7 @@ import { FolderLock, Plus, ShieldAlert, Trash2 } from 'lucide-react';
 interface AllowlistEditorProps {
   /** resolved allowed roots, as they exist in firestore / agent config. */
   roots: string[];
-  /**
-   * called with the next roots array after an add/remove. mock — callers
-   * are expected to persist to firestore themselves (wiring lands with the
-   * real editor in a later wave).
-   */
+  /** Next roots array after an add/remove; callers persist to firestore themselves. */
   onChange?: (roots: string[]) => void;
   /** non-admin viewers get a read-only presentation. */
   readOnly?: boolean;

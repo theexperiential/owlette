@@ -1,19 +1,15 @@
 /**
- * Roosts — concurrent publish (task 4.2)
+ * Roosts — concurrent publish.
  *
- * Two operators race a publish: A reads head = v3, B's publish lands as v4
- * first, A submits with `expectedCurrentVersionId` pinned to v3 → 412
- * `version_stale`. A re-reads, retries with v4 as expected, retry mints v5
- * (NOT v4 — B took that slot).
+ * Two operators race: A reads head v3, B's publish lands as v4, A submits with
+ * `expectedCurrentVersionId` pinned to v3 → 412 `version_stale`. A re-reads and
+ * retries against v4; the retry mints v5, not v4.
  *
- * SCOPE LIMITATION (api-only). `web/lib/roostUpload.ts` does NOT send
- * `expectedCurrentVersionId` (lines 285-292), so the route's CAS branch never
- * trips from the dashboard path — concurrent dashboard publishes succeed via
- * firestore optimistic concurrency with adjacent monotonic versionNumbers.
- * `ProjectDistributionDialog` also lacks a retry-banner UX for 412 — terminal
- * errors surface a generic `toast.error('upload failed', …)` (line 551). Both
- * gaps flagged for follow-up. We exercise the API contract via the browser's
- * authenticated session, mirroring `access-control/admin-api-403.spec.ts`.
+ * API-ONLY by necessity: `web/lib/roostUpload.ts` never sends
+ * `expectedCurrentVersionId`, so the CAS branch can't trip from the dashboard
+ * path, and `ProjectDistributionDialog` has no 412 retry UX (it shows a generic
+ * "upload failed" toast). Both gaps are follow-ups. Driven through the browser's
+ * authenticated session, as in `access-control/admin-api-403.spec.ts`.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -35,8 +31,8 @@ const ROOST_ID = 'rst_test_concurrent_001';
 const ROOST_NAME = 'lobby';
 const EXTRACT_PATH = 'C:/ProgramData/Owlette/projects/lobby';
 
-// Distinct hashes per attempt — route mints versionId from sha256(version
-// body), so a reused hash would yield the same versionId and obscure the tx.
+// Distinct hashes per attempt: versionId is sha256(version body), so a reused
+// hash yields the same versionId and hides the transaction under test.
 const HASH_ATTEMPT = '7a20d190ca7b4eeb510bb72e4357cf7857a8682290ceef206ac0eaa137c0f16e';
 const HASH_RETRY = 'e55684f381f455a91afad9e022502641050d4d1ec429e03ee020cc3d80d6d5dd';
 const COMPETING_V4_ID = 'vrs_competing_v4';
@@ -123,12 +119,12 @@ test('CAS conflict surfaces as 412 version_stale; retry mints the next monotonic
     .collection('sites').doc(SITE_ID)
     .collection('roosts').doc(ROOST_ID);
 
-  // Operator A reads the head — v3 from seedRoostWithVersionHistory.
+  // Operator A reads the head (v3 from seedRoostWithVersionHistory).
   const operatorAExpectedHead = (await roostRef.get()).data()?.currentVersionId as string;
   expect(operatorAExpectedHead).toBe(`vrs_${ROOST_ID}_v3`);
 
-  // ─── operator B's publish lands as v4 in the race window ────────────
-  // Direct firestore writes; mirror the real route's tx ordering.
+  // Operator B's publish lands as v4 inside the race window. Direct firestore
+  // writes, mirroring the real route's transaction ordering.
   await roostRef.collection('versions').doc(COMPETING_V4_ID).set({
     versionId: COMPETING_V4_ID,
     versionNumber: 4,
@@ -152,7 +148,7 @@ test('CAS conflict surfaces as 412 version_stale; retry mints the next monotonic
     { merge: true },
   );
 
-  // ─── operator A submits with stale expected (= v3) ──────────────────
+  // Operator A submits with a stale expected head (v3).
   const attempt = await finalizeAs(
     page,
     operatorAExpectedHead,
@@ -168,15 +164,15 @@ test('CAS conflict surfaces as 412 version_stale; retry mints the next monotonic
     title: 'head changed',
     code: 'version_stale',
   });
-  // detail surfaces the actual current head so the client can re-read.
+  // `detail` carries the real head so the client can re-read.
   expect(attempt.body.detail as string).toContain(COMPETING_V4_ID);
 
-  // Pointer state unchanged by the failed attempt.
+  // The failed attempt left pointer state untouched.
   const afterFailure = await roostRef.get();
   expect(afterFailure.data()?.currentVersionId).toBe(COMPETING_V4_ID);
   expect(afterFailure.data()?.versionCounter).toBe(4);
 
-  // ─── operator A retries with the refreshed head ─────────────────────
+  // Operator A retries with the refreshed head.
   const retry = await finalizeAs(
     page,
     afterFailure.data()?.currentVersionId as string,
@@ -185,7 +181,7 @@ test('CAS conflict surfaces as 412 version_stale; retry mints the next monotonic
     'retry after competing publish',
   );
 
-  // Retry succeeds; versionNumber MUST be 5 (not 4 — B already took it).
+  // MUST be 5: B already took slot 4.
   expect(retry.status).toBe(201);
   expect(retry.body.versionNumber).toBe(5);
   expect(retry.body.previousVersionId).toBe(COMPETING_V4_ID);
@@ -193,8 +189,7 @@ test('CAS conflict surfaces as 412 version_stale; retry mints the next monotonic
   expect(retryVersionId).toMatch(/^[a-f0-9]{64}$/);
   expect(retry.body.currentVersionId).toBe(retryVersionId);
 
-  // Final firestore state — pointer flipped to retry, counter at 5,
-  // previousVersionId points back at B's v4.
+  // Final state: pointer on the retry, counter 5, previousVersionId → B's v4.
   await expect.poll(async () => {
     const data = (await roostRef.get()).data() ?? {};
     const { currentVersionId, previousVersionId, versionCounter } = data;

@@ -1,26 +1,13 @@
 /**
- * Shared output helpers used by every owlette CLI command.
- *
- * Consolidates the small primitives every command reaches for:
- *   - `isJson(cmd)` — read the global `--json` flag off a commander
- *     Command instance
- *   - `printJson(value)` — stringify + println to stdout
- *   - `printTable(headers, rows)` — ascii table with padding + a
- *     separator row; used by list / get / key list / etc.
- *   - `printLine` / `errLine` — stdout / stderr with trailing newline
- *   - `humanBytes(n)` — human-readable bytes (B / KiB / MiB / …)
- *   - `truncate(s, n)` — ellipsize long strings
- *
- * The --json envelope stays byte-identical across commands (important
- * for users piping output into `jq`).
+ * Shared output primitives for every owlette CLI command. The `--json`
+ * envelope must stay byte-identical across commands — users pipe it to `jq`.
  */
 
 import type { Command } from 'commander';
 
 /** True when the caller passed the global `--json` flag. */
 export function isJson(cmd: Command): boolean {
-  // `optsWithGlobals()` walks up the parent chain so nested sub-
-  // commands pick up the root-level flag too.
+  // Walks the parent chain so nested subcommands see the root-level flag.
   const globals = cmd.optsWithGlobals();
   return globals.json === true;
 }
@@ -68,9 +55,8 @@ export function unconfirmedMutationFatal(input: UnconfirmedMutationFatalInput): 
 }
 
 /**
- * ASCII table renderer: pads each column to the widest cell, draws a
- * dash separator row under the headers, preserves insertion order.
- * Empty rows render as `(no rows)` so callers don't have to special-case.
+ * ASCII table: columns padded to the widest cell, dash separator under the
+ * headers, insertion order preserved. Empty input renders `(no rows)`.
  */
 export function printTable(
   headers: readonly string[],
@@ -107,9 +93,8 @@ export function renderTable(
 }
 
 /**
- * Human-readable bytes. Values < 1024 render as `N.N B`; values in any
- * non-byte unit + < 10 get two decimals (e.g. `2.00 KiB`), ≥ 10 get
- * one decimal (`12.3 MiB`). Negative values keep their sign.
+ * Human-readable bytes. `< 1024` renders `N.N B`; other units get two decimals
+ * below 10 (`2.00 KiB`) and one at or above (`12.3 MiB`). Sign is preserved.
  */
 export function humanBytes(n: number): string {
   const abs = Math.abs(n);

@@ -1,35 +1,16 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/hoot/turnStore.server.ts`
- * (hoot-async-turns wave 1.1).
+ * `web/lib/hoot/turnStore.server.ts` — stream-doc lifecycle for
+ * `chats/{chatId}/stream/current`.
  *
- * Covers the stream-doc lifecycle for `chats/{chatId}/stream/current`:
- *   1. acquireTurnLock — fresh claim, contention (TurnActiveError while a
- *      fresh turn runs), supersede claim, stale-runner takeover, claim over
- *      terminal docs, throttle reset on claim
- *   2. writeSnapshot — message persistence + updatedAt bump, undefined
- *      stripping (JSON clone), ≥750ms throttle (per chat, skips don't reset
- *      the window), superseded-write no-op, missing-doc / firestore-failure
- *      tolerance (resolves false, never throws)
- *   3. touch — heartbeat bump without touching the message, unthrottled
- *   4. recordToolCommand — toolCallId → {commandId, machineId} recovery
- *      index accumulation
- *   5. finishTurn — complete/error/cancelled transitions, error stamping,
- *      superseded no-op
- *
- * The firestore admin sdk is replaced with an in-memory store keyed by doc
- * path. `FieldValue.serverTimestamp()` sentinels materialize to a fake
- * Timestamp at the mocked `Date.now()` on write — mirroring commit-time
- * resolution — so staleness and throttle behavior are exercised with a
- * controlled clock (no real sleeps).
+ * The firestore admin sdk is an in-memory store keyed by doc path.
+ * `FieldValue.serverTimestamp()` sentinels materialize to a fake Timestamp at the
+ * mocked `Date.now()` on write, mirroring commit-time resolution, so staleness and
+ * throttling run on a controlled clock with no real sleeps.
  */
 
 import { Timestamp } from 'firebase-admin/firestore';
-
-/* -------------------------------------------------------------------------- */
-/*  mocks                                                                     */
-/* -------------------------------------------------------------------------- */
 
 jest.mock('firebase-admin/firestore', () => {
   class FakeTimestamp {
@@ -47,9 +28,8 @@ jest.mock('firebase-admin/firestore', () => {
       return new FakeTimestamp(Date.now());
     }
   }
-  // Mirrors firebase-admin's FieldPath: literal segments, never split on '.'.
-  // This is why `recordToolCommand` MUST use it — hyphenated machineIds
-  // (e.g. 'INF-PROJECTION-WALL') pass straight through as one segment.
+  // Like firebase-admin's FieldPath: literal segments, never split on '.'. This is
+  // why recordToolCommand must use it — 'INF-PROJECTION-WALL' stays one segment.
   class FakeFieldPath {
     readonly segments: string[];
     constructor(...segments: string[]) {
@@ -66,16 +46,12 @@ jest.mock('firebase-admin/firestore', () => {
   };
 });
 
-// Re-import the mocked FieldPath so the fake txn.update can detect it.
+// Re-imported so the fake txn.update can detect it.
 import { FieldPath as MockFieldPath } from 'firebase-admin/firestore';
 type FieldPathLike = { segments: string[] };
 function isFieldPath(value: unknown): value is FieldPathLike {
   return value instanceof (MockFieldPath as unknown as new (...s: string[]) => object);
 }
-
-/* -------------------------------------------------------------------------- */
-/*  in-memory firestore                                                       */
-/* -------------------------------------------------------------------------- */
 
 type StoreShape = Record<string, Record<string, unknown>>;
 const store: StoreShape = {};
@@ -87,9 +63,8 @@ function materialize(value: unknown): unknown {
   return value === '__SERVER_TS__' ? Timestamp.now() : value;
 }
 
-/** Set a (materialized) value at a nested segment path, cloning nodes as it
- *  descends — so a nested-field update preserves sibling keys (exactly the
- *  no-last-write-wins property firestore guarantees). */
+/** Set a materialized value at a nested path, cloning as it descends so sibling
+ *  keys survive — firestore's no-last-write-wins property. */
 function setBySegments(
   target: Record<string, unknown>,
   segments: string[],
@@ -115,10 +90,9 @@ function applyUpdate(target: Record<string, unknown>, patch: Record<string, unkn
   }
 }
 
-/** Apply a `txn.update(ref, ...args)` in EITHER firestore form:
- *   - object form: a single plain-object patch (dotted string keys).
- *   - variadic form: `(fieldPathOrString, value, ...)` pairs — this is what
- *     `recordToolCommand` uses with a `FieldPath`. */
+/** Apply `txn.update(ref, ...args)` in either firestore form: one dotted-key
+ *  object patch, or `(fieldPathOrString, value, ...)` pairs (what
+ *  `recordToolCommand` uses, with a FieldPath). */
 function applyUpdateArgs(target: Record<string, unknown>, args: unknown[]) {
   if (
     args.length === 1 &&
@@ -141,8 +115,7 @@ interface FakeRef {
   collection: (name: string) => { doc: (id: string) => FakeRef };
 }
 
-// All module IO goes through the transaction — doc refs only need to carry
-// their path (and chain subcollections).
+// All module IO is transactional, so refs only need a path + subcollection chain.
 function buildCollection(prefix: string) {
   return {
     doc: (id: string): FakeRef => {
@@ -187,10 +160,6 @@ const fakeDb = {
     return fn(txn);
   }),
 } as unknown as FirebaseFirestore.Firestore;
-
-/* -------------------------------------------------------------------------- */
-/*  setup                                                                     */
-/* -------------------------------------------------------------------------- */
 
 import type { UIMessage } from 'ai';
 import {
@@ -250,10 +219,6 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-/* -------------------------------------------------------------------------- */
-/*  generateTurnId                                                            */
-/* -------------------------------------------------------------------------- */
-
 describe('generateTurnId', () => {
   it('produces unique turn_<base64url> ids', () => {
     const a = generateTurnId();
@@ -262,10 +227,6 @@ describe('generateTurnId', () => {
     expect(a).not.toBe(b);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  acquireTurnLock                                                           */
-/* -------------------------------------------------------------------------- */
 
 describe('acquireTurnLock', () => {
   it('claims when no stream doc exists', async () => {
@@ -363,8 +324,7 @@ describe('acquireTurnLock', () => {
     });
     expect(first).toBeNull();
 
-    // Record a command on the running turn, then supersede — the claim returns
-    // the prior turn's index so the new turn can recover in-flight results.
+    // Supersede returns the prior index so the new turn recovers in-flight results.
     await recordToolCommand(fakeDb, CHAT_ID, 'turn_a', 'tc_1', 'cmd_1', MACHINE_ID);
     const prior = await acquireTurnLock(fakeDb, CHAT_ID, {
       turnId: 'turn_b',
@@ -396,10 +356,6 @@ describe('acquireTurnLock', () => {
     expect(await writeSnapshot(fakeDb, CHAT_ID, 'turn_b', assistantMessage('fresh'))).toBe(true);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  writeSnapshot                                                             */
-/* -------------------------------------------------------------------------- */
 
 describe('writeSnapshot', () => {
   it('persists the message and bumps updatedAt', async () => {
@@ -444,8 +400,7 @@ describe('writeSnapshot', () => {
       { type: 'text', text: 'one' },
     ]);
 
-    // 700ms after the last *accepted* write — still throttled even though
-    // the skipped attempt was only 600ms ago.
+    // 700ms after the last ACCEPTED write — still throttled.
     nowMs = T0 + 700;
     expect(await writeSnapshot(fakeDb, CHAT_ID, 'turn_old', assistantMessage('three'))).toBe(false);
 
@@ -494,10 +449,6 @@ describe('writeSnapshot', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  touch                                                                     */
-/* -------------------------------------------------------------------------- */
-
 describe('touch', () => {
   it('reports `owned` and bumps updatedAt without touching the message, unthrottled', async () => {
     seedStream({ message: { id: 'm', role: 'assistant', parts: [] } });
@@ -519,8 +470,7 @@ describe('touch', () => {
   });
 
   it('reports `lost` on a terminal doc even when the turnId matches (stop/cancel)', async () => {
-    // A stopped/cancelled turn's doc is terminal: a still-running runner's
-    // touch must report `lost` so it aborts itself.
+    // Terminal doc: a still-running runner must see `lost` and abort itself.
     seedStream({ status: 'cancelled', updatedAt: Timestamp.fromMillis(nowMs - 1_000) });
 
     expect(await touch(fakeDb, CHAT_ID, 'turn_old')).toBe('lost');
@@ -529,9 +479,8 @@ describe('touch', () => {
   });
 
   it('reports `error` (NOT `lost`) when the transaction throws — a transient blip is not genuine loss', async () => {
-    // The runner must distinguish these: `lost` aborts a genuinely superseded
-    // turn, but `error` (a network blip) must NOT abort a healthy, still-owned
-    // one. The doc is untouched — a still-`running`, still-owned turn survives.
+    // `lost` aborts a superseded turn; `error` (a blip) must not abort a healthy
+    // still-owned one.
     seedStream();
     failNextTransaction = true;
 
@@ -539,10 +488,6 @@ describe('touch', () => {
     expect(store[STREAM_PATH]).toMatchObject({ status: 'running', turnId: 'turn_old' });
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  recordToolCommand                                                         */
-/* -------------------------------------------------------------------------- */
 
 describe('recordToolCommand', () => {
   it('accumulates toolCallId → machineId → {commandId} entries across tool calls', async () => {
@@ -566,9 +511,8 @@ describe('recordToolCommand', () => {
   });
 
   it('records EVERY machine under one toolCallId (site-wide fan-out — no last-write-wins)', async () => {
-    // One toolCallId dispatched to two machines: the second write must NOT
-    // clobber the first (the finding-7 regression). The nested FieldPath update
-    // touches only its own `[toolCallId][machineId]` leaf.
+    // finding-7 regression: one toolCallId, two machines — the second write must
+    // not clobber the first. FieldPath touches only its own leaf.
     seedStream();
 
     expect(
@@ -587,9 +531,8 @@ describe('recordToolCommand', () => {
   });
 
   it('persists hyphenated machineIds intact (FieldPath, not a dotted string)', async () => {
-    // A real machineId ('INF-PROJECTION-WALL') is invalid in firestore's dotted
-    // field-path mini-language; a `toolCommands.tc.INF-PROJECTION-WALL` string
-    // would throw. The FieldPath segments pass through literally.
+    // Hyphens are invalid in firestore's dotted field-path language, so the
+    // string form would throw; FieldPath segments pass through literally.
     seedStream();
 
     expect(
@@ -623,10 +566,6 @@ describe('recordToolCommand', () => {
     expect(store[STREAM_PATH].toolCommands).toEqual({});
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  finishTurn                                                                */
-/* -------------------------------------------------------------------------- */
 
 describe('finishTurn', () => {
   it('marks the turn complete without an error field', async () => {

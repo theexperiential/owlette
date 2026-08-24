@@ -1,33 +1,20 @@
 """
-sync_scrub — periodic on-disk integrity verification for roost (wave 4b.7).
+sync_scrub — periodic on-disk integrity verification for roost.
 
-walks the most recent committed version for each roost, re-hashes
-every assembled file's CONTENTS (not just size + mtime — that's syncthing's
-mistake; silent bit-rot on never-modified files goes undetected with mtime
-alone), and reports drift to firestore so the dashboard surfaces "machine
-X has corrupted file Y".
+Re-hashes every assembled file's CONTENTS, not size+mtime: mtime alone misses
+silent bit-rot on never-modified files. Drift is reported to firestore so the
+dashboard can surface "machine X has corrupted file Y".
 
-design:
-- runs from a separate scheduler (windows scheduled task or agent's own
-  cron, wired up at install time). NOT triggered by the main loop.
-- one ScrubReport per scrub run, written to firestore + local json file
-  for debugging. report contains the (file_path, expected_hash, actual_hash,
-  size, error?) for every drift.
-- per-distribution; only scrubs the CURRENT version. older immutable
-  versions aren't scrubbed (their files may have been overwritten by
-  later distributions, which is expected).
-- chunked SHA-256 (no whole-file load) so a 50GB file doesn't OOM the agent.
-- skips files in 'failed' state (already known broken — no need to re-confirm).
+- driven by a separate scheduler, never the main loop
+- only CURRENT, committed versions; older versions may legitimately have been
+  overwritten by later distributions
+- chunked SHA-256 so a 50GB file doesn't OOM the agent
+- skips files already in 'failed' state
 
-also owns the LOCAL content-store reaper (`reap_orphan_chunks`): the
-same walk-the-state-DB machinery answers "which cached chunks is nothing
-waiting on any more", and something has to actually delete them — a failed
-distribution otherwise keeps every byte it downloaded, forever.
+Also owns the local content-store reaper (`reap_orphan_chunks`) — without it a
+failed distribution keeps every byte it downloaded, forever.
 
-NOT this module's job:
-- triggering the scrub (separate cron / scheduled task)
-- repairing detected drift (operator decides; could trigger a re-pull)
-- garbage collecting old versions in R2 (chunk GC is wave 2b.4, server-side)
+Not here: triggering the scrub, repairing drift, R2-side chunk GC.
 """
 
 from __future__ import annotations
@@ -50,12 +37,10 @@ logger = logging.getLogger(__name__)
 
 def _default_scrub_report_dir() -> str:
     """
-    resolve the default scrub-report directory.
+    default report dir: %PROGRAMDATA%\\Owlette\\scrub-reports on windows,
+    $XDG_DATA_HOME/owlette/scrub-reports (else ~/.local/share/...) on POSIX.
 
-    windows: %PROGRAMDATA%\\Owlette\\scrub-reports
-    POSIX:   $XDG_DATA_HOME/owlette/scrub-reports, else ~/.local/share/owlette/scrub-reports
-
-    see sync_state._default_state_db_path() for why we avoid `~/Documents/`
+    See sync_state._default_state_db_path() for why `~/Documents/` is avoided
     under LocalSystem.
     """
     if os.name == 'nt':
@@ -70,24 +55,18 @@ def _default_scrub_report_dir() -> str:
 DEFAULT_SCRUB_REPORT_DIR = _default_scrub_report_dir()
 _SCRUB_BUFFER_BYTES = 1024 * 1024  # 1 MiB read buffer
 
-# retention for the JSON scrub reports. the agent dispatches a scrub every
-# hour, so without a cap this directory gains a file per due distribution
-# per run for the life of the machine. reports are a debugging aid — the
-# recent ones are the useful ones.
+# Hourly scrub dispatch would otherwise grow this dir forever; only recent
+# reports have debugging value.
 MAX_SCRUB_REPORTS = 50
 MAX_SCRUB_REPORT_AGE_SECONDS = 30 * 24 * 3600
 
-# a cached chunk has to be this old before the reaper will touch it, even
-# when the state DB says nothing references it. the gap covers the window
-# between "sync_downloader wrote the blob" and "start_distribution / the
-# chunk row is visible + the distribution is in an active state", plus any
-# out-of-band writer we haven't thought of. 24h is far longer than any
-# single distribution takes and still bounds the leak to one day.
+# Minimum age before the reaper touches an unreferenced chunk. Covers the gap
+# between "blob written" and "chunk row visible in an active distribution",
+# plus unknown out-of-band writers; bounds any leak to one day.
 DEFAULT_ORPHAN_MIN_AGE_SECONDS = 24 * 3600
 
-# content-store filenames are the chunk's lowercase sha-256 hex digest,
-# optionally with a `.partial` suffix while a download is in flight.
-# anything else in the store was not written by us — leave it alone.
+# Chunk filenames are lowercase sha-256 hex, optionally `.partial` mid-download.
+# Anything else in the store isn't ours to touch.
 _CHUNK_NAME_RE = re.compile(r'^([0-9a-f]{64})(\.partial)?$')
 
 
@@ -96,7 +75,7 @@ class FileDrift:
     """one drift entry: a file that doesn't match its version entry."""
     path: str
     expected_size: int
-    actual_size: Optional[int]  # None if file missing entirely
+    actual_size: Optional[int]  # None if the file is missing
     reason: str  # 'missing', 'size_mismatch', 'hash_mismatch', 'read_error'
     error: Optional[str] = None  # populated for 'read_error'
 
@@ -112,7 +91,7 @@ class ScrubReport:
     started_at: float
     finished_at: float
     files_checked: int
-    files_skipped: int  # files in 'failed' state, skipped
+    files_skipped: int  # files in 'failed' state
     drifts: List[FileDrift] = field(default_factory=list)
 
     @property
@@ -127,28 +106,25 @@ def scrub_distribution(
     report_dir: Optional[str] = None,
 ) -> ScrubReport:
     """
-    re-verify the on-disk contents of every file from the given distribution
-    against its version. returns a ScrubReport. caller persists/uploads it.
+    re-verify on-disk contents against the version; returns a ScrubReport for
+    the caller to persist/upload.
 
-    extract_root is required because the version doesn't store the customer's
-    extraction destination — that lives in the operator's config + the original
-    sync_pull command payload. caller (the cron entry point) reads it from
-    the same source.
+    extract_root must be passed because the version doesn't carry the
+    extraction destination — that lives in config + the sync_pull payload.
     """
     started = time.time()
     dist_row = state.get_distribution(distribution_id)
     if dist_row is None:
         raise ValueError(f"distribution {distribution_id} not found in state")
 
-    # only scrub committed distributions; in-flight ones are racing with
-    # sync_assembler and would produce false drifts.
+    # In-flight distributions race sync_assembler and produce false drifts.
     if dist_row['state'] != 'committed':
         raise ValueError(
             f"distribution {distribution_id} is in state {dist_row['state']!r}; "
             f"only 'committed' distributions are scrub-eligible"
         )
 
-    # fetch version from cache (same one sync_assembler used to write the files)
+    # Same cached version sync_assembler wrote the files from.
     try:
         version = fetch_version(
             dist_row['version_url'],
@@ -159,7 +135,6 @@ def scrub_distribution(
             f"could not load version {dist_row['version_id']!r} for scrub: {e}"
         ) from e
 
-    # which files to skip (already known failed)?
     failed_paths = {row['path'] for row in state.list_files(distribution_id, state='failed')}
 
     drifts: List[FileDrift] = []
@@ -189,8 +164,7 @@ def scrub_distribution(
         drifts=drifts,
     )
 
-    # persist the report locally (for debugging + replay). recompute the
-    # default each call so a test env override (XDG_DATA_HOME) takes effect.
+    # Default recomputed per call so an XDG_DATA_HOME test override applies.
     _write_report(report, report_dir or _default_scrub_report_dir())
 
     if report.healthy:
@@ -209,14 +183,9 @@ def scrub_distribution(
 
 def _check_file(extract_root: Path, version_file: VersionFile) -> Optional[FileDrift]:
     """
-    verify one file's on-disk contents match the version. returns None
-    on match, a FileDrift entry on mismatch.
-
-    re-hashes the file CONTENTS (not size+mtime). catches:
-    - missing files
-    - size mismatches (truncation, partial assembly)
-    - hash mismatches (silent bit-rot, av interference, manual edit)
-    - permission errors / read failures
+    verify one file against the version: None on match, FileDrift on mismatch.
+    Re-hashes CONTENTS, so it catches truncation, bit-rot, AV interference and
+    manual edits — not just missing files.
     """
     target_relative = Path(*version_file.path.split('/'))
     target = extract_root / target_relative
@@ -243,10 +212,8 @@ def _check_file(extract_root: Path, version_file: VersionFile) -> Optional[FileD
             actual_size=actual_size, reason='size_mismatch',
         )
 
-    # hash the file contents in chunks. compute the FILE-level SHA-256 by
-    # concatenating each chunk's hash? no — that's not how we computed the
-    # version. the version stores PER-CHUNK hashes; we need to slice
-    # the file the same way and verify each chunk independently.
+    # The version stores PER-CHUNK hashes, so slice the file identically and
+    # verify each chunk — a whole-file digest would not match anything.
     try:
         if not _verify_chunks(target, version_file):
             return FileDrift(
@@ -264,11 +231,8 @@ def _check_file(extract_root: Path, version_file: VersionFile) -> Optional[FileD
 
 def _verify_chunks(target: Path, version_file: VersionFile) -> bool:
     """
-    open the file, slice it into chunks of the SAME sizes as the version
-    declares, and verify each chunk's SHA-256 matches the version entry.
-
-    returns True if every chunk matches; False on first mismatch (early exit
-    saves time on large corrupted files).
+    slice the file into the version's declared chunk sizes and verify each
+    SHA-256. False on the first mismatch — early exit on large corrupt files.
     """
     with open(target, 'rb') as f:
         for i, chunk in enumerate(version_file.chunks):
@@ -291,17 +255,11 @@ def scrub_all_due(
     report_dir: Optional[str] = None,
 ) -> List[ScrubReport]:
     """
-    iterate every committed distribution whose last_scrub_at is older than
-    max_age_seconds (or NULL — never scrubbed), run scrub_distribution on
-    each, mark_scrubbed() on success.
+    scrub every committed distribution whose last_scrub_at is older than
+    max_age_seconds (or never), marking each scrubbed on success.
 
-    intended to be called periodically from the agent main loop (via the
-    slow_command_worker thread, NOT the main loop itself — scrub may take
-    minutes for large projects). a single call drains the backlog one at a
-    time; failures don't stop subsequent distributions.
-
-    returns the list of reports produced (caller can upload them to firestore
-    or store for the dashboard).
+    Call from slow_command_worker, NEVER the 5s main loop — a scrub can take
+    minutes. One failure doesn't stop the rest.
     """
     due = state.list_scrub_due(max_age_seconds)
     if not due:
@@ -316,9 +274,8 @@ def scrub_all_due(
                 row['id'], row['extract_root'], state, report_dir=report_dir,
             )
             reports.append(report)
-            # mark_scrubbed even on drift — we DID scrub successfully; the
-            # drift itself is reported separately. only fail-to-run skips
-            # the mark so the next pass retries it.
+            # Mark even on drift — the scrub itself succeeded. Only a
+            # fail-to-run skips the mark so the next pass retries.
             state.mark_scrubbed(row['id'])
         except (ValueError, OSError) as e:
             logger.error(
@@ -327,14 +284,11 @@ def scrub_all_due(
     return reports
 
 
-# ─── content-store reaper ────────────────────────────────────────────
-
-
 @dataclass
 class ReapReport:
     """summary of one content-store reap pass."""
     scanned: int = 0            # chunk-shaped files examined
-    deleted: int = 0            # orphans removed (or, in dry-run, selected)
+    deleted: int = 0            # removed, or selected when dry_run
     bytes_freed: int = 0
     kept_referenced: int = 0    # still needed by an in-flight distribution
     kept_recent: int = 0        # younger than min_age_seconds
@@ -351,24 +305,14 @@ def reap_orphan_chunks(
     dry_run: bool = False,
 ) -> ReapReport:
     """
-    delete cached chunks that no in-flight distribution needs any more.
+    delete cached chunks no in-flight distribution needs. Reaped only when BOTH:
+      1. unreferenced by any ACTIVE_DISTRIBUTION_STATES row (committed/failed/
+         cancelled are history and never resume), and
+      2. older than `min_age_seconds` — guards a distribution that wrote blobs
+         before registering its rows.
 
-    a chunk is reaped when BOTH hold:
-      1. its hash is not referenced by a distribution in an active state
-         (see sync_state.ACTIVE_DISTRIBUTION_STATES). committed / failed /
-         cancelled rows are history — the assembler releases a committed
-         distribution's chunks itself, and a failed one is never resumed.
-      2. it is older than `min_age_seconds` (default 24h). this is the
-         belt-and-braces guard: a distribution that has written blobs but
-         hasn't registered its rows yet keeps its bytes regardless of what
-         the state DB currently says.
-
-    `.partial` sidecars are reaped under the same two rules — an abandoned
-    partial download is exactly the leak this is here to stop.
-
-    best-effort by construction: a file we cannot delete is counted and
-    logged, never raised. returns a ReapReport for the caller to log or
-    surface. `dry_run=True` selects and reports without deleting.
+    `.partial` sidecars follow the same rules. Best-effort: an undeletable file
+    is counted and logged, never raised. `dry_run` selects without deleting.
     """
     store = Path(os.path.expanduser(content_store or _default_content_store()))
     report = ReapReport(dry_run=dry_run)
@@ -387,8 +331,7 @@ def reap_orphan_chunks(
         try:
             st = path.stat()
         except OSError:
-            # vanished between scandir and stat — nothing to do.
-            continue
+            continue  # vanished between scandir and stat
         if st.st_mtime > cutoff:
             report.kept_recent += 1
             continue
@@ -412,9 +355,7 @@ def reap_orphan_chunks(
         logger.debug(f"sync_scrub: reaped orphan chunk {path.name} ({st.st_size} bytes)")
 
     if report.deleted or report.failed:
-        # sample the hashes so an operator can correlate the reap with a
-        # specific distribution without turning on debug logging, but cap
-        # it — a 125k-chunk store must not write 125k log lines.
+        # Capped sample: a 125k-chunk store must not write 125k log lines.
         sample = ', '.join(h[:12] + '…' for h in report.deleted_hashes[:10])
         more = '' if len(report.deleted_hashes) <= 10 else f" (+{len(report.deleted_hashes) - 10} more)"
         verb = 'would reap' if dry_run else 'reaped'
@@ -435,12 +376,11 @@ def reap_orphan_chunks(
 
 def _iter_content_store(store: Path, report: ReapReport) -> Iterable[Tuple[Path, str]]:
     """
-    yield (path, chunk_hash) for every chunk-shaped file in the sharded
-    content store (`<store>/<2 hex>/<64 hex>[.partial]`).
+    yield (path, chunk_hash) for each chunk-shaped file in the sharded store
+    (`<store>/<2 hex>/<64 hex>[.partial]`).
 
-    anything that isn't a regular file with a chunk-shaped name is counted
-    in `report.kept_unrecognized` and skipped — the reaper only ever deletes
-    files it can prove it wrote. symlinks are skipped for the same reason.
+    Non-files, symlinks and off-pattern names count as kept_unrecognized: the
+    reaper only deletes what it can prove it wrote.
     """
     try:
         with os.scandir(str(store)) as shards:
@@ -474,13 +414,10 @@ def _iter_content_store(store: Path, report: ReapReport) -> Iterable[Tuple[Path,
 
 def _write_report(report: ScrubReport, report_dir: str) -> None:
     """
-    write the scrub report as JSON for local debugging + replay, then trim
-    the report directory so it can't grow without bound.
+    write the report as JSON for local debugging, then trim the directory.
 
-    best-effort: any error (mkdir failure, disk full, permission denied)
-    logs a warning but does NOT raise — the in-memory report is still
-    returned to the caller. the scrub itself isn't a critical-path op
-    and an unwritable report dir shouldn't break the agent.
+    Best-effort: write errors warn and return: an unwritable report dir must
+    not break the agent.
     """
     rd = Path(os.path.expanduser(report_dir))
     fname = f"scrub_{report.distribution_id}_{int(report.finished_at)}.json"
@@ -503,17 +440,11 @@ def _prune_old_reports(
     max_age_seconds: int = MAX_SCRUB_REPORT_AGE_SECONDS,
 ) -> int:
     """
-    delete scrub reports that are beyond the newest `keep` OR older than
-    `max_age_seconds`. returns the number deleted.
+    delete reports beyond the newest `keep` or older than `max_age_seconds`;
+    returns the count. Nothing else cleans this dir — cleanup_old_logs only
+    walks the logs root for `*.log`.
 
-    the agent scrubs on an hourly dispatch, so without this the report
-    directory gains a file per due-distribution per run, forever — nothing
-    else cleans it (shared_utils.cleanup_old_logs only walks the logs root
-    and only matches `*.log`).
-
-    only files matching our own `scrub_*.json` naming are considered, and
-    every failure is swallowed: a report we can't delete is disk noise, not
-    a reason to fail a scrub.
+    Only `scrub_*.json` is considered, and delete failures are swallowed.
     """
     try:
         entries = [p for p in report_dir.glob('scrub_*.json') if p.is_file()]

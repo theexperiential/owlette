@@ -1,14 +1,11 @@
 /**
- * Typed access to the Rust host.
+ * Typed access to the Rust host. Every Tauri command has exactly one wrapper
+ * here and nothing else calls `invoke` directly, so a rename in
+ * `src-tauri/src/commands.rs` breaks the build instead of failing at runtime.
  *
- * Every Tauri command has exactly one wrapper here and nothing else in the app
- * calls `invoke` directly — the command names and argument shapes live in one
- * place, so a rename in `src-tauri/src/commands.rs` breaks the build instead of
- * failing at runtime.
- *
- * The host mirrors the python service's file seam: JSON reads and writes go
- * through the `Global\OwletteJsonFileMutex` named mutex and land atomically,
- * and the three files the service publishes are watched rather than polled.
+ * Mirrors the python service's file seam: JSON reads/writes go through the
+ * `Global\OwletteJsonFileMutex` named mutex and land atomically; the three
+ * files the service publishes are watched, not polled.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -25,8 +22,8 @@ export const OWLETTE_FILES = {
 export type OwletteFile = 'config' | 'app_states' | 'service_status'
 
 /**
- * The service rewrites `service_status.json` on a 30 s throttle, so a file
- * older than this is not slow — it means nothing is writing it.
+ * The service rewrites `service_status.json` on a 30 s throttle, so older than
+ * this means nothing is writing it, not that it is slow.
  */
 export const SERVICE_STATUS_STALE_SECONDS = 120
 
@@ -35,13 +32,10 @@ const EVENT_FILE_CHANGED = 'owlette://file-changed'
 const EVENT_SECOND_INSTANCE = 'owlette://second-instance'
 
 /**
- * How the cross-process mutex behaved for one operation.
- *
- * `acquired` is the normal result: the service creates the mutex with an
- * explicit descriptor that lets this process wait on it. `unavailable` means the
- * agent on this machine predates that fix and left the object with LocalSystem's
- * default DACL, which shuts out non-elevated processes. The write is still
- * atomic either way, so it costs a lost update at worst, never a torn file.
+ * `acquired` is normal. `unavailable` means the agent on this machine predates
+ * the fix that gave the mutex an explicit descriptor, so LocalSystem's default
+ * DACL shuts out non-elevated processes. Writes stay atomic either way — worst
+ * case a lost update, never a torn file.
  */
 export type LockOutcome = 'acquired' | 'abandoned' | 'timeout' | 'unavailable'
 
@@ -106,8 +100,8 @@ export interface ServiceCommandOutcome {
   /** `scm` issued directly, `elevated` via a UAC prompt, `noop` already there. */
   method: 'scm' | 'elevated' | 'noop'
   /**
-   * State observed before the request. An elevated start only confirms the
-   * shell accepted it, so callers poll {@link serviceStatus} for the result.
+   * State before the request. An elevated start only confirms the shell
+   * accepted it, so callers poll {@link serviceStatus} for the result.
    */
   stateBefore: ServiceState
 }
@@ -133,13 +127,39 @@ export const ARG_TRAY = '--tray'
 /** Argument the service passes when a process has exhausted its relaunch budget. */
 export const ARG_RESTART_PROMPT = '--restart-prompt'
 
+/** Argument the installer passes to open this window straight on the pairing dialog. */
+export const ARG_PAIR = '--pair'
+
 /**
- * argv this process was launched with, including argv[0].
- *
- * Only describes the *first* launch. A second launch is folded into this
- * instance by the single-instance plugin, which forwards its argv through
- * {@link onSecondInstance} instead — so anything reacting to
- * {@link ARG_RESTART_PROMPT} has to read both.
+ * Argument that names which owlette server to pair against; only meaningful
+ * alongside {@link ARG_PAIR}.
+ */
+export const ARG_SERVER = '--server'
+
+/** 'dev' | 'prod' from `--server dev` or `--server=dev`; null when absent or unrecognised. */
+export function serverFromArgs(argv: readonly string[]): 'dev' | 'prod' | null {
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    let value: string | undefined
+    if (arg === ARG_SERVER) {
+      value = argv[i + 1]
+    } else if (arg.startsWith(`${ARG_SERVER}=`)) {
+      value = arg.slice(ARG_SERVER.length + 1)
+    } else {
+      continue
+    }
+    // The first occurrence decides, even when its value is junk — a later
+    // well-formed flag must not override what the installer put first.
+    return value === 'dev' || value === 'prod' ? value : null
+  }
+  return null
+}
+
+/**
+ * argv of the FIRST launch only. A second launch is folded into this instance
+ * by the single-instance plugin, which forwards its argv through
+ * {@link onSecondInstance} — anything reacting to {@link ARG_RESTART_PROMPT}
+ * must read both.
  */
 export function launchArgs(): Promise<string[]> {
   return invoke<string[]>('launch_args')
@@ -162,23 +182,19 @@ export function setStartupLink(enabled: boolean): Promise<boolean> {
 
 /**
  * Read a JSON file from the owlette tree under the cross-process mutex.
- *
- * A missing file resolves to `{}` — `app_states.json` does not exist until the
- * service has launched something. Content that will not parse rejects rather
- * than resolving empty, so a torn read can never be mistaken for an empty
- * config and written back over the real one.
+ * Missing file → `{}` (`app_states.json` doesn't exist until the service has
+ * launched something). Unparseable content REJECTS, so a torn read can never
+ * be mistaken for an empty config and written back over the real one.
  */
 export function readOwletteJson<T = Record<string, unknown>>(path: string): Promise<T> {
   return invoke<T>('read_owlette_json', { path })
 }
 
 /**
- * Write a JSON file into the owlette tree: serialised with the service's own
- * 4-space indentation, written to a scratch file and renamed over the target.
- *
- * There is no read-modify-write here — callers that update part of a document
- * must read it, merge, and write the whole thing back, preserving keys they do
- * not understand (the `firebase` block above all).
+ * Write JSON into the owlette tree: service-matching 4-space indent, scratch
+ * file renamed over the target. No read-modify-write — callers must read,
+ * merge, and write the whole document back, preserving keys they don't
+ * understand (the `firebase` block above all).
  */
 export function writeOwletteJson(path: string, json: unknown): Promise<WriteOutcome> {
   return invoke<WriteOutcome>('write_owlette_json', { path, json })
@@ -201,8 +217,8 @@ export function serviceStop(): Promise<ServiceCommandOutcome> {
 
 /**
  * Close a process gracefully (WM_CLOSE, then terminate), but only if the pid is
- * still running `expectedExe`. A pid the service has already recycled rejects
- * instead of killing an unrelated process.
+ * still running `expectedExe` — a recycled pid rejects rather than killing an
+ * unrelated process.
  */
 export function terminatePid(
   pid: number,
@@ -217,22 +233,17 @@ export function terminatePid(
 }
 
 /**
- * Width the process-list sidebar should open at, in logical pixels.
- *
- * Layout memory is device-local shell geometry, so it lives in a per-user JSON
- * beside the remembered window size (`%APPDATA%\app.owlette.desktop\layout.json`)
- * rather than in `config.json` — nothing here belongs to the fleet.
+ * Sidebar width in logical pixels. Device-local shell geometry, so it lives in
+ * a per-user JSON beside the remembered window size
+ * (`%APPDATA%\app.owlette.desktop\layout.json`), not in fleet `config.json`.
  */
 export function sidebarWidth(): Promise<number> {
   return invoke<number>('sidebar_width')
 }
 
 /**
- * Store the sidebar width, resolving to the value actually kept.
- *
- * The host clamps, so the resolved width is not always the one that was asked
- * for. Callers should debounce: this writes a file, and a drag produces a move
- * event per frame.
+ * Store the sidebar width; resolves to the value actually kept (the host
+ * clamps). Debounce — this writes a file and a drag fires per frame.
  */
 export function setSidebarWidth(width: number): Promise<number> {
   return invoke<number>('set_sidebar_width', { width })
@@ -244,26 +255,20 @@ export function sidebarCollapsed(): Promise<boolean> {
 }
 
 /**
- * Remember whether the process list is collapsed.
- *
- * Stored beside the width, not instead of it: expanding again lands on the
- * width that was dragged to before the collapse.
+ * Remember whether the process list is collapsed. Stored beside the width, not
+ * instead of it, so expanding lands on the last dragged width.
  */
 export function setSidebarCollapsed(collapsed: boolean): Promise<boolean> {
   return invoke<boolean>('set_sidebar_collapsed', { collapsed })
 }
 
 /**
- * The icon Windows draws for an executable, as a `data:` URL ready for an
- * `<img>`, or null when there is not one.
+ * The executable's Windows icon as a `data:` URL, or null.
  *
- * Resolves rather than rejects for every ordinary miss — a blank path, a file
- * that is not there, a target with no icon — because the list draws the same
- * fallback glyph for all of them. A host-side failure rejects; callers treat
- * that as a miss too.
- *
- * The host caches by path and modified time, so calling this per row on every
- * render costs a hash lookup after the first extraction.
+ * Resolves (not rejects) for every ordinary miss — blank path, missing file, no
+ * icon — because the list draws the same fallback glyph for all of them. Host
+ * failures reject; callers treat those as a miss too. The host caches by path +
+ * mtime, so per-row calls cost a hash lookup after the first extraction.
  */
 export async function exeIcon(path: string): Promise<string | null> {
   const encoded = await invoke<string | null>('exe_icon', { path })
@@ -274,27 +279,22 @@ export async function exeIcon(path: string): Promise<string | null> {
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 /**
- * Write a line into the app's own log file
- * (`%LOCALAPPDATA%\app.owlette.desktop\logs\owlette-desktop.log`).
+ * Append to the app's log file
+ * (`%LOCALAPPDATA%\app.owlette.desktop\logs\owlette-desktop.log`). Release
+ * builds have no console and no devtools, so unlogged steps are unrecoverable
+ * after the fact — and the flows worth logging are the ones that can take the
+ * app down mid-sequence (e.g. a teardown stopping the owlette service).
  *
- * A release build has no console and no devtools, so anything a multi-step flow
- * does not say here is unrecoverable after the fact — and the flows worth
- * logging are exactly the ones that can take the app down mid-sequence, like a
- * teardown that stops the owlette service.
- *
- * Never rejects. A step that failed to be logged must not become a step that
- * failed, so the promise resolves even when the host call does not.
+ * Never rejects: a step that failed to be logged must not become a failed step.
  */
 export function logEvent(level: LogLevel, message: string): Promise<void> {
   return invoke<void>('log_event', { level, message }).catch(() => undefined)
 }
 
 /**
- * Is owlette supervising this machine right now?
- *
- * Both halves matter: a service that is running but has stopped refreshing
- * `service_status.json` for two minutes is wedged, and the footer must say so
- * rather than showing a green light.
+ * Both halves matter: a service that is running but hasn't refreshed
+ * `service_status.json` for two minutes is wedged, and the footer must not show
+ * a green light.
  */
 export function isServiceDown(status: ServiceStatus): boolean {
   return !status.installed || !status.running || status.statusFile.stale
@@ -316,9 +316,9 @@ export function onOwletteFileChangedFor(
 }
 
 /**
- * Subscribe to relaunch attempts. A second launch does not open a window: the
- * host focuses this one and forwards its argv here, which is how `--tray` and
- * `--restart-prompt` reach an already-running app.
+ * Relaunch attempts. A second launch opens no window — the host focuses this
+ * one and forwards its argv here, which is how `--tray` and `--restart-prompt`
+ * reach an already-running app.
  */
 export function onSecondInstance(
   handler: (payload: SecondInstancePayload) => void,

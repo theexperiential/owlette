@@ -1,17 +1,12 @@
 'use client';
 
 /**
- * useTargetStates — real-time listener for per-target sync status
- * reported by agents during a roost rollout.
+ * Per-target sync status reported by agents during a roost rollout, from
+ * `sites/{siteId}/roosts/{roostId}/target_state/{machineId}`. The
+ * `onTargetStateWritten` function reads the same docs to advance canary->fleet.
  *
- * path: sites/{siteId}/roosts/{roostId}/target_state/{machineId}
- *
- * The `onTargetStateWritten` cloud function reads the same docs to
- * advance canary→fleet; the UI reads them to show per-target progress
- * on the roost page.
- *
- * Skipping the listener entirely when siteId / roostId aren't set
- * avoids a dangling collection ref and a spurious permission-denied.
+ * The listener is skipped outright without siteId/roostId — a dangling
+ * collection ref yields a spurious permission-denied.
  */
 
 import { useEffect, useState } from 'react';
@@ -59,10 +54,8 @@ function coerceStatus(raw: unknown): TargetStatus | null {
 
 export function useTargetStates(siteId: string, roostId: string | null) {
   const [states, setStates] = useState<TargetState[]>([]);
-  // Start in loading state only when we have a path to listen on. When
-  // siteId / roostId are empty we're genuinely "not loading" — there's
-  // nothing to wait for. Computing this during render avoids a cascading
-  // setState({}) + setLoading(false) inside the effect.
+  // Only "loading" when there is a path to listen on. Computing it during
+  // render avoids a cascading setState + setLoading(false) inside the effect.
   const initialLoading = !!(siteId && roostId);
   const [loading, setLoading] = useState<boolean>(initialLoading);
 
@@ -96,9 +89,8 @@ export function useTargetStates(siteId: string, roostId: string | null) {
         setLoading(false);
       },
       () => {
-        // Permission-denied happens legitimately during site-switch races.
-        // Blank the list and drop the loading flag; the page-level roosts
-        // listener handles surfacing hard auth errors.
+        // Permission-denied is legitimate during a site-switch race. The
+        // page-level roosts listener surfaces genuine auth errors.
         setStates([]);
         setLoading(false);
       },

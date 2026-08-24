@@ -1,20 +1,17 @@
 /** @jest-environment node */
 
 /**
- * Tests for the wave 2A `/api/mfa/disable` server-mediated MFA disable.
+ * `/api/mfa/disable` — the only authorized way to flip mfaEnrolled / mfaSecret /
+ * backupCodes (Firestore rules lock those against browser writes). It must:
+ * require a session; accept a fresh TOTP OR a backup code; consume the backup
+ * code in a transaction; re-mint the session via markSessionMfaDisabled so the
+ * user isn't bounced to /verify-2fa; emit a `user_mutated` audit row tagged
+ * `mfa_disabled`; 400 on invalid codes.
  *
- * The Firestore rules now lock the user-doc allowlist so the browser
- * cannot mutate mfaEnrolled / mfaSecret / backupCodes directly. This
- * route is the only authorized way to flip those fields, and it must:
- *   1. Require an authenticated session.
- *   2. Accept either a fresh TOTP code OR a backup code.
- *   3. Consume a used backup code inside a transaction (single-use even
- *      under concurrency — covered separately in verify-login.test.ts).
- *   4. Server-mediate the write (admin SDK bypass of the rule).
- *   5. Re-mint the session via markSessionMfaDisabled so the user isn't
- *      bounced to /verify-2fa on the next request.
- *   6. Emit a `user_mutated` audit row tagged `mfa_disabled`.
- *   7. Reject invalid TOTP / backup codes with a 400.
+ * INVERSION under universal 2FA: the route no longer writes `mfaEnrolled` /
+ * `requiresMfaSetup` — `applyMfaFactorChange` derives them. Dropping the last
+ * factor re-arms `requiresMfaSetup` to TRUE (it used to force false); an
+ * account still holding a passkey stays enrolled with the nag off.
  */
 
 const mockRequireSession = jest.fn();
@@ -37,8 +34,8 @@ jest.mock('@/lib/withRateLimit', () => ({
 }));
 
 jest.mock('@/lib/apiAuth.server', () => {
-  // Defined inline because the factory is hoisted ABOVE module-scope code
-  // by jest — top-level classes aren't yet initialised here.
+  // Inline: jest hoists the factory above module scope, so top-level classes
+  // aren't initialised yet.
   class ApiAuthError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -67,11 +64,9 @@ jest.mock('@/lib/sessionManager.server', () => ({
   markSessionMfaDisabled: (...a: unknown[]) => mockMarkSessionMfaDisabled(...a),
 }));
 
-// jest.mock replaces the whole module, so the route's real
-// `@/lib/deviceTrust.server` import MUST be stubbed here too — otherwise the
-// route would pull in the Admin-SDK-backed implementation and every existing
-// test would TypeError. `DEVICE_TRUST_COOKIE` / `deviceTrustCookieOptions`
-// mirror the real values so the cookie-expiry assertions are meaningful.
+// jest.mock replaces the whole module, so `@/lib/deviceTrust.server` must be
+// stubbed too or the route pulls in the Admin SDK and every test TypeErrors.
+// The cookie constants mirror real values so expiry assertions mean something.
 jest.mock('@/lib/deviceTrust.server', () => ({
   revokeAllTrustedDevices: (...a: unknown[]) => mockRevokeAllTrustedDevices(...a),
   DEVICE_TRUST_COOKIE: 'owlette_device_trust',
@@ -96,16 +91,34 @@ jest.mock('firebase-admin/firestore', () => ({
 }));
 
 // Mutable doc store backing the mocked admin SDK.
+//
+// `@/lib/mfaFactors.server` is deliberately NOT mocked — the route delegates
+// the mfaEnrolled/requiresMfaSetup derivation to it, so the real module runs
+// against this fake. The fake therefore must support what it does: a
+// transaction reading the user doc, counting the `passkeys` subcollection when
+// the stored inventory can't be trusted, then one merge `set`.
 let userData: Record<string, unknown> | null;
+/** Size of `users/user-1/passkeys` — the other factor the account may hold. */
+let passkeyCount = 0;
 const updateCalls: Array<{ path: string; payload: Record<string, unknown> }> = [];
 let runTransactionFn:
   | ((cb: (tx: unknown) => Promise<unknown>) => Promise<unknown>)
   | null = null;
 
+/** Ref marker so the fake `tx.get` can tell a doc read from a count read. */
+const PASSKEYS_PATH = 'users/user-1/passkeys';
+
+function makePasskeysRef() {
+  return { path: PASSKEYS_PATH, get: async () => ({ size: passkeyCount }) };
+}
+
 function makeUserRef() {
   const path = 'users/user-1';
   return {
     path,
+    id: 'user-1',
+    collection: (name: string) =>
+      name === 'passkeys' ? makePasskeysRef() : { path: `${path}/${name}` },
     get: async () => ({
       exists: userData !== null,
       data: () => userData ?? undefined,
@@ -120,6 +133,12 @@ function makeUserRef() {
   };
 }
 
+/** Apply a write onto the local store and record it for assertions. */
+function recordWrite(payload: Record<string, unknown>) {
+  if (userData) userData = { ...userData, ...payload };
+  updateCalls.push({ path: 'users/user-1', payload });
+}
+
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
     collection: (name: string) => ({
@@ -128,16 +147,23 @@ jest.mock('@/lib/firebase-admin', () => ({
     }),
     runTransaction: (cb: (tx: unknown) => Promise<unknown>) => {
       if (runTransactionFn) return runTransactionFn(cb);
-      // Default: emulate a tx by passing in a tx object that mirrors the
-      // user doc and applies update() against userData.
+      // Tx that mirrors the user doc, answers subcollection counts, and applies
+      // update()/set() against userData.
       const tx = {
-        get: async () => ({
-          exists: userData !== null,
-          data: () => userData ?? undefined,
-        }),
+        get: async (ref: { path?: string }) => {
+          if (ref?.path === PASSKEYS_PATH) {
+            return { size: passkeyCount };
+          }
+          return {
+            exists: userData !== null,
+            data: () => userData ?? undefined,
+          };
+        },
         update: (_ref: unknown, payload: Record<string, unknown>) => {
-          if (userData) userData = { ...userData, ...payload };
-          updateCalls.push({ path: 'users/user-1', payload });
+          recordWrite(payload);
+        },
+        set: (_ref: unknown, payload: Record<string, unknown>) => {
+          recordWrite(payload);
         },
       };
       return cb(tx);
@@ -155,6 +181,7 @@ beforeEach(() => {
     mfaSecret: 'iv:cipher', // encrypted secret form
     backupCodes: ['hash-bk-1', 'hash-bk-2', 'hash-bk-3'],
   };
+  passkeyCount = 0;
   updateCalls.length = 0;
   runTransactionFn = null;
 
@@ -185,10 +212,8 @@ function disableReq(body: unknown) {
 
 describe('POST /api/mfa/disable — auth gate', () => {
   it('rejects with 401 when no session', async () => {
-    // Build a fresh ApiAuthError-shaped error matching the mocked class.
     const err = new Error('Unauthorized') as Error & { status: number };
-    // Match the mocked class's `instanceof` check by importing the same
-    // module path the route does.
+    // Same module path the route imports, so `instanceof` matches.
     const { ApiAuthError } = jest.requireMock(
       '@/lib/apiAuth.server',
     ) as { ApiAuthError: new (status: number, message: string) => Error };
@@ -249,10 +274,12 @@ describe('POST /api/mfa/disable — TOTP path', () => {
       mfaEnrolled: false,
       mfaSecret: '__FIELD_DELETE__',
       backupCodes: [],
-      requiresMfaSetup: false,
+      mfaFactors: { totp: false, passkeys: 0 },
+      // INVERSION: losing the last factor re-arms the nag (used to force false).
+      requiresMfaSetup: true,
     });
 
-    // Session must be re-minted so the user isn't bounced to /verify-2fa.
+    // Re-mint or the user is bounced to /verify-2fa.
     expect(mockMarkSessionMfaDisabled).toHaveBeenCalledTimes(1);
 
     // Audit row written tagged mfa_disabled.
@@ -260,7 +287,10 @@ describe('POST /api/mfa/disable — TOTP path', () => {
     const audit = mockEmitMutation.mock.calls[0][0];
     expect(audit.kind).toBe('user_mutated');
     expect(audit.attributes.verb).toBe('mfa_disabled');
+    expect(audit.attributes.factor).toBe('totp');
     expect(audit.attributes.factorUsed).toBe('totp');
+    expect(audit.attributes.stillEnrolled).toBe(false);
+    expect(audit.attributes.setupReArmed).toBe(true);
   });
 
   it('rejects an invalid TOTP code with 400', async () => {
@@ -283,10 +313,69 @@ describe('POST /api/mfa/disable — TOTP path', () => {
   });
 });
 
+describe('POST /api/mfa/disable — factor inventory', () => {
+  it('re-arms requiresMfaSetup when TOTP was the account\'s last factor', async () => {
+    passkeyCount = 0;
+
+    const res = await POST(disableReq({ code: '123456' }));
+    expect(res.status).toBe(200);
+
+    const teardown = updateCalls.find((c) => 'mfaFactors' in c.payload);
+    expect(teardown!.payload).toMatchObject({
+      mfaFactors: { totp: false, passkeys: 0 },
+      mfaEnrolled: false,
+      requiresMfaSetup: true,
+    });
+  });
+
+  it('keeps the account enrolled (nag off) when a passkey remains', async () => {
+    passkeyCount = 2;
+
+    const res = await POST(disableReq({ code: '123456' }));
+    expect(res.status).toBe(200);
+
+    // Only the TOTP leg drops; remaining passkeys keep `mfaEnrolled` true.
+    const teardown = updateCalls.find((c) => 'mfaFactors' in c.payload);
+    expect(teardown!.payload).toMatchObject({
+      mfaFactors: { totp: false, passkeys: 2 },
+      mfaEnrolled: true,
+      requiresMfaSetup: false,
+      mfaSecret: '__FIELD_DELETE__',
+      backupCodes: [],
+    });
+
+    const audit = mockEmitMutation.mock.calls[0][0];
+    expect(audit.attributes.passkeysEnrolled).toBe(2);
+    expect(audit.attributes.stillEnrolled).toBe(true);
+    expect(audit.attributes.setupReArmed).toBe(false);
+  });
+
+  it('trusts a well-formed stored inventory instead of recounting', async () => {
+    // A backfilled doc carries `mfaFactors`, so no subcollection recount. The
+    // count below contradicts it deliberately, to catch a stray recount.
+    userData = {
+      mfaEnrolled: true,
+      mfaSecret: 'iv:cipher',
+      backupCodes: ['hash-bk-1'],
+      mfaFactors: { totp: true, passkeys: 1 },
+    };
+    passkeyCount = 99;
+
+    const res = await POST(disableReq({ code: '123456' }));
+    expect(res.status).toBe(200);
+
+    const teardown = updateCalls.find((c) => 'mfaFactors' in c.payload);
+    expect(teardown!.payload).toMatchObject({
+      mfaFactors: { totp: false, passkeys: 1 },
+      mfaEnrolled: true,
+      requiresMfaSetup: false,
+    });
+  });
+});
+
 describe('POST /api/mfa/disable — backup-code path', () => {
   it('accepts a valid backup code, consumes it inside a transaction, and tears down MFA', async () => {
-    // First call to verifyBackupCode (called for each stored hash) will
-    // match the second stored hash to simulate finding the right code.
+    // Match on the second stored hash to simulate finding the right code.
     mockVerifyBackupCode.mockImplementation((_code: string, hash: string) =>
       hash === 'hash-bk-2',
     );
@@ -300,8 +389,7 @@ describe('POST /api/mfa/disable — backup-code path', () => {
     expect(body.success).toBe(true);
     expect(body.backupCodeUsed).toBe(true);
 
-    // Transaction-side update consumed the used hash AND retained the
-    // rest. (verifyBackupCode returned true for hash-bk-2 only.)
+    // The tx consumed the used hash and retained the rest.
     const txConsumeWrite = updateCalls.find(
       (c) =>
         Array.isArray(c.payload.backupCodes) &&
@@ -350,8 +438,7 @@ describe('POST /api/mfa/disable — device trust revocation', () => {
     expect(mockRevokeAllTrustedDevices).toHaveBeenCalledTimes(1);
     expect(mockRevokeAllTrustedDevices).toHaveBeenCalledWith('user-1');
 
-    // The revoked count rides on the SINGLE existing audit emission — no
-    // second emitMutation (audit invariant).
+    // Audit invariant: the revoked count rides the single existing emission.
     expect(mockEmitMutation).toHaveBeenCalledTimes(1);
     const audit = mockEmitMutation.mock.calls[0][0];
     expect(audit.attributes.trustedDevicesRevoked).toBe(4);

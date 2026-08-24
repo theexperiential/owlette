@@ -1,27 +1,18 @@
 /**
- * Per-site storage quota enforcement (roost wave 2b.5).
+ * Per-site storage quota enforcement. Pure decision logic lives in lib/quotaLogic.ts; this
+ * file glues Firestore state + R2 listing into it and writes alarm events.
  *
- * Two entrypoints:
- *
- *   preUploadCheck   — HTTPS callable. The tusd pre-create hook (wave 2b.1)
- *                      calls this before issuing a signed upload URL. On
- *                      admission the pending-bytes reservation is written
- *                      atomically; on denial a 402 (site out of storage)
- *                      returns to tusd which propagates to the client.
- *
- *   reconcileQuota   — scheduled daily. Rebuilds `usedBytes` from the
- *                      authoritative R2 listing and re-emits any crossed
- *                      alarm thresholds (50 / 80 / 100 %). Pending-bytes
- *                      are aged: reservations older than the pending TTL
- *                      are presumed abandoned and released.
- *
- * The pure decision logic lives in lib/quotaLogic.ts. This file glues
- * firestore state + R2 listing into that logic + writes alarm events.
+ *   preUploadCheck  — HTTPS callable from the tusd pre-create hook, before a signed upload
+ *                     URL is issued. Admission writes the pending-bytes reservation
+ *                     atomically; denial returns 402 through tusd to the client.
+ *   reconcileQuota  — daily. Rebuilds `usedBytes` from the authoritative R2 listing,
+ *                     re-emits crossed alarm thresholds (50/80/100%), and releases
+ *                     reservations older than the pending TTL as abandoned.
  */
 
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import { requireInternalSecret } from './lib/requireInternalSecret';
 import {
@@ -37,20 +28,14 @@ import {
 /** Pending reservations older than this are presumed abandoned. */
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
-/* --------------------------------------------------------------------- */
-/*  Dependency interfaces (injectable for tests)                         */
-/* --------------------------------------------------------------------- */
-
+// Dependency interfaces, injectable for tests.
 export interface QuotaStore {
   /** Return the site's cached quota state + last-seen alarm level. */
   read(siteId: string): Promise<{
     state: QuotaState;
     lastAlarmLevel: AlarmLevel;
   } | null>;
-  /**
-   * Reserve `bytes` as pendingBytes against the site's quota,
-   * identified by `reservationId`. Idempotent on the id.
-   */
+  /** Reserve `bytes` as pendingBytes; idempotent on `reservationId`. */
   reservePending(
     siteId: string,
     reservationId: string,
@@ -79,10 +64,6 @@ export interface SiteDirectory {
   listSiteIds(): Promise<string[]>;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Pure orchestrator — pre-upload admission                             */
-/* --------------------------------------------------------------------- */
-
 export interface PreUploadRequest {
   siteId: string;
   reservationId: string;
@@ -106,11 +87,8 @@ export interface PreUploadDeps {
   now?: () => Date;
 }
 
-/**
- * Run the pre-upload check. Returns an HTTP-shaped response describing
- * the verdict. Side-effect on admission: the `reservationId` is recorded
- * as pending bytes, so a concurrent call can't also "fit".
- */
+/** HTTP-shaped verdict. On admission `reservationId` is recorded as pending bytes, so a
+ * concurrent call can't also "fit". */
 export async function runPreUploadCheck(
   req: PreUploadRequest,
   deps: PreUploadDeps,
@@ -152,9 +130,8 @@ export async function runPreUploadCheck(
     };
   }
 
-  // reserve atomically BEFORE returning admission. if this throws,
-  // surface a 503 so the client retries rather than accidentally
-  // getting an admission without a reservation.
+  // Reserve atomically BEFORE admitting; on throw, 503 so the client retries rather than
+  // holding an admission with no reservation.
   await deps.quota.reservePending(
     req.siteId,
     req.reservationId,
@@ -171,10 +148,6 @@ export async function runPreUploadCheck(
     },
   };
 }
-
-/* --------------------------------------------------------------------- */
-/*  Pure orchestrator — daily reconcile                                  */
-/* --------------------------------------------------------------------- */
 
 export interface ReconcileDeps {
   directory: SiteDirectory;
@@ -203,8 +176,7 @@ export async function reconcileOneSite(
     deps.metrics.usedBytes(siteId),
   ]);
 
-  // preserve previously-tracked pendingBytes, but let the TTL prune by
-  // passing `now` to rewrite — store impl expires stale reservations.
+  // Keep tracked pendingBytes; passing `now` lets the store expire stale reservations.
   const nextState: QuotaState = {
     usedBytes,
     pendingBytes: existing?.state.pendingBytes ?? 0,
@@ -247,10 +219,6 @@ export async function reconcileAllSites(
   }
   return results;
 }
-
-/* --------------------------------------------------------------------- */
-/*  Scheduled + HTTPS entrypoints                                        */
-/* --------------------------------------------------------------------- */
 
 /** Daily reconcile at 03:45 UTC (separated from chunkGc's 02:15 slot). */
 export const reconcileQuota = onSchedule(
@@ -296,12 +264,8 @@ export const preUploadCheck = onRequest(
   },
 );
 
-/* --------------------------------------------------------------------- */
-/*  Production wiring                                                    */
-/* --------------------------------------------------------------------- */
-
 function getDefaultDirectory(): SiteDirectory {
-  const db = admin.firestore();
+  const db = getFirestore();
   return {
     async listSiteIds() {
       const snap = await db.collection('sites').listDocuments();
@@ -311,7 +275,7 @@ function getDefaultDirectory(): SiteDirectory {
 }
 
 function getDefaultQuotaStore(): QuotaStore {
-  const db = admin.firestore();
+  const db = getFirestore();
   const quotaDoc = (siteId: string) =>
     db.collection('sites').doc(siteId).collection('roost').doc('quota');
   const pendingCol = (siteId: string) =>
@@ -354,7 +318,7 @@ function getDefaultQuotaStore(): QuotaStore {
     },
     async rewrite(siteId, state, now) {
       const cutoff = new Date(now.getTime() - PENDING_TTL_MS);
-      // prune expired reservations in the same read window
+      // Prune expired reservations in the same read window.
       const expired = await pendingCol(siteId)
         .where('reservedAt', '<', cutoff)
         .get();
@@ -406,6 +370,5 @@ function getDefaultStorageMetrics(): StorageMetrics {
   };
 }
 
-// keep ALARM_LEVELS re-exported for consumers that want to show the
-// threshold legend in the dashboard without importing the lib directly.
+// Re-exported so the dashboard can render the threshold legend without importing the lib.
 export { ALARM_LEVELS };

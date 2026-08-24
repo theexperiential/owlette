@@ -41,18 +41,14 @@ export interface UseSchedulePresetsReturn {
 }
 
 /**
- * Hook to manage schedule presets scoped to a site.
- * Firestore path: config/{siteId}/schedule_presets/{presetId}
- *
- * Built-in presets are always present (merged client-side from BUILT_IN_PRESETS).
- * If an admin edits a built-in, the override is saved to Firestore and takes precedence.
+ * Site-scoped schedule presets — config/{siteId}/schedule_presets/{presetId}.
+ * Built-ins are merged in client-side from BUILT_IN_PRESETS; an admin edit persists a
+ * Firestore override that takes precedence.
  */
 export function useSchedulePresets(siteId: string | null): UseSchedulePresetsReturn {
-  // loadedSiteId pins Firestore presets to the site they came from so that
-  // `loading` can be derived at render (no sync setState in the effect body).
-  // The original behavior — staying in loading while siteId is null so the
-  // editor doesn't flash built-in defaults as if Firestore had no overrides —
-  // is preserved: `loadedSiteId` is null until the first snapshot lands.
+  // Pins presets to the site they came from so `loading` derives at render with no sync
+  // setState in the effect. Null until the first snapshot lands, which keeps the editor in
+  // loading rather than flashing built-in defaults as if there were no overrides.
   const [state, setState] = useState<{
     firestorePresets: SchedulePreset[];
     loadedSiteId: string | null;
@@ -86,18 +82,16 @@ export function useSchedulePresets(siteId: string | null): UseSchedulePresetsRet
     return () => unsubscribe();
   }, [siteId]);
 
-  // Surface only data that matches the currently-requested site. When siteId
-  // is null, stay in loading — otherwise the editor briefly renders built-in
-  // defaults as if no Firestore overrides existed (see original comment).
+  // Only data for the currently-requested site; a null siteId stays loading, or the editor
+  // flashes built-in defaults as if no overrides existed.
   const firestorePresets = state.loadedSiteId === siteId ? state.firestorePresets : EMPTY_SCHEDULE_PRESETS;
   const loading = !!db && (!siteId || state.loadedSiteId !== siteId);
   const error = state.error;
 
-  // Merge built-in defaults with Firestore overrides + custom presets
   const presets = useMemo(() => {
     const firestoreById = new Map(firestorePresets.map(p => [p.id, p]));
 
-    // Built-ins: use Firestore override if it exists, otherwise the hardcoded default
+    // Firestore override wins over the hardcoded default.
     const builtIns: SchedulePreset[] = BUILT_IN_PRESETS.map((bp, i) => {
       const id = builtInId(bp.name);
       const override = firestoreById.get(id);
@@ -114,7 +108,7 @@ export function useSchedulePresets(siteId: string | null): UseSchedulePresetsRet
       };
     });
 
-    // Custom presets: everything in Firestore that isn't a built-in override
+    // Custom = everything in Firestore that isn't a built-in override.
     const builtInIds = new Set(BUILT_IN_PRESETS.map(bp => builtInId(bp.name)));
     const custom = firestorePresets
       .filter(p => !builtInIds.has(p.id))

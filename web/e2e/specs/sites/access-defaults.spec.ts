@@ -1,19 +1,14 @@
 /**
  * Sites — access defaults (C2.4)
  *
- * The site-switcher scope is driven by useSites (web/hooks/useFirestore.ts).
- * Superadmins query the whole `sites` collection (platform god-mode);
- * everyone else fetches only the sites listed in their `users/{uid}.sites`
- * array.
- *
- * This spec pins that contract end-to-end:
+ * Site-switcher scope comes from useSites (web/hooks/useFirestore.ts): superadmins query
+ * the whole `sites` collection, everyone else only the sites in `users/{uid}.sites`.
+ * Pinned end-to-end:
  *   - member (sites: ['site-A']) → switcher lists site-A, NOT site-B
  *   - admin  (sites: ['site-A']) → switcher lists site-A, NOT site-B
  *   - superadmin (sites: []) → switcher lists BOTH site-A and site-B
  *
- * The owner-defaults contract (new sites have owner = creator.uid) is
- * already covered by C2.1's Admin SDK read-through, so we don't duplicate
- * it here.
+ * Owner defaults are covered by C2.1's Admin SDK read-through, not duplicated here.
  */
 
 import { test, expect } from '@playwright/test';

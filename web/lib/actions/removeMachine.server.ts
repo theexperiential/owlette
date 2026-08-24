@@ -1,41 +1,18 @@
 /**
- * removeMachine action core (security-boundary-migration wave 3.8).
+ * removeMachine action core. Hard-deletes the machine doc, its config doc, its
+ * pending/completed command maps, and every matching `agent_refresh_tokens`
+ * row. Capability `MACHINE_REMOVE` (site-scoped).
  *
- * Hard-deletes a machine and all of its associated data from a site:
+ * Atomicity: machine + config delete in one batch; command maps and tokens are
+ * best-effort follow-ups because they may not exist (a freshly-paired machine
+ * has no commands subcollection). Firestore deletes are idempotent on absent
+ * docs, so no existence pre-check.
  *
- *   1. `sites/{siteId}/machines/{machineId}`          — main machine doc
- *   2. `config/{siteId}/machines/{machineId}`         — machine config
- *   3. `sites/{siteId}/machines/{machineId}/commands/pending`   — pending command map
- *   4. `sites/{siteId}/machines/{machineId}/commands/completed` — completed command map
- *   5. `agent_refresh_tokens` where `siteId` and `machineId` match
+ * No active-deployment guard: the legacy client-side check was racy against
+ * in-flight commands and lived in the UI, not the data layer. The audit log
+ * records the removal; reconciliation handles abandoned deployments.
  *
- * The fixed machine/config/commands paths mirror the client-side cascade in
- * `web/hooks/useMachineOperations.ts`. The hook will be deleted in a
- * follow-up wave once the route-side action is the only writer.
- *
- * Capability: `MACHINE_REMOVE` — site-scoped per the role matrix in
- * `web/lib/capabilities.ts`. Site admins can remove machines on their assigned
- * sites; superadmins on any site.
- *
- * Atomicity: the main doc + config delete run in a Firestore batch; the
- * command-map docs and agent refresh token docs are deleted as best-effort
- * follow-ups since they may not exist (a freshly-paired machine that never
- * received a command has no commands subcollection at all). Missing-doc
- * deletes are NOT errors — Firestore's `delete()` is naturally idempotent
- * for absent docs, so we don't need to pre-check existence.
- *
- * Active-deployment guard: the legacy client flow checked
- * `checkMachineHasActiveDeployment` BEFORE calling the cascade. We do NOT
- * replicate that check here because:
- *   (a) it lived in the dashboard UI, not the data layer, and was never
- *       authoritative — racy against in-flight commands.
- *   (b) the audit log captures the removal action; downstream
- *       reconciliation handles abandoned deployments.
- * If a stronger guard is needed it ships in a follow-up wave.
- *
- * Resumability: cascade size is bounded by fixed machine/config/commands
- * docs plus matching agent refresh token docs. No need for operation-id
- * resumption at this scale.
+ * TODO: delete `web/hooks/useMachineOperations.ts` once this is the only writer.
  */
 
 import { Firestore } from 'firebase-admin/firestore';
@@ -96,20 +73,14 @@ export async function removeMachine(
   const pendingCommandsRef = machineRef.collection('commands').doc('pending');
   const completedCommandsRef = machineRef.collection('commands').doc('completed');
 
-  // Phase 1: atomic batch for the two top-level docs (main + config). If
-  // this fails the machine remains visible — desired, since the audit log
-  // records the failure and the user can retry.
+  // Atomic: a failure leaves the machine visible and retryable.
   const batch = db.batch();
   batch.delete(machineRef);
   batch.delete(configRef);
   await batch.commit();
 
-  // Phase 2: best-effort command-map cleanup. These docs are NOT always
-  // present (machines that have never received a command have no
-  // `commands/pending` doc at all), but Firestore deletes are idempotent
-  // so a missing doc is not an error. We still log warnings for
-  // unexpected failure modes (e.g. permission denied from a misconfigured
-  // emulator) so they're visible in production telemetry.
+  // Best-effort: these docs may never have existed. Warn rather than throw,
+  // so unexpected modes (e.g. permission denied) stay visible in telemetry.
   try {
     await pendingCommandsRef.delete();
   } catch (err) {
@@ -136,9 +107,8 @@ export async function removeMachine(
     });
   }
 
-  // Phase 3: best-effort token cleanup. The agent refresh token documents
-  // are top-level docs keyed by token hash, so locate them by the same
-  // siteId + machineId query used by the manual revoke route.
+  // Tokens are top-level docs keyed by hash, so they're found by the same
+  // siteId + machineId query the manual revoke route uses.
   try {
     for (;;) {
       const tokensSnapshot = await db.collection('agent_refresh_tokens')

@@ -1,18 +1,14 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for the talon store (talons wave 1, task 1.1).
+ * Unit tests for the talon store.
  *
- * Firestore is a small in-memory fake rather than a chain of `jest.fn()`s:
- * the store writes to two collections, reads back through batches, and
- * deletes fields with a `FieldValue.delete()` sentinel, so the tests need a
- * store that actually holds state to assert "the secret is in talon_secrets
- * and nowhere else" or "nextRunAt was removed, not nulled".
- *
- * `firebase-admin/firestore` is mocked down to `FieldValue` alone so the suite
- * never loads the real Admin SDK; the collaborators with I/O or crypto cost
- * (`assertLlmKeyAvailable`, `validateWebhookUrl`, the audit emitter) are mocked
- * the way the `__tests__/lib/actions/*` suites mock theirs.
+ * Firestore is an in-memory fake rather than `jest.fn()` chains: the store
+ * writes two collections, reads back through batches, and deletes fields with
+ * a `FieldValue.delete()` sentinel, so assertions like "the secret is in
+ * talon_secrets and nowhere else" or "nextRunAt was removed, not nulled" need
+ * real state. `firebase-admin/firestore` is mocked to `FieldValue` alone so
+ * the real Admin SDK never loads.
  */
 
 const mockDeleteSentinel = { __fieldValue: 'delete' } as const;
@@ -57,9 +53,7 @@ import {
 import { MAX_TALONS_PER_SITE } from '@/lib/talons/validation';
 import type { TalonDoc } from '@/lib/talons/types';
 
-/* ------------------------------------------------------------------------- */
-/*  In-memory Firestore                                                       */
-/* ------------------------------------------------------------------------- */
+// In-memory Firestore
 
 type DocData = Record<string, unknown>;
 type BatchOp = { kind: 'set' | 'update' | 'delete'; path: string; data?: DocData };
@@ -287,9 +281,7 @@ class FakeDocRef {
   }
 }
 
-/* ------------------------------------------------------------------------- */
-/*  Fixtures                                                                  */
-/* ------------------------------------------------------------------------- */
+// Fixtures
 
 const SITE = 'site-a';
 const TALONS_PATH = `sites/${SITE}/talons`;
@@ -377,9 +369,7 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
-/* ------------------------------------------------------------------------- */
-/*  createTalon                                                               */
-/* ------------------------------------------------------------------------- */
+// createTalon
 
 describe('createTalon', () => {
   it('persists the normalized input plus the server-owned fields', async () => {
@@ -397,7 +387,7 @@ describe('createTalon', () => {
     );
 
     const doc = storedTalon(created.id);
-    // Normalization is the validator's — the store must persist its output.
+    // The store must persist the validator's normalized output.
     expect(doc.name).toBe('morning check');
     expect(doc.description).toBe('keeps the lobby wall alive');
     expect(doc.trigger).toEqual({
@@ -487,7 +477,7 @@ describe('createTalon', () => {
         trigger: { type: 'threshold', metric: 'cpu_percent', operator: '>', value: 90 },
       }),
     );
-    // Absent, not null: null would satisfy the sweep's `nextRunAt <= now` filter.
+    // Absent, not null — null satisfies the sweep's `nextRunAt <= now` filter.
     expect('nextRunAt' in storedTalon(created.id)).toBe(false);
     expect('nextRunAt' in created).toBe(false);
   });
@@ -597,8 +587,8 @@ describe('createTalon', () => {
   });
 
   it('refuses a hoot output that lets hoot act, authored by a non-admin', async () => {
-    // Same power class as a `command` output — an unattended turn on tier-2
-    // tools can restart the same process — so it takes the same privilege.
+    // Same power as a `command` output (tier-2 tools can restart the same
+    // process), so it takes the same privilege.
     await expectStoreError(
       createTalon(
         db,
@@ -652,7 +642,7 @@ describe('createTalon', () => {
       'llm_key_required',
       400,
     );
-    // The AUTHORING uid, never a site — there is no site-level key scope.
+    // The AUTHORING uid — there is no site-level key scope.
     expect(mockAssertLlmKeyAvailable).toHaveBeenCalledWith(db, 'admin-uid');
     expect(fake.docs.size).toBe(0);
   });
@@ -687,7 +677,7 @@ describe('createTalon', () => {
     expect((error as TalonStoreError).message).toBe(
       'this talon uses ai, so it needs an ai key. add one in settings → hoot, then save again.',
     );
-    // The underlying failure names server infrastructure — it must not travel.
+    // The underlying failure names server infra; it must not travel.
     expect((error as TalonStoreError).message).not.toContain('OWLETTE_LLM_KEY');
   });
 
@@ -742,9 +732,7 @@ describe('createTalon', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  updateTalon                                                               */
-/* ------------------------------------------------------------------------- */
+// updateTalon
 
 describe('updateTalon', () => {
   it('rejects an unknown talon', async () => {
@@ -920,8 +908,8 @@ describe('updateTalon', () => {
   });
 
   it("checks the original AUTHOR's key, not the editor's", async () => {
-    // `createdBy` never changes on an update, so the talon will still run on
-    // the original author's key however many other admins edit it.
+    // `createdBy` is immutable, so the talon keeps running on the original
+    // author's key however many admins edit it.
     seedTalon('t1', { createdBy: 'original-author' });
 
     await updateTalon(
@@ -935,9 +923,7 @@ describe('updateTalon', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  setTalonEnabled                                                           */
-/* ------------------------------------------------------------------------- */
+// setTalonEnabled
 
 describe('setTalonEnabled', () => {
   it('rejects an unknown talon', async () => {
@@ -1004,7 +990,7 @@ describe('setTalonEnabled', () => {
 
       await setTalonEnabled(db, ctxFor(), 't1', enabled);
 
-      // Deleted, not blanked: a re-armed talon must not still claim a cause.
+      // Deleted, not blanked — a re-armed talon must not still claim a cause.
       expect('disabledReason' in storedTalon('t1')).toBe(false);
     },
   );
@@ -1034,9 +1020,7 @@ describe('setTalonEnabled', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  deleteTalon                                                               */
-/* ------------------------------------------------------------------------- */
+// deleteTalon
 
 describe('deleteTalon', () => {
   it('rejects an unknown talon', async () => {
@@ -1068,9 +1052,7 @@ describe('deleteTalon', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  reads                                                                     */
-/* ------------------------------------------------------------------------- */
+// reads
 
 describe('getTalon / listTalons', () => {
   it('returns null for a talon that does not exist', async () => {
@@ -1101,9 +1083,7 @@ describe('getTalon / listTalons', () => {
   });
 });
 
-/* ------------------------------------------------------------------------- */
-/*  reassign — authorship survives a departure                                */
-/* ------------------------------------------------------------------------- */
+// reassign — authorship survives a departure
 
 describe('countTalonsAuthoredBy / listTalonsAuthoredBy', () => {
   it('counts only the talons the named uid authored', async () => {
@@ -1129,8 +1109,8 @@ describe('countTalonsAuthoredBy / listTalonsAuthoredBy', () => {
 describe('listTalonsAuthoredByAcrossSites', () => {
   it('reaches sites the user is not a member of', async () => {
     seedTalon('t1', { name: 'lobby', createdBy: 'leaver-uid' });
-    // A second site, authored by the same person — the case a walk of
-    // `users/{uid}.sites[]` would miss for a superadmin.
+    // Same author, second site — a walk of `users/{uid}.sites[]` misses this
+    // for a superadmin.
     fake.docs.set('sites/site-b/talons/t9', {
       name: 'atrium',
       enabled: false,
@@ -1176,14 +1156,9 @@ describe('reassignTalons', () => {
     expect(storedTalon('t3').createdBy).toBe('bystander-uid');
   });
 
-  /* --- the handover has to actually finish the job -------------------------
-   *
-   * Both of these were live defects when the two halves of this feature were
-   * composed: `reassignTalons` wrote `createdBy` and nothing else, so the very
-   * scenario the feature exists for — an author leaves, the system disables
-   * their talons, an admin takes them over — ended with the talons still off,
-   * still blaming an author who is no longer relevant.
-   */
+  // Live defect once: `reassignTalons` wrote `createdBy` and nothing else, so
+  // a handover left the talons still disabled and still blaming the departed
+  // author.
 
   it('re-arms a talon the system disabled because its creator left', async () => {
     seedSuccessor('successor-uid');
@@ -1268,7 +1243,7 @@ describe('reassignTalons', () => {
       kind: 'talon_mutated',
       siteId: SITE,
       actor: 'user:admin-uid',
-      // The talon, not the user — "did this talon change?" has to stay
+      // The talon, not the user — "did this talon change?" must stay
       // answerable from the audit log.
       targetId: 't1',
     });
@@ -1325,8 +1300,8 @@ describe('reassignTalons', () => {
   });
 
   it('refuses a successor with no access to the site', async () => {
-    // An admin — of some other site. TALON_MANAGE is site-scoped, so this is
-    // exactly the "handed it to someone who cannot run it" failure again.
+    // Admin of ANOTHER site: TALON_MANAGE is site-scoped, so this is the
+    // "handed it to someone who cannot run it" failure.
     seedSuccessor('successor-uid', { sites: ['site-elsewhere'] });
     seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
 
@@ -1377,8 +1352,7 @@ describe('reassignTalons', () => {
       'talon_not_found',
       404,
     );
-    // All-or-nothing: a partial move would leave some automations orphaned
-    // with no signal which.
+    // All-or-nothing — a partial move orphans automations with no signal which.
     expect(storedTalon('t1').createdBy).toBe('leaver-uid');
   });
 
@@ -1416,12 +1390,10 @@ describe('reassignTalons', () => {
   });
 
   describe('privileged outputs', () => {
-    // Honest note on coverage: the store checks MACHINE_EXEC_COMMAND
-    // separately from TALON_MANAGE, but the current capability matrix grants
-    // both to exactly the same roles, so no seedable user can fail only the
-    // second. These tests therefore pin the observable behaviour — a talon
-    // that runs commands still refuses an ineligible successor, and an
-    // eligible admin can inherit one — not the isolated inner gate.
+    // Coverage caveat: the store checks MACHINE_EXEC_COMMAND separately from
+    // TALON_MANAGE, but the matrix grants both to the same roles, so no
+    // seedable user fails only the second. These pin observable behaviour, not
+    // the isolated inner gate.
     it('refuses an ineligible successor for a talon that runs commands', async () => {
       seedSuccessor('successor-uid', { sites: ['site-elsewhere'] });
       seedTalon('t1', {

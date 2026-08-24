@@ -3,22 +3,17 @@ const nextJest = require('next/jest')
 
 /** @type {import('jest').Config} */
 const createJestConfig = nextJest({
-  // Provide the path to your Next.js app to load next.config.js and .env files in your test environment
+  // Loads next.config.js + .env files into the test environment.
   dir: './',
 })
 
-// Add any custom config to be passed to Jest
 const config = {
-  // Automatically clear mock calls, instances, contexts and results before every test
   clearMocks: true,
 
-  // Indicates whether the coverage information should be collected while executing the test
   collectCoverage: false,
 
-  // The directory where Jest should output its coverage files
   coverageDirectory: 'coverage',
 
-  // An array of glob patterns indicating a set of files for which coverage information should be collected
   collectCoverageFrom: [
     'app/**/*.{js,jsx,ts,tsx}',
     'components/**/*.{js,jsx,ts,tsx}',
@@ -32,34 +27,29 @@ const config = {
     '!**/jest.config.js',
   ],
 
-  // The test environment that will be used for testing
   testEnvironment: 'jsdom',
 
-  // Setup files to run after Jest is initialized
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
 
-  // Module name mapper to handle CSS imports and path aliases
   moduleNameMapper: {
-    // Handle CSS imports (with CSS modules)
+    // CSS modules
     '^.+\\.module\\.(css|sass|scss)$': 'identity-obj-proxy',
 
-    // Handle CSS imports (without CSS modules)
+    // plain CSS
     '^.+\\.(css|sass|scss)$': '<rootDir>/__mocks__/styleMock.js',
 
-    // Handle image imports
+    // images
     '^.+\\.(png|jpg|jpeg|gif|webp|avif|ico|bmp|svg)$': '<rootDir>/__mocks__/fileMock.js',
 
-    // Handle module aliases (matching tsconfig paths)
+    // tsconfig path aliases
     '^@/(.*)$': '<rootDir>/$1',
   },
 
-  // Test match patterns
   testMatch: [
     '**/__tests__/**/*.[jt]s?(x)',
     '**/?(*.)+(spec|test).[jt]s?(x)',
   ],
 
-  // Ignore patterns
   testPathIgnorePatterns: [
     '/node_modules/',
     '/.next/',
@@ -68,12 +58,33 @@ const config = {
     '/__tests__/rules/', // Firestore rules tests — use `npm run test:rules` (boots emulator).
   ],
 
-  // Transform ignore patterns
   transformIgnorePatterns: [
     '/node_modules/',
     '^.+\\.module\\.(css|sass|scss)$',
   ],
 }
 
-// createJestConfig is exported this way to ensure that next/jest can load the Next.js config which is async
-module.exports = createJestConfig(config)
+// Exported as a call so next/jest can load the async Next.js config.
+//
+// next/jest PREPENDS its own node_modules patterns, and transformIgnorePatterns
+// is OR-ed — a file matching any entry is left untransformed. So appending an
+// exception to `config` above cannot work; next's pattern still matches first.
+// The resolved config has to be rewritten instead.
+//
+// Why: firebase-admin 14 reaches jose (via jwks-rsa), and jose 6 is ESM-only
+// (`type: module`, no CJS build), which jest's CJS runtime cannot parse. Suites
+// that mock `@/lib/firebase-admin` never load it; the few that exercise the real
+// bootstrap do, and they fail on `Unexpected token 'export'` without this.
+const ESM_ONLY_DEPS = ['jose']
+
+// Windows resolves module paths with backslashes, POSIX with slashes; match either.
+const SEP = '[\\\\/]'
+
+module.exports = async () => {
+  const resolved = await createJestConfig(config)()
+  resolved.transformIgnorePatterns = [
+    `node_modules${SEP}(?!(${ESM_ONLY_DEPS.join('|')})${SEP})`,
+    '^.+\\.module\\.(css|sass|scss)$',
+  ]
+  return resolved
+}

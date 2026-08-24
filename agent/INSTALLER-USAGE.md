@@ -33,12 +33,11 @@ Owlette-Installer-v<version>.exe /SERVER=dev
 
 ### How It Works
 
-1. The `/SERVER` parameter is passed to the Inno Setup installer
-2. Installer translates it to the appropriate setup URL:
-   - `dev` → `https://dev.owlette.app/setup`
-   - `prod` → `https://owlette.app/setup`
-3. The URL is passed to `configure_site.py` during installation
-4. The console prints the pairing URL and starts polling; press Enter only if you want to open the local browser
+1. The `/SERVER` parameter is passed to the Inno Setup installer, which normalizes it to `dev` or `prod`; anything else is treated as `prod`
+2. That token is passed straight through as `--server dev` or `--server prod`. No URL is passed at all — the agent resolves the API base and the Firebase project for that environment itself (`shared_utils.get_api_base_url` / `get_project_id`)
+3. On an interactive install the installer hands pairing to the desktop app (`owlette-desktop.exe --pair --server ...`), which opens the **join a site** dialog with the pairing phrase, the authorization link for that server, and an environment badge on anything other than production
+4. `configure_site.py` runs on the console instead when `/ADD=` is supplied, or when the machine has no WebView2 runtime for the desktop app to render in
+5. Either way the agent starts polling immediately, and nothing on the target machine opens a browser on its own — authorize from the pairing dialog's button, or from any other device
 
 ## Silent Installation
 
@@ -55,7 +54,7 @@ Owlette-Installer-v<version>.exe /SILENT /SERVER=prod /ADD=silver-compass-drift
 Owlette-Installer-v<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SERVER=prod /ADD=silver-compass-drift
 ```
 
-**Note:** For unattended installs, pass `/ADD=<phrase>` with a preauthorized pairing phrase from the dashboard. Silent installs without `/ADD=` still need an existing valid config or an operator to complete interactive pairing.
+**Note:** For unattended installs, pass `/ADD=<phrase>` with a preauthorized pairing phrase from the dashboard. A silent install without `/ADD=` skips pairing entirely — nobody can read a pairing phrase on that path — and installs the machine unpaired. The service is still registered and started; pair it later from the desktop app or `configure_site.py`.
 
 ## Installation Process
 
@@ -69,22 +68,26 @@ Owlette-Installer-v<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SERVE
 3. **File Extraction**
    - Copies Python runtime, Owlette Agent code, tools, and configurations to `C:\ProgramData\Owlette`
 
-4. **Site Configuration**
-   - Prints the pairing phrase and authorization URL for the selected environment (dev/prod)
-   - User presses Enter to open the browser, or authorizes from another device
-   - User logs in and selects/creates a site
+4. **Service Installation**
+   - Registers Owlette as a Windows service hosted by `owlette-host.exe`
+   - Configures service to start automatically
+   - Starts the service
+   - **Unconditional** — pairing no longer gates it. A machine that never completes pairing still ends up with a registered, running service; it simply has no site to talk to yet
+   - Once paired, the agent authenticates using the stored device-code tokens
+
+5. **Site Configuration**
+   - Skipped on upgrades: an existing valid config already bound to the requested server
+   - **Interactive installs** hand pairing to the desktop app, which opens **join a site** with the pairing phrase, the authorization link, and an environment badge on anything other than production. The wizard does not wait for it, which is why the service is installed and started while you are still pairing
+   - **`/ADD=` installs, and machines with no WebView2 runtime**, run `configure_site.py` on the console instead; the wizard does wait for that one
+   - **Silent installs without `/ADD=`** skip pairing altogether and install the machine unpaired
+   - Authorize from the pairing dialog's own button, or from a phone or another computer. Nothing on this machine opens a browser on its own
    - **Automatic device-code token exchange:**
      - Web backend authorizes the pairing phrase
      - Agent polls until access + refresh tokens are returned
      - Tokens are stored in the encrypted Owlette token file
      - Site ID and configuration saved to `config.json`
    - **No manual credential downloads required!**
-
-5. **Service Installation**
-   - Registers Owlette as a Windows service hosted by `owlette-host.exe`
-   - Configures service to start automatically
-   - Starts the service
-   - Agent automatically authenticates using stored device-code tokens
+   - If pairing does not complete, the installer says so and prints both recovery routes. The service is already running, so pairing later is all that is left
 
 6. **Shortcuts Creation**
    - Start Menu shortcuts for GUI and tray icon
@@ -162,12 +165,19 @@ If pairing cannot reach the server:
 2. Confirm the pairing phrase has not expired
 3. Re-run the installer or `configure_site.py`
 
-### Browser Doesn't Open
+### No Browser Opens
 
-The installer no longer opens a browser automatically during setup:
-1. Press Enter in the pairing console to open the local browser, or manually navigate to the URL shown in the installer
-2. Complete the pairing flow
-3. Installation will continue automatically
+That is by design — nothing on the target machine opens a browser on its own. Authorize from the **open owlette.app/add** button in the pairing window, or from a phone or another computer using the link that is displayed. `--no-browser` and `OWLETTE_NO_BROWSER=1` are still accepted by `configure_site.py` so existing deployment scripts keep working, but they no longer change anything.
+
+### The Pairing Window Doesn't Appear
+
+The service is installed and running either way, so only pairing is outstanding. Finish it by opening Owlette from the Start menu and choosing **join site**, or by running the pairing helper from an administrator prompt:
+
+```bash
+"C:\ProgramData\Owlette\python\python.exe" "C:\ProgramData\Owlette\agent\src\configure_site.py" --server prod
+```
+
+Machines with no WebView2 runtime get the console pairing flow instead of the window. The installer bootstraps that runtime, but a blocked bootstrapper leaves it missing; the installer's own `/LOG=` file records the outcome.
 
 ### Service Won't Start
 
@@ -186,6 +196,10 @@ The installer uses `C:\ProgramData\Owlette` by default. To change:
 ```bash
 Owlette-Installer-v<version>.exe /DIR="D:\CustomPath\Owlette"
 ```
+
+### Forcing the Console Pairing Path
+
+`/SILENT` bypasses the GUI handoff entirely while still installing the service. That is the documented rollback lever if the desktop pairing window misbehaves on a particular image — no new flag was added for it. Combine it with `/ADD=<phrase>` to actually complete pairing on that path; `/SILENT` on its own installs the machine unpaired.
 
 ### Skip Pairing
 
@@ -210,11 +224,18 @@ Owlette-Installer-v<version>.exe /SERVER=prod
 
 ### Manual Configuration Override
 
-The `configure_site.py` script also accepts `--url` directly:
+`configure_site.py` accepts `--url` to point at an API base other than the two hosted ones:
 
 ```bash
-python configure_site.py --url https://localhost:3000/setup
+python configure_site.py --url https://localhost:3000/api --server dev
 ```
+
+Two things matter here:
+
+- `--server` is **required** whenever `--url` is given. `--url` is a pure base-URL override and carries no environment of its own, so without `--server` the agent would write a production Firebase project id for a development URL. Passing `--url` alone exits with code 2.
+- The base must end at `/api`, not `/setup`. The agent appends its own paths to it (`/agent/auth/exchange`, `/agent/auth/device-code/...`).
+
+With no `--url`, `--server` is optional: the machine keeps the environment its config is already bound to.
 
 This is useful for local web development.
 

@@ -1,22 +1,16 @@
 /**
- * Talon output executors — one per output type (talons wave 2, task 2.1).
+ * Talon output executors — one per output type.
  *
- * Every executor returns a {@link TalonRunOutput} rather than throwing: a talon
- * with an email and a webhook must still deliver the webhook when the mail
- * transport is down, so a failure is a *recorded result*, not control flow. The
- * engine records each entry individually and never aborts the remaining
- * outputs.
+ * Executors return a {@link TalonRunOutput} instead of throwing: a talon with an
+ * email and a webhook must still deliver the webhook when mail is down, so a
+ * failure is a recorded result, not control flow. The engine records each entry
+ * individually and never aborts the remaining outputs.
  *
- * Status vocabulary (`TalonOutputStatus`):
- *   - `sent`    — the side effect happened.
- *   - `skipped` — deliberately not attempted (a gate said no, or there was
- *                 nobody/nothing to act on). Benign: does not fail the run.
- *   - `failed`  — attempted and did not land. Fails the run, and ten
- *                 consecutive failed runs auto-disable the talon.
- *
- * A gate must NEVER report `sent`. "the email was suppressed by the billing
- * cutoff" and "the email went out" are different facts and an operator has to
- * be able to tell them apart from the run record alone.
+ * `sent` = the side effect happened. `skipped` = deliberately not attempted
+ * (benign; does not fail the run). `failed` = attempted and did not land; fails
+ * the run, and ten consecutive failed runs auto-disable the talon. A gate must
+ * NEVER report `sent` — an operator has to tell "suppressed by the billing
+ * cutoff" from "the email went out" using the run record alone.
  */
 import type { Firestore } from 'firebase-admin/firestore';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
@@ -56,8 +50,8 @@ export const TALON_WEBHOOK_EVENT = 'talon.fired';
 const WEBHOOK_TIMEOUT_MS = 5_000;
 
 /**
- * Everything an output executor needs about the run it belongs to. Assembled
- * once per run by the engine; executors never read the talon document.
+ * Everything an output executor needs about its run. Assembled once per run by
+ * the engine; executors never read the talon document.
  */
 export interface TalonOutputContext {
   db: Firestore;
@@ -82,8 +76,8 @@ export interface TalonOutputContext {
   machineId?: string;
   machineName?: string;
   /**
-   * Machines a `command` output acts on. One entry for a machine-scoped run;
-   * the talon's scope (or the whole site) for a site-level run.
+   * Machines a `command` output acts on: one entry for a machine-scoped run, the
+   * talon's scope (or the whole site) for a site-level run.
    */
   targetMachineIds: string[];
   /** The condition outcome, when the talon had a condition. */
@@ -129,16 +123,11 @@ export async function executeTalonOutput(
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  email                                                                     */
-/* -------------------------------------------------------------------------- */
-
 async function executeEmailOutput(ctx: TalonOutputContext): Promise<TalonRunOutput> {
   const resend = getResend();
   if (resend === null) {
-    // No RESEND_API_KEY in this environment. Reporting `sent` here would tell
-    // an operator their alert went out when nothing was ever handed to a
-    // transport.
+    // No RESEND_API_KEY here. Reporting `sent` would tell an operator their alert
+    // went out when nothing was ever handed to a transport.
     return { type: 'email', status: 'skipped', detail: 'email_transport_unconfigured' };
   }
 
@@ -232,9 +221,9 @@ function buildTalonEmail(ctx: TalonOutputContext, unsubscribeUrl?: string): stri
   rows.push({ label: 'time', value: emailTimestamp(ctx.now) });
   rows.push({ label: 'environment', value: ENV_LABEL });
 
-  // The capture url is a short-lived signed link. It is embedded here because
-  // this email is sent seconds after the capture; it is deliberately NOT the
-  // durable reference (the run doc stores the storage path for that).
+  // The capture url is a short-lived signed link, embedded because this email is
+  // sent seconds after the capture. The durable reference is the storage path on
+  // the run doc, not this.
   const screenshotHtml = condition?.screenshotUrl
     ? `<p style="margin:20px 0 6px;color:${EMAIL_COLORS.muted};font-size:13px;">what the display looked like:</p>
        <a href="${escapeHtml(condition.screenshotUrl)}"><img src="${escapeHtml(condition.screenshotUrl)}" alt="screenshot" width="536" style="display:block;width:100%;max-width:536px;border-radius:6px;border:1px solid ${EMAIL_COLORS.border};"></a>
@@ -254,10 +243,6 @@ function buildTalonEmail(ctx: TalonOutputContext, unsubscribeUrl?: string): stri
     preheader: `${ctx.talonName}: ${ctx.triggerSummary}`,
   });
 }
-
-/* -------------------------------------------------------------------------- */
-/*  webhook                                                                   */
-/* -------------------------------------------------------------------------- */
 
 async function executeWebhookOutput(
   ctx: TalonOutputContext,
@@ -345,10 +330,6 @@ async function executeWebhookOutput(
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  command                                                                   */
-/* -------------------------------------------------------------------------- */
-
 /** Per-machine outcome, folded into the single recorded output entry below. */
 interface CommandAttempt {
   status: TalonRunOutput['status'];
@@ -370,9 +351,8 @@ async function executeCommandOutput(
 
   const attempts: CommandAttempt[] = [];
   for (const machineId of ctx.targetMachineIds) {
-    // Sequential on purpose: the agent throttles same-type commands to one per
-    // 5s per machine, and a parallel fan-out over a scope that repeats a
-    // machine would rate-limit itself.
+    // Sequential on purpose: the agent throttles same-type commands to one per 5s
+    // per machine, so a parallel fan-out over a repeated machine rate-limits itself.
     attempts.push(await runCommandOnMachine(ctx, machineId, output.commandType, payload));
   }
 
@@ -423,9 +403,9 @@ async function runCommandOnMachine(
         ? entry.error
         : '';
 
-  // The agent's own per-type throttle (`{cmd_type}:{process}`, 5s window —
-  // owlette_service.py `handle_firebase_command`). Not a talon fault: the
-  // command was refused before it ran, so the next run can just try again.
+  // The agent's own per-type throttle (`{cmd_type}:{process}`, 5s window — see
+  // owlette_service.py `handle_firebase_command`). Not a talon fault: the command
+  // was refused before it ran, so the next run can just try again.
   if (resultText.startsWith('Error: rate limited')) {
     return { status: 'skipped', detail: 'agent_rate_limited' };
   }
@@ -442,8 +422,7 @@ async function runCommandOnMachine(
 
 /**
  * One output entry from N per-machine attempts. Precedence `failed` > `sent` >
- * `skipped`: a talon that reached three of four machines still needs the fourth
- * looked at, so the run must not read as clean.
+ * `skipped`: reaching three of four machines still needs the fourth looked at.
  */
 function foldCommandAttempts(attempts: CommandAttempt[]): TalonRunOutput {
   const failed = attempts.filter((a) => a.status === 'failed');
@@ -480,17 +459,13 @@ function foldCommandAttempts(attempts: CommandAttempt[]): TalonRunOutput {
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  hoot (hoot)                                                             */
-/* -------------------------------------------------------------------------- */
-
 /**
- * Hand the directive to a headless assistant turn. `detail` is the chat the
- * turn is running in — the engine lifts it onto the run document, so the run
- * list can link straight to the conversation the talon produced.
+ * Hand the directive to a headless assistant turn. `detail` is the chat the turn
+ * runs in — the engine lifts it onto the run document so the run list can link
+ * straight to the conversation.
  *
- * `sent` means the turn was DISPATCHED, not that it finished: the runner is
- * detached and outlives this call by design (see `hootOutput.server.ts`).
+ * `sent` means DISPATCHED, not finished: the runner is detached and outlives this
+ * call by design (see `hootOutput.server.ts`).
  */
 async function executeHootOutput(
   ctx: TalonOutputContext,

@@ -1,17 +1,14 @@
 /**
- * Shared talon input validator — the single rule set behind both the client
- * editor (inline field errors) and the server store (400 responses), so a
- * talon that the editor accepts is a talon the store accepts.
+ * Shared talon input validator — one rule set behind both the client editor
+ * (inline field errors) and the server store (400s), so anything the editor
+ * accepts the store accepts.
  *
- * Follows the shared-pure-validator pattern of `@/lib/processPayloadValidation`:
- * pure functions, no I/O, no Firestore imports. Unlike that module this one
- * accumulates *every* violation instead of short-circuiting on the first —
- * the editor renders them all at once.
+ * Pure, no I/O, like `@/lib/processPayloadValidation` — but this one
+ * accumulates EVERY violation instead of short-circuiting, so the editor can
+ * render them all at once.
  *
- * The validator also normalizes: strings are trimmed, day and event lists are
- * de-duplicated (days additionally sorted into canonical week order), and
- * omitted optional fields come back as their defaults. Callers persist
- * `value`, never the raw input.
+ * Also normalizes (trims strings, de-dupes days/events, sorts days into week
+ * order, fills defaults). Callers persist `value`, never the raw input.
  */
 import {
   DAY_KEYS,
@@ -53,9 +50,8 @@ export const TALON_EXPECTATION_MAX_LENGTH = 500;
 export const TALON_MAX_COOLDOWN_MINUTES = 1440;
 export const DEFAULT_TALON_COOLDOWN_MINUTES = 60;
 /**
- * Longest an event trigger may wait before running. A day, matching the
- * cooldown ceiling — anything longer is a schedule, not a reaction, and the
- * deferral would outlive several sweeps' worth of fleet state.
+ * Longest an event trigger may defer: a day, matching the cooldown ceiling.
+ * Longer is a schedule, not a reaction, and would outlive the fleet state.
  */
 export const TALON_MAX_DELAY_MINUTES = 1440;
 
@@ -85,11 +81,8 @@ export interface TalonFieldError {
   /** Dotted/indexed path to the offending field, e.g. `outputs[1].url`. */
   field: string;
   code: 'invalid_body' | 'missing_field' | 'invalid_field' | 'unknown_field' | 'out_of_range';
-  /**
-   * Plain human copy, rendered verbatim next to the offending control by the
-   * editor and returned verbatim in problem+json `fieldErrors`. It never names
-   * the path — `field` above carries that, and it is what callers bind on.
-   */
+  /** Human copy, rendered verbatim by the editor and in problem+json
+   * `fieldErrors`. Never names the path — `field` carries that. */
   message: string;
 }
 
@@ -114,9 +107,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Syntactic https check only. Deep SSRF defense — DNS resolution, private and
- * link-local address ranges, redirect chasing — happens server-side at send
- * time; this validator is also client-side and can't be trusted for that.
+ * Syntactic https check only. Real SSRF defense (DNS, private/link-local
+ * ranges, redirects) is server-side at send time — this runs on the client too.
  */
 function isValidHttpsUrl(value: string): boolean {
   let parsed: URL;
@@ -136,10 +128,8 @@ class ErrorBag {
   }
 }
 
-/**
- * Copy for a bounded string field. Each variant is the whole message — the
- * helpers never compose prose around it, so nothing can leak a path in.
- */
+/** Each variant is the WHOLE message — helpers never compose prose around it,
+ * so a path can't leak in. */
 interface StringCopy {
   /** Absent, blank, or the wrong type. */
   missing: string;
@@ -157,10 +147,7 @@ interface IntegerCopy {
   tooHigh: string;
 }
 
-/**
- * Reads a required, non-empty, length-bounded string. Returns the trimmed
- * value, or `null` when it recorded an error.
- */
+/** Trimmed value, or `null` when it recorded an error. */
 function readBoundedString(
   bag: ErrorBag,
   value: unknown,
@@ -172,8 +159,8 @@ function readBoundedString(
     bag.add(field, 'missing_field', copy.missing);
     return null;
   }
-  // A non-string reads to the user as "you have not given me one yet", so it
-  // shares the missing copy — only the code distinguishes them.
+  // A non-string reads as "not given yet" to the user, so it shares the
+  // missing copy; only the code distinguishes them.
   if (typeof value !== 'string') {
     bag.add(field, 'invalid_field', copy.missing);
     return null;
@@ -230,16 +217,11 @@ function validateDays(bag: ErrorBag, value: unknown, field: string): DayKey[] | 
     seen.add(day as DayKey);
   }
   if (!valid) return null;
-  // De-duplicated and re-ordered into canonical week order so two equivalent
-  // selections always persist identically.
+  // Canonical week order so equivalent selections persist identically.
   return DAY_KEYS.filter((day) => seen.has(day));
 }
 
-/**
- * A schedule entry the editor did not mint. Ids are generated, so a malformed
- * one is not something the user can fix in place — the honest instruction is
- * to drop the row.
- */
+/** Ids are generated, so a malformed one isn't user-fixable — say drop the row. */
 const BROKEN_SCHEDULE_ENTRY = 'something is off with this time — remove it and add it again';
 
 function validateScheduleEntries(
@@ -303,10 +285,9 @@ function validateTrigger(
     return null;
   }
 
-  // A delay is a property of reacting to an event. Rejected on the other two
-  // forms rather than dropped: silently ignoring a field the caller set is how
-  // a talon ends up not doing what its author asked. Checked before the switch
-  // so the schedule and threshold branches can keep their early returns.
+  // Delay only makes sense on an event. Rejected, not dropped — silently
+  // ignoring a set field is how a talon stops doing what its author asked.
+  // Before the switch so schedule/threshold keep their early returns.
   if (
     (value.type === 'schedule' || value.type === 'threshold') &&
     value.delayMinutes !== undefined &&
@@ -337,9 +318,8 @@ function validateTrigger(
         return entries === null ? null : { type: 'schedule', entries };
       }
 
-      // A visual check costs a screenshot round-trip plus a model call per
-      // run, so it carries a wider interval floor than a plain schedule. The
-      // condition is validated first precisely so this floor can be applied.
+      // Screenshot + model call per run earns a wider floor than a plain
+      // schedule; the condition is validated first so this can be applied.
       const isVisualCheck = condition?.type === 'visual_check';
       const minInterval = isVisualCheck
         ? TALON_MIN_INTERVAL_MINUTES_VISUAL_CHECK
@@ -388,8 +368,7 @@ function validateTrigger(
     }
 
     case 'event': {
-      // Read before the event list so a bad delay and a bad subscription are
-      // reported together rather than one submit apart.
+      // Before the event list so both errors surface on one submit.
       let delayMinutes: number | undefined;
       let delayValid = true;
       if (value.delayMinutes !== undefined && value.delayMinutes !== null) {
@@ -407,8 +386,7 @@ function validateTrigger(
           },
         );
         if (parsed === null) delayValid = false;
-        // 0 IS the absence of a delay, so it normalizes away — "run right now"
-        // has one representation on the document, not two.
+        // 0 IS no delay — normalize away so "run now" has one representation.
         else if (parsed > 0) delayMinutes = parsed;
       }
 
@@ -547,9 +525,8 @@ function validateOutput(bag: ErrorBag, value: unknown, path: string): TalonOutpu
       }
 
       if (directive === null) return null;
-      // `false` IS the default, so it normalizes away — "hoot only looks" has
-      // one representation on the document, not two. Authoring `true` is
-      // separately gated on site admin by the store.
+      // `false` IS the default — normalize away. Authoring `true` is gated on
+      // site admin by the store.
       return allowActions
         ? { type: 'cortex', directive, allowActions: true }
         : { type: 'cortex', directive };
@@ -587,11 +564,10 @@ function validateOutput(bag: ErrorBag, value: unknown, path: string): TalonOutpu
       }
       if (!valid) return null;
 
-      // A command with no target is accepted by nothing downstream: the agent
-      // resolves id-then-name, reports `<unspecified>`, and the executor
-      // records a `failed` run — every run, until the tenth consecutive failure
-      // auto-disables the talon. Reported against `processId` because the
-      // editor routes both target keys to one message slot.
+      // Nothing downstream accepts a targetless command — the agent reports
+      // `<unspecified>` and the executor fails the run until the tenth
+      // consecutive failure auto-disables the talon. Reported against
+      // `processId` because the editor routes both target keys to one slot.
       if (output.processId === undefined && output.processName === undefined) {
         bag.add(`${path}.processId`, 'missing_field', PROCESS_TARGET_COPY.processId.missing);
         return null;
@@ -664,12 +640,10 @@ function validateScope(bag: ErrorBag, value: unknown): TalonScope | null {
 }
 
 /**
- * Validates and normalizes the caller-supplied half of a talon.
- *
- * Every violation is reported — the result is `ok: false` with the full error
- * list, never a partial value. Server-owned fields (`schemaVersion`,
- * `createdBy`, `createdAt`, run bookkeeping) are rejected as unknown fields so
- * a client can never inject them.
+ * Validates + normalizes the caller-supplied half of a talon. Reports every
+ * violation; never returns a partial value. Server-owned fields
+ * (`schemaVersion`, `createdBy`, `createdAt`, run bookkeeping) are rejected as
+ * unknown so a client can never inject them.
  */
 export function validateTalonInput(input: unknown): TalonValidationResult {
   const bag = new ErrorBag();
@@ -679,8 +653,7 @@ export function validateTalonInput(input: unknown): TalonValidationResult {
     return { ok: false, errors: bag.errors };
   }
 
-  // Server-owned fields land here too. The message stays deliberately plain:
-  // this path is reachable only through the API, never through the editor.
+  // Server-owned fields land here too. Plain copy: API-only path.
   for (const key of Object.keys(input)) {
     if (!ALLOWED_FIELDS.has(key)) {
       bag.add(key, 'unknown_field', 'this field cannot be set here');
@@ -744,8 +717,8 @@ export function validateTalonInput(input: unknown): TalonValidationResult {
     if (parsed !== null) cooldownMinutes = parsed;
   }
 
-  // Every `null` above recorded an error, so the length check alone decides
-  // the outcome — the null comparisons are here to narrow the types.
+  // Every `null` above already recorded an error, so the length check decides
+  // the outcome; the null comparisons only narrow types.
   if (
     bag.errors.length > 0 ||
     name === null ||
@@ -771,18 +744,15 @@ export function validateTalonInput(input: unknown): TalonValidationResult {
   return { ok: true, value };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  talon presets                                                             */
-/* -------------------------------------------------------------------------- */
 
 export type TalonPresetTemplateResult =
   | { ok: true; value: TalonPresetTemplate }
   | { ok: false; errors: TalonFieldError[] };
 
 /**
- * Fields a talon carries that a TEMPLATE must not — see {@link TalonPresetTemplate}.
- * Rejected rather than dropped: silently discarding a field the caller set is
- * how a preset ends up not doing what its author asked.
+ * Talon fields a TEMPLATE must not carry ({@link TalonPresetTemplate}).
+ * Rejected, not dropped — silently discarding a set field is how a preset
+ * stops doing what its author asked.
  */
 const PRESET_FORBIDDEN_FIELDS: Readonly<Record<string, string>> = {
   scope: 'a template applies to every machine — pick machines when you use it',
@@ -792,17 +762,11 @@ const PRESET_FORBIDDEN_FIELDS: Readonly<Record<string, string>> = {
 /**
  * Validates the talon-shaped payload a preset carries.
  *
- * DELEGATES to `validateTalonInput` rather than re-deriving the rules: a preset
- * that stored a talon the store would refuse is a preset whose breakage the
- * operator only discovers at apply time. `enabled` and `scope` are injected at
- * their template defaults so the delegate sees a complete talon, then dropped
- * from the result — a template owns neither. Every bound the talon validator
- * enforces (output count, interval floors, the visual-check floor, directive
- * and expectation lengths) therefore applies to a template for free.
- *
- * Error paths are prefixed `template.` so they address the preset body the
- * caller actually sent. Paths the editor has no exact slot for fall through to
- * its footer summary, which is where an API-shaped error belongs anyway.
+ * DELEGATES to `validateTalonInput` rather than re-deriving the rules — a
+ * preset storing a talon the store would refuse only breaks at apply time.
+ * `enabled` and `scope` are injected at template defaults so the delegate sees
+ * a complete talon, then dropped (a template owns neither). Error paths are
+ * prefixed `template.` to address the body the caller actually sent.
  */
 export function validateTalonPresetInput(input: unknown): TalonPresetTemplateResult {
   if (!isPlainObject(input)) {

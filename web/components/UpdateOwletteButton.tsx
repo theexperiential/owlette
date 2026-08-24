@@ -1,15 +1,6 @@
 /**
- * UpdateOwletteButton Component
- *
- * Provides a one-click button to update all owlette agents to the latest version.
- * Displays current version, outdated machine count, and confirmation dialog.
- *
- * Features:
- * - Shows latest available version
- * - Counts machines needing updates
- * - Confirmation dialog with machine selection
- * - Progress tracking during update
- * - Success/error notifications
+ * One-click self-update for owlette agents: shows the latest version and the
+ * outdated count, then a confirmation dialog with per-machine selection.
  */
 
 'use client';
@@ -52,20 +43,16 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(new Set());
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // The actionable set: machines that can be updated *right now*. A self-update
-  // is an `update_owlette` command the agent service must be online to receive
-  // and execute (an offline agent can never consume it), and an in-flight
-  // update can't be re-triggered (a stale / "may have failed" one can). This
-  // single predicate is the source of truth for the button's count badge, the
-  // default selection, "select all", each row's checkbox, and the submit
-  // filter — so the count and the selection can never disagree.
+  // Machines updatable RIGHT NOW: online (an offline agent can never consume
+  // the `update_owlette` command) and not mid-update (a stale one may be
+  // re-triggered). Single source of truth for the count badge, default
+  // selection, "select all", each checkbox and the submit filter, so the count
+  // and the selection can never disagree.
   const canUpdateMachine = (m: Machine) =>
     m.online && !(updatingMachines.has(m.machineId) && !staleMachines.has(m.machineId));
   const selectableMachineIds = outdatedMachines.filter(canUpdateMachine).map(m => m.machineId);
 
-  // Initialize selected machines when dialog opens
   const handleOpenDialog = () => {
-    // Default to every machine that can actually be updated right now.
     setSelectedMachines(new Set(selectableMachineIds));
     setDialogOpen(true);
   };
@@ -96,9 +83,8 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
       return;
     }
 
-    // Guard the open→submit race: a selected machine can drop offline (or start
-    // updating elsewhere) while the dialog is open. Only send to machines that
-    // are still updatable.
+    // open→submit race: a selection can go offline or start updating elsewhere
+    // while the dialog is open.
     const selectableIdSet = new Set(selectableMachineIds);
     const targetMachines = Array.from(selectedMachines).filter(id => selectableIdSet.has(id));
     const skipped = selectedMachines.size - targetMachines.length;
@@ -141,12 +127,10 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
     }
   };
 
-  // Don't show button if no machines or all up-to-date
   if (isLoading || totalMachinesNeedingUpdate === 0) {
     return null;
   }
 
-  // Count machines currently being updated
   const inProgressCount = updatingMachines.size;
 
   return (

@@ -1,14 +1,11 @@
 /**
  * HTTP-shape tests for `owlette user list | get | promote | demote |
- * assign-sites | remove-sites | delete`.
+ * assign-sites | remove-sites | delete`: intercepts global.fetch, builds an
+ * in-process commander program, and asserts URL/method/headers/body against
+ * `src/commands/user.ts` and the route handlers.
  *
- * Intercepts global.fetch, builds an in-process commander program, and
- * asserts the request URL/method/headers/body match the contract documented
- * in `src/commands/user.ts` + the wave-3B route handlers.
- *
- * Special-cases the two server-side conflicts that get bespoke CLI handling:
- *   - 409 last_superadmin (demote)
- *   - 409 orphan_sites    (delete)
+ * Also covers the two conflicts with bespoke CLI handling: 409 last_superadmin
+ * (demote) and 409 orphan_sites (delete).
  */
 
 import { Command } from 'commander';
@@ -70,7 +67,7 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-/* -------------------- list -------------------- */
+/* list */
 
 describe('owlette user list', () => {
   it('GETs /api/users with Bearer auth (no query when no filters)', async () => {
@@ -152,7 +149,7 @@ describe('owlette user list', () => {
   });
 });
 
-/* -------------------- get -------------------- */
+/* get */
 
 describe('owlette user get', () => {
   it('GETs /api/users/:uid with Bearer auth', async () => {
@@ -200,7 +197,7 @@ describe('owlette user get', () => {
   });
 });
 
-/* -------------------- promote -------------------- */
+/* promote */
 
 describe('owlette user promote', () => {
   it('POSTs /api/users/:uid/promote with role body + auto Idempotency-Key', async () => {
@@ -236,7 +233,7 @@ describe('owlette user promote', () => {
   });
 });
 
-/* -------------------- demote -------------------- */
+/* demote */
 
 describe('owlette user demote', () => {
   it('POSTs /api/users/:uid/demote with empty body + auto Idempotency-Key', async () => {
@@ -291,7 +288,7 @@ describe('owlette user demote', () => {
   });
 });
 
-/* -------------------- assign-sites -------------------- */
+/* assign-sites */
 
 describe('owlette user assign-sites', () => {
   it('POSTs /api/users/:uid/assign-sites with siteIds[] body + auto Idempotency-Key', async () => {
@@ -366,7 +363,7 @@ describe('owlette user assign-sites', () => {
   });
 });
 
-/* -------------------- remove-sites -------------------- */
+/* remove-sites */
 
 describe('owlette user remove-sites', () => {
   it('POSTs /api/users/:uid/remove-sites with siteIds[] body + auto Idempotency-Key', async () => {
@@ -399,7 +396,7 @@ describe('owlette user remove-sites', () => {
   });
 });
 
-/* -------------------- delete -------------------- */
+/* delete */
 
 describe('owlette user delete', () => {
   it('DELETEs /api/users/:uid with Bearer + auto Idempotency-Key when --yes is supplied', async () => {

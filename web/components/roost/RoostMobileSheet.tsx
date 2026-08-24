@@ -1,18 +1,13 @@
 'use client';
 
 /**
- * RoostMobileSheet — right-slide sheet primitive for the mobile roost detail
- * view (wave 1.2).
+ * Right-slide sheet for the mobile roost detail view. Wraps
+ * `@radix-ui/react-dialog` directly, NOT `@/components/ui/dialog` — that
+ * `DialogContent` is centred-modal styled and fights the slide layout.
+ * Animations come from `tw-animate-css` (imported in `globals.css`);
+ * esc/overlay close are inherited from Radix.
  *
- * Thin wrapper around `@radix-ui/react-dialog` primitives (intentionally NOT
- * `@/components/ui/dialog`, whose `DialogContent` is centred-modal styled and
- * would fight the right-slide layout). Slide + fade animations come from the
- * `tw-animate-css` utilities wired up via `@import "tw-animate-css"` in
- * `globals.css`. Esc-to-close and overlay-click-to-close are inherited from
- * the Radix primitives.
- *
- * No visible close button — callers wrap their own header (e.g.
- * `RoostDetailPanel`) inside `children`, and that header owns the close X.
+ * No close button: the caller's header inside `children` owns the X.
  */
 
 import * as DialogPrimitive from '@radix-ui/react-dialog';

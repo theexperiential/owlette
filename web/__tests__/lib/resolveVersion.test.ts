@@ -22,9 +22,7 @@ beforeEach(() => {
   mocks.collectionGet.mockReset();
 });
 
-/* ========================================================================== */
-/*  malformed refs (no IO — fail fast)                                        */
-/* ========================================================================== */
+// malformed refs (no IO — fail fast)
 
 describe('resolveVersion — malformed refs', () => {
   it('empty string → VersionRefMalformedError', async () => {
@@ -85,9 +83,7 @@ describe('resolveVersion — malformed refs', () => {
   });
 });
 
-/* ========================================================================== */
-/*  number forms (3 / #3 / v3 / V3) — all map to lookupByNumber               */
-/* ========================================================================== */
+// number forms (3 / #3 / v3 / V3) — all map to lookupByNumber
 
 describe('resolveVersion — number forms', () => {
   it.each([
@@ -109,7 +105,7 @@ describe('resolveVersion — number forms', () => {
     const result = await resolveVersion({ roostId: ROOST, siteId: SITE, ref });
     expect(result.versionNumber).toBe(expectedNumber);
     expect(result.versionId).toBe('vrs_for_number_test_xx');
-    // confirm the where('versionNumber', '==', N).limit(1).get() chain ran
+    // the where('versionNumber','==',N).limit(1).get() chain ran
     expect(mocks.where).toHaveBeenCalledWith('versionNumber', '==', expectedNumber);
     expect(mocks.limit).toHaveBeenCalledWith(1);
   });
@@ -122,9 +118,7 @@ describe('resolveVersion — number forms', () => {
   });
 });
 
-/* ========================================================================== */
-/*  stable id form (vrs_*) — direct lookup                                    */
-/* ========================================================================== */
+// stable id form (vrs_*) — direct lookup
 
 describe('resolveVersion — stable id form', () => {
   it('bare sha-256 id → lookupById on /versions/{id}', async () => {
@@ -186,9 +180,7 @@ describe('resolveVersion — stable id form', () => {
   });
 });
 
-/* ========================================================================== */
-/*  alias forms (current / previous / first)                                  */
-/* ========================================================================== */
+// alias forms (current / previous / first)
 
 describe('resolveVersion — alias forms', () => {
   it('"current" reads roost.currentVersionId, then looks up that version', async () => {
@@ -258,9 +250,7 @@ describe('resolveVersion — alias forms', () => {
   });
 });
 
-/* ========================================================================== */
-/*  whitespace tolerance                                                      */
-/* ========================================================================== */
+// whitespace tolerance
 
 describe('resolveVersion — whitespace tolerance', () => {
   it('trims surrounding whitespace from refs (shell-paste tolerance)', async () => {

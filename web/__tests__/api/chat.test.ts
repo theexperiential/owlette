@@ -1,28 +1,18 @@
 /** @jest-environment node */
 
 /**
- * api-sprint wave 3 — track 3A (hoot-api / chat noun).
+ * Http-shape coverage for the public Hoot conversation endpoints (list,
+ * create, send+stream, rename, soft-delete): scope-pass, scope-fail, and the
+ * per-verb happy/error paths (validation, 404, idempotency replay, sse smoke).
  *
- * Http-shape coverage for the public Hoot conversation endpoints:
- *
- *   GET    /api/hoot/conversations
- *   POST   /api/hoot/conversations
- *   POST   /api/hoot/conversations/{conversationId}      (send + stream)
- *   PATCH  /api/hoot/conversations/{conversationId}      (rename)
- *   DELETE /api/hoot/conversations/{conversationId}      (soft-delete)
- *
- * Each verb is covered for scope-pass + scope-fail + verb-specific happy /
- * error paths (validation, 404, idempotency replay, sse smoke). Storage is
- * mocked at the helper boundary (`chatStorage.server`) so the pure routing
- * + auth + audit logic is what's exercised; the storage helpers themselves
- * have their own jest unit tests in `lib/__tests__/chatStorage.test.ts`.
+ * Storage is mocked at the `chatStorage.server` boundary so this exercises
+ * routing + auth + audit only; the helpers have their own unit tests in
+ * `lib/__tests__/chatStorage.test.ts`.
  */
 
 import { NextRequest } from 'next/server';
 
-/* -------------------------------------------------------------------------- */
-/*  Mocks                                                                     */
-/* -------------------------------------------------------------------------- */
+// Mocks
 
 jest.mock('@sentry/nextjs', () => ({
   captureException: jest.fn(),
@@ -62,8 +52,8 @@ jest.mock('@/lib/auditLogClient', () => ({
   scopeFingerprint: jest.fn(() => 'fp'),
 }));
 
-// Storage helper mocks. `getConversation` is the chokepoint: routes call it
-// to discover the conversation's siteId before doing the auth+scope check.
+// `getConversation` is the chokepoint — routes call it to discover the
+// conversation's siteId before the auth+scope check.
 const mockGetConversation = jest.fn();
 const mockCreateConversation = jest.fn();
 const mockListConversations = jest.fn();
@@ -80,11 +70,10 @@ jest.mock('@/lib/chatStorage.server', () => {
     appendMessage: (...a: unknown[]) => mockAppendMessage(...a),
     softDeleteConversation: (...a: unknown[]) => mockSoftDelete(...a),
     renameConversation: (...a: unknown[]) => mockRename(...a),
-    // ChatStorageError is exported from the actual module via the spread.
   };
 });
 
-// Hoot stream is mocked at the module boundary so we don't need a real LLM.
+// Mocked at the module boundary so no real LLM is needed.
 const mockRunHootStream = jest.fn();
 jest.mock('@/lib/hootStream.server', () => {
   const actual = jest.requireActual('@/lib/hootStream.server');
@@ -94,7 +83,6 @@ jest.mock('@/lib/hootStream.server', () => {
   };
 });
 
-// User+site reads for the GET /api/hoot/conversations list filter.
 const mockGetUserSiteIds = jest.fn();
 jest.mock('@/lib/apiHelpers.server', () => {
   const actual = jest.requireActual('@/lib/apiHelpers.server');
@@ -113,9 +101,8 @@ jest.mock('@/lib/apiAuth.server', () => {
   };
 });
 
-// Firebase admin: GET list uses it for the owned-sites lookup; the per-conversation
-// routes use it for the superadmin override on the conversation-owner check.
-// Default the user-doc lookup to "no role" so the superadmin escape hatch is closed.
+// GET list uses this for owned-sites; the per-conversation routes use it for
+// the superadmin override. Defaults to "no role" so that escape hatch is shut.
 const mockOwnedSitesGet = jest.fn().mockResolvedValue({ docs: [] });
 const mockUserDocGet = jest.fn().mockResolvedValue({
   exists: false,
@@ -147,9 +134,7 @@ import {
   DELETE as deleteDELETE,
 } from '@/app/api/hoot/conversations/[conversationId]/route';
 
-/* -------------------------------------------------------------------------- */
-/*  Helpers                                                                   */
-/* -------------------------------------------------------------------------- */
+// Helpers
 
 const SITE = 'site-alpha';
 const CONV = 'conv_abc123';
@@ -242,7 +227,6 @@ beforeEach(() => {
     title: typeof title === 'string' ? title.trim() : 'untitled chat',
   }));
 
-  // Default: hoot returns a tiny synthetic stream
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
@@ -262,9 +246,7 @@ beforeEach(() => {
   });
 });
 
-/* ========================================================================== */
-/*  GET /api/hoot/conversations - list                                      */
-/* ========================================================================== */
+// GET /api/hoot/conversations - list
 
 describe('GET /api/hoot/conversations', () => {
   it('200 with conversations + pagination shape', async () => {
@@ -335,9 +317,7 @@ describe('GET /api/hoot/conversations', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/hoot/conversations - create                                   */
-/* ========================================================================== */
+// POST /api/hoot/conversations - create
 
 describe('POST /api/hoot/conversations', () => {
   it('201 with full conversation payload', async () => {
@@ -442,9 +422,7 @@ describe('POST /api/hoot/conversations', () => {
   });
 });
 
-/* ========================================================================== */
-/*  POST /api/hoot/conversations/{conversationId} - send + stream           */
-/* ========================================================================== */
+// POST /api/hoot/conversations/{conversationId} - send + stream
 
 describe('POST /api/hoot/conversations/{conversationId}', () => {
   it('streams an SSE-style text/plain response on happy path', async () => {
@@ -461,7 +439,6 @@ describe('POST /api/hoot/conversations/{conversationId}', () => {
     expect(res.headers.get('Content-Type')).toMatch(/text\/plain/);
     expect(res.headers.get('X-Vercel-AI-Data-Stream')).toBe('v1');
 
-    // Read at least one chunk to confirm the stream emits text deltas.
     const reader = res.body!.getReader();
     const { value } = await reader.read();
     const decoded = new TextDecoder().decode(value);
@@ -567,9 +544,7 @@ describe('POST /api/hoot/conversations/{conversationId}', () => {
   });
 
   it('404 when caller is not the conversation owner (cross-user hijack)', async () => {
-    // Conversation owned by someone else on the same site. The caller has
-    // valid `chat=<siteId>:write` scope on the site (default mock auth) but
-    // must not be able to read/write another user's conversation.
+    // Valid site scope, but another user's conversation.
     mockGetConversation.mockResolvedValueOnce(
       mockConversation({ ownerUid: 'other-user' }),
     );
@@ -582,7 +557,7 @@ describe('POST /api/hoot/conversations/{conversationId}', () => {
       ),
       ctx(),
     );
-    // 404 (not 403) intentionally — don't leak existence of another user's chat.
+    // 404, not 403 — don't leak that another user's chat exists.
     expect(res.status).toBe(404);
     expect(mockAppendMessage).not.toHaveBeenCalled();
     expect(mockRunHootStream).not.toHaveBeenCalled();
@@ -680,9 +655,7 @@ describe('POST /api/hoot/conversations/{conversationId}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  PATCH /api/hoot/conversations/{conversationId} - rename                 */
-/* ========================================================================== */
+// PATCH /api/hoot/conversations/{conversationId} - rename
 
 describe('PATCH /api/hoot/conversations/{conversationId}', () => {
   it('200 on title-only update', async () => {
@@ -765,9 +738,7 @@ describe('PATCH /api/hoot/conversations/{conversationId}', () => {
   });
 });
 
-/* ========================================================================== */
-/*  DELETE /api/hoot/conversations/{conversationId} - soft delete           */
-/* ========================================================================== */
+// DELETE /api/hoot/conversations/{conversationId} - soft delete
 
 describe('DELETE /api/hoot/conversations/{conversationId}', () => {
   it('200 with alreadyDeleted=false on first delete', async () => {

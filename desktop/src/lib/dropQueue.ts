@@ -1,16 +1,14 @@
 /**
  * The queue between "files landed on the window" and "entries in config.json".
  *
- * A drop is never written straight through. The classifier's output is a
- * proposal — it guesses a name, picks an interpreter, and sometimes cannot find
- * the host application at all — so each classified path becomes a card the
- * operator reads, edits and confirms one at a time. Dropping nine files
- * therefore produces nine cards and, if the operator confirms them all, nine
- * writes: one entry per write, so a mistake on card seven leaves the first six
- * exactly where they are.
+ * A drop is never written straight through: the classifier's output is a proposal
+ * (guessed name, chosen interpreter, sometimes no host application at all), so
+ * each path becomes a card the operator confirms individually. Nine files means
+ * nine cards and nine separate writes, so a mistake on card seven leaves the
+ * first six intact.
  *
- * Everything here is pure and total. The component owns the array; this module
- * only says what the next one should be.
+ * Pure and total. The component owns the array; this module only computes the
+ * next one.
  */
 
 import type {
@@ -22,13 +20,10 @@ import type {
 } from '@/lib/dropClassifier'
 
 /**
- * One proposed process, waiting to be confirmed.
- *
- * `path` is the identity: the same file dropped twice while its card is still
- * on screen is the same card, not two, and there is nothing else about a drop
- * that is reliably unique. (Two entries for one path is a legitimate thing to
- * want — a second copy with different arguments, say — it is just not something
- * a double drop should produce silently.)
+ * One proposed process awaiting confirmation. `path` is the identity — nothing
+ * else about a drop is reliably unique — so re-dropping a file whose card is
+ * still on screen updates that card rather than adding a second. (Two entries for
+ * one path is legitimate, just not something a double drop should produce.)
  */
 export interface DropCard {
   kind: DropKind
@@ -54,12 +49,8 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   script: 'script',
 }
 
-/**
- * The article each label takes.
- *
- * Data rather than a rule: "an application" but "a unity build", which no test
- * on the first letter gets right.
- */
+/** Data, not a rule: "an application" but "a unity build" — no first-letter test
+ *  gets both right. */
 const KIND_ARTICLES: Record<DropKind, string> = {
   touchdesigner: 'a',
   unity: 'a',
@@ -132,10 +123,9 @@ export function updateCard(
 /**
  * Why this card cannot be added yet, in the operator's words.
  *
- * The duplicate-name check is not cosmetic: the web api answers a second
- * process with an existing name with a 409, so an entry that slips past here
- * would be written to disk, uploaded by the service, and silently rejected in
- * the cloud — a divergence nothing on this machine would ever show.
+ * The duplicate-name check is load-bearing: the web api 409s a second process
+ * with an existing name, so one that slips past here lands on disk, uploads, and
+ * is silently rejected in the cloud — a divergence nothing here would surface.
  */
 export function cardBlockedReason(
   card: DropCard,

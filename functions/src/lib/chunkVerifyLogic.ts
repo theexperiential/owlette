@@ -1,20 +1,11 @@
 /**
- * Pure logic for roost chunk hash verification (wave 2b.2).
+ * Pure logic for roost chunk hash verification, split from the handler so it is
+ * testable without cloud storage.
  *
- * Chunks live at `project-content/{siteId}/{hashPrefix}/{hash}` where
- * `hashPrefix` is the first two chars of the chunk's sha-256 hex. The
- * filename IS the content address — if the bytes on disk hash to
- * something else, the object is either corrupted or planted by an
- * attacker and must be removed.
- *
- * Defense in depth: even if the upload URL was signed (so only the
- * signing service could have issued it), a malicious or buggy client
- * could PUT different bytes than it claimed. Without this verify step,
- * an agent later downloading by hash gets the attacker's bytes,
- * trusting the CAS invariant that was actually violated.
- *
- * Split out from the handler so the decision logic is unit-testable
- * without cloud-storage setup.
+ * Chunks live at `project-content/{siteId}/{hashPrefix}/{hash}`; the filename IS
+ * the content address. A signed upload URL doesn't stop a client PUTting bytes
+ * that hash to something else, and agents downloading by hash would then trust
+ * a violated CAS invariant — so mismatches are deleted.
  */
 
 /** Object-path prefix under which all roost chunk content lives. */
@@ -30,20 +21,12 @@ export interface ParsedChunkPath {
 }
 
 /**
- * Parse an object path into its structural components, or return null
- * if the shape doesn't match the CAS layout.
+ * Parse `project-content/{siteId}/{hashPrefix}/{hash}`, or null if it doesn't
+ * match: 4 segments, valid siteId, 64-char lowercase hex hash, prefix equal to
+ * the hash's first 2 chars.
  *
- * Accepts:  `project-content/{siteId}/{hashPrefix}/{hash}`
- * Requires:
- *   - exactly 4 non-empty path segments
- *   - first segment === 'project-content'
- *   - siteId matches the Owlette siteId shape (non-empty, no path chars)
- *   - hash is 64 lowercase hex
- *   - hashPrefix is the first 2 chars of hash (matches the shard layout)
- *
- * Anything not matching is malformed. Malformed objects get the same
- * treatment as hash mismatches (deletion) — if we don't understand the
- * path, we don't trust the object.
+ * Malformed paths are deleted like hash mismatches — an object whose path we
+ * can't parse isn't one we trust.
  */
 export function parseChunkPath(objectPath: string): ParsedChunkPath | null {
   if (typeof objectPath !== 'string' || objectPath.length === 0) return null;
@@ -61,21 +44,14 @@ export function parseChunkPath(objectPath: string): ParsedChunkPath | null {
 }
 
 function isValidSiteId(s: string): boolean {
-  // siteIds are caller-created but we're defensive: non-empty, no slashes,
-  // no '..' (would break our assumption that the 4-segment split = 4 parts),
-  // no dot-only (would collide with path traversal).
+  // Caller-created, so treated as hostile: a slash or '..' would break the
+  // 4-segment split this parser depends on.
   if (!s || s.length === 0 || s.length > 128) return false;
   if (s.includes('/') || s.includes('\\') || s.includes('..')) return false;
   if (s === '.' || s === '..') return false;
-  // printable ASCII only — siteIds are app-controlled identifiers; rejecting
-  // anything exotic short-circuits a whole class of confused-deputy attacks.
-  // allow [a-zA-Z0-9-_.] — standard identifier shape.
+  // Identifier charset only; exotic bytes buy a confused-deputy class of bug.
   return /^[A-Za-z0-9_\-.]+$/.test(s);
 }
-
-/* --------------------------------------------------------------------- */
-/*  Verdict                                                              */
-/* --------------------------------------------------------------------- */
 
 export type Verdict =
   | { ok: true; parsed: ParsedChunkPath }
@@ -88,12 +64,8 @@ export type Verdict =
     };
 
 /**
- * Decide whether an uploaded object should be kept or deleted, given
- * its path and the sha-256 computed by streaming its bytes.
- *
- * `computedHashHex` is the lowercase 64-char hex digest of the object's
- * stored bytes. Callers stream + compute that; this function just
- * decides the outcome.
+ * Keep-or-delete decision from the path plus `computedHashHex`, the 64-char hex
+ * sha-256 of the stored bytes (the caller does the streaming).
  */
 export function verdict(
   objectPath: string,
@@ -104,8 +76,7 @@ export function verdict(
     return { ok: false, reason: 'malformed_path', parsed: null };
   }
 
-  // normalize to lowercase; if the caller passed the wrong shape we'll
-  // still reject via the regex-validated `parsed.hash` comparison.
+  // A wrong-shaped input still fails the regex + equality check below.
   const computed = typeof computedHashHex === 'string' ? computedHashHex.toLowerCase() : '';
 
   if (!HASH_HEX_RE.test(computed) || computed !== parsed.hash) {
@@ -119,10 +90,6 @@ export function verdict(
 
   return { ok: true, parsed };
 }
-
-/* --------------------------------------------------------------------- */
-/*  Alert payload                                                        */
-/* --------------------------------------------------------------------- */
 
 export interface AlertPayload {
   event: 'chunk_verify_failed';

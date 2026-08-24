@@ -1,15 +1,9 @@
 /**
- * Disk IO monitoring utilities
- *
- * Throughput formatting, chart colors, and key helpers for per-volume disk
- * activity metrics. Chart data carries two parallel key families per channel
- * ({volumeId}_io_{channel} for raw bytes/sec, {volumeId}_io_{channel}_pct for
- * percent-of-max-bandwidth); `isDiskIOKey` / `parseDiskIOKey` accept both.
- * The MetricsDetailPanel picks which family to bind to a visible chart line
- * at render time: percent mode (default 0-100 axis) when a volume is running
- * near max bandwidth so users can see saturation, and bytes mode (auto-scaled
- * right axis with KB/MB/GB ticks) when activity is far below max so the line
- * stays readable instead of flatlining near zero.
+ * Disk IO monitoring utilities — throughput formatting, chart colors, key
+ * helpers. Chart data carries two parallel key families per channel:
+ * `{volumeId}_io_{channel}` (bytes/sec) and `..._pct` (percent of max
+ * bandwidth); `isDiskIOKey` / `parseDiskIOKey` accept both. MetricsDetailPanel
+ * binds percent near saturation and bytes when activity would flatline.
  */
 
 import { formatThroughput } from './networkUtils';
@@ -25,17 +19,12 @@ export function formatDiskIO(bytesPerSec: number): string {
   return formatThroughput(bytesPerSec);
 }
 
-/** Returns true iff the key matches the per-volume disk IO naming — either the
- *  bytes variant ({volumeId}_io_read|write) or the percent variant
- *  ({volumeId}_io_read|write_pct). `_io_busy` and unknown channels are rejected. */
+/** Matches `{volumeId}_io_read|write` and its `_pct` variant; `_io_busy` and unknown channels are rejected. */
 export function isDiskIOKey(key: string): boolean {
   return /^.+_io_(read|write)(_pct)?$/.test(key);
 }
 
-/** Parse a per-volume disk IO key into { id, channel, isPct }, or null if the
- *  key doesn't match the disk-IO naming. `isPct` distinguishes the %-of-max
- *  chart-line variant from the raw bytes/sec variant so callers can pick the
- *  right rendering branch. */
+/** Parse a disk IO key into { id, channel, isPct }, or null. `isPct` marks the %-of-max variant. */
 export function parseDiskIOKey(
   key: string,
 ): { id: string; channel: 'read' | 'write'; isPct: boolean } | null {
@@ -49,26 +38,20 @@ export function parseDiskIOKey(
     : null;
 }
 
-/** Compute round-number Y-axis ticks for a bytes/sec chart. Recharts' auto
- *  tick picker divides the observed max by 4 and lands on values like
- *  "585.9 KB/s" that don't match any unit boundary users recognise. This
- *  picks a step from nice mantissas × binary bases (1, 1024, 1024², 1024³) so
- *  every tick formats cleanly via formatThroughput — 250 KB/s, 500 KB/s,
- *  1 MB/s, etc. Returns null for non-positive max so callers fall through to
- *  recharts' default scale (e.g. empty/all-zero charts). */
+/** Round-number Y-axis ticks for a bytes/sec chart. Recharts divides the max by
+ *  4 and produces ticks like "585.9 KB/s"; this picks a step from nice mantissas
+ *  × binary bases so every tick formats cleanly. Null for non-positive max, so
+ *  callers fall through to recharts' default scale. */
 export function computeNiceByteTicks(
   maxBytesPerSec: number,
 ): { domainMax: number; ticks: number[] } | null {
   if (!Number.isFinite(maxBytesPerSec) || maxBytesPerSec <= 0) return null;
 
-  // Nice decimal mantissas × binary bases. The mantissas that divide cleanly
-  // into 1024 (e.g. 256, 512) aren't here by design — "250 KB", "500 KB",
-  // "1 MB" are what humans expect, even though 250 × 1024 = 256 000 bytes.
+  // 256/512 are omitted by design: humans expect "250 KB", "500 KB", "1 MB".
   const mantissas = [1, 2, 5, 10, 25, 50, 100, 250, 500];
   const bases = [1, 1024, 1024 * 1024, 1024 * 1024 * 1024];
 
-  // Aim for ~4 intervals between 0 and niceMax, so pick the smallest
-  // candidate ≥ max/4.
+  // ~4 intervals: smallest candidate ≥ max/4.
   const rough = maxBytesPerSec / 4;
   let step = 0;
   outer: for (const base of bases) {
@@ -80,8 +63,7 @@ export function computeNiceByteTicks(
       }
     }
   }
-  // Max beyond 500 GB/s — rare but keep the axis sane by capping at the
-  // largest candidate rather than bailing out.
+  // Beyond 500 GB/s: cap at the largest candidate rather than bail out.
   if (step === 0) step = mantissas[mantissas.length - 1] * bases[bases.length - 1];
 
   const domainMax = Math.ceil(maxBytesPerSec / step) * step;

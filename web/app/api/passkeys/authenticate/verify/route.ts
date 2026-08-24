@@ -1,16 +1,16 @@
 /**
- * Passkey Authentication Verification API
- *
- * Verifies the WebAuthn authentication response, then creates the session
- * via `createSession` and mints a Firebase custom token. Passkey login does
- * NOT bypass 2FA: `createSession` re-derives MFA state from Firestore, so a
- * TOTP-enrolled user is still redirected to `/verify-2fa` by the proxy unless
- * the session was already verified (same-user preserve) or the device carries
- * a valid `owlette_device_trust` cookie.
- *
  * POST /api/passkeys/authenticate/verify
- * Request: { credential: AuthenticationResponseJSON, challengeId: string }
+ * Request:  { credential: AuthenticationResponseJSON, challengeId: string }
  * Response: { success: boolean, customToken: string, userId: string }
+ *
+ * A passkey login SATISFIES 2FA in one ceremony: `requireUserVerification: true`
+ * is pinned below, so a verified response proves possession AND user
+ * verification (PIN/biometric). The session is created with
+ * `mfaSatisfiedBy: 'passkey-uv'` and born `mfaVerified` even for a TOTP-enrolled
+ * user, rather than bouncing to `/verify-2fa`.
+ *
+ * `createSession` still re-derives `mfaRequired` from Firestore — this route
+ * asserts the challenge was satisfied, never that it doesn't apply.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -41,7 +41,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Retrieve and validate challenge
     const challengeData = await getAndDeleteChallenge(challengeId);
     if (!challengeData) {
       return NextResponse.json(
@@ -54,7 +53,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       return NextResponse.json({ error: 'Invalid challenge type' }, { status: 400 });
     }
 
-    // Extract userHandle from credential response (set during registration)
     const userHandle = credential.response?.userHandle;
     if (!userHandle) {
       return NextResponse.json(
@@ -63,11 +61,15 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // The userHandle is the userId we set during registration
-    const userId = userHandle;
+    // userHandle carries the registration uid but arrives BASE64URL-ENCODED:
+    // @simplewebauthn/browser base64url-encodes every ArrayBuffer on the way out
+    // (`userHandle?: Base64URLString`). Using it verbatim looked up
+    // `users/<base64url-of-uid>`, so every passkey sign-in 403'd in
+    // `assertActiveUser` as "deleted or inactive". Broken from day one — no test
+    // reached this line until `e2e/specs/mfa/passkey-factor.spec.ts`.
+    const userId = isoBase64URL.toUTF8String(userHandle);
     await assertActiveUser(userId);
 
-    // Find the matching credential
     const userPasskeys = await getUserPasskeys(userId);
     const credentialIdFromResponse = credential.id;
 
@@ -82,12 +84,15 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Verify authentication response
     const verification = await verifyAuthenticationResponse({
       response: credential,
       expectedChallenge: challengeData.challenge,
       expectedOrigin: getExpectedOrigins(),
       expectedRPID: getRpId(),
+      // Pinned even though upstream defaults it to true: without the `uv` flag
+      // this is possession only, and a default flip would silently downgrade
+      // every passkey login to single-factor.
+      requireUserVerification: true,
       credential: {
         id: matchingPasskey.credentialId,
         publicKey: isoBase64URL.toBuffer(matchingPasskey.credentialPublicKey),
@@ -103,7 +108,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Update counter (clone detection)
+    // Clone detection.
     const { authenticationInfo } = verification;
     await updatePasskeyCounter(
       userId,
@@ -111,10 +116,12 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       authenticationInfo.newCounter
     );
 
-    // Create iron-session
-    await createSession(userId);
+    // Reaching here means verification passed with `requireUserVerification`, so
+    // the authenticator checked the human — the basis for one ceremony counting
+    // as two factors. `'passkey-uv'` is hardcoded on purpose: it is server-side
+    // only and must never be derived from the request.
+    await createSession(userId, 7, 'passkey-uv');
 
-    // Create Firebase custom token for client-side Firebase Auth
     const adminAuth = getAdminAuth();
     const customToken = await adminAuth.createCustomToken(userId);
 

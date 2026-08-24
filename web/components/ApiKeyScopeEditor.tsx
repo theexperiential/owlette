@@ -17,17 +17,14 @@ import {
 import type { ApiKeyListItem, ApiKeyScope } from '@/lib/apiKeyTypes';
 
 /**
- * Edit an existing key's name and scopes in place.
+ * Edit a key's name and scopes in place, leaving the secret untouched.
  *
- * The alternative — revoke and recreate — means every consumer of that
- * credential has to be updated to widen a permission, which is why a key
- * issued a scope short of what it needed tended to get replaced by an
- * over-broad one instead. Rotation does not help: it also hands out a new
- * secret. The secret is untouched here; only what it can reach changes.
+ * Revoke-and-recreate means updating every consumer just to widen one
+ * permission, which is why under-scoped keys got replaced by over-broad ones;
+ * rotation doesn't help, since it also hands out a new secret.
  *
- * ttl and environment are deliberately absent: the server rejects both on
- * PATCH (rotate is the way to extend expiry), so offering the fields would
- * only produce a 400.
+ * ttl and environment are deliberately absent — the server rejects both on
+ * PATCH (rotate extends expiry), so the fields would only produce a 400.
  */
 
 interface Props {
@@ -38,8 +35,8 @@ interface Props {
 
 export function ApiKeyScopeEditor({ apiKey, onSubmit, onCancel }: Props) {
   const [name, setName] = useState(apiKey.name || '');
-  // A key minted from a preset reopens on that preset; anything else (or a
-  // legacy key with no scopes at all) starts in the custom builder.
+  // Preset-minted keys reopen on their preset; everything else, including
+  // legacy keys with no scopes, starts in the custom builder.
   const [preset, setPreset] = useState<ScopeSelection>(() => presetForScopes(apiKey.scopes));
   const [customScopes, setCustomScopes] = useState<ApiKeyScope[]>(() =>
     apiKey.scopes && apiKey.scopes.length > 0
@@ -47,8 +44,8 @@ export function ApiKeyScopeEditor({ apiKey, onSubmit, onCancel }: Props) {
       : [{ resource: 'site', id: '*', permissions: ['read'] }],
   );
   const [saving, setSaving] = useState(false);
-  // A key predating scoped auth stores no scopes at all and authenticates as
-  // full access. Editing it is a narrowing, not an adjustment.
+  // Pre-scoped-auth keys store no scopes and authenticate as full access, so
+  // editing one is a narrowing, not an adjustment.
   const isLegacy = !apiKey.scopes || apiKey.scopes.length === 0;
 
   async function handleSave() {
@@ -74,9 +71,8 @@ export function ApiKeyScopeEditor({ apiKey, onSubmit, onCancel }: Props) {
   }
 
   return (
-    /* Square top, no top border: this is the lower half of the row above it,
-       not a second card. With several keys listed, a detached panel gives no
-       indication of which one it is editing. */
+    /* Square top, no top border: this is the lower half of the row above, not
+       a second card — a detached panel wouldn't say which key it edits. */
     <div className="space-y-4 rounded-md rounded-t-none border border-t-0 border-accent-cyan/50 bg-background/40 p-3">
       <h3 className="text-sm font-medium text-white">
         editing <span className="text-accent-cyan">{apiKey.name || '(unnamed key)'}</span>

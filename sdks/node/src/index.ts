@@ -121,29 +121,21 @@ export class Owlette {
   }
 
   /**
-   * Site-scoped process resource. Returns a fresh `Processes` instance bound
-   * to the (siteId, machineId) tuple — not memoised because the tuple is
-   * part of the constructor identity. Cheap to construct on each call.
+   * Site-scoped process resource, bound to (siteId, machineId). Not memoised —
+   * the tuple is part of the constructor identity, and construction is cheap.
    */
   processes(siteId: string, machineId: string): Processes {
     return new Processes(this.client, siteId, machineId);
   }
 
-  /**
-   * Site-scoped membership resource. Returns a fresh `Members` instance
-   * bound to `siteId` — not memoised for the same reason as `processes()`.
-   */
+  /** Site-scoped membership resource bound to `siteId`; not memoised. */
   members(siteId: string): Members {
     return new Members(this.client, siteId);
   }
 
   /**
-   * Webhook signature verification — static helpers grouped under
-   * `owlette.events` so calling sites read naturally:
-   *
-   *   if (!owlette.events.verifySignature(header, body, secret)) {
-   *     return res.status(401).send();
-   *   }
+   * Webhook signature verification, grouped so call sites read as
+   * `owlette.events.verifySignature(header, body, secret)`.
    */
   readonly events = {
     verifySignature: (

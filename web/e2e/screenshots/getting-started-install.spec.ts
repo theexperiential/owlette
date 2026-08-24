@@ -1,11 +1,9 @@
 /**
- * Screenshot - docs getting-started installer buttons proof-of-concept.
+ * Docs screenshot — installer download + copy-link button cluster, captured
+ * from the `dashboard-mixed-states` scenario.
  *
- * Output: `web/public/docs-screens/getting-started-install-buttons.png`
+ * Out: `web/public/docs-screens/getting-started-install-buttons.png`
  * Used by: `web/content/docs/getting-started.mdx`
- *
- * Drives the dashboard into the `dashboard-mixed-states` scenario and captures
- * the installer download + copy-link button cluster highlighted.
  */
 import { test, expect } from '@playwright/test';
 import { Timestamp } from 'firebase-admin/firestore';
@@ -23,8 +21,7 @@ test('getting-started install buttons docs screenshot', async ({ page }) => {
   const ctx = await seedScreenshotFixtures('dashboard-mixed-states');
 
   try {
-    // Pin lastSiteId so /dashboard auto-selects the screenshot site instead
-    // of the baseline `site-A` the admin user is also assigned to.
+    // Pin lastSiteId so /dashboard picks the screenshot site, not baseline site-A.
     await pinAdminSiteContext(ctx.siteId);
 
     await getAdminDb().collection('installer_metadata').doc('latest').set({
@@ -35,8 +32,7 @@ test('getting-started install buttons docs screenshot', async ({ page }) => {
       release_notes: 'latest release',
     });
 
-    // Pin the clock BEFORE goto so any "x minutes ago" / heartbeat-age text
-    // resolves against FIXED_NOW.
+    // Clock BEFORE goto so "x minutes ago" text resolves against FIXED_NOW.
     await installFixedClock(page);
 
     await page.goto('/dashboard');
@@ -63,8 +59,7 @@ test('getting-started install buttons docs screenshot', async ({ page }) => {
       `,
     });
 
-    // Re-pin Date.now() after navigation so any hook that captured it at
-    // mount has the fixed anchor on its next render tick.
+    // Re-pin Date.now() after navigation for hooks that captured it at mount.
     await page.clock.setFixedTime(FIXED_NOW_MS);
     await page.waitForTimeout(500);
 

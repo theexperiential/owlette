@@ -26,16 +26,15 @@ import shared_utils
 
 logger = logging.getLogger(__name__)
 
-# IPC directories (created by shared_utils constants)
+# IPC directories, created by shared_utils constants
 IPC_CMD_DIR = shared_utils.get_data_path('ipc/cortex_commands')
 IPC_RESULT_DIR = shared_utils.get_data_path('ipc/cortex_results')
 
-# IPC polling config
 IPC_POLL_INTERVAL = 0.2  # seconds
 IPC_TIMEOUT = 30  # seconds
 
 
-# ─── IPC Helpers ──────────────────────────────────────────────────────────────
+# IPC helpers
 
 
 def _ensure_ipc_dirs():
@@ -77,7 +76,7 @@ def _write_ipc_command(tool_name: str, tool_params: dict) -> str:
         'timestamp': time.time(),
     }
 
-    # Write atomically (write to tmp, then rename)
+    # Atomic: write tmp, then rename.
     tmp_path = cmd_path + '.tmp'
     with open(tmp_path, 'w', encoding='utf-8') as f:
         json.dump(payload, f)
@@ -100,7 +99,6 @@ def _poll_ipc_result(cmd_id: str, timeout: float = IPC_TIMEOUT) -> dict:
             try:
                 with open(result_path, 'r', encoding='utf-8') as f:
                     result = json.load(f)
-                # Clean up result file
                 try:
                     os.remove(result_path)
                 except OSError:
@@ -109,7 +107,7 @@ def _poll_ipc_result(cmd_id: str, timeout: float = IPC_TIMEOUT) -> dict:
                 return result.get('result', result)
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning(f"IPC result read error for {cmd_id}: {e}")
-                # File may still be being written — retry
+                # Possibly mid-write; retry.
         time.sleep(IPC_POLL_INTERVAL)
 
     logger.warning(f"IPC command timed out: {cmd_id}")
@@ -151,7 +149,7 @@ async def _execute_via_ipc(tool_name: str, params: dict) -> dict:
     return await asyncio.to_thread(_execute_via_ipc_sync, tool_name, params)
 
 
-# ─── Tier 1: Read-Only Tools (direct execution) ─────────────────────────────
+# Tier 1: read-only tools, executed directly
 
 
 def _make_tier1_tools(config: dict) -> list:
@@ -238,7 +236,7 @@ def _make_tier1_tools(config: dict) -> list:
     ]
 
 
-# ─── Tier 2: Process Management (IPC to service) ────────────────────────────
+# Tier 2: process management, via IPC to the service
 
 
 def _make_tier2_tools() -> list:
@@ -302,7 +300,7 @@ def _make_tier2_tools() -> list:
             capture_screenshot]
 
 
-# ─── Tier 3: Privileged Tools (direct execution) ────────────────────────────
+# Tier 3: privileged tools, executed directly
 
 
 def _make_tier3_tools(config: dict) -> list:
@@ -351,7 +349,7 @@ def _make_tier3_tools(config: dict) -> list:
     return [run_command, run_powershell, execute_script, read_file, write_file, list_directory]
 
 
-# ─── Server Factory ──────────────────────────────────────────────────────────
+# Server factory
 
 
 def create_owlette_mcp_server(config: dict, max_tier: int = 2):
@@ -366,14 +364,11 @@ def create_owlette_mcp_server(config: dict, max_tier: int = 2):
     """
     tools = []
 
-    # Tier 1 always included
     tools.extend(_make_tier1_tools(config))
 
-    # Tier 2 if allowed
     if max_tier >= 2:
         tools.extend(_make_tier2_tools())
 
-    # Tier 3 if allowed
     if max_tier >= 3:
         tools.extend(_make_tier3_tools(config))
 

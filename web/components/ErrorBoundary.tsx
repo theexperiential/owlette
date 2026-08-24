@@ -16,18 +16,8 @@ interface State {
 }
 
 /**
- * ErrorBoundary component catches JavaScript errors anywhere in the child component tree,
- * logs those errors, and displays a fallback UI instead of crashing the whole app.
- *
- * Usage:
- * <ErrorBoundary>
- *   <YourComponent />
- * </ErrorBoundary>
- *
- * Or with custom fallback:
- * <ErrorBoundary fallback={<CustomErrorUI />}>
- *   <YourComponent />
- * </ErrorBoundary>
+ * Catches render errors in the child tree, logs them (console + Sentry) and
+ * shows `fallback` — or the default UI — instead of crashing the app.
  */
 export class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
@@ -40,7 +30,6 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   static getDerivedStateFromError(error: Error): State {
-    // Update state so the next render will show the fallback UI
     return {
       hasError: true,
       error,
@@ -49,22 +38,19 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    // Log error details for debugging
     console.error('ErrorBoundary caught an error:', error);
     console.error('Component stack:', errorInfo.componentStack);
 
-    // Update state with error info
     this.setState({
       error,
       errorInfo,
     });
 
-    // Call custom error handler if provided
     if (this.props.onError) {
       this.props.onError(error, errorInfo);
     }
 
-    // Report to Sentry (no-op if DSN not configured)
+    // No-op when no DSN is configured.
     Sentry.withScope((scope) => {
       scope.setContext('react', { componentStack: errorInfo.componentStack });
       Sentry.captureException(error);
@@ -81,12 +67,10 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
-      // Custom fallback UI if provided
       if (this.props.fallback) {
         return this.props.fallback;
       }
 
-      // Default fallback UI
       return (
         <div className="min-h-screen bg-background flex items-center justify-center p-4">
           <div className="max-w-md w-full bg-background border border-border rounded-lg shadow-lg p-6">

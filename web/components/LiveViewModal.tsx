@@ -51,8 +51,8 @@ export function LiveViewModal({
   const [fullscreen, setFullscreen] = useState(false);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Refs mirror isStarting/isStopping so the snapshot listener (set up once per
-  // open) can read the current pending state without re-subscribing on every change.
+  // Mirrors of isStarting/isStopping so the once-per-open snapshot listener can
+  // read pending state without re-subscribing.
   const isStartingRef = useRef(false);
   const isStoppingRef = useRef(false);
 
@@ -63,12 +63,10 @@ export function LiveViewModal({
     }
   };
 
-  // Listen for real-time machine doc updates (lastScreenshot + liveView state).
-  // Also clears pending start/stop spinners once the agent's response lands —
-  // the commands are enqueued via sendMachineCommand and the API call returns in
-  // ~100ms, long before the agent picks up and processes the command. Resetting
-  // the spinner in the call's finally block would cause the button to flicker
-  // back to its idle state during that gap.
+  // Machine doc updates (lastScreenshot + liveView), and the only correct place
+  // to clear the start/stop spinners: sendMachineCommand returns in ~100ms, long
+  // before the agent acts, so clearing in its finally block flickers the button
+  // back to idle during the gap.
   useEffect(() => {
     if (!open || !db || !siteId || !machineId) return;
 
@@ -78,7 +76,7 @@ export function LiveViewModal({
       if (!data) return;
 
       if (data.lastScreenshot?.url) {
-        // Firestore serverTimestamp arrives as a Timestamp object — convert to ms
+        // serverTimestamp arrives as a Timestamp — convert to ms.
         const ts = data.lastScreenshot.timestamp;
         const timestampMs =
           ts && typeof ts.toMillis === 'function'
@@ -104,7 +102,7 @@ export function LiveViewModal({
         setExpiresAt(null);
       }
 
-      // Clear pending spinners once the agent confirms the requested state change
+      // Spinners clear only once the agent confirms the state change.
       if (newActive && isStartingRef.current) {
         isStartingRef.current = false;
         setIsStarting(false);
@@ -119,7 +117,6 @@ export function LiveViewModal({
     return () => unsubscribe();
   }, [open, siteId, machineId]);
 
-  // Countdown timer
   useEffect(() => {
     if (countdownRef.current) {
       clearInterval(countdownRef.current);
@@ -127,7 +124,7 @@ export function LiveViewModal({
     }
 
     if (!liveViewActive || !expiresAt) {
-      // Reset displayed countdown when there's nothing to count down to
+      // Nothing to count down to.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setTimeRemaining('');
       return;
@@ -154,7 +151,7 @@ export function LiveViewModal({
     };
   }, [liveViewActive, expiresAt]);
 
-  // Reset transient UI state when the modal closes so a re-open starts fresh
+  // Reset transient UI state on close so a re-open starts fresh.
   useEffect(() => {
     if (!open) {
       isStartingRef.current = false;
@@ -170,15 +167,14 @@ export function LiveViewModal({
     }
   }, [open]);
 
-  // Cleanup any pending timeout on unmount
   useEffect(() => {
     return () => {
       if (pendingTimeoutRef.current) clearTimeout(pendingTimeoutRef.current);
     };
   }, []);
 
-  // Safety timeout — if the agent never confirms the state change, clear the spinner
-  // after 30s so the user isn't stuck staring at "starting..." forever.
+  // If the agent never confirms, clear the spinner after 30s rather than leave
+  // the user on "starting..." forever.
   const PENDING_TIMEOUT_MS = 30000;
 
   const handleStart = useCallback(async () => {
@@ -193,8 +189,7 @@ export function LiveViewModal({
 
     try {
       await onStartLiveView(machineId, interval, 600);
-      // Don't clear isStarting here — wait for the Firestore snapshot to confirm
-      // liveView.active=true (handled by the snapshot listener above).
+      // isStarting clears on the snapshot confirming liveView.active=true.
     } catch (err) {
       console.error('Failed to start live view:', err);
       isStartingRef.current = false;
@@ -215,8 +210,7 @@ export function LiveViewModal({
 
     try {
       await onStopLiveView(machineId);
-      // Don't clear isStopping here — wait for the Firestore snapshot to confirm
-      // liveView.active=false (handled by the snapshot listener above).
+      // isStopping clears on the snapshot confirming liveView.active=false.
     } catch (err) {
       console.error('Failed to stop live view:', err);
       isStoppingRef.current = false;
@@ -241,7 +235,6 @@ export function LiveViewModal({
     }
   }, [screenshot, machineName]);
 
-  // Close fullscreen on Escape
   useEffect(() => {
     if (!fullscreen) return;
     const handleKey = (e: KeyboardEvent) => {
@@ -253,7 +246,7 @@ export function LiveViewModal({
 
   return (
     <>
-      {/* Fullscreen overlay */}
+
       {fullscreen && screenshot && (
         <div
           className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center cursor-pointer"
@@ -279,7 +272,7 @@ export function LiveViewModal({
       <Dialog open={open} onOpenChange={(v) => { if (fullscreen) { setFullscreen(false); return; } onOpenChange(v); }}>
         <DialogContent showCloseButton={false} className="bg-card border-border w-[calc(100vw-2rem)] sm:max-w-4xl max-w-none p-0 gap-0 h-[calc(100vh-4rem)] max-h-[700px]">
           <div className="flex flex-col h-full">
-            {/* Header */}
+
             <DialogHeader className="px-4 py-2 border-b border-border flex-shrink-0">
               <DialogTitle className="flex items-center gap-2">
                 <Eye className="h-5 w-5" />
@@ -309,7 +302,6 @@ export function LiveViewModal({
               </DialogTitle>
             </DialogHeader>
 
-            {/* Screenshot display */}
             <div className="flex-1 relative bg-black/30 flex items-center justify-center overflow-hidden min-h-0">
               {!screenshot && !liveViewActive && (
                 <div className="flex flex-col items-center gap-3 py-12 text-muted-foreground text-center px-6">
@@ -338,10 +330,9 @@ export function LiveViewModal({
               )}
             </div>
 
-            {/* Footer — controls */}
             <div className="flex items-center justify-between px-4 py-2 border-t border-border flex-shrink-0">
               <div className="flex items-center gap-3">
-                {/* Interval selector */}
+
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground">interval:</span>
                   <Select

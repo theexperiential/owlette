@@ -1,15 +1,12 @@
 'use client';
 
 /**
- * Public DMCA takedown form (wave 0.2).
+ * Public DMCA takedown form, capturing all six elements required by
+ * 17 U.S.C. § 512(c)(3)(A). Email/postal notices reach the same
+ * `dmca_notices` collection via admin entry; this is the preferred path.
  *
- * 17 U.S.C. § 512(c)(3)(A) requires six elements — this form captures
- * each. Notices arriving by email / postal mail still go through the
- * same `dmca_notices` firestore collection via admin entry, but this
- * form is the preferred path.
- *
- * Decision logic lives in `web/lib/dmcaLogic.ts`; the API endpoint at
- * `web/app/api/legal/dmca/route.ts` does rate-limiting + persistence.
+ * Decision logic: `web/lib/dmcaLogic.ts`. Rate-limiting + persistence:
+ * `web/app/api/legal/dmca/route.ts`.
  */
 
 import { useState } from 'react';
@@ -39,10 +36,9 @@ export default function DmcaFormPage() {
     setErrorMessage('');
     const form = new FormData(e.currentTarget);
 
-    // The form is noValidate (the browser's native bubble is unstyleable and
-    // foreign to the rest of the UI), so the six statutory elements are checked
-    // here. Marks the offending field invalid — Input/Textarea render the red
-    // aria-invalid outline — and focuses it, so "which box" is obvious.
+    // The form is noValidate (the native bubble is unstyleable), so the six
+    // statutory elements are checked here. Marking the field invalid gives it
+    // the red aria-invalid outline, and focusing it says which box.
     const REQUIRED: ReadonlyArray<readonly [string, string]> = [
       ['copyrightedWork', 'describe the copyrighted work being infringed'],
       ['identifiedMaterial', 'identify the material you claim is infringing'],

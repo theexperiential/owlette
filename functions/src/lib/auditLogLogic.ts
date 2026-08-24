@@ -1,27 +1,19 @@
 /**
  * Pure logic for the roost audit log sink (wave 2b.7).
  *
- * The audit log is **append-only, hash-chained, and tamper-evident**.
- * Every record embeds `hash(previousHash || canonicalPayload)` so a
- * verifier can walk a site's chain and prove no record was silently
- * modified or deleted. The first record in a chain uses GENESIS_HASH
- * as its previous-hash sentinel.
+ * Append-only, hash-chained, tamper-evident: every record embeds
+ * `hash(previousHash || canonicalPayload)` so a verifier can walk a site's chain
+ * and prove nothing was modified or deleted. The first record uses GENESIS_HASH.
  *
- * This file does NOT write to firestore — it builds records the handler
- * can persist. Verification is also here so any consumer (dashboard,
- * external auditor script) can run it with no firebase deps.
+ * No firestore here — this builds records the handler persists, and keeps the
+ * verifier importable by any consumer with no firebase deps.
  */
 
 import { createHash } from 'crypto';
 
-/* --------------------------------------------------------------------- */
-/*  Event taxonomy                                                       */
-/* --------------------------------------------------------------------- */
-
 /**
- * Stable set of event types the audit log records. Adding a new kind
- * requires extending both this union AND the shape validator — the
- * two live together on purpose.
+ * Event types the audit log records. A new kind must extend this union AND the
+ * shape validator — they live together on purpose.
  */
 export const AUDIT_EVENT_KINDS = [
   'signed_url_issued',
@@ -53,30 +45,18 @@ export const PLATFORM_AUDIT_SITE_ID = '__platform__';
 export interface AuditEvent {
   kind: AuditEventKind;
   siteId: string;
-  /**
-   * User / API-key / service identifier that initiated the event.
-   * `service:chunkGc` or `apiKey:owk_abc…hash` for automated actors.
-   */
+  /** Initiator: uid, `apiKey:<hash>`, or `service:<name>` for automated actors. */
   actor: string;
   /** unix ms when the audited operation happened, NOT when recorded. */
   occurredAt: number;
   /** Optional mutated resource id, sent by the web mutation audit client. */
   target?: string;
-  /**
-   * Kind-specific attributes — intentionally open-ended as long as the
-   * entire payload is JSON-serialisable. Nested structure is fine;
-   * canonical JSON handles it.
-   */
+  /** Kind-specific; anything JSON-serialisable, nesting included. */
   attributes: Record<string, unknown>;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Canonicalisation                                                     */
-/* --------------------------------------------------------------------- */
-
 /**
- * Shape-check a raw incoming event. Returns the validated event or an
- * error string. Strict — unknown fields or missing required fields are
+ * Shape-check a raw incoming event. Strict — missing or invalid fields are
  * rejected so the chain never ingests garbage.
  */
 export function canonicaliseEvent(
@@ -127,11 +107,8 @@ function isAuditEventKind(x: unknown): x is AuditEventKind {
 }
 
 /**
- * Produce a canonical JSON representation — keys sorted recursively.
- *
- * The chain hashes this string, so any two verifiers starting from the
- * same record must compute the same bytes. JSON.stringify alone is not
- * stable across property-insertion order, so we sort.
+ * Canonical JSON, keys sorted recursively. The chain hashes this string and
+ * JSON.stringify alone is not stable across property-insertion order.
  */
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(sortForCanonical(value));
@@ -148,21 +125,15 @@ function sortForCanonical(v: unknown): unknown {
   return sorted;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Hash chain                                                           */
-/* --------------------------------------------------------------------- */
-
 /**
- * Sentinel previous-hash for the first record in a site's chain.
- * 64 zeros matches the output width of SHA-256-hex so chain verifiers
- * can compare without special-casing the first record.
+ * First-record sentinel. 64 zeros matches SHA-256-hex width so chain verifiers
+ * don't special-case the first record.
  */
 export const GENESIS_HASH = '0'.repeat(64);
 
 /**
- * Hash input is the concatenation of previous-hash, recorded-at
- * timestamp, and canonical-event-payload. Separators are non-ambiguous
- * characters never emitted by canonical JSON.
+ * Hashes `previousHash | recordedAt | canonicalPayload`; the separator is a
+ * character canonical JSON never emits, so the input is unambiguous.
  */
 export function computeChainHash(
   previousHash: string,
@@ -194,12 +165,9 @@ export function buildAuditRecord(
 }
 
 /**
- * Verify a sequence of records:
- *   - records[0].previousHash === GENESIS_HASH (if flagged as chain start)
- *   - each record's hash matches its derivation
- *   - each record's previousHash matches the prior record's hash
- *
- * Returns `{ ok: true }` or the index of the first failing record.
+ * Walk the chain: every record's hash matches its derivation and its
+ * previousHash matches the prior record's hash (records[0] against GENESIS_HASH
+ * when `assertGenesis`). Returns `{ ok: true }` or the first failing index.
  */
 export function verifyChain(
   records: readonly AuditRecord[],
@@ -225,10 +193,5 @@ export function verifyChain(
   return { ok: true };
 }
 
-/* --------------------------------------------------------------------- */
-/*  Retention                                                            */
-/* --------------------------------------------------------------------- */
-
-/** SOX + HIPAA both want ≥7 years. 7*365 days; leap years don't matter
- *  for coarse retention bookkeeping. */
+/** SOX + HIPAA both want ≥7 years; leap years don't matter at this coarseness. */
 export const AUDIT_RETENTION_DAYS = 7 * 365;

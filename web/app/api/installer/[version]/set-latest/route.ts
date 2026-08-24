@@ -5,14 +5,9 @@
  * Atomic Firestore transaction — refuses if the version doesn't exist or
  * is soft-deleted.
  *
- * Auth:
- *   - api key with `installer=*:admin` scope (superadmin-only at minting)
- *   - session / id-token from a superadmin user
- *
- * Idempotency: required. Re-issuing the same Idempotency-Key with the
- * same body within 24h returns the cached response.
- *
- * api-sprint wave 1 track 1B (installer-api).
+ * Auth: an api key with `installer=*:admin` scope, or a superadmin session.
+ * Idempotency-Key is REQUIRED; the same key + body within 24h replays the
+ * cached response.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -50,8 +45,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // Read + discard body so idempotency body-hashing is consistent even
-    // when callers send `{}` or no body. Also rejects malformed json early.
+    // Read + discard the body so idempotency body-hashing is consistent whether
+    // callers send `{}` or nothing; also rejects malformed json early.
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 

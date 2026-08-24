@@ -40,19 +40,10 @@ interface CreateKeyBody {
 }
 
 /**
- * POST /api/keys
- *
- * Create a new scoped API key for the authenticated user.
- *
- * Body:
- *   {
- *     name: string,
- *     scopes: [{resource, id, permissions[]}],
- *     ttlDays?: number (1-365, default 90),
- *     environment?: ignored — every key is minted 'live'
- *   }
- *
- * Returns the raw key once — only the SHA-256 hash is stored.
+ * POST /api/keys — create a scoped API key.
+ * Body: `{ name, scopes: [{resource, id, permissions[]}], ttlDays? (1-365,
+ * default 90), environment? (ignored — every key is minted 'live') }`.
+ * Returns the raw key ONCE; only its SHA-256 hash is stored.
  */
 export const POST = withRateLimit(
   async (request: NextRequest) => {
@@ -93,10 +84,8 @@ export const POST = withRateLimit(
       }
       const ttlDays = rawTtl;
 
-      // Every new key is minted live. `body.environment` is accepted and
-      // ignored rather than rejected: the shipped @owlette/cli and both SDKs
-      // still send it, and 400-ing them would break clients over a field that
-      // never controlled anything they could observe.
+      // `body.environment` is ignored, not rejected: the shipped CLI and both
+      // SDKs still send it, and 400-ing would break them over a no-op field.
       const environment = MINTED_API_KEY_ENVIRONMENT;
 
       // owk_live_<43 base64url chars>
@@ -211,8 +200,8 @@ export const GET = withRateLimit(
         .orderBy('createdAt', 'desc')
         .get();
 
-      // One instant for the whole listing, so two keys either side of the
-      // boundary can't be classified against different "now"s.
+      // One instant for the whole listing, so keys either side of the expiry
+      // boundary aren't classified against different "now"s.
       const listedAt = Date.now();
       const keys: ApiKeyListItem[] = snap.docs.map((doc) =>
         buildApiKeyListItem(doc.id, doc.data() as Record<string, unknown>, listedAt)

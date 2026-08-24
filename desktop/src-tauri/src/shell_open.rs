@@ -1,20 +1,16 @@
 //! Handing a path or a URL to the Windows shell.
 //!
-//! The overflow menu's `config`, `logs` and `docs` items are the same three the
-//! legacy GUI offered (`owlette_gui.open_config` / `open_logs` / `_open_docs`,
-//! :2476-2621), where each one was a bare `os.startfile` / `webbrowser.open`.
-//! `ShellExecuteW` is the API underneath both, and it is already how this crate
-//! elevates a service command (`service_ctl::elevated`), so it is used directly
-//! rather than pulling in a plugin for two call sites.
+//! `ShellExecuteW` directly rather than a plugin: it is the API under
+//! `os.startfile` / `webbrowser.open` (what the legacy GUI's config/logs/docs
+//! items used) and is already how this crate elevates a service command.
 //!
-//! Two rules make this safe to expose over IPC:
+//! Two rules make this safe over IPC:
 //!
-//! * A path is resolved against the owlette data root and rejected if it lands
-//!   outside it — the same containment [`crate::paths::resolve_in_root`] gives
-//!   the JSON commands. The menu can open `config.json`; it cannot open
-//!   `C:\Windows\System32\cmd.exe`.
-//! * A URL must be `http` or `https`. Without that check the shell would happily
-//!   run any registered protocol handler, which is a launcher, not a link.
+//! * Paths resolve against the owlette data root via
+//!   [`crate::paths::resolve_in_root`] and are rejected outside it — `config.json`
+//!   yes, `C:\Windows\System32\cmd.exe` no.
+//! * URLs must be `http`/`https`, or the shell runs any registered protocol
+//!   handler — a launcher, not a link.
 
 use std::path::Path;
 
@@ -27,8 +23,8 @@ use crate::paths;
 /// `ShellExecuteW` returns an HINSTANCE; anything above 32 means it launched.
 const SHELL_EXECUTE_SUCCESS_FLOOR: isize = 32;
 
-/// `SE_ERR_NOASSOC` — nothing is registered for this file type. Common on a
-/// bare Windows Server, where `.json` has no handler at all.
+/// `SE_ERR_NOASSOC` — no handler for this file type. Common on bare Windows
+/// Server, where `.json` has none.
 const SE_ERR_NOASSOC: isize = 31;
 
 /// Schemes a frontend link may use.
@@ -36,9 +32,9 @@ const ALLOWED_SCHEMES: [&str; 2] = ["https://", "http://"];
 
 /// Open a file or folder inside the owlette tree with its default handler.
 ///
-/// `requested` is relative to the data root (`config/config.json`, `logs`).
-/// A file type with no association falls back to Notepad rather than reporting
-/// a failure the operator cannot act on.
+/// `requested` is relative to the data root (`config/config.json`, `logs`). An
+/// unassociated file type falls back to Notepad rather than reporting a failure
+/// the operator cannot act on.
 pub fn open_in_tree(requested: &str) -> Result<(), String> {
   let resolved = paths::resolve_in_root(&paths::data_root(), requested)?;
   if !resolved.exists() {
@@ -79,8 +75,8 @@ pub fn open_url(url: &str) -> Result<(), String> {
   {
     return Err(format!("refusing to open a non-web link: {trimmed}"));
   }
-  // A control character would let a crafted string break out of the argument the
-  // shell parses; there is no legitimate URL containing one.
+  // A control character could break out of the argument the shell parses, and no
+  // legitimate URL contains one.
   if trimmed.chars().any(char::is_control) {
     return Err("refusing to open a link containing control characters".to_string());
   }

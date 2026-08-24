@@ -1,26 +1,21 @@
 /** @jest-environment node */
 
 /**
- * Eslint-rule integration tests for the wave-2.1 authorized-handler guards
- * (rule A: no raw route exports under app/api/**; rule B: no raw firestore
- * client writes outside the preferences allowlist).
+ * Eslint-rule integration tests for the wave-2.1 authorized-handler guards (rule A: no
+ * raw route exports under app/api/**; rule B: no raw firestore client writes outside the
+ * preferences allowlist).
  *
- * Runs eslint programmatically over short ts source fragments and asserts
- * the no-restricted-syntax rule fires with the expected message. The
- * fragments are written to a temp dir under web/__tests__/.eslint-fixtures
- * so they exercise the same `eslint.config.mjs` resolution that the editor
- * and CI use. Cleaned up in afterAll.
+ * Runs eslint over short ts fragments written to web/__tests__/.eslint-fixtures, so the
+ * same `eslint.config.mjs` resolution the editor and CI use applies. Cleaned up in afterAll.
  */
 
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
-// Each test spawns the eslint binary against the project's flat config —
-// inherently slow (~4–8s in isolation) and far slower under full-suite parallel
-// load, where the eslint subprocess competes with ~16 jest workers for CPU and
-// has been observed to take 60s+. A generous ceiling keeps this from flaking the
-// pre-push hook; normal runs finish in seconds and never approach it.
+// Each test spawns the eslint binary against the project's flat config — ~4-8s in
+// isolation and 60s+ under full-suite parallel load against ~16 jest workers. The
+// generous ceiling keeps this from flaking the pre-push hook.
 jest.setTimeout(120_000);
 
 interface EslintMessage {
@@ -37,10 +32,9 @@ interface EslintFileResult {
 }
 
 const webRoot = path.resolve(__dirname, '..', '..');
-// Fixture paths must live under web/app/api/** (rule A) and web/hooks/**
-// (rule B) so the flat-config `files:` glob matches. We use distinctive
-// namespace prefixes (`__eslint_fixture_*`) so accidental git-adds are
-// trivially identifiable, and afterAll cleans them up.
+// Fixture paths must live under web/app/api/** (rule A) and web/hooks/** (rule B) so the
+// flat-config `files:` glob matches. The `__eslint_fixture_*` prefix makes an accidental
+// git-add obvious; afterAll cleans them up.
 const apiFixturesRoot = path.join(webRoot, 'app', 'api', '__eslint_fixture_wave21');
 const hooksFixturesRoot = path.join(webRoot, 'hooks', '__eslint_fixture_wave21');
 
@@ -55,9 +49,8 @@ afterAll(async () => {
 });
 
 /**
- * Invoke eslint via the project's own eslint binary in a subprocess so
- * the flat-config (`eslint.config.mjs`) loads natively under the parent
- * node runtime — jest's vm context refuses dynamic ESM imports without
+ * Invoke eslint via the project's own binary in a subprocess so `eslint.config.mjs` loads
+ * natively — jest's vm context refuses dynamic ESM imports without
  * --experimental-vm-modules, which we don't enable globally.
  */
 async function lintWithContent(
@@ -90,10 +83,6 @@ async function lintWithContent(
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  rule A — raw route handler exports                                        */
-/* -------------------------------------------------------------------------- */
-
 describe('eslint rule A — raw route handler exports', () => {
   // TODO(security-boundary-migration wave 2.1): selector doesn't fire on this
   // syntactic shape either. See TODO below for the broader rule fix.
@@ -116,10 +105,9 @@ export async function POST() {
     expect(hit).toBeDefined();
   });
 
-  // TODO(security-boundary-migration wave 2.1): the no-restricted-syntax
-  // selector that codex shipped catches `export async function POST()` but
-  // not `export const POST = async () => ...`. Same gap covers the setDoc
-  // case below. Tests are .skip pending the selector fix.
+  // TODO(security-boundary-migration wave 2.1): the no-restricted-syntax selector catches
+  // `export async function POST()` but not `export const POST = async () => ...`; the same
+  // gap covers the setDoc case below. Tests .skip pending the selector fix.
   it.skip('flags `export const POST = async () => ...` under app/api/**', async () => {
     const fixture = `
 import { NextResponse } from 'next/server';
@@ -154,10 +142,6 @@ export const POST = wrapper({})(async () => null);
     expect(hit).toBeUndefined();
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  rule B — raw firestore client writes outside allowlist                    */
-/* -------------------------------------------------------------------------- */
 
 describe('eslint rule B — raw firestore client writes', () => {
   // TODO(security-boundary-migration wave 2.1): see TODO above — selector gap.

@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useScrollFade } from '@/hooks/useScrollFade'
 import { pickDirectory, pickExecutable, pickFile } from '@/lib/pickers'
 import {
   coerceForm,
@@ -39,9 +40,8 @@ import { isLive, STATUS_TEXT, statusLabel, type ProcessStatus } from '@/lib/proc
 import { cn } from '@/lib/utils'
 
 /**
- * Enter and blur both fire for a single "I'm done typing", and the legacy GUI
- * drops the second within 100 ms rather than writing the file twice
- * (`owlette_gui.py:867-871`).
+ * Enter and blur both fire for one "done typing"; drop the second within 100ms
+ * rather than writing the file twice (`owlette_gui.py:867-871`).
  */
 const SAVE_DEBOUNCE_MS = 100
 
@@ -52,12 +52,8 @@ const LAUNCH_MODES: { value: LaunchMode; label: string }[] = [
 ]
 
 /**
- * The dashboard's launch-mode colours (`web/.../ProcessDialog.tsx:85-105`),
- * split in two because the fill slides and the text does not.
- *
- * Green for "running whatever happens", blue for "running on a clock", muted
- * for "owlette is not touching this" — the same three the web app paints, so a
- * screenshot from one is readable next to the other.
+ * The dashboard's launch-mode colours (`web/.../ProcessDialog.tsx:85-105`), split
+ * in two because the fill slides and the text does not. Keep in sync with web.
  */
 const LAUNCH_MODE_FILL: Record<LaunchMode, string> = {
   off: 'bg-muted',
@@ -72,12 +68,8 @@ const LAUNCH_MODE_TEXT: Record<LaunchMode, string> = {
 }
 
 /**
- * The quiet line that starts a group of fields.
- *
- * Three of them turn one long column of labelled rows into "what to run", "when
- * to run" and "what to do when it stops" — which is the order an operator fills
- * the form in, and the order they come back to read it in. It spans both columns
- * of the form grid so the rows underneath keep their shared label gutter.
+ * Group heading. Spans both columns of the form grid so the rows underneath keep
+ * their shared label gutter.
  */
 function SectionLabel({
   children,
@@ -108,11 +100,8 @@ function SectionLabel({
 interface ProcessDetailProps {
   process: ProcessEntry
   status: ProcessStatus
-  /**
-   * When the live generation was launched, in unix milliseconds — null when the
-   * service has never launched this entry. Only meaningful while the status is
-   * a live one, which is the only time it is shown.
-   */
+  /** Launch time of the live generation, unix ms; null if never launched. Only
+   *  meaningful (and only shown) while the status is live. */
   startedAt?: number | null
   /** Persist the seven text fields. Already coerced; the caller only writes. */
   onSave: (form: ProcessForm) => void
@@ -123,27 +112,21 @@ interface ProcessDetailProps {
   onVisibility: (visibility: Visibility) => void
   onRestart: () => void
   onKill: () => void
-  /** The advanced disclosure is owned above so it survives changing process. */
+  /** Owned above so it survives a process change. */
   advancedOpen?: boolean
   onAdvancedOpenChange?: (open: boolean) => void
 }
 
 /**
- * The detail form for one process.
+ * Detail form for one process. Two non-obvious behaviours:
  *
- * Two behaviours here are worth more than they look:
+ * Auto-save: no save button. A field writes `config.json` on blur/enter, but only
+ * when it differs from disk — otherwise tabbing through rewrites the file, and
+ * every rewrite makes the service re-read and re-upload the config.
  *
- * **Auto-save.** There is no save button. A field writes itself to
- * `config.json` when it loses focus or takes an enter key, but only if it
- * actually differs from what is on disk — otherwise merely tabbing through the
- * form would rewrite the file, and every rewrite makes the service re-read and
- * re-upload the config.
- *
- * **Deferred external refresh.** The web app and the service write this same
- * file. When one of them changes the selected process the panel takes the new
- * values immediately — except for a field the operator is typing in, which
- * would be intolerable to have change under the cursor. That field keeps its
- * text and picks up the change when focus leaves (`owlette_gui.py:1434-1448`).
+ * Deferred external refresh: the web app and the service write the same file.
+ * External changes apply immediately except to the field under the cursor, which
+ * keeps its text until focus leaves (`owlette_gui.py:1434-1448`).
  */
 export function ProcessDetail({
   process,
@@ -163,12 +146,12 @@ export function ProcessDetail({
   const [pendingRefresh, setPendingRefresh] = useState(false)
   const [editingSchedule, setEditingSchedule] = useState(false)
 
-  // The values last known to be on disk, so an incoming document can be told
-  // apart from the echo of our own write.
+  const scroller = useScrollFade<HTMLDivElement>()
+
+  // Last known on-disk values — distinguishes an incoming change from our echo.
   const synced = useRef<ProcessForm>(formFromProcess(process))
-  // What the draft was seeded with. The draft differing from *this* is the only
-  // proof the operator typed something — it will also differ from what is on
-  // disk whenever an external change is being held back.
+  // Seed of the draft: differing from THIS is the only proof the operator typed
+  // (the draft also differs from disk whenever an external change is held back).
   const seeded = useRef<ProcessForm>(formFromProcess(process))
   const shownId = useRef(process.id)
   const focused = useRef<TextField | null>(null)
@@ -180,11 +163,8 @@ export function ProcessDetail({
   // Which third of the segmented control the fill sits over.
   const modeIndex = LAUNCH_MODES.findIndex((option) => option.value === mode)
 
-  // Nothing owlette manages this entry with applies while it is off, so the
-  // recovery fields are dimmed to say so. They stay editable: setting them up
-  // before switching the mode on is exactly how an operator configures a new
-  // entry, and a form that locks fields the moment they matter least is a form
-  // that has to be fought.
+  // Recovery fields are dimmed while the entry is off (nothing applies), but stay
+  // editable — configuring them before switching the mode on is the normal flow.
   const unmanaged = mode === 'off'
   const live = isLive(status)
 
@@ -192,7 +172,7 @@ export function ProcessDetail({
     latest.current = process
     const next = formFromProcess(process)
 
-    // A different process is on screen: adopt it wholesale, cursor or not.
+    // Different process: adopt wholesale, cursor or not.
     if (shownId.current !== process.id) {
       shownId.current = process.id
       synced.current = next
@@ -220,15 +200,13 @@ export function ProcessDetail({
     (form: ProcessForm): boolean => {
       const coerced = coerceForm(form)
 
-      // The one field a soft save will not blank: an entry with no name cannot
-      // be found again in the list.
+      // Never soft-save a blank name: the entry becomes unfindable in the list.
       if (!coerced.name) return false
 
       const onDisk = formFromProcess(latest.current)
       if (formsEqual(coerced, onDisk)) {
-        // Nothing to write — but what was typed may not be what will be stored
-        // (a two-second initialise time is floored to ten), so the form has to
-        // stop showing a value the file does not hold.
+        // Nothing to write, but the typed value may not be the stored one (a 2s
+        // initialise time floors to 10), so stop showing a value disk lacks.
         seeded.current = onDisk
         setDraft(onDisk)
         return false
@@ -257,8 +235,7 @@ export function ProcessDetail({
   const handleBlur = useCallback(() => {
     focused.current = null
 
-    // An edit the operator made outranks a change that arrived while they were
-    // making it — last writer wins, and they are the one holding the keyboard.
+    // The operator's edit outranks a change that arrived mid-typing.
     if (!formsEqual(draft, seeded.current)) {
       save(draft)
       setPendingRefresh(false)
@@ -317,15 +294,9 @@ export function ProcessDetail({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/*
-        Same grid template as the form below, so the header is the first row of
-        one layout rather than a band of its own: `name` right-aligns with
-        `launch mode` and `exe`, and the field starts exactly where the segmented
-        control and every input do.
-
-        Name and status share this row because they are the two things an
-        operator looks at first — what this entry is, and what it is doing — and
-        because the name field never needed the full width of the pane. The row
-        it used to have below is a row of vertical space the form gets back.
+        Same grid template as the form below, so the header is that layout's first
+        row: `name` right-aligns with `launch mode` and `exe`, and the field starts
+        where every input does.
       */}
       <header
         data-testid="detail-header"
@@ -342,11 +313,7 @@ export function ProcessDetail({
           </TooltipContent>
         </Tooltip>
 
-        {/*
-          The two controls sit with the status word rather than across the pane
-          from it: they are what you do about what it says, and an operator
-          reading "running" should not have to travel to act on it.
-        */}
+        {/* Controls sit with the status word, not across the pane from it. */}
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           <Input
             id="name"
@@ -372,10 +339,8 @@ export function ProcessDetail({
           </Tooltip>
 
           {/*
-            `app_states.json` records when the service launched this generation
-            and nothing else about time, so this is a launch time — shown only
-            while that generation is the one still up, where "started" is a
-            statement the file can back.
+            `app_states.json` only records the launch of this generation, so this is
+            a launch time — shown only while that generation is still up.
           */}
           {live && startedAt !== null && (
             <Tooltip>
@@ -404,19 +369,13 @@ export function ProcessDetail({
                   <RotateCcw />
                 </Button>
               </TooltipTrigger>
-              {/*
-                Always offered, whatever the status: restart is launch-mode
-                aware, so on a managed entry that is down it is the way to ask
-                the service for it back.
-              */}
+              {/* Always offered: restart is launch-mode aware, so on a managed
+                  entry that is down it is how you ask the service for it back. */}
               <TooltipContent>restart — stop it and let the service bring it back</TooltipContent>
             </Tooltip>
             <Tooltip>
-              {/*
-                A disabled button receives no pointer events, so the wrapper is
-                what the tooltip hangs off — otherwise the one state that needs
-                explaining is the one state with no explanation.
-              */}
+              {/* A disabled button gets no pointer events, so the tooltip hangs
+                  off the wrapper. */}
               <TooltipTrigger asChild>
                 <span className="inline-flex">
                   <Button
@@ -440,7 +399,8 @@ export function ProcessDetail({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+      {/* Scrolls under the header rather than being clipped by it. */}
+      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
         <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
           {/* The name lives in the header row above; this is the rest of it. */}
           <SectionLabel first>what to run</SectionLabel>
@@ -544,31 +504,20 @@ export function ProcessDetail({
           </Tooltip>
           <div className="flex min-w-0 items-center gap-3">
             {/*
-              One bordered shell around two children: the three-mode group and
-              the schedule pencil, flush against each other with a single hairline
-              between — the same run of segments the dashboard draws, so the two
-              screens read alike.
-
-              The border, rounding and clipping live out here rather than on the
-              group so the pencil sits inside them; the group keeps only its own
-              geometry.
+              One bordered shell around the three-mode group and the schedule
+              pencil. Border/rounding/clipping live here, not on the group, so the
+              pencil sits inside them.
             */}
             <div className="flex w-fit overflow-hidden rounded-lg border border-border bg-card">
               {/*
-                Three states, all three always visible and one click apart —
-                a select would hide two of them behind a popover for no gain at
-                this width. The fill slides between segments rather than jumping,
-                which is what makes it read as one control with a position rather
-                than three buttons that change colour.
+                All three states visible, one click apart, with a sliding fill.
 
-                Equal columns are load-bearing: the indicator is a third of the
-                group wide and moves by whole multiples of itself, so segments
-                sized to their own labels ("off" against "scheduled") would leave
-                it landing short. `grid-cols-3` under `w-fit` gives every column
-                the width of the widest label — and it is why the pencil is a
-                sibling of this grid rather than a fourth cell in it: a fourth
-                column would make the indicator a quarter wide and land it short
-                of every segment.
+                EQUAL COLUMNS ARE LOAD-BEARING: the indicator is a third of the
+                group wide and moves in whole multiples of itself, so label-sized
+                segments would leave it landing short. `grid-cols-3` under `w-fit`
+                gives every column the widest label's width — and is why the pencil
+                is a SIBLING of this grid, not a fourth cell (a fourth column would
+                make the indicator a quarter wide).
               */}
               <div
                 role="radiogroup"
@@ -594,10 +543,8 @@ export function ProcessDetail({
                       role="radio"
                       aria-checked={active}
                       data-testid={`launch-mode-${option.value}`}
-                      // Clicking the mode it is already in is not a change. The
-                      // select this replaced swallowed those too, and the caller
-                      // writes config.json for every one it is told about — which
-                      // makes the service re-read and re-upload for nothing.
+                      // Re-clicking the current mode is not a change; the caller
+                      // writes config.json for every one it is told about.
                       onClick={() => !active && onLaunchMode(option.value)}
                       className={cn(
                         'relative z-10 flex cursor-pointer items-center px-3 text-xs font-medium transition-colors',
@@ -612,19 +559,11 @@ export function ProcessDetail({
                 })}
               </div>
               {/*
-                Always offered, in every launch mode.
-
-                It used to appear only once the entry was already `scheduled`,
-                which put the windows behind the mode that needs them — and a
-                scheduled entry with no windows runs at all times, so committing
-                to the mode first did the opposite of what it looked like. Two
-                walkthroughs ran into exactly that.
-
-                Editing from `off` or `always on` is pre-configuring: the windows
-                are stored and the mode stays where it was. The segmented control
-                is still the only thing that changes a launch mode — which is why
-                the pencil is painted as an inactive segment and never picks up a
-                fill: it opens an editor, it does not select a mode.
+                Offered in EVERY launch mode. Gating it on `scheduled` put the
+                windows behind the mode that needs them, and a scheduled entry with
+                no windows runs always — two walkthroughs hit that. Editing from
+                `off`/`always on` just stores windows; only the segmented control
+                changes a mode, which is why the pencil never takes a fill.
               */}
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -655,17 +594,12 @@ export function ProcessDetail({
             recovery
           </SectionLabel>
 
-          {/*
-            Dimmed, not disabled: these three are what the service does with a
-            process it manages, and an entry that is off is not managed — but the
-            usual way to set one up is to fill this in *before* switching it on.
-          */}
+          {/* Dimmed, not disabled — see the isOff note above. */}
           <div
             className={cn(
               'contents [&>*]:transition-opacity',
-              // Full strength for whichever field is being typed into: dimmed is
-              // a statement about when these apply, and it should not be a
-              // statement about the field under the cursor.
+              // Full strength for the focused field: the dimming is about when
+              // these apply, not about what is under the cursor.
               unmanaged && '[&>*]:opacity-70 [&>*]:focus-within:opacity-100',
             )}
             data-testid="recovery-fields"
@@ -721,11 +655,7 @@ export function ProcessDetail({
             />
           </div>
 
-          {/*
-            Priority and visibility are set once, if ever — they were taking the
-            same weight on screen as the fields every entry needs. Folded away,
-            they are one click from where they always were.
-          */}
+          {/* Priority and visibility are set once, if ever — folded away. */}
           <Collapsible
             open={advancedOpen}
             onOpenChange={onAdvancedOpenChange}
@@ -804,11 +734,10 @@ export function ProcessDetail({
       </div>
 
       {/*
-        Mounted only while it is open — the editor seeds its draft once, in a
-        state initializer, so remounting is what makes a second visit show what
-        is on disk rather than the last draft. Kept outside the mode-conditional
-        markup above so a launch-mode change arriving from the web app mid-edit
-        cannot pull the dialog out from under the operator.
+        Mounted only while open: the editor seeds its draft in a state initializer,
+        so the remount is what makes a second visit show disk instead of the last
+        draft. Outside the mode-conditional markup so a launch-mode change from the
+        web app mid-edit can't yank the dialog away.
       */}
       {editingSchedule && (
         <ScheduleEditor

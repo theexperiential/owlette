@@ -3,23 +3,17 @@ import { cn } from '@/lib/utils'
 
 interface ProcessListEmptyProps {
   /**
-   * True while a file is being dragged over the window.
-   *
-   * The window is the drop target, not this box — `useFileDrop` owns the state
-   * and it arrives here as a prop, so the two never disagree about whether
-   * something is hovering.
+   * True while a file is dragged over the WINDOW — the window is the drop
+   * target, not this box, so `useFileDrop` owns the state and passes it down.
    */
   dragOver?: boolean
   className?: string
 }
 
 /**
- * What a fresh install looks like: nothing to supervise yet, and the fastest
- * way to change that.
- *
- * Dropping a file is the primary route on purpose — it is one gesture against a
- * form with nine fields — so it gets the drop-zone framing, and the button in
- * the header is named as the alternative rather than repeated as one.
+ * The fresh-install empty state. Dropping a file is the primary route on
+ * purpose — one gesture versus a nine-field form — so it gets the drop-zone
+ * framing and the header button is named as the alternative, not repeated.
  */
 export function ProcessListEmpty({ dragOver = false, className }: ProcessListEmptyProps) {
   return (

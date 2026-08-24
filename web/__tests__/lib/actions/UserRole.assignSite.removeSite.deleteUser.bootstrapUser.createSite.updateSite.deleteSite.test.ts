@@ -49,23 +49,22 @@ class FakeDb {
   }
 
   /**
-   * Collection-group reads, for `deleteUser`'s fleet-wide talon lookup. Matches
-   * on the last collection segment of a path rather than a prefix, and exposes
-   * `ref.parent.parent.id` so the caller can recover the owning site.
+   * Collection-group reads for `deleteUser`'s fleet-wide talon lookup. Matches
+   * the last path segment, not a prefix, and exposes `ref.parent.parent.id` so
+   * callers can recover the owning site.
    */
   collectionGroup(id: string): FakeCollectionGroup {
     return new FakeCollectionGroup(this, id);
   }
 
   /**
-   * Write batch, for the talon store's all-or-nothing reassign commit and
-   * for createSite's site-doc + owner-membership pair.
+   * Write batch — the talon store's all-or-nothing reassign, and createSite's
+   * site-doc + owner-membership pair.
    *
-   * Models the two real-Firestore behaviours the callers depend on, which a
-   * naive sequential apply would not: `update` against a missing document
-   * fails, and a failed commit writes nothing at all. `FakeDoc.update` on its
-   * own deliberately keeps its upsert behaviour — plenty of existing tests
-   * rely on it — so the strictness lives here, at the batch boundary.
+   * Models the two real-Firestore behaviours a naive sequential apply misses:
+   * `update` on a missing doc fails, and a failed commit writes nothing.
+   * `FakeDoc.update` keeps its upsert behaviour (existing tests rely on it), so
+   * the strictness lives here at the batch boundary.
    */
   batch() {
     const ops: Array<{
@@ -121,9 +120,8 @@ interface FakeQuerySnapshot {
 }
 
 /**
- * Minimal collection/query fake. `where` supports equality only and `limit`
- * truncates — enough for the owner-scoped lookups these actions run, without
- * pulling in a Firestore emulator.
+ * Minimal collection/query fake: `where` is equality-only, `limit` truncates.
+ * Enough for these owner-scoped lookups without a Firestore emulator.
  */
 class FakeCollection {
   constructor(
@@ -164,9 +162,8 @@ class FakeCollection {
 }
 
 /**
- * Collection-group query fake. Equality filters only; `orderBy` sorts by the
- * field's string form, matching the `createdBy == uid, orderBy name` shape the
- * talon store issues.
+ * Collection-group query fake. Equality only; `orderBy` sorts on the field's
+ * string form, matching the talon store's `createdBy == uid, orderBy name`.
  */
 class FakeCollectionGroup {
   constructor(
@@ -282,8 +279,8 @@ function isFieldOp(
 
 const ctx = {
   auditActor: 'user:admin',
-  // `deleteUser` carries the authorized caller into the talon store's audit
-  // context; the other action cores ignore the extra field.
+  // `deleteUser` needs the caller for the talon store's audit context; other
+  // action cores ignore the extra field.
   actor: { type: 'user' as const, userId: 'admin', role: 'superadmin' as const, sites: [] },
   endpoint: '/test',
   method: 'POST',
@@ -454,9 +451,9 @@ describe('deleteUser', () => {
       db: db.asFirestore(),
     });
 
-    // The count is the warning; without `reassignTalons` nothing moves. This is
-    // the deliberate half: an api client that has always passed `successorUid`
-    // must not discover it now rewrites authorship.
+    // The count is the warning; without `reassignTalons` nothing moves — an api
+    // client that always passed `successorUid` must not suddenly find it
+    // rewriting authorship.
     expect(result).toMatchObject({
       kind: 'deleted',
       authoredTalonCount: 2,
@@ -512,7 +509,7 @@ describe('deleteUser', () => {
       revokedKeyIds: [],
     });
     const db = talonDb();
-    // bob is an admin of site-a only; the talon on site-b is out of his reach.
+    // bob admins site-a only; the site-b talon is out of reach.
     db.seed('sites/site-b/talons/t3', {
       name: 'atrium sweep',
       enabled: true,
@@ -527,9 +524,8 @@ describe('deleteUser', () => {
       db: db.asFirestore(),
     });
 
-    // The account is already gone by this point, so a per-site refusal is
-    // reported rather than thrown — otherwise the operator would have no way
-    // to learn which automations were left behind.
+    // The account is already gone, so a per-site refusal is reported, not
+    // thrown — otherwise nobody learns which automations were left behind.
     expect(result).toMatchObject({ kind: 'deleted', authoredTalonCount: 3 });
     const failures = (result as { talonReassignFailures: { siteId: string }[] })
       .talonReassignFailures;
@@ -568,6 +564,9 @@ describe('bootstrapUser', () => {
       sites: [],
       mfaEnrolled: false,
       requiresMfaSetup: true,
+      // Seeded at creation so a new account is never "legacy", i.e. never needs
+      // normalizeMfaFactors to backfill the inventory.
+      mfaFactors: { totp: false, passkeys: 0 },
       preferences: {
         temperatureUnit: 'C',
         timezone: 'America/Los_Angeles',
@@ -641,11 +640,10 @@ describe('site CRUD actions', () => {
       owner: 'owner-1',
       timezone: 'Not/AZone',
     });
-    // The regression this guards: stamping `owner` alone left the site
-    // invisible to its creator, because the client site list resolves
-    // `users/{uid}.sites[]` and never queries by owner. Asserting the
-    // membership entry is the whole point — an owner-only write passes
-    // every other assertion in this test.
+    // Regression: stamping `owner` alone left the site invisible to its creator,
+    // because the client list resolves `users/{uid}.sites[]` and never queries
+    // by owner. The membership assertion is the point — an owner-only write
+    // passes every other assertion here.
     expect(db.docs.get('users/owner-1')?.sites).toEqual(['site-a']);
   });
 
@@ -655,8 +653,7 @@ describe('site CRUD actions', () => {
 
     await runCreateSite(db);
 
-    // arrayUnion, not an overwrite: a user creating their second site must
-    // not lose access to the first.
+    // arrayUnion, not overwrite — a second site must not drop access to the first.
     expect(db.docs.get('users/owner-1')?.sites).toEqual(['existing-site', 'site-a']);
   });
 
@@ -665,10 +662,9 @@ describe('site CRUD actions', () => {
 
     await expect(runCreateSite(db)).rejects.toThrow();
 
-    // Atomicity: the batch fails as a unit, so no orphaned site doc is left
-    // behind for nobody to see. The route's assertActiveUser makes this
-    // unreachable in production; the guard is here so a future caller that
-    // skips it fails loudly instead of recreating the original bug.
+    // The batch fails as a unit, so no orphaned site doc survives. The route's
+    // assertActiveUser makes this unreachable in prod; the guard is here so a
+    // future caller that skips it fails loudly instead of recreating the bug.
     expect(db.docs.get('sites/site-a')).toBeUndefined();
   });
 

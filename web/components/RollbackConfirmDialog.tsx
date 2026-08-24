@@ -1,23 +1,13 @@
 'use client';
 
 /**
- * RollbackConfirmDialog — confirm flipping the version pointer to a
- * prior version, showing exactly what changes (roost wave 3.7).
+ * Confirm flipping a roost's `currentVersionId` (an atomic compare-and-swap) to a prior
+ * version. The risk is the operator not knowing what is about to reach the fleet, so the
+ * dialog answers: which files differ, the net byte delta, and canary vs flip-all.
  *
- * Rolling back a roost is an atomic compare-and-swap on the roost doc's
- * `currentVersionId`. From the operator's perspective, the dangerous
- * part isn't the API call — it's not knowing what they're about to push
- * to the fleet. This dialog answers three questions:
- *
- *   1. What files differ between now and the target?
- *   2. How much data is being moved (net delta)?
- *   3. Do we ease it in via canary, or flip everything at once?
- *
- * Decision logic lives in `web/lib/versionDiff.ts`. This component is
- * presentation + the HTTP POST to `/api/roosts/{roostId}/rollback`.
- * Until wave 2a.6 wires the route, the endpoint returns 501 and the
- * dialog surfaces that to the operator verbatim — better than a
- * misleading "done" toast.
+ * Diff logic lives in web/lib/versionDiff.ts; this is presentation plus the POST to
+ * /api/roosts/{roostId}/rollback. A 501 from an unwired route is surfaced verbatim rather
+ * than faked as success.
  */
 
 import { useMemo, useState } from 'react';
@@ -95,9 +85,8 @@ export function RollbackConfirmDialog({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           siteId,
-          // targetVersion accepts either a versionNumber or a versionId/alias
-          // — server-side resolver handles both. Prefer the number when we
-          // have it (more user-readable in audit logs).
+          // The resolver takes a number, id, or alias; prefer the number — it reads better
+          // in audit logs.
           targetVersion:
             targetVersion.versionNumber ?? targetVersion.versionId,
           strategy,
@@ -286,10 +275,6 @@ export function RollbackConfirmDialog({
 
 export default RollbackConfirmDialog;
 
-/* --------------------------------------------------------------------- */
-/*  Internal                                                             */
-/* --------------------------------------------------------------------- */
-
 interface DiffTileProps {
   icon?: React.ReactNode;
   label: string;
@@ -329,10 +314,7 @@ function KindBadge({ kind }: { kind: 'added' | 'removed' | 'changed' }) {
   );
 }
 
-/**
- * Parse an RFC 7807 problem+json body (our roost error envelope). Returns
- * the body if it looks like one, or null if the response isn't JSON.
- */
+/** RFC 7807 problem+json body, or null when the response isn't JSON. */
 async function parseProblemJson(
   res: Response,
 ): Promise<{ type?: string; title?: string; detail?: string } | null> {

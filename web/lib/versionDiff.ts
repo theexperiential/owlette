@@ -1,15 +1,10 @@
 /**
- * Pure version diff for roost rollback UI (wave 3.7).
+ * Pure version diff for the roost rollback dialog: partition `from` (live) and
+ * `to` (target) into add/remove/change/unchanged so the operator sees what will
+ * happen before flipping the pointer.
  *
- * Given two versions (the current `from` and the rollback target `to`),
- * partition their files into add/remove/change/unchanged buckets so the
- * rollback dialog can show "what will actually happen" before the
- * operator flips the pointer.
- *
- * This mirrors the agent-side diff in `agent/src/sync_version.py` but
- * at the file-level granularity the UI cares about, not the chunk level.
- * Two files are "unchanged" iff they have the same ordered chunk-hash
- * sequence — same bytes, same order.
+ * Mirrors `agent/src/sync_version.py` but at FILE granularity, not chunk.
+ * Unchanged iff the ordered chunk-hash sequence matches.
  */
 
 import type { VersionFileEntry } from './chunking';
@@ -30,10 +25,8 @@ export interface VersionDiffResult {
 }
 
 /**
- * Diff file lists between two versions. `from` is the current / live
- * version; `to` is the target (for rollback: an older version).
- * "Added" means it exists in `to` but not `from` — i.e., after the
- * rollback completes, this file will appear on the agents.
+ * Diff two versions' file lists. `from` is live, `to` is the target — so "added"
+ * means the file appears on the agents once the rollback completes.
  */
 export function diffVersions(
   from: readonly VersionFileEntry[],
@@ -50,8 +43,6 @@ export function diffVersions(
   const changed: VersionDiffResult['changed'] = [];
   const unchanged: VersionFileEntry[] = [];
 
-  // Walk `to`: decide for each target file whether it's new, changed,
-  // or unchanged vs the current version.
   for (const toFile of to) {
     const fromFile = fromByPath.get(toFile.path);
     if (!fromFile) {
@@ -65,14 +56,14 @@ export function diffVersions(
     }
   }
 
-  // Walk `from`: any file not present in `to` gets removed by rollforward.
+  // Anything not in `to` gets removed.
   for (const fromFile of from) {
     if (!toByPath.has(fromFile.path)) {
       removed.push(fromFile);
     }
   }
 
-  // Stable ordering for deterministic UI.
+  // Deterministic UI ordering.
   added.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   removed.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   changed.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
@@ -90,10 +81,6 @@ function sameContent(a: VersionFileEntry, b: VersionFileEntry): boolean {
   return true;
 }
 
-/* --------------------------------------------------------------------- */
-/*  Summary for the dialog header                                        */
-/* --------------------------------------------------------------------- */
-
 export interface DiffSummary {
   added: number;
   removed: number;
@@ -101,11 +88,7 @@ export interface DiffSummary {
   unchanged: number;
   /** Any material change? false = rollback would be a no-op. */
   hasChanges: boolean;
-  /**
-   * Net byte delta: `to.totalBytes - from.totalBytes`. Positive means the
-   * rollback target is larger; negative means smaller. Useful for a quick
-   * "you'll reclaim ~2 GB" note in the dialog.
-   */
+  /** `to` bytes minus `from` bytes; negative means the rollback reclaims space. */
   netBytesDelta: number;
 }
 
@@ -127,15 +110,7 @@ export function summariseDiff(
   };
 }
 
-/* --------------------------------------------------------------------- */
-/*  Rollout strategy                                                     */
-/* --------------------------------------------------------------------- */
-
 export type RolloutStrategy = 'canary' | 'all_at_once';
 
-/**
- * Default strategy: canary. Rolling back all-at-once defeats the point
- * of the canary machinery on the server (wave 2b.3) — a bad rollback
- * still shouldn't hit the fleet simultaneously.
- */
+/** Canary by default — a bad rollback must not hit the whole fleet at once. */
 export const DEFAULT_ROLLOUT_STRATEGY: RolloutStrategy = 'canary';

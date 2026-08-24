@@ -1,45 +1,48 @@
 /**
- * Running the agent's python helper, and reading what it says back.
+ * Run the agent's python helper and read what it says back.
  *
- * Pairing, leaving a site and filing a bug report all need the agent's cloud
- * client and its encrypted token store, which this app deliberately does not
- * have. The host spawns `agent/src/configure_site.py` instead (see
- * `src-tauri/src/agent_cli.rs`) and forwards every line it writes as an
- * `owlette://agent-cli` event. This module turns that stream into one promise
- * per run.
+ * Pairing, leaving a site and filing a bug report need the agent's cloud client
+ * and encrypted token store, which this app deliberately does not have. The
+ * host spawns `agent/src/configure_site.py` (`src-tauri/src/agent_cli.rs`) and
+ * forwards every line as an `owlette://agent-cli` event; this module turns that
+ * stream into one promise per run.
  *
- * The wire format is one JSON object per line:
- * `{"event": "phrase" | "status" | "authorized" | "done" | "error", "value": …}`
- * — the "Headless modes" section of `configure_site.py` is the other half of
- * this contract, and a change on either side has to be made on both.
+ * Wire format is one JSON object per line:
+ * `{"event": "phrase"|"status"|"authorized"|"done"|"error", "value": …}`.
+ * The "Headless modes" section of `configure_site.py` is the other half —
+ * change both sides together.
+ *
+ * `join` may additionally name the cloud it pairs against; the host turns that
+ * into `--server dev|prod`, and omitting it keeps the config's current
+ * environment. `agent_cli::MODES` in `desktop/src-tauri/src/agent_cli.rs` is
+ * the other half of that contract — the mode names and which of them carry a
+ * server live there.
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-/** Event name the host emits for every line, and for the exit. */
+/** Emitted per line and on exit. */
 const EVENT_AGENT_CLI = 'owlette://agent-cli'
 
-/** The modes the host will run. Mirrors `agent_cli::MODES`. */
+/** Mirrors `agent_cli::MODES`. */
 export type AgentMode = 'join' | 'leave' | 'report-issue' | 'reboot-now' | 'dismiss-reboot'
 
-/** The pairing phrase and where to approve it. */
 export interface PairPhrase {
   pairPhrase: string
   /** owlette.app/add with the phrase pre-filled. */
   pairingUrl: string
   verificationUri: string
-  /** Seconds the phrase stays valid. */
+  /** Seconds until the phrase expires. */
   expiresIn: number
 }
 
-/** The outcome of a successful pairing. */
 export interface Authorized {
   siteId: string
   /**
-   * False when the helper could not restart the service afterwards — NSSM needs
-   * rights a standard user does not have. Pairing still succeeded, but the
-   * machine will not appear on the dashboard until the service is restarted.
+   * False when the helper couldn't restart the service (needs rights a standard
+   * user lacks). Pairing still succeeded, but the machine stays off the
+   * dashboard until the service restarts.
    */
   serviceRestarted: boolean
 }
@@ -51,14 +54,14 @@ export type AgentEvent =
   | { event: 'done'; value: Record<string, unknown> }
   | { event: 'error'; value: string }
 
-/** Events that end a run. Exactly one is emitted per successful protocol run. */
+/** Run-ending events; exactly one per successful protocol run. */
 const TERMINAL_EVENTS = ['authorized', 'done', 'error'] as const
 
 export function isTerminal(event: AgentEvent): boolean {
   return (TERMINAL_EVENTS as readonly string[]).includes(event.event)
 }
 
-/** One line of output, or the child's exit. Mirrors `agent_cli::AgentCliEvent`. */
+/** One output line, or the exit. Mirrors `agent_cli::AgentCliEvent`. */
 interface AgentCliLine {
   run: string
   stream: 'stdout' | 'stderr' | 'exit'
@@ -67,11 +70,9 @@ interface AgentCliLine {
 }
 
 /**
- * Parse one stdout line.
- *
- * Anything that is not a well-formed event is ignored rather than thrown:
- * python can write a warning to stdout that we did not ask for, and losing a
- * progress line must never fail a pairing that is otherwise going fine.
+ * Parse one stdout line. Malformed input is ignored, never thrown: python can
+ * write unsolicited warnings to stdout, and a lost progress line must not fail
+ * an otherwise-fine pairing.
  */
 export function parseAgentLine(line: string): AgentEvent | null {
   const trimmed = line.trim()
@@ -111,8 +112,7 @@ export function parseAgentLine(line: string): AgentEvent | null {
         event: 'authorized',
         value: {
           siteId: typeof authorized.siteId === 'string' ? authorized.siteId : '',
-          // Assume the restart worked when the helper did not say: an older
-          // helper that omits the field did restart the service.
+          // Absent means an older helper, which did restart the service.
           serviceRestarted: authorized.serviceRestarted !== false,
         },
       }
@@ -130,35 +130,34 @@ export function parseAgentLine(line: string): AgentEvent | null {
 }
 
 export interface AgentRunOutcome {
-  /** The process exit code; null when it could not be reaped. */
+  /** Exit code; null when the process couldn't be reaped. */
   code: number | null
-  /** The last terminal event seen, or null when the helper died mid-protocol. */
+  /** Last terminal event, or null if the helper died mid-protocol. */
   terminal: AgentEvent | null
-  /** Everything written to stderr, for a diagnostic nothing else explains. */
+  /** Full stderr, for diagnostics nothing else explains. */
   stderr: string
 }
 
 export interface AgentRunOptions {
-  /** Payload for `report-issue`; every other mode takes none. */
+  /** `report-issue` only; every other mode takes none. */
   payload?: unknown
+  /** 'join' only: which owlette server to pair against. Omitted = the config's environment. */
+  server?: 'dev' | 'prod'
   onEvent?: (event: AgentEvent) => void
 }
 
 export interface AgentRun {
-  /** Host-assigned run id. */
   id: string
-  /** Resolves when the helper exits, however it exits. */
+  /** Resolves however the helper exits. */
   completed: Promise<AgentRunOutcome>
-  /** Kill the helper. Safe to call after it has already exited. */
+  /** Kill the helper. Safe after it has exited. */
   cancel: () => Promise<void>
 }
 
 /**
- * The message shown when a run ends without saying why.
- *
- * A helper that exits non-zero having emitted no `error` has crashed before its
- * own handler could run — a missing interpreter, an import error — and the
- * stderr tail is the only useful thing left to show.
+ * Message for a run that ends without saying why. Non-zero exit with no `error`
+ * event means it crashed before its own handler ran (missing interpreter,
+ * import error), so the stderr tail is all that's left.
  */
 function unexplained(outcome: { code: number | null; stderr: string }): string {
   const tail = outcome.stderr.trim().split('\n').filter(Boolean).slice(-3).join('\n')
@@ -167,11 +166,9 @@ function unexplained(outcome: { code: number | null; stderr: string }): string {
 }
 
 /**
- * Start a run and stream it.
- *
- * The event subscription is opened *before* the helper is spawned and buffers
- * everything it sees, because the host can emit the first line before `invoke`
- * has resolved the run id back to us — pairing emits a status line immediately.
+ * Start a run and stream it. The subscription opens BEFORE the spawn and
+ * buffers, because the host can emit its first line before `invoke` resolves
+ * the run id back to us — pairing emits a status line immediately.
  */
 export async function startAgentRun(
   mode: AgentMode,
@@ -225,13 +222,14 @@ export async function startAgentRun(
     id = await invoke<string>('agent_cli_start', {
       mode,
       payload: options.payload ?? null,
+      server: options.server ?? null,
     })
   } catch (cause) {
     await unlisten()
     throw cause
   }
 
-  // Drain whatever arrived while the id was in flight, in order.
+  // Drain what arrived while the id was in flight, in order.
   for (const payload of buffered.splice(0)) handle(payload)
 
   return {
@@ -241,17 +239,15 @@ export async function startAgentRun(
       try {
         await invoke<boolean>('agent_cli_cancel', { run: id })
       } catch {
-        // The run had already finished; its exit event settles the promise.
+        // Already finished; the exit event settles the promise.
       }
     },
   }
 }
 
 /**
- * Run a mode to completion and reject with something worth showing.
- *
- * Used by everything that has no progress to render — leaving a site, filing a
- * report, dismissing a pending reboot.
+ * Run a mode to completion, rejecting with something worth showing. For modes
+ * with no progress to render — leave, report-issue, dismiss-reboot.
  */
 export async function runAgent(
   mode: AgentMode,
@@ -265,7 +261,7 @@ export async function runAgent(
   return outcome
 }
 
-/** Open a file or folder inside the owlette tree with its default handler. */
+/** Open a path inside the owlette tree with its default handler. */
 export function openOwlettePath(path: string): Promise<void> {
   return invoke<void>('open_owlette_path', { path })
 }

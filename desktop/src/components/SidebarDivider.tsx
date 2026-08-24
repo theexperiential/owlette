@@ -17,27 +17,23 @@ interface SidebarDividerProps {
   /** Called once when the gesture ends, to persist what was landed on. */
   onCommit?: () => void
   /**
-   * Fires when a pointer drag starts and ends. The aside animates its width
-   * for toggle/keyboard collapses but must NOT while a drag is tracking the
-   * pointer — an eased width fighting the cursor reads as lag.
+   * Drag start/end. The aside animates width for toggle/keyboard collapses but
+   * must NOT during a drag — an eased width fighting the cursor reads as lag.
    */
   onDraggingChange?: (dragging: boolean) => void
   className?: string
 }
 
 /**
- * The line between the process list and the detail pane, and the handle that
- * moves it.
+ * The line between the process list and the detail pane, plus its drag handle.
  *
- * It is the border it replaces — one hairline, painted in the same token — until
- * a pointer approaches, so nothing about the window advertises that this is a
- * control until it is useful. The grab area is nine pixels wide even though the
- * line is one: a 1 px hit target is a game, not an affordance.
+ * Renders as the hairline border it replaces (same token) until a pointer
+ * approaches, so it doesn't advertise itself. The grab area is 9px wide though
+ * the line is 1px — a 1px hit target is not an affordance.
  *
- * Dragged far enough left the sidebar collapses to its icon rail rather than
- * disappearing, and dragging back out restores the width it had. That is the
- * collapse gesture; the rail's own toggle is the same state reached by a click,
- * for operators who never think to drag a border.
+ * Dragged far enough left it collapses to the icon rail rather than vanishing;
+ * dragging back out restores the previous width. The rail's toggle reaches the
+ * same state by click, for operators who never think to drag a border.
  */
 export function SidebarDivider({
   layout,
@@ -58,9 +54,8 @@ export function SidebarDivider({
       startX: event.clientX,
       start: layout,
     }
-    // Capture keeps the moves coming while the pointer is over the webview's
-    // other panes — and over the detail pane's inputs, which would otherwise
-    // swallow them.
+    // Capture keeps moves flowing over the other panes — the detail pane's
+    // inputs would otherwise swallow them.
     event.currentTarget.setPointerCapture(event.pointerId)
     setDragging(true)
     onDraggingChange?.(true)
@@ -79,8 +74,7 @@ export function SidebarDivider({
     drag.current = null
     setDragging(false)
     onDraggingChange?.(false)
-    // Pointer capture is released implicitly after this event, as it is in the
-    // process list's own drag.
+    // Capture releases implicitly after this event.
     onCommit?.()
   }
 
@@ -93,10 +87,9 @@ export function SidebarDivider({
 
   return (
     <div
-      // The window-splitter pattern: a focusable separator carrying the range it
-      // moves through, so the width is legible to a screen reader and to the
-      // keyboard without a visible label. The rail is the bottom of that range —
-      // the one width below the minimum the column is allowed to take.
+      // Window-splitter pattern: a focusable separator carrying its range, so
+      // the width is legible to a screen reader without a visible label. The
+      // rail is the bottom of that range — one width below the column minimum.
       role="separator"
       aria-orientation="vertical"
       aria-label="resize the process list"

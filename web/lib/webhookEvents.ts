@@ -1,10 +1,6 @@
 /**
- * Canonical roost webhook event catalog.
- *
- * Single source of truth for:
- *   - subscription validation (which event names users may subscribe to)
- *   - dispatcher publishing (enum used when fanning out in wave 6.9)
- *   - sdk/probe type hints
+ * Canonical roost webhook event catalog — single source of truth for subscription
+ * validation, dispatcher publishing, and sdk/probe type hints.
  *
  * Mirrors docs/api/webhooks.md — keep both in sync when adding events.
  */
@@ -40,10 +36,8 @@ export function isValidWebhookEvent(event: string): event is RoostWebhookEvent {
 }
 
 /**
- * Validate a user-supplied events[] array against the catalog.
- *
- * Returns the normalized (deduped) list on success, or a list of unknown
- * event names on failure.
+ * Validate a user-supplied events[] array against the catalog. Returns the normalized
+ * (deduped) list, or the list of unknown event names on failure.
  */
 export function validateEvents(
   events: unknown,

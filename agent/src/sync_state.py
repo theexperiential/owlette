@@ -1,31 +1,21 @@
 """
 sync_state — crash-safe local state for roost (project distribution v2).
 
-tracks per-roost sync progress in a SQLite database with WAL journaling
-so that an agent crash, power loss, or service restart NEVER loses state.
-the version cache + chunk-download progress + reassembly intent live
-here; on startup, the agent walks pending sync ops and resumes them.
+per-roost sync progress in SQLite with WAL journaling, so a crash, power loss
+or service restart never loses state; on startup the agent resumes pending ops.
 
-design principles:
-- single state DB per agent install at %PROGRAMDATA%\Owlette\sync-state.db on
-  windows, or $XDG_DATA_HOME/owlette/sync-state.db (≡ ~/.local/share/owlette/)
-  on POSIX. kept OUT of the user's Documents tree so the cache can't leak into
-  the same directory as user-visible assembled files.
-- WAL mode for atomic writes + concurrent readers (the cortex MCP can read
-  sync state without blocking the worker thread)
-- every long-running op writes a row BEFORE starting and updates rows
-  rather than deleting+inserting (audit trail for postmortems)
-- foreign keys enabled; cascade deletes when a roost is removed
-- schema migration via PRAGMA user_version + numbered migration steps
+- one DB per install: %PROGRAMDATA%\Owlette\sync-state.db, or
+  $XDG_DATA_HOME/owlette/sync-state.db on POSIX. deliberately outside the
+  user's Documents tree so the cache cannot mix with assembled files.
+- WAL: atomic writes plus concurrent readers (cortex MCP reads without
+  blocking the worker thread).
+- rows are written BEFORE a long op and updated, never deleted+reinserted —
+  the history is the postmortem trail.
+- foreign keys on (cascade delete with a roost); migrations via
+  PRAGMA user_version.
 
-NOT this module's job:
-- chunk download (sync_downloader.py)
-- file reassembly (sync_assembler.py)
-- version fetch + diff (sync_version.py)
-- HTTP, network, or filesystem I/O (only SQLite)
-
-reference: roost plan, wave 4a.4. consumed by sync_version, sync_downloader,
-sync_assembler, sync_commands.
+SQLite only. download, reassembly and version fetch live in sync_downloader,
+sync_assembler and sync_version.
 """
 
 from __future__ import annotations
@@ -41,14 +31,11 @@ from typing import Any, Iterable, Iterator, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
-# sqlite schema version stamped into PRAGMA user_version. lets an in-place
-# upgrade detect "this DB was created by a previous shape" and migrate it.
-# _create_schema() is the source of truth for a FRESH DB (it always builds the
-# latest shape); existing DBs are brought forward by the numbered steps in
-# _MIGRATIONS. bump this and add a matching migration whenever the schema
-# changes.
+# stamped into PRAGMA user_version. _create_schema() builds a FRESH DB at the
+# latest shape; existing DBs step forward through _MIGRATIONS. bump this AND add
+# a migration on every schema change.
 #
-# v1 -> v2: the roost rename (folder->roost, manifest->version) renamed three
+# v1 -> v2: roost rename (folder->roost, manifest->version) renamed three
 #           distributions columns; see _migrate_1_to_2.
 SCHEMA_VERSION = 2
 
@@ -75,15 +62,12 @@ def _default_state_db_path() -> str:
     return os.path.join(os.path.expanduser('~'), '.local', 'share', 'owlette', 'sync-state.db')
 
 
-# default state DB location. computed lazily so a test-time env override
-# (XDG_DATA_HOME) takes effect; call sites that need the string should use
-# _default_state_db_path() rather than DEFAULT_STATE_DB_PATH directly.
+# computed lazily so a test-time XDG_DATA_HOME override takes effect — call
+# _default_state_db_path(), not DEFAULT_STATE_DB_PATH.
 DEFAULT_STATE_DB_PATH = _default_state_db_path()
 
-# distribution states that are still in flight: their chunks are either
-# being downloaded or about to be assembled, so the content-store reaper
-# must leave those blobs alone. every other state ('committed', 'failed',
-# 'cancelled') is terminal — a resume never happens from those rows.
+# in-flight states — the content-store reaper must not touch their blobs.
+# 'committed' / 'failed' / 'cancelled' are terminal; no resume from those.
 ACTIVE_DISTRIBUTION_STATES = ('pending', 'downloading', 'verifying', 'assembling')
 
 # transition states for chunk + file rows.
@@ -103,20 +87,14 @@ def _migrate_1_to_2(conn: sqlite3.Connection) -> None:
     """
     schema v1 -> v2: the roost rename (folder -> roost, manifest -> version).
 
-    DBs created before the rename carry the old column names on the
-    distributions table (folder_id / manifest_id / manifest_url); the current
-    code reads the new ones (roost_id / version_id / version_url), so an
-    unmigrated DB raises `IndexError: No item with that key` on every row
-    access — e.g. the hourly scrub, and any real sync against those rows.
-    SQLite 3.25+ RENAME COLUMN updates the column plus every constraint/index
-    that references it (the UNIQUE natural key included), preserving all rows.
+    pre-rename DBs carry folder_id / manifest_id / manifest_url, so current
+    code raises `IndexError: No item with that key` on every row. SQLite 3.25+
+    RENAME COLUMN also fixes the constraints and indexes referencing them.
 
-    idempotent per column: interim dev builds created DBs with the NEW column
-    names while still stamping user_version 1 (the version bump and the rename
-    did not land together). renaming a column that is already gone raises
-    OperationalError, the failed txn rolls back the version stamp, and the
-    same crash then repeats on every open (TEC-B4A's hourly scrub,
-    2026-08-17) — so each rename first checks its source column exists.
+    per-column existence check because interim dev builds stamped
+    user_version 1 with the NEW names: renaming a missing column raises
+    OperationalError, rolls back the version stamp, and re-crashes on every
+    open (TEC-B4A hourly scrub, 2026-08-17).
     """
     columns = {row[1] for row in conn.execute('PRAGMA table_info(distributions)')}
     renames = (
@@ -129,9 +107,8 @@ def _migrate_1_to_2(conn: sqlite3.Connection) -> None:
             conn.execute(f'ALTER TABLE distributions RENAME COLUMN {old} TO {new}')
 
 
-# numbered migration steps: {target_version: fn(conn)}. applied in order for an
-# existing DB stamped below SCHEMA_VERSION (see SyncState._run_migrations). a
-# fresh DB skips these and gets _create_schema() — the current shape — directly.
+# {target_version: fn(conn)}, applied in order to an existing DB below
+# SCHEMA_VERSION. a fresh DB skips these and gets _create_schema().
 _MIGRATIONS = {
     2: _migrate_1_to_2,
 }
@@ -152,8 +129,7 @@ class SyncState:
 
     def __init__(self, db_path: Optional[str] = None) -> None:
         if db_path is None:
-            # recompute at construction so a test fixture mutating env vars
-            # (e.g. XDG_DATA_HOME) AFTER module import still takes effect.
+            # recomputed here so an env override applied after import counts.
             db_path = _default_state_db_path()
         else:
             db_path = os.path.expanduser(db_path)
@@ -165,22 +141,17 @@ class SyncState:
     # ─── lifecycle ────────────────────────────────────────────────────
 
     def _open(self) -> None:
-        # ensure parent dir exists; SQLite will create the file itself.
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        # check_same_thread=False because we serialize via self._lock and
-        # share a single connection across the agent's worker threads.
-        # WAL mode + a single connection avoids the SQLite-per-thread
-        # gotcha while still giving safe concurrent access.
+        # check_same_thread=False: one connection shared across worker threads,
+        # serialized by self._lock. Avoids the SQLite-per-thread gotcha.
         self._conn = sqlite3.connect(
             str(self._db_path),
             check_same_thread=False,
             isolation_level=None,  # autocommit; explicit BEGIN/COMMIT in transactions
         )
-        # WAL: writers don't block readers; survives crash + power loss.
-        # synchronous=NORMAL: durable across power loss (fsync on commit) but
-        # ~3x faster than FULL — appropriate for an event log we can replay
-        # against the version if a few entries are missing.
-        # foreign_keys=ON: cascade deletes work + integrity enforcement.
+        # WAL: writers don't block readers, survives power loss.
+        # synchronous=NORMAL: ~3x faster than FULL and good enough for a log
+        # that can be replayed against the version if entries are missing.
         self._conn.execute('PRAGMA journal_mode = WAL')
         self._conn.execute('PRAGMA synchronous = NORMAL')
         self._conn.execute('PRAGMA foreign_keys = ON')
@@ -206,11 +177,8 @@ class SyncState:
         """
         bring the DB up to SCHEMA_VERSION.
 
-        a fresh DB (user_version 0) gets the current schema created in one
-        shot — _create_schema() is the source of truth for the latest shape.
-        an existing DB stamped at an older version is upgraded by applying each
-        numbered step in _MIGRATIONS in order, preserving its rows. already
-        current → no-op.
+        user_version 0 → _create_schema() in one shot; older → each numbered
+        _MIGRATIONS step in order, preserving rows; current → no-op.
         """
         assert self._conn is not None
         current = self._conn.execute('PRAGMA user_version').fetchone()[0]
@@ -218,10 +186,8 @@ class SyncState:
             return
         with self._txn():
             if current == 0:
-                # fresh DB: build the latest schema directly.
                 self._create_schema()
             else:
-                # existing DB: step it forward one version at a time.
                 for version in range(current + 1, SCHEMA_VERSION + 1):
                     migrate = _MIGRATIONS.get(version)
                     if migrate is None:
@@ -239,10 +205,9 @@ class SyncState:
     def _create_schema(self) -> None:
         """create the full schema from scratch. single source of truth."""
         assert self._conn is not None
-        # distribution = one in-flight or completed sync op for a roost.
-        # site_id + roost_id is the natural key; a new version creates a
-        # new distribution row (immutable history).
-        # extract_root + last_scrub_at support the periodic scrub.
+        # distribution = one sync op for a roost. natural key site_id+roost_id;
+        # a new version means a new row (immutable history). extract_root +
+        # last_scrub_at drive the periodic scrub.
         self._conn.execute('''
             CREATE TABLE distributions (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -262,7 +227,7 @@ class SyncState:
                 UNIQUE (site_id, roost_id, version_id)
             )
         ''')
-        # file = a target file the agent will reassemble from chunks.
+        # file = a target file reassembled from chunks.
         self._conn.execute('''
             CREATE TABLE files (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -276,9 +241,8 @@ class SyncState:
                 UNIQUE (distribution_id, path)
             )
         ''')
-        # chunk = one content-addressed blob this distribution needs.
-        # the same hash may appear in multiple distributions (dedup) but
-        # the chunks table tracks per-distribution download intent.
+        # chunk = one content-addressed blob. a hash may recur across
+        # distributions (dedup); this table is per-distribution intent.
         self._conn.execute('''
             CREATE TABLE chunks (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -293,7 +257,6 @@ class SyncState:
                 UNIQUE (distribution_id, hash)
             )
         ''')
-        # indexes for the common queries.
         self._conn.execute('CREATE INDEX idx_distributions_state ON distributions(state)')
         self._conn.execute('CREATE INDEX idx_distributions_scrub ON distributions(state, last_scrub_at)')
         self._conn.execute('CREATE INDEX idx_chunks_state ON chunks(distribution_id, state)')
@@ -304,10 +267,7 @@ class SyncState:
 
     @contextmanager
     def _txn(self) -> Iterator[sqlite3.Connection]:
-        """
-        BEGIN ... COMMIT/ROLLBACK wrapper. all multi-statement writes go
-        through this so they're atomic across crash/power-loss.
-        """
+        """BEGIN/COMMIT wrapper — every multi-statement write goes through it."""
         assert self._conn is not None
         with self._lock:
             self._conn.execute('BEGIN IMMEDIATE')

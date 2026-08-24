@@ -1,27 +1,19 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `web/lib/fanOut.server.ts` (security-boundary-migration
- * wave 2.2). Mocks the firebase-admin Firestore client at the doc-ref
- * level — same approach as `commandLifecycle.test.ts` — so we can assert
- * exactly what the helper writes without booting the emulator.
- *
- * Key invariants under test:
- *   - per-target results returned in input order with correct `ok` flags
- *   - `auditCorrelationId` propagated into `metadata` of every entry
- *     (and also exposed as the top-level field stamped by 1.6)
- *   - chunking: 100 machines with chunk size 50 → exactly 2 batches
- *   - partial failures isolated; one bad machine does not abort the rest
- *   - builder throws are caught and surfaced as `ok: false`
+ * Unit tests for `web/lib/fanOut.server.ts`. Mocks firebase-admin at the doc-ref
+ * level (as `commandLifecycle.test.ts` does) to assert exact writes without the
+ * emulator. Invariants: results in input order with correct `ok` flags;
+ * `auditCorrelationId` in every entry's `metadata` plus the top-level field;
+ * 100 machines at chunk size 50 → exactly 2 batches; failures isolated per
+ * machine; builder throws surface as `ok: false`.
  */
 
 import { Timestamp } from 'firebase-admin/firestore';
 
-// `getAdminDb` must be mocked at module load, even though every test in
-// this file injects an explicit `db` — the helper resolves the default db
-// once at the top of `fanOutToMachines`, so without the mock that branch
-// would touch the real firebase-admin and crash under jsdom-derived test
-// envs.
+// Must be mocked at module load even though every test injects an explicit `db`:
+// `fanOutToMachines` resolves the default db up front, which would otherwise
+// touch real firebase-admin.
 const defaultSetMock = jest.fn().mockResolvedValue(undefined);
 const defaultBuildCollection = (): Record<string, unknown> => ({
   doc: jest.fn(() => ({
@@ -41,11 +33,8 @@ import {
 } from '@/lib/fanOut.server';
 import type { FanOutResult } from '@/lib/commandLifecycle';
 
-/**
- * `fanOutToMachines`'s `db` option is typed as the admin-SDK Firestore.
- * We extract that type to widen our test stubs without depending on
- * firebase-admin's full surface area.
- */
+/** Extracted so test stubs widen to the `db` option's type without pulling in
+ *  firebase-admin's full surface. */
 type FakeFirestore = NonNullable<Parameters<typeof fanOutToMachines>[0]['db']>;
 
 interface RecordedCall {
@@ -54,11 +43,8 @@ interface RecordedCall {
   options?: { merge?: boolean };
 }
 
-/**
- * Build a fake admin-SDK Firestore that records every `.set()` call so a
- * test can assert the exact path and payload the helper produced. Mirrors
- * the helper used in `commandLifecycle.test.ts`.
- */
+/** Fake admin Firestore recording every `.set()` path + payload (mirrors
+ *  `commandLifecycle.test.ts`). */
 function buildFakeDb(
   shouldFail?: (machineId: string) => boolean,
 ): {
@@ -72,10 +58,8 @@ function buildFakeDb(
     return {
       doc: (id: string) => {
         const docPath = [...parentPath, id];
-        // The path shape we care about is
-        //   sites / {siteId} / machines / {machineId} / commands / pending
-        // Track the most recent machine id as we descend so the optional
-        // `shouldFail` predicate can branch on it.
+        // Path shape: sites/{siteId}/machines/{machineId}/commands/pending.
+        // Track the latest machine id so `shouldFail` can branch on it.
         if (parentPath.length >= 1 && parentPath[parentPath.length - 1] === 'machines') {
           lastMachineId = id;
         }
@@ -104,9 +88,7 @@ const simpleBuilder: CommandBuilder = (machineId) => ({
   commandData: { type: 'restart_process', process_id: `p_${machineId}` },
 });
 
-/* -------------------------------------------------------------------------- */
-/*  module shape                                                              */
-/* -------------------------------------------------------------------------- */
+// module shape
 
 describe('FANOUT_CHUNK_SIZE', () => {
   it('is exported as 50', () => {
@@ -114,9 +96,7 @@ describe('FANOUT_CHUNK_SIZE', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  happy paths                                                               */
-/* -------------------------------------------------------------------------- */
+// happy paths
 
 describe('fanOutToMachines — all succeed', () => {
   it('returns one result per machine in input order with ok flags set', async () => {
@@ -189,9 +169,7 @@ describe('fanOutToMachines — all succeed', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  correlation id propagation                                                */
-/* -------------------------------------------------------------------------- */
+// correlation id propagation
 
 describe('fanOutToMachines — correlation id', () => {
   it('injects auditCorrelationId into metadata of every command entry', async () => {
@@ -212,9 +190,8 @@ describe('fanOutToMachines — correlation id', () => {
       const metadata = entry.metadata as Record<string, unknown>;
       expect(metadata).toBeDefined();
       expect(metadata.auditCorrelationId).toBe('corr_42');
-      // 1.6's stamper still emits the top-level field — kept for backward
-      // compat with the audit pipeline. The metadata-side mirror is wave
-      // 2.2's contract for routing/replay consumers.
+      // Top-level field stays for the audit pipeline; the metadata mirror is the
+      // contract for routing/replay consumers.
       expect(entry.auditCorrelationId).toBe('corr_42');
     }
   });
@@ -249,9 +226,8 @@ describe('fanOutToMachines — correlation id', () => {
 
   it('handles non-object metadata from builder by replacing it with a fresh object', async () => {
     const { db, calls } = buildFakeDb();
-    // A builder that mistakenly emits a string as `metadata` should not
-    // crash the helper — the wave-2.2 contract owns the slot, so we
-    // overwrite cleanly rather than try to merge into a non-object.
+    // A builder emitting a non-object `metadata` must not crash the helper: the
+    // slot is overwritten rather than merged into.
     const builder: CommandBuilder = () => ({
       commandIdPrefix: 'noop',
       commandData: { type: 'noop', metadata: 'oops' as unknown as Record<string, unknown> },
@@ -272,16 +248,12 @@ describe('fanOutToMachines — correlation id', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  chunking / concurrency                                                    */
-/* -------------------------------------------------------------------------- */
+// chunking / concurrency
 
 describe('fanOutToMachines — chunking', () => {
   it('processes 100 machineIds in exactly 2 batches of 50 (sequential between batches)', async () => {
-    // Track per-machine concurrency: we want to prove that batch N+1
-    // doesn't start until batch N has fully resolved. Each `set()` waits
-    // for a shared "release" signal; we count how many calls are in
-    // flight at peak.
+    // Prove batch N+1 doesn't start until batch N resolves: each `set()` waits on
+    // a shared release signal and we record peak in-flight calls.
     let inFlight = 0;
     let peakInFlight = 0;
     const batchCallObservations: number[] = [];
@@ -301,9 +273,7 @@ describe('fanOutToMachines — chunking', () => {
                   set: jest.fn(async () => {
                     inFlight += 1;
                     peakInFlight = Math.max(peakInFlight, inFlight);
-                    // When we hit the chunk size, snapshot how many calls
-                    // are concurrent (== chunk size for full batches) and
-                    // open the gate so the await below can resolve.
+                    // At chunk size, snapshot concurrency and open the gate.
                     if (inFlight === FANOUT_CHUNK_SIZE) {
                       batchCallObservations.push(inFlight);
                       releaseBatch?.();
@@ -311,7 +281,7 @@ describe('fanOutToMachines — chunking', () => {
                     await pendingRelease;
                     inFlight -= 1;
                     if (inFlight === 0) {
-                      // Re-arm for the next batch — fresh gate object.
+                      // Re-arm with a fresh gate for the next batch.
                       pendingRelease = new Promise((resolve) => {
                         releaseBatch = resolve;
                       });
@@ -337,7 +307,7 @@ describe('fanOutToMachines — chunking', () => {
 
     expect(results).toHaveLength(100);
     expect(results.every((r) => r.ok)).toBe(true);
-    // Two full batches of 50 concurrent calls — never more.
+    // Two full batches of 50 concurrent calls, never more.
     expect(peakInFlight).toBe(FANOUT_CHUNK_SIZE);
     expect(batchCallObservations).toEqual([FANOUT_CHUNK_SIZE, FANOUT_CHUNK_SIZE]);
   });
@@ -391,9 +361,7 @@ describe('fanOutToMachines — chunking', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  failure isolation                                                         */
-/* -------------------------------------------------------------------------- */
+// failure isolation
 
 describe('fanOutToMachines — failure modes', () => {
   it('partial failure: 7 succeed + 3 fail → all 10 results returned with correct ok flags', async () => {
@@ -471,8 +439,8 @@ describe('fanOutToMachines — failure modes', () => {
   });
 
   it('isolates per-batch failures across chunk boundaries', async () => {
-    // Fail every machine in the second batch (m50..m99). The first batch
-    // must still resolve cleanly — no abort propagation across batches.
+    // Fail all of batch 2 (m50..m99); batch 1 must still resolve — no abort
+    // propagation across batches.
     const { db } = buildFakeDb((machineId) => {
       const n = Number(machineId.slice(1));
       return n >= 50;
@@ -496,9 +464,7 @@ describe('fanOutToMachines — failure modes', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  validation                                                                */
-/* -------------------------------------------------------------------------- */
+// validation
 
 describe('fanOutToMachines — input validation', () => {
   it('rejects a missing siteId', async () => {
@@ -528,9 +494,8 @@ describe('fanOutToMachines — input validation', () => {
       fanOutToMachines({
         siteId: 'site_a',
         machineIds: ['m1'],
-        // Force the wrong type through the boundary — production callers
-        // can't reach this case under tsc, but runtime callers (e.g. JS
-        // tests, dynamic imports) can.
+        // Force a wrong type past tsc — unreachable for typed callers, reachable
+        // from JS/dynamic imports.
         builder: undefined as unknown as CommandBuilder,
         correlationId: 'corr_1',
       }),
@@ -538,9 +503,7 @@ describe('fanOutToMachines — input validation', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  default db fallback                                                       */
-/* -------------------------------------------------------------------------- */
+// default db fallback
 
 describe('fanOutToMachines — default db fallback', () => {
   it('falls back to getAdminDb() when no db is injected', async () => {

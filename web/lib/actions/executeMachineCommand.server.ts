@@ -1,24 +1,15 @@
 /**
- * Action core: queue a remote command on a machine.
+ * Action core: queue a remote command on a machine. Shared by the public route
+ * and server-side callers (hoot tool dispatch via `invokeAsSystem`, jobs).
  *
- * security-boundary-migration wave 3.1. Lifted from the body of
- * `web/app/api/sites/[siteId]/machines/[machineId]/commands/route.ts`
- * (api-sprint wave 2 — track 2A) so it can be reused from the public
- * route + future server-side callers (hoot tool dispatch via
- * `invokeAsSystem`, scheduled jobs).
+ * Owns allowlist enforcement, the offline check, the command-id mint, the
+ * `stampCommand` lifecycle write and the audit emission. Auth, capability,
+ * rate-limit and idempotency belong to the wrapper — this ASSUMES it runs
+ * inside an `authorizedSiteHandler` / `invokeAsSystem` frame with the actor's
+ * right to the site/machine already established.
  *
- * Allowlist enforcement, machine-offline check, command-id mint,
- * `stampCommand`-based lifecycle write, and audit emission all happen
- * here. Auth + capability + rate-limit + idempotency are the wrapper's
- * job — this function assumes it's running inside an
- * `authorizedSiteHandler` (or `invokeAsSystem`) call frame and that the
- * caller has already established the actor's right to act on the
- * site/machine.
- *
- * The allowlist is intentionally narrow — every supported `type` maps
- * to one of the known agent command handlers. Anything outside the list
- * is rejected with a 400 (`unsupported_command_type`) so api-key
- * callers can't spawn arbitrary commands.
+ * The allowlist is deliberately narrow: everything outside it 400s with
+ * `unsupported_command_type` so api-key callers can't spawn arbitrary commands.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
@@ -28,24 +19,8 @@ import type { Actor } from '@/lib/capabilities';
 import { FieldValue } from 'firebase-admin/firestore';
 
 /**
- * Allowlist of command types this action will queue. Mirrors the union
- * of types observed in the wave-1.1 write inventory for
- * `MACHINE_EXEC_COMMAND`. Names match the agent-side handlers exactly
- * (verified against `agent/src/owlette_service.py`).
- *
- * - `reboot_machine` / `shutdown_machine` / `cancel_reboot` /
- *   `dismiss_reboot_pending` — scoped operator actions.
- * - `capture_screenshot` — single-shot screenshot.
- * - `start_live_view` / `stop_live_view` - live-view session control.
- * - `apply_display_topology` / `ack_display_topology` /
- *   `enumerate_display_modes` / `test_display_apply` — display editor
- *   command surface (used by `useDisplayActions`).
- * - `restart_process` / `start_process` / `stop_process` /
- *   `kill_process` - process-control commands emitted by the public API.
- * - `cancel_mcp_tool` — kill an in-flight `mcp_tool_call` subprocess by
- *   its command id (hoot cancel button — `/api/hoot/cancel-tool`).
- * - `update_owlette` — agent self-update command issued by
- *   `lib/firebase.ts:sendOwletteUpdateCommand`.
+ * Command types this action will queue. Names must match the agent handlers in
+ * `agent/src/owlette_service.py` exactly.
  */
 export const ALLOWED_COMMAND_TYPES: ReadonlySet<string> = new Set<string>([
   'reboot_machine',
@@ -73,15 +48,9 @@ export interface ExecuteMachineCommandInput {
   /** Command type — must be in `ALLOWED_COMMAND_TYPES`. */
   type: string;
   /**
-   * Per-type validated fields. Caller (route shim or system invoker)
-   * is responsible for filtering / normalizing these — this function
-   * does NOT re-validate them; it merges them into the firestore command
-   * envelope as-is alongside the lifecycle stamp.
-   *
-   * Reserved keys (`type`, `status`, `timestamp`, `siteId`, `machineId`,
-   * `queuedBy`, `createdAt`, `expiresAt`, `auditCorrelationId`) in
-   * `payload` are silently overwritten by the canonical values this
-   * action sets.
+   * Per-type fields, merged into the command envelope as-is — the caller owns
+   * validation, this does NOT re-validate. Reserved keys (see
+   * `RESERVED_PAYLOAD_KEYS`) are overwritten with canonical values.
    */
   payload: Record<string, unknown>;
 }
@@ -94,23 +63,13 @@ export interface ExecuteMachineCommandContext {
   siteId: string;
   /** Target machine within `siteId`. */
   machineId: string;
-  /**
-   * Acting principal (user or system). The wrapper produces this; the
-   * action core uses it as a forward-compat hook for any per-actor
-   * branching. Currently only the formatted `auditActor` string is read.
-   */
+  /** Acting principal. Kept as a hook for per-actor branching; unread today. */
   actor: Actor;
-  /**
-   * Pre-formatted audit-actor descriptor (`user:<uid>`,
-   * `apiKey:<keyId>`, or `system:<name>`). The route shim picks the
-   * right form based on `auth.keyContext`; system callers pass
-   * `system:<actorName>`.
-   */
+  /** Audit-actor descriptor: `user:<uid>`, `apiKey:<keyId>` or `system:<name>`. */
   auditActor: string;
   /**
-   * Optional correlation id from `authorizedSiteHandler` /
-   * `invokeAsSystem`. Stamped into the command envelope so the agent
-   * write-back can be correlated with the originating audit row.
+   * Stamped into the envelope so the agent write-back correlates with the
+   * originating audit row.
    */
   correlationId?: string;
 }
@@ -128,11 +87,7 @@ export class ExecuteMachineCommandError extends Error {
   }
 }
 
-/**
- * Reserved keys this action controls. Anything in `input.payload` under
- * these keys is silently dropped to avoid the caller spoofing the
- * `queuedBy` / `status` / lifecycle fields.
- */
+/** Dropped from `input.payload` so a caller can't spoof queuedBy/status/lifecycle. */
 const RESERVED_PAYLOAD_KEYS: ReadonlySet<string> = new Set<string>([
   'type',
   'status',
@@ -155,11 +110,7 @@ function stripReservedKeys(payload: Record<string, unknown>): Record<string, unk
 }
 
 export interface ExecuteMachineCommandOptions {
-  /**
-   * Inject a Firestore instance — tests pass a mock; production callers
-   * omit this and the helper uses `getAdminDb()`. Same pattern as
-   * `writeCommandFanOut`.
-   */
+  /** Injected Firestore for tests; production omits it. */
   db?: ReturnType<typeof getAdminDb>;
   /** Override the wall-clock `now` — unit tests use this for deterministic command ids. */
   now?: () => number;

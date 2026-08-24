@@ -1,33 +1,19 @@
 #!/usr/bin/env node
 /**
- * Site Owner Membership Backfill
+ * Site owner membership backfill.
  *
- * Repairs accounts stranded by the createSite membership gap: `createSite`
- * stamped `sites/{siteId}.owner` but never added the id to
- * `users/{uid}.sites[]`. The server honours ownership (firestore.rules,
- * GET /api/sites, apiAuth) but the client site list resolves membership only,
- * so those sites are invisible in-product to the users who created them —
- * dashboard shows "create your first site", /add reports "no sites available",
- * and every site-scoped page has nothing to select.
+ * `createSite` stamped `sites/{siteId}.owner` but never added the id to
+ * `users/{uid}.sites[]` (live since 1756e5f, 2026-03-20). The server honours
+ * ownership, but the client site list and `web/lib/capabilities.ts` resolve
+ * membership only — so a stranded owner sees "create your first site" and is
+ * 403'd on their own site. This is an authorization repair, not just visibility.
  *
- * The code fix (batched arrayUnion in web/lib/actions/createSite.server.ts) is
- * not retroactive, so affected users cannot self-heal. Retrying does not help
- * either, but not for the reason first assumed: site ids are generated word
- * pairs rather than derived from the name, so a retry produces a NEW invisible
- * site instead of colliding. The production data shows exactly that — one user
- * created four sites named "Zagreb" in 148 seconds. This script closes the gap
- * for sites created between 1756e5f (2026-03-20) and that fix.
+ * The code fix is not retroactive and retrying does not help: site ids are
+ * generated word pairs, so a retry creates a NEW invisible site (prod shows one
+ * user with four "Zagreb" sites in 148 seconds).
  *
- * For every `sites/{siteId}` with an `owner`, ensures `owner` has that id in
- * `users/{owner}.sites[]`. Idempotent — a second run reports 0 to repair.
- *
- * NOTE: this is an authorization change, not merely a visibility one.
- * `web/lib/capabilities.ts` resolves site-scoped capabilities from
- * `actor.sites` and never consults ownership, so a stranded owner is currently
- * 403'd on their own site. Membership is what restores that.
- *
- * Reports the full blast radius before writing anything, so the count can be
- * reviewed before a production mutation.
+ * For every `sites/{siteId}` with an `owner`, ensures that id is in
+ * `users/{owner}.sites[]`. Idempotent. Prints the blast radius before writing.
  *
  * Usage:
  *   node scripts/backfill-site-owner-membership.mjs --env=prod --dry-run
@@ -35,21 +21,14 @@
  *   node scripts/backfill-site-owner-membership.mjs --env=prod --confirm-project=owlette-prod-90a12
  *   node scripts/backfill-site-owner-membership.mjs --env=prod --rollback --log-file=<path>
  *
- * Every live run writes a machine-readable change log next to the script and
- * prints the `--rollback` command that reverses it. arrayUnion is not
- * self-identifying: without that log there is no way to distinguish membership
- * this script added from membership that was always there, and a blind undo
- * would strip legitimate entries.
+ * Every live run writes a change log and prints the `--rollback` command that
+ * reverses it. arrayUnion is not self-identifying, so without that log a blind
+ * undo would strip legitimate memberships.
  *
- * Credentials:
- *   Reads FIREBASE_PROJECT_ID_{DEV|PROD}, FIREBASE_CLIENT_EMAIL_{DEV|PROD},
- *   FIREBASE_PRIVATE_KEY_{DEV|PROD} from the environment, falling back to the
- *   unsuffixed web/.env.local vars. dev and prod are SEPARATE Firebase
- *   projects — the fallback targets whichever project web/.env.local points
- *   at, so verify the printed project id before running live.
- *
- *   web/.env.local, .claude/.env.local, and scripts/.env.local are auto-loaded
- *   if present.
+ * Credentials: FIREBASE_{PROJECT_ID,CLIENT_EMAIL,PRIVATE_KEY}_{DEV|PROD}, falling
+ * back to the unsuffixed vars. dev and prod are SEPARATE Firebase projects and
+ * the fallback follows web/.env.local — verify the printed project id before a
+ * live run. web/.env.local, .claude/.env.local, scripts/.env.local auto-load.
  */
 
 import { createRequire } from 'module';
@@ -66,8 +45,6 @@ const ROOT = join(__dirname, '..');
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 const admin = require('firebase-admin');
 
-// ---- CLI parsing ------------------------------------------------------------
-
 const args = process.argv.slice(2);
 
 function getFlag(name) {
@@ -79,9 +56,8 @@ function getFlag(name) {
 
 /**
  * Strict boolean flag. `getFlag` returns the string after `=`, so a bare
- * `=== true` check silently treats the natural `--dry-run=true` as OFF and
- * takes the live-write path. Accept the bare form, accept explicit
- * true/false, and refuse anything else rather than guessing.
+ * `=== true` check would read `--dry-run=true` as OFF and take the live-write
+ * path. Accept the bare form or explicit true/false; refuse anything else.
  */
 function getBooleanFlag(name) {
   const raw = getFlag(name);
@@ -127,8 +103,6 @@ if (rollback && !logFileArg) {
   process.exit(2);
 }
 
-// ---- .env loading -----------------------------------------------------------
-
 function loadEnvFile(path) {
   if (!existsSync(path)) return;
   const content = readFileSync(path, 'utf8');
@@ -152,8 +126,6 @@ function loadEnvFile(path) {
 loadEnvFile(join(ROOT, 'web', '.env.local'));
 loadEnvFile(join(ROOT, '.claude', '.env.local'));
 loadEnvFile(join(ROOT, 'scripts', '.env.local'));
-
-// ---- Credentials ------------------------------------------------------------
 
 const suffix = env === 'prod' ? '_PROD' : '_DEV';
 const projectId =
@@ -180,23 +152,19 @@ if (usingFallback) {
   console.warn(`   Verify this matches the intended ${env} project before continuing.\n`);
 }
 
-// ---- Backfill ---------------------------------------------------------------
-
 /** Firestore caps a write batch at 500 operations. */
 const BATCH_LIMIT = 400;
 
 /**
- * Projects that require a typed confirmation regardless of the --env flag.
- * Gating on the flag alone trusts an argument over the credentials actually
- * resolved above; this gates on what we are really pointed at.
+ * Projects requiring a typed confirmation regardless of --env — gate on the
+ * credentials actually resolved, not on an argument.
  */
 const PROTECTED_PROJECT_IDS = new Set(['owlette-prod-90a12']);
 
 function promptYesNo(question) {
   return new Promise((resolve) => {
-    // Non-interactive confirmation: the operator must name the exact project
-    // being written to. Deliberate enough that it cannot be typed by accident
-    // or inherited from a stale shell history against the wrong environment.
+    // Non-interactive confirm: the operator must name the exact project, so it
+    // can't be inherited from stale shell history against the wrong environment.
     if (confirmProject !== undefined) {
       if (confirmProject === projectId) {
         console.log(`${question}y  (--confirm-project=${confirmProject})`);
@@ -229,13 +197,10 @@ function promptYesNo(question) {
 }
 
 /**
- * Reverse a previous run using its change log.
- *
- * arrayUnion is not self-identifying: after the fact, a membership this
- * script added is indistinguishable from one that was always there. Deriving
- * the undo set from `sites/{id}.owner` would over-remove every membership
- * that was already correct before the run, recreating the original bug for
- * different users. So the log written below is the only safe undo source.
+ * Reverse a previous run from its change log — the only safe undo source.
+ * arrayUnion is not self-identifying, so deriving the undo set from
+ * `sites/{id}.owner` would strip memberships that were already correct,
+ * recreating the original bug for different users.
  */
 async function runRollback(db) {
   const raw = readFileSync(logFileArg, 'utf8');
@@ -337,10 +302,8 @@ async function main() {
       missingUserDoc.push({ siteId, owner });
       continue;
     }
-    // Every sanctioned membership-granting path refuses soft-deleted users
-    // (see assignSiteToUser.server.ts), and the delete cascade deliberately
-    // clears `sites` as part of its teardown. Re-populating it here would
-    // partially reverse that.
+    // Sanctioned membership paths refuse soft-deleted users (assignSiteToUser
+    // .server.ts) and the delete cascade clears `sites` — repopulating reverses it.
     if (typeof userData.deletedAt === 'number') {
       softDeleted.push({ siteId, owner });
       continue;
@@ -356,7 +319,7 @@ async function main() {
     else toRepair.push({ siteId, owner });
   }
 
-  // ---- Blast radius, before any write ----
+  // Blast radius, before any write.
   const affectedUsers = new Set(toRepair.map((r) => r.owner));
   console.log('--- blast radius ---');
   console.log(`  sites with an owner        : ${ownedSites.length}`);
@@ -380,10 +343,8 @@ async function main() {
   console.log('');
 
   if (toRepair.length > 0) {
-    // Role matters: membership is what unlocks site-scoped capabilities
-    // (web/lib/capabilities.ts consults actor.sites, never ownership), so an
-    // admin-role recipient gains materially more than a member-role one.
-    // Surface it so the reviewer sees the real authorization delta.
+    // Print role/email: membership is what unlocks site-scoped capabilities, so
+    // an admin recipient gains materially more than a member. Shows the authz delta.
     console.log('sites to repair:');
     for (const { siteId, owner } of toRepair) {
       const u = userDocs.get(owner) ?? {};
@@ -395,8 +356,7 @@ async function main() {
   }
 
   if (missingUserDoc.length > 0) {
-    // Worth surfacing individually: these are orphaned sites whose owner no
-    // longer has an account, which no backfill can resolve.
+    // Orphaned sites whose owner no longer has an account — unrepairable here.
     console.log('⚠️  skipped — owner has no user document:');
     for (const { siteId, owner } of missingUserDoc) {
       console.log(`  ${siteId}  (owner ${owner})`);
@@ -427,9 +387,9 @@ async function main() {
     }
   }
 
-  // Write the change log BEFORE committing. arrayUnion is not
-  // self-identifying, so if the process dies mid-run this file is the only
-  // record of what was intended; entries are marked applied as batches land.
+  // Write the log BEFORE committing: arrayUnion is not self-identifying, so if
+  // the process dies mid-run this is the only record of intent. Entries are
+  // marked applied as batches land.
   const logPath =
     logFileArg ||
     join(ROOT, 'scripts', `backfill-site-owner-membership.${projectId}.log.json`);

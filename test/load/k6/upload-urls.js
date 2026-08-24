@@ -1,10 +1,7 @@
 /**
- * k6 load test: POST /api/chunks/upload-urls.
- *
- * Called after /api/chunks/check to mint signed PUT URLs for every
- * chunk the server doesn't already have. R2 signed-URL issuance is
- * the slow part — each URL requires an HMAC + short-lived cert lookup
- * server-side.
+ * k6 load test: POST /api/chunks/upload-urls — mints signed PUT URLs for every
+ * chunk /api/chunks/check reported missing. R2 signed-URL issuance is the slow
+ * part (HMAC + short-lived cert lookup per URL).
  *
  * SLO: p99 < 500 ms. Batches up to 1000 hashes per request.
  */
@@ -33,9 +30,8 @@ const ALL_SCENARIOS = {
     tags: { scenario: 'sustained' },
   },
   burst: {
-    // realistic: a customer hits upload-urls for a 10 GB folder = ~2500
-    // chunks = 3 rounds of 1000 batches. 50 concurrent customers for 30s
-    // simulates a mid-morning spike.
+    // A 10 GB folder ≈ 2500 chunks ≈ 3 rounds of 1000; 50 concurrent customers
+    // for 30s models a mid-morning spike.
     executor: 'constant-vus',
     vus: 50,
     duration: '30s',
@@ -49,8 +45,8 @@ export const options = {
 };
 
 export default function () {
-  // 50 hashes per batch — middle of the allowed 1..1000 range; real
-  // clients vary but this is representative for mid-size folders.
+  // 50 per batch — mid-range of the allowed 1..1000, representative of
+  // mid-size folders.
   const hashes = [];
   for (let i = 0; i < 50; i++) {
     hashes.push(fakeHash(__VU * 10000 + __ITER * 50 + i));
@@ -73,7 +69,7 @@ export default function () {
     },
   });
 
-  // simulate the client handoff to the real PUT uploads (which this
-  // test deliberately doesn't do — the R2 upload path is tested separately).
+  // The real PUT uploads are deliberately out of scope here — the R2 upload
+  // path is load-tested separately.
   sleep(0.25);
 }

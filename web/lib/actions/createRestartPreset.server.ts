@@ -1,13 +1,10 @@
 /**
- * createRestartPreset action core (security-boundary-migration wave 3.6).
+ * Mirrors `useRestartPresets:createPreset`: mint a preset id, write
+ * `config/{siteId}/reboot_presets/{presetId}`, stamp `createdAt`.
  *
- * Mirrors `useRestartPresets:createPreset` (web/hooks/useRestartPresets.ts):
- * generates a preset id, writes the doc to `config/{siteId}/reboot_presets/{presetId}`,
- * and stamps `createdAt = serverTimestamp()`.
- *
- * Storage note: the `reboot_presets` collection name and the `reboot-` preset-id
- * prefix are stored/wire contracts and intentionally keep the legacy spelling —
- * only UI and code identifiers were renamed to "restart".
+ * The `reboot_presets` collection and `reboot-` id prefix are wire contracts and
+ * deliberately keep the legacy spelling; only UI and code identifiers say
+ * "restart".
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';

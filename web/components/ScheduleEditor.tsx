@@ -32,11 +32,9 @@ function formatTimeDisplay(value: string, use24h: boolean): string {
   return `${h12}:${m.toString().padStart(2, '0')} ${ampm}`;
 }
 
-/** Parse typed time input into "HH:MM" 24h format. Returns null if unrecognizable.
- *
- * In 12h mode, a bare "H:MM" (no am/pm) inherits the am/pm of `currentHour24`
- * so editing "2:25 pm" to "3:25" stays in the afternoon instead of silently
- * jumping back to 3:25 AM.
+/**
+ * Typed time → "HH:MM" 24h, or null. In 12h mode a bare "H:MM" inherits the
+ * am/pm of `currentHour24`, so editing "2:25 pm" to "3:25" stays afternoon.
  */
 function parseTimeInput(input: string, use24h: boolean, currentHour24?: number): string | null {
   const s = input.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -159,13 +157,11 @@ function formatScheduleSummary(schedules: ScheduleBlock[] | null | undefined, ti
     const days = block.days || [];
     const ranges = block.ranges || [];
 
-    // Use block name if available
     if (block.name) {
       parts.push(block.name);
       continue;
     }
 
-    // Smart day grouping
     let dayStr: string;
     const weekdays = ['mon', 'tue', 'wed', 'thu', 'fri'];
     const weekends = ['sat', 'sun'];
@@ -201,7 +197,7 @@ function formatScheduleSummary(schedules: ScheduleBlock[] | null | undefined, ti
 export { formatScheduleSummary };
 
 // ─── Reusable Schedule Blocks Editor ────────────────────────────────────────
-// Used by both the Dialog wrapper below and SchedulePopover
+// Shared by the Dialog wrapper below and SchedulePopover.
 
 interface ScheduleBlocksEditorProps {
   blocks: ScheduleBlock[];
@@ -209,7 +205,7 @@ interface ScheduleBlocksEditorProps {
   compact?: boolean;
 }
 
-/** Get stable color index for a block, using its colorIndex or falling back to position */
+/** Stable colour slot: the block's `colorIndex`, else its position. */
 function getBlockColorIndex(block: ScheduleBlock, position: number): number {
   return block.colorIndex ?? position;
 }
@@ -222,7 +218,6 @@ export function ScheduleBlocksEditor({ blocks, onChange, compact }: ScheduleBloc
   };
 
   const addBlock = () => {
-    // Find the next unused colorIndex
     const usedColors = new Set(blocks.map(b => b.colorIndex ?? -1));
     let nextColor = 0;
     while (usedColors.has(nextColor)) nextColor++;
@@ -425,18 +420,17 @@ export default function ScheduleEditor({
   open, onOpenChange, schedules, initialPresetId, onChange, siteTimezone, currentLaunchMode,
   presets, onCreatePreset, onDeletePreset, onUpdatePreset,
 }: ScheduleEditorProps) {
-  // Always show built-in presets, then append any custom presets from Firestore
+  // Built-ins first, then Firestore customs.
   const builtInAsPresets = BUILT_IN_PRESETS.map((bp, i) => ({
     id: `builtin-${i}`, ...bp, isBuiltIn: true, order: i, createdBy: '', createdAt: null,
   }));
   const customPresets = (presets || []).filter(p => !p.isBuiltIn);
   const displayPresets = [...builtInAsPresets, ...customPresets];
 
-  // Component remounts each time dialog opens — useState initializers run fresh
+  // Remounts on every open, so useState initializers run fresh.
   const defaultBlocks: ScheduleBlock[] = [{ colorIndex: 0, days: ['mon', 'tue', 'wed', 'thu', 'fri'], ranges: [{ start: '08:00', stop: '17:00' }] }];
   const initialBlocks = ensureBlockColors(schedules && schedules.length > 0 ? schedules : defaultBlocks);
 
-  // Auto-detect preset if no stored preset ID
   const detectedPresetId = (() => {
     if (initialPresetId) return initialPresetId;
     const blocksKey = JSON.stringify(initialBlocks.map(b => ({ days: [...b.days].sort(), ranges: b.ranges })));
@@ -462,8 +456,8 @@ export default function ScheduleEditor({
   };
 
   const applyPreset = (preset: SchedulePreset) => {
-    // If switching back to the preset that was active when the dialog opened,
-    // restore the user's saved blocks rather than resetting to the preset template.
+    // Switching back to the preset the dialog opened on restores the user's
+    // saved blocks, not the preset template.
     if (preset.id === detectedPresetId) {
       setBlocks(initialBlocks);
     } else {
@@ -515,7 +509,7 @@ export default function ScheduleEditor({
         <div className="space-y-1.5">
           {(() => {
             const selectedPreset = activePresetId ? displayPresets.find(p => p.id === activePresetId) : null;
-            // Dirty check: current blocks differ from the selected preset's stored blocks.
+            // Dirty = blocks differ from the selected preset's stored blocks.
             const currentKey = JSON.stringify(blocks.map(b => ({ days: [...b.days].sort(), ranges: b.ranges })));
             const presetKey = selectedPreset
               ? JSON.stringify(selectedPreset.blocks.map((b: ScheduleBlock) => ({ days: [...b.days].sort(), ranges: b.ranges })))

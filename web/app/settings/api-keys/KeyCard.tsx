@@ -26,19 +26,14 @@ import type { ApiKeyListItem, ApiKeyScope } from '@/lib/apiKeyTypes';
 export type { ApiKeyListItem } from '@/lib/apiKeyTypes';
 
 /**
- * One key, as a collapsible row.
+ * One key, as a collapsible row. Name, state and the three dates stay on the
+ * row; prefix and scope summary open on demand. The old layout spent ~7rem on
+ * the prefix and ~7.5rem on three always-visible buttons, leaving the name
+ * under 100px inside the account-settings dialog.
  *
- * The row carries what you scan for — name, state, and the three dates — and
- * defers what you only need occasionally: the key prefix and the scope summary
- * open on demand. That is what buys the name a readable column. The previous
- * layout spent ~7rem on a prefix nobody reads at a glance and ~7.5rem on three
- * always-visible icon buttons, which together left the name under 100px inside
- * the account-settings dialog.
- *
- * The actions moved into one overflow menu for the same reason, and that fixes
- * an alignment bug with it: three buttons on an active row versus one on an
- * expired row is an 80px difference, and it came out of the only flexible
- * column, so no two rows agreed on where their columns started.
+ * Folding the actions into one overflow menu also fixed an alignment bug: three
+ * buttons on an active row versus one on an expired row is an 80px swing, taken
+ * out of the only flexible column, so no two rows agreed on column positions.
  */
 
 const EXPIRATION_WARNING_MS = 14 * 24 * 60 * 60 * 1000;
@@ -102,7 +97,7 @@ interface Props {
   onEditScopes: (apiKey: ApiKeyListItem) => void;
   /** True while this row's scope editor is open directly beneath it. */
   editing: boolean;
-  /** Snapshot of Date.now() passed down from the parent on each tick. Injected so the render stays pure (lint rule). */
+  /** Date.now() from the parent's tick — injected to keep the render pure. */
   now: number;
 }
 
@@ -116,8 +111,8 @@ export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, editing, n
     typeof apiKey.expiresAt === 'number'
       ? Math.max(1, Math.ceil((apiKey.expiresAt - now) / (24 * 60 * 60 * 1000)))
       : null;
-  // Rotate and edit are meaningless once a key is terminal — the server 409s on
-  // both. Revoke stays, which is why an expired row still has a menu.
+  // The server 409s rotate and edit on a terminal key. Revoke stays, which is
+  // why an expired row still has a menu.
   const actionable = !apiKey.expired && !apiKey.retired && !apiKey.rotatedAt;
 
   async function handleRotate() {
@@ -169,11 +164,9 @@ export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, editing, n
           : 'rounded-md border border-border bg-card/50 px-3 py-2 space-y-2'
       }
     >
-      {/* Fixed tracks for the three date columns, so every column lands at the
-          same x on every row. The name is the only flexible column and now has
-          room to be read. Each date column stacks its label over its value —
-          two text lines rather than four, and labels above the dates is what
-          stops the dates truncating. */}
+      {/* Fixed tracks for the date columns so they land at the same x on every
+          row; the name is the only flexible one. Stacking each label over its
+          value is what stops the dates truncating. */}
       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(6rem,1fr)_5.25rem_5.25rem_5.25rem_auto]">
         <button
           type="button"
@@ -193,10 +186,9 @@ export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, editing, n
           <p className="min-w-0 truncate text-sm text-white font-medium">
             {apiKey.name || '(unnamed key)'}
           </p>
-          {/* Only legacy `test` keys get a badge. Now that live is the sole
-              environment minted, a "live" badge on every row is noise — but this
-              is the one place a lingering test key is visible, and it still
-              authenticates exactly like a live one, so it stays called out. */}
+          {/* Only legacy `test` keys get a badge — live is the only environment
+              minted now, so a "live" badge everywhere is noise. A lingering test
+              key authenticates identically, so it stays called out. */}
           {apiKey.environment === 'test' && (
             <Badge
               variant="outline"
@@ -340,8 +332,7 @@ export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, editing, n
             <KeyRound className="mt-0.5 h-3 w-3 flex-shrink-0" />
             <span className="min-w-0 break-words">{summarizeScopes(apiKey.scopes)}</span>
           </div>
-          {/* The date columns are hidden below sm: — this is where they surface
-              on a phone. */}
+          {/* Where the sm:-hidden date columns surface on a phone. */}
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground sm:hidden">
             <span>created {formatDate(apiKey.createdAt)}</span>
             <span>last used {formatRelativeAt(apiKey.lastUsedAt, now)}</span>

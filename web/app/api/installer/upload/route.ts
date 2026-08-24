@@ -1,24 +1,16 @@
 /**
- * POST /api/installer/upload
+ * POST /api/installer/upload — step 1: request a signed upload URL; the client then
+ * uploads the binary directly to Firebase Storage with it.
  *
- * Step 1 of two-step upload: request a signed upload URL. The client then
- * uploads the binary directly to Firebase Storage using the returned URL.
+ * PUT /api/installer/upload — step 2 (finalize): verify the file is in Storage, compute
+ * the checksum, reject a caller-supplied mismatch, write
+ * `installer_metadata/data/versions/{version}` and optionally the `latest` pointer.
  *
- * PUT  /api/installer/upload
+ * Auth (both verbs): an api key with `installer=*:write` (superadmin-only at minting),
+ * or a superadmin session / id-token.
  *
- * Step 2 (finalize): server verifies the file is in Storage, computes
- * checksum, rejects a caller-supplied checksum mismatch, writes
- * `installer_metadata/data/versions/{version}` (and optionally the
- * `installer_metadata/latest` pointer).
- *
- * Auth (both verbs):
- *   - api key with `installer=*:write` scope (superadmin-only at minting)
- *   - session / id-token from a superadmin user
- *
- * Idempotency: required on both POST and PUT. Same Idempotency-Key + body
- * within 24h replays the cached response.
- *
- * api-sprint wave 1 track 1B (installer-api).
+ * Idempotency required on both; the same key + body within 24h replays the cached
+ * response. api-sprint wave 1 track 1B.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -55,10 +47,6 @@ interface UploadFinalizeBody {
   uploadId?: unknown;
   checksum_sha256?: unknown;
 }
-
-/* --------------------------------------------------------------------- */
-/*  POST — request signed upload URL                                     */
-/* --------------------------------------------------------------------- */
 
 export async function POST(request: NextRequest) {
   try {
@@ -194,10 +182,6 @@ export async function POST(request: NextRequest) {
     return problemFromError(err, 'installer/upload:POST');
   }
 }
-
-/* --------------------------------------------------------------------- */
-/*  PUT — finalize upload                                                */
-/* --------------------------------------------------------------------- */
 
 export async function PUT(request: NextRequest) {
   try {

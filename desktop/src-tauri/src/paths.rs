@@ -1,22 +1,18 @@
 //! Layout of the owlette ProgramData tree.
 //!
-//! Mirrors `shared_utils.get_data_path()` (`agent/src/shared_utils.py:900-941`):
-//! the root is `%PROGRAMDATA%\Owlette`, falling back to `C:\ProgramData\Owlette`
-//! when the variable is missing or empty. Reading the environment variable
-//! instead of hardcoding the drive keeps the desktop app pointed at exactly the
-//! tree the service uses, and lets tests redirect the whole tree elsewhere by
-//! passing a different root.
+//! Mirrors `shared_utils.get_data_path()`: root is `%PROGRAMDATA%\Owlette`,
+//! falling back to `C:\ProgramData\Owlette`. Reading the variable rather than
+//! hardcoding the drive keeps the app on exactly the tree the service uses and
+//! lets tests redirect it by passing a different root.
 
 use std::path::{Component, Path, PathBuf};
 
 /// Directory created under `%PROGRAMDATA%`.
 const DATA_DIR_NAME: &str = "Owlette";
 
-/// Relative paths of the seam files, in the same spelling the TypeScript
-/// wrappers use. Separators are normalised by [`resolve_in_root`], so the
-/// forward slashes here are deliberate — they match the Python constants
-/// (`shared_utils.CONFIG_PATH`, `shared_utils.RESULT_FILE_PATH`,
-/// `owlette_service._write_service_status`).
+/// Seam files, spelled as the TypeScript wrappers spell them. Forward slashes
+/// are deliberate — they match the Python constants, and [`resolve_in_root`]
+/// normalises separators anyway.
 pub const CONFIG_REL: &str = "config/config.json";
 pub const APP_STATES_REL: &str = "tmp/app_states.json";
 pub const SERVICE_STATUS_REL: &str = "tmp/service_status.json";
@@ -26,9 +22,9 @@ pub const SERVICE_STATUS_REL: &str = "tmp/service_status.json";
 /// (`firebase_client._metrics_loop`).
 pub const GUI_PID_REL: &str = "tmp/gui.pid";
 
-/// Written for the whole life of the process, window or no window. This is what
-/// `owlette_service._is_tray_alive` reads to decide whether it still needs to
-/// spawn a tray — the same file the python tray used as its singleton lock.
+/// Written for the whole process lifetime, window or not.
+/// `owlette_service._is_tray_alive` reads it to decide whether to spawn a tray
+/// — the same singleton lock the python tray used.
 pub const TRAY_PID_REL: &str = "tmp/tray.pid";
 
 /// Touched to ask a running service to exit 42 so NSSM restarts it
@@ -48,12 +44,10 @@ pub fn data_root() -> PathBuf {
   Path::new(&program_data).join(DATA_DIR_NAME)
 }
 
-/// Resolve a caller-supplied path against the data root.
-///
-/// Relative paths are joined onto the root; absolute paths are accepted only
-/// when they land inside it. `..` is rejected outright rather than normalised,
-/// so no frontend string can address (or overwrite) a file outside the owlette
-/// tree — the JSON commands are the app's only filesystem write surface.
+/// Resolve a caller-supplied path against the data root: relative paths are
+/// joined, absolute ones accepted only inside it. `..` is rejected outright
+/// rather than normalised, so no frontend string can reach a file outside the
+/// owlette tree.
 pub fn resolve_in_root(root: &Path, requested: &str) -> Result<PathBuf, String> {
   let trimmed = requested.trim();
   if trimmed.is_empty() {
@@ -67,8 +61,7 @@ pub fn resolve_in_root(root: &Path, requested: &str) -> Result<PathBuf, String> 
     root.join(requested_path)
   };
 
-  // `components()` drops `.` segments and keeps `..` ones, which is exactly the
-  // distinction we want to make here.
+  // `components()` drops `.` and keeps `..` — exactly the distinction we need.
   let mut normalized = PathBuf::new();
   for component in joined.components() {
     match component {

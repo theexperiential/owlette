@@ -1,28 +1,20 @@
 /**
- * Shared lifecycle predicates for `agent_refresh_tokens` documents.
+ * Lifecycle predicates for `agent_refresh_tokens` documents. States:
+ *   live       — the agent's current credential (shown in the admin list)
+ *   superseded — rotated away from; usable for a 5-minute grace (`retiresAt`)
+ *                so a client that lost the rotation response can retry
+ *   expired    — `expiresAt` in the past (rare; most tokens have no expiry)
  *
- * A token document goes through these states:
- *   - live        — the agent's current credential (shown in the admin list)
- *   - superseded  — rotated away from (>= 2.12.0 agents); its successor is now
- *                   the live token. Readable for a 5-minute grace window
- *                   (`retiresAt`) so a client that lost the rotation response
- *                   can retry, then it is dead.
- *   - expired     — `expiresAt` in the past (rare; tokens are minted without
- *                   an expiry for long-duration installs).
+ * "Dead" = provably unusable and safe to delete (superseded past grace, or
+ * expired) — what admin prune and rotation GC remove.
  *
- * "Dead" tokens are provably unusable and safe to delete: a superseded token
- * past its grace window, or an expired token. These are what the admin
- * "prune dead tokens" action removes and what rotation garbage-collects.
- *
- * These predicates are the single source of truth shared by the list route
- * (which hides superseded/expired tokens), the revoke route (prune mode), and
- * the refresh route (rotation grandparent GC), so the definitions never drift.
+ * Single source of truth for the list route, the revoke route (prune mode) and
+ * the refresh route (grandparent GC), so the definitions cannot drift.
  */
 
 /**
- * Coerce a Firestore timestamp-ish value to epoch millis.
- * Accepts a Firestore Timestamp ({ toMillis() }), a number (already millis),
- * a Date, or undefined/null. Returns undefined when absent/unparseable.
+ * Firestore timestamp-ish → epoch millis. Accepts a Timestamp, number, or Date;
+ * undefined when absent or unparseable.
  */
 export function tokenTimestampToMillis(value: unknown): number | undefined {
   if (value === null || value === undefined) return undefined;
@@ -50,25 +42,20 @@ export interface AgentTokenLifecycleFields {
 }
 
 /**
- * True when the token has been rotated away from (a successor token exists).
- * The successor is the live credential; superseded docs are hidden from the
- * admin list regardless of whether their grace window has elapsed.
+ * Rotated away from — a successor exists. Hidden from the admin list whether or
+ * not the grace window has elapsed.
  */
 export function isTokenSuperseded(data: AgentTokenLifecycleFields | undefined): boolean {
   return Boolean(data?.supersededAt || data?.supersededBy);
 }
 
 /**
- * True when the token's own expiry (if any) is strictly in the past. Tokens
- * minted without `expiresAt` never expire and are never considered expired.
+ * Expiry strictly in the past; no `expiresAt` means never expires.
  *
- * This MUST mirror the refresh route's acceptance test exactly
- * (`if (expiresAt && expiresAt < now)` at agent/auth/refresh/route.ts) so a
- * token the auth endpoint would still accept can never be classified dead and
- * pruned out from under a live agent:
- *   - strict `<` (not `<=`): a token expiring at exactly `now` is still valid,
- *   - `Boolean(expiresAt)` guard: a falsy `0` epoch is treated as absent
- *     (never-expires), matching the route's truthiness check.
+ * MUST mirror `if (expiresAt && expiresAt < now)` in agent/auth/refresh/route.ts
+ * or a token the auth endpoint still accepts gets pruned from under a live
+ * agent: strict `<` (expiring exactly at `now` is valid) and the truthiness
+ * guard (a `0` epoch counts as absent).
  */
 export function isTokenExpired(
   data: AgentTokenLifecycleFields | undefined,
@@ -79,14 +66,9 @@ export function isTokenExpired(
 }
 
 /**
- * True when the token is provably unusable and safe to delete:
- *   - superseded AND past its grace window (retiresAt in the past, or absent —
- *     which the refresh route already treats as expired), OR
- *   - expired.
- *
- * A superseded token still WITHIN its grace window is NOT dead — a client may
- * legitimately still be retrying with it — so it is preserved by prune/GC.
- * This mirrors the acceptance check in the refresh route exactly.
+ * Provably unusable and safe to delete: expired, or superseded past its grace
+ * (absent `retiresAt` counts as past, matching the refresh route). A superseded
+ * token still WITHIN grace is NOT dead — a client may still be retrying it.
  */
 export function isTokenDead(
   data: AgentTokenLifecycleFields | undefined,
@@ -101,9 +83,8 @@ export function isTokenDead(
 }
 
 /**
- * True when the token should appear in the admin "live tokens" list:
- * not superseded and not expired. (A brief in-grace superseded token is
- * hidden because its successor is already the live row.)
+ * Belongs in the admin "live tokens" list. An in-grace superseded token is
+ * hidden because its successor is already the live row.
  */
 export function isTokenLive(
   data: AgentTokenLifecycleFields | undefined,

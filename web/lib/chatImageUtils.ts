@@ -6,9 +6,8 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { storage } from '@/lib/firebase';
 
 /**
- * Compress an image blob using canvas.
- * Resizes to fit within maxDimension on the longest edge, outputs JPEG at 0.85 quality.
- * Returns the original blob if it's already small enough.
+ * Canvas-compress to fit `maxDimension` on the longest edge, as JPEG q=0.85.
+ * Returns the original blob when it is already small enough.
  */
 export async function compressImage(
   blob: Blob,
@@ -23,13 +22,12 @@ export async function compressImage(
 
       const { width, height } = img;
 
-      // Skip compression if already within bounds and reasonably sized (<500KB)
+      // Already in bounds and under 500KB — leave it alone.
       if (width <= maxDimension && height <= maxDimension && blob.size < 500_000) {
         resolve(blob);
         return;
       }
 
-      // Calculate scaled dimensions
       const scale = Math.min(maxDimension / width, maxDimension / height, 1);
       const newWidth = Math.round(width * scale);
       const newHeight = Math.round(height * scale);
@@ -69,10 +67,8 @@ export async function compressImage(
 }
 
 /**
- * Upload a chat image to Firebase Storage.
- * Path: chat-images/{userId}/{chatId}/{timestamp}.jpg
- *
- * Returns the download URL and media type.
+ * Upload to `chat-images/{userId}/{chatId}/{timestamp}.jpg`, returning the
+ * download URL and media type.
  */
 export async function uploadChatImage(
   userId: string,

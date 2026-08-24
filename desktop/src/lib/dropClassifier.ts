@@ -1,19 +1,12 @@
 /**
  * Drag-and-drop classification: dropped paths in, owlette process entries out.
  *
- * The module is deliberately inert — the only contact with the disk is the
- * injected {@link FsProbe}, there is no module-level state, and the single
- * import is the type/defaults module describing `config.json`, which is itself
- * dependency-free. The whole rule matrix is therefore unit-testable without
- * Tauri, and the rules that run in a test are byte-for-byte the ones that run
- * on a kiosk.
+ * All disk contact goes through the injected {@link FsProbe} and there is no
+ * module state, so the rule matrix is unit-testable without Tauri.
  *
- * The draft it produces mirrors the python service's on-disk schema exactly
- * (`agent/src/owlette_gui.py:1043-1057`). Numeric fields are STRINGS: that is
- * what every entry already in `config.json` looks like, and the service coerces
- * with `int()`/`float()` when it reads them (`owlette_service.py:2097,:2271`).
- * Emitting real numbers here would parse fine but make our entries the odd ones
- * out in a file two other writers (the GUI and the Firestore sync) also touch.
+ * Drafts mirror the python service's on-disk schema (`owlette_gui.py:1043-1057`).
+ * Numeric fields are STRINGS to match every other writer of `config.json`; the
+ * service coerces with int()/float() (`owlette_service.py:2097,:2271`).
  */
 
 import {
@@ -25,12 +18,9 @@ import {
 } from '@/lib/owletteConfig'
 
 /**
- * A `processes[]` entry minus the `id`, which the caller mints on confirm.
- *
- * Stricter than {@link ProcessEntry}, deliberately: that type describes what
- * may be *read* out of a file three writers have edited over several versions,
- * this one describes what this app is allowed to *write*. Every field is
- * present and every value is the current spelling.
+ * A `processes[]` entry minus the `id`, minted on confirm. Deliberately stricter
+ * than {@link ProcessEntry}: that describes what may be read from a file three
+ * writers have edited, this describes what we are allowed to write.
  */
 export interface ProcessEntryDraft {
   name: string
@@ -49,11 +39,8 @@ export interface ProcessEntryDraft {
 }
 
 /**
- * Fields the classifier could not derive and the confirm card must prompt for.
- *
- * Only `exe_path` today: every rule can derive a name, a cwd and a file
- * argument from the drop itself, but the interpreter or host application may
- * simply not be installed on this machine.
+ * Fields the classifier could not derive; the confirm card prompts for them.
+ * Only `exe_path`: the interpreter or host app may not be installed here.
  */
 export type NeedsInput = 'exe_path'
 
@@ -62,7 +49,6 @@ export type DropKind = 'touchdesigner' | 'unity' | 'executable' | 'script'
 
 export interface ClassifiedDrop {
   kind: DropKind
-  /** The path as dropped. */
   path: string
   entry: ProcessEntryDraft
   needsInput: NeedsInput[]
@@ -80,18 +66,9 @@ export interface UnsupportedDrop {
 export type DropResult = ClassifiedDrop | UnsupportedDrop
 
 /**
- * Values every dropped entry starts with.
- *
- * The three numbers are taken from {@link NEW_PROCESS_DEFAULTS} rather than
- * chosen here, so a process that arrives by drop and one added with the `+`
- * button are the same entry. An earlier draft used a lower relaunch budget on
- * the theory that a dropped process is unproven — but nothing about the drop
- * makes it more likely to crash, `launch_mode: 'off'` already means it does not
- * run until the operator says so, and two creation paths in one app quietly
- * writing different values for the same field is a bug waiting to be filed.
- *
- * `launch_mode: 'off'` (with the matching `autolaunch: false`) means dropping a
- * file configures it without starting it — the operator opts in afterwards.
+ * Values every dropped entry starts with. The numbers come from
+ * {@link NEW_PROCESS_DEFAULTS} so drop and `+` produce identical entries — do
+ * not fork them. `launch_mode: 'off'` means a drop configures but never starts.
  */
 export const DROP_DEFAULTS = {
   priority: 'Normal',
@@ -116,15 +93,12 @@ export interface ClassifyOptions {
 }
 
 /**
- * Stock Windows locations. Overridable so tests never touch the real disk and
- * so the caller can prepend per-user installs (`%LOCALAPPDATA%\Programs\…`),
- * which this module cannot expand on its own.
+ * Stock Windows locations. Overridable so tests never touch the real disk and so
+ * callers can prepend per-user installs, which this module cannot expand.
  */
 export const DEFAULT_CLASSIFY_OPTIONS: Required<ClassifyOptions> = {
   touchDesignerRoot: 'C:\\Program Files\\Derivative',
-  // py.exe is the PEP 397 launcher: it honours a script's shebang and falls
-  // back to the newest installed interpreter, so it beats any python.exe we
-  // could pick ourselves.
+  // py.exe (PEP 397) honours the shebang and falls back to the newest interpreter.
   pythonCandidates: ['C:\\Windows\\py.exe'],
   pythonInstallRoot: 'C:\\Program Files',
   powershellCandidates: [
@@ -135,11 +109,9 @@ export const DEFAULT_CLASSIFY_OPTIONS: Required<ClassifyOptions> = {
 
 /** Everything the classifier needs to know about the disk. */
 export interface FsProbe {
-  /** True when anything — file or directory — exists at `path`. */
   exists(path: string): Promise<boolean>
-  /** True when `path` exists and is a directory. */
   isDir(path: string): Promise<boolean>
-  /** Entry NAMES (not full paths) directly inside `path`. */
+  /** Entry NAMES, not full paths. */
   listDir(path: string): Promise<string[]>
 }
 
@@ -150,25 +122,18 @@ const UNITY_DATA_SUFFIX = '_Data'
 const FALLBACK_NAME = 'untitled'
 
 /**
- * Shown when a `.ps1` lives under a path with spaces in it.
- *
- * The script has to travel in `file_path` (see {@link classifyPowerShellScript}),
- * and powershell strips the quotes the launcher adds, then reads the spaced path
- * as a command plus arguments — verified against the real powershell.exe.
+ * For a `.ps1` under a spaced path: it must travel in `file_path`, and powershell
+ * strips the launcher's quotes and reads the spaced path as command + args
+ * (verified against real powershell.exe).
  */
 const POWERSHELL_SPACED_PATH_WARNING =
   'powershell mishandles a script path containing spaces — move the script somewhere without spaces, or check the launch'
 
 /**
- * Classify a set of dropped paths into process entries.
- *
- * Paths are classified concurrently and returned in the order they were
- * dropped. Probes shared between paths — "where is TouchDesigner?" — run once
- * per call: the resolver memoises the promise, not the result, so two `.toe`
- * files dropped together share a single directory scan.
- *
- * A path whose probes throw becomes an `unsupported` result rather than
- * rejecting the batch; one unreadable file must not lose the other nine.
+ * Classify dropped paths concurrently, returned in drop order. Shared probes
+ * ("where is TouchDesigner?") run once per call — the resolver memoises the
+ * promise, not the result. A path whose probes throw becomes `unsupported`
+ * rather than rejecting the whole batch.
  */
 export function classifyDrop(
   paths: string[],
@@ -189,7 +154,7 @@ export function classifyDrop(
   )
 }
 
-/** Attach a freshly minted id, keeping the service's field order. */
+/** Keeps the service's field order. */
 export function toProcessEntry(draft: ProcessEntryDraft, id: string): ProcessEntry {
   return { id, ...draft }
 }
@@ -215,10 +180,7 @@ async function classifyOne(path: string, fs: FsProbe, resolver: Resolver): Promi
   }
 }
 
-/**
- * A dropped folder is only useful if it is a Unity player build: an executable
- * sitting beside the `<name>_Data` folder Unity generates for it.
- */
+/** A dropped folder is only useful as a Unity build: `<name>.exe` beside `<name>_Data`. */
 async function classifyDirectory(path: string, fs: FsProbe): Promise<DropResult> {
   const unity = await findUnityPlayer(path, fs)
   if (!unity) {
@@ -235,9 +197,7 @@ async function classifyDirectory(path: string, fs: FsProbe): Promise<DropResult>
       name: lowerName(unity.stem),
       exe_path: unity.exePath,
       file_path: '',
-      // Trailing separator dropped: this string ends up in the config as the
-      // working directory, and `C:\builds\Kiosk\` reads as a typo next to the
-      // entries the service writes.
+      // trailing separator dropped to match the service's own cwd entries
       cwd: trimTrailing(path),
     }),
     needsInput: [],
@@ -246,9 +206,8 @@ async function classifyDirectory(path: string, fs: FsProbe): Promise<DropResult>
 }
 
 /**
- * TouchDesigner opens a project as `TouchDesigner.exe <file.toe>`; the cwd is
- * the project's own folder so its relative asset paths resolve the same way
- * they do when an operator double-clicks the file.
+ * `TouchDesigner.exe <file.toe>`; cwd is the project folder so relative asset
+ * paths resolve as they do on double-click.
  */
 async function classifyTouchDesignerProject(path: string, resolver: Resolver): Promise<DropResult> {
   const exePath = await resolver.touchDesigner()
@@ -267,11 +226,7 @@ async function classifyTouchDesignerProject(path: string, resolver: Resolver): P
   }
 }
 
-/**
- * A bare executable. If it turns out to be a Unity player — dropped directly
- * rather than by its folder — say so, so the confirm card can label it
- * correctly; the entry itself is identical either way.
- */
+/** A bare executable; labelled `unity` when a `_Data` sibling exists. Entry is identical either way. */
 async function classifyExecutable(path: string, fs: FsProbe): Promise<DropResult> {
   const directory = dirname(path)
   const isUnityPlayer = await fs.isDir(join(directory, `${stem(path)}${UNITY_DATA_SUFFIX}`))
@@ -291,12 +246,10 @@ async function classifyExecutable(path: string, fs: FsProbe): Promise<DropResult
 }
 
 /**
- * `.bat`/`.cmd` go in as the executable, not as an argument to cmd.exe: the
- * launcher already knows a batch file cannot go through CreateProcess and
- * wraps it itself (`agent/src/process_launcher.py:170-174`). Routing it
- * through cmd.exe here would put `/c "<script>"` in `file_path`, which the
- * service runs through `os.path.abspath()` and mangles into a bogus path
- * (`owlette_service.py:1902-1910` → `_validate_path`).
+ * `.bat`/`.cmd` go in as the executable, never as an arg to cmd.exe: the launcher
+ * already wraps batch files (`process_launcher.py:170-174`), and `/c "<script>"`
+ * in `file_path` gets mangled by the service's abspath validator
+ * (`owlette_service.py:1902-1910`).
  */
 function classifyBatchScript(path: string): DropResult {
   return {
@@ -332,11 +285,9 @@ async function classifyPythonScript(path: string, resolver: Resolver): Promise<D
 }
 
 /**
- * `powershell.exe "<script>"`, for the same reason as python: the script goes
- * in `file_path` because anything that is not an existing file there gets
- * rewritten by the service's path validator, which rules out the `-File` form.
- * That costs one edge case, which is warned about rather than left to fail
- * silently at 2 am — see {@link POWERSHELL_SPACED_PATH_WARNING}.
+ * `powershell.exe "<script>"`. The script must go in `file_path` — anything there
+ * that is not an existing file is rewritten by the service's path validator,
+ * which rules out `-File`. Costs the {@link POWERSHELL_SPACED_PATH_WARNING} case.
  */
 async function classifyPowerShellScript(path: string, resolver: Resolver): Promise<DropResult> {
   const exePath = await resolver.powershell()
@@ -361,12 +312,9 @@ interface UnityPlayer {
 }
 
 /**
- * Find the player executable in a Unity build folder.
- *
  * The `_Data` folder is the anchor, not the exe: a build ships several
- * executables (`UnityCrashHandler64.exe`, launchers, installers) but exactly
- * one of them is named after a `_Data` folder. When a folder somehow holds
- * more than one such pair, the one named after the folder itself wins.
+ * executables but only one is named after a `_Data` folder. On multiple pairs,
+ * the one named after the folder wins.
  */
 async function findUnityPlayer(directory: string, fs: FsProbe): Promise<UnityPlayer | null> {
   const entries = await fs.listDir(directory)
@@ -420,9 +368,8 @@ function createResolver(fs: FsProbe, options: Required<ClassifyOptions>): Resolv
 }
 
 /**
- * Newest `<prefix>*` install directory under `root` that actually contains
- * `<tail>` — a version directory left behind by an uninstall has the name but
- * not the executable, so the name alone proves nothing.
+ * Newest `<prefix>*` dir under `root` that actually contains `<tail>` — an
+ * uninstall leaves the version directory behind, so the name proves nothing.
  */
 async function newestInstall(
   fs: FsProbe,
@@ -457,12 +404,9 @@ async function isFile(fs: FsProbe, path: string): Promise<boolean> {
 }
 
 /**
- * Natural comparison of install directory names.
- *
- * Digit runs compare as numbers so `TouchDesigner.2025.9999` sorts BELOW
- * `TouchDesigner.2025.30060`, which a plain string sort gets backwards — and
- * picking the wrong build is exactly the failure this exists to prevent. A
- * name with no version at all (`TouchDesigner`) sorts oldest.
+ * Natural sort: digit runs compare numerically, so `TouchDesigner.2025.9999`
+ * sorts below `.30060` — a string sort gets that backwards and picks the wrong
+ * build. An unversioned name sorts oldest.
  */
 export function compareVersionNames(a: string, b: string): number {
   const left = chunk(a)
@@ -528,10 +472,8 @@ function lowerName(value: string): string {
 }
 
 /*
- * Path helpers. Windows accepts either separator and both turn up in the wild —
- * Tauri hands us backslashes, while entries written by the python GUI's file
- * dialog are full of forward slashes — so these read both and write back the
- * separator the input already used.
+ * Path helpers. Tauri hands us backslashes, the python GUI's file dialog writes
+ * forward slashes — so these read both and echo back the input's separator.
  */
 
 function separatorOf(path: string): string {

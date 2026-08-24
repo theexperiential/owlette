@@ -1,17 +1,13 @@
 /**
  * Sites — create-site dialog (C2.1)
  *
- * Exercises the end-to-end create flow: superadmin opens the site switcher,
- * enters "manage sites", opens "new site", provides a custom site ID + name,
- * and submits. Verifies:
- *   - toast "created successfully" fires
- *   - site appears in the site-switcher dropdown
- *   - sites/{id} doc exists in Firestore with owner: super-uid (creator's uid)
- *     and the timezone field populated (defaulted when the browser sends one)
+ * Superadmin: site switcher → "manage sites" → "new site" → custom site ID + name →
+ * submit. Verifies the "created successfully" toast, the site appearing in the switcher
+ * dropdown, and sites/{id} in Firestore with owner set to the creator's uid and a
+ * populated timezone.
  *
- * Edge case: attempting to reuse an existing site ID should flip the
- * availability indicator to "taken", surface the error text, and keep the
- * submit button disabled.
+ * Edge case: reusing an existing site ID flips the availability indicator to "taken",
+ * surfaces the error text, and keeps the submit button disabled.
  */
 
 import { test, expect } from '@playwright/test';
@@ -49,7 +45,6 @@ test('superadmin can create a new site via the switcher', async ({ page }) => {
   await page.getByRole('dialog', { name: /manage sites/i })
     .getByRole('button', { name: 'new site', exact: true }).click();
 
-  // Create-site dialog is now open.
   const createDialog = page.getByRole('dialog', { name: /create new site/i });
   await expect(createDialog).toBeVisible();
 

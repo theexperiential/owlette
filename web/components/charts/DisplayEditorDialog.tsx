@@ -1,15 +1,9 @@
 'use client';
 
 /**
- * DisplayEditorDialog Component
- *
- * Modal dialog for manually editing a single monitor's properties within the
- * admin-authored "assigned" display layout. Opened from DisplayLayoutPanel's
- * assigned tab; the parent owns the list and merges the returned partial.
- *
- * Pure controlled component — no Firestore access, no hooks beyond local
- * form state. The parent is responsible for persisting the changes returned
- * from `onSave`.
+ * Modal for editing one monitor in the admin-authored "assigned" display
+ * layout. Pure controlled component: no Firestore, no hooks beyond local form
+ * state — the parent owns the list and persists what `onSave` returns.
  */
 
 import { useState } from 'react';
@@ -54,20 +48,15 @@ const ROTATION_OPTIONS: ReadonlyArray<{ value: number; label: string }> = [
 
 const SCALE_OPTIONS: ReadonlyArray<number> = [100, 125, 150, 175, 200];
 
-/**
- * Coerce an <input type="number"> value to an integer. Empty strings and
- * non-numeric garbage collapse to 0 rather than NaN so downstream math stays
- * well-defined.
- */
+/** Coerce an <input type="number"> value to an int; garbage → 0, never NaN. */
 function toInt(raw: string): number {
   const n = parseInt(raw, 10);
   return Number.isFinite(n) ? n : 0;
 }
 
 /**
- * Build a Partial<MonitorInfo> that includes only fields that changed relative
- * to the supplied baseline. Ordering matches the form so the diff stays easy
- * to audit when the parent logs or previews changes.
+ * Partial<MonitorInfo> of changed fields only, in form order so a logged or
+ * previewed diff reads in the same sequence as the UI.
  */
 function computeChanges(
   original: MonitorInfo,
@@ -106,15 +95,9 @@ export function DisplayEditorDialog({
   onClose,
   onSave,
 }: DisplayEditorDialogProps) {
-  // Form state is kept local and re-seeded whenever the target monitor
-  // changes. Keeping it flat (rather than one object) makes per-field edits
-  // cheap and the change-detection diff trivial.
-  //
-  // The "reseed on prop change" pattern follows React's recommended approach
-  // for form state derived from props: track the source identity and reset
-  // during render when it changes, avoiding the cascading renders a useEffect
-  // + setState would cause. See https://react.dev/reference/react/useState
-  // ("Storing information from previous renders").
+  // Flat local state, re-seeded when the target monitor changes. Reset during
+  // render (tracking source identity) rather than in a useEffect — that avoids
+  // the cascading render. https://react.dev/reference/react/useState
   const [resolution, setResolution] = useState<{ width: number; height: number }>({
     width: 0,
     height: 0,
@@ -127,9 +110,8 @@ export function DisplayEditorDialog({
   const [seededFor, setSeededFor] = useState<MonitorInfo | null>(null);
 
   if (monitor !== seededFor) {
-    // Re-seed on identity change (including first open and monitor swap).
-    // Called during render — React flushes the synchronous updates before
-    // committing, so the rendered output already reflects the new monitor.
+    // Called during render: React flushes these synchronous updates before
+    // commit, so the output already reflects the new monitor.
     setResolution(monitor ? monitor.resolution : { width: 0, height: 0 });
     setRefreshHz(monitor ? monitor.refreshHz : 60);
     setRotation(monitor ? monitor.rotation : 0);
@@ -157,9 +139,8 @@ export function DisplayEditorDialog({
     onClose();
   };
 
-  // Radix Dialog surfaces open state changes through a single callback;
-  // anything other than "opening" is a close request from the user
-  // (escape, overlay click, or the built-in X button).
+  // Radix reports open state through one callback; anything but "opening" is a
+  // user close (escape, overlay click, X).
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) onClose();
   };

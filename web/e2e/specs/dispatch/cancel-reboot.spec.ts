@@ -1,20 +1,10 @@
 /**
- * Dispatch — cancel pending restart (D2.4)
+ * Dispatch — cancel a pending restart: seed a mid-restart machine, click the
+ * cancel pill, stub the agent, assert the pill clears.
  *
- * Flow:
- *   1. Seed a machine that's mid-restart (rebootingInSec=120 sets
- *      `rebooting: true` + `rebootScheduledAt: now+120s`).
- *   2. UI: dashboard shows the red cancel-countdown pill instead of the
- *      green online pill (per MachineStatusPill: hasUpcomingRestart is
- *      true while rebootScheduledAt > now).
- *   3. Click the pill → useFirestore.cancelRestart writes a
- *      `cancel_reboot_{ts}` command to `commands/pending`. NOTE:
- *      cancelRestart does NOT directly clear rebootScheduledAt — the
- *      agent does that after consuming the command.
- *   4. Stub the agent: completeCommand for cancel_reboot AND clear
- *      rebootScheduledAt + rebooting on the machine doc (the agent
- *      writes both as one merge).
- *   5. Assert: cancel pill disappears, rebootScheduledAt is null.
+ * Key contract: `cancelRestart` only writes a `cancel_reboot_{ts}` command; it
+ * does NOT clear `rebootScheduledAt` — the agent does that on consuming it, so
+ * the stub must clear both flags in one merge.
  */
 
 import { test, expect } from '@playwright/test';
@@ -36,8 +26,8 @@ async function clearMachineCommands() {
 }
 
 test.beforeEach(async () => {
-  // 120-second future window keeps the cancel pill clickable for the
-  // duration of the test (final 5 seconds → text-only, no click handler).
+  // 120s keeps the pill clickable for the whole test — inside the final 5s it
+  // becomes text-only with no click handler.
   await seedMachine(SITE_ID, MACHINE_ID, { rebootingInSec: 120 });
   await clearMachineCommands();
 });
@@ -73,8 +63,7 @@ test('admin cancels an in-flight reboot — cancel command dispatched + agent cl
   expect(cmd.type).toBe('cancel_reboot');
   expect(cmd.status).toBe('pending');
 
-  // Stub the agent: complete the cancel command + clear the reboot flags
-  // (mirrors agent's cancel-handler at owlette_service.py:5489).
+  // Stub the agent's cancel-handler: complete the command and clear both flags.
   await completeCommand(SITE_ID, MACHINE_ID, cancelCmdId, { cancelled: true }, { cmdType: 'cancel_reboot' });
   await stubRebootSuccess(SITE_ID, MACHINE_ID);
 

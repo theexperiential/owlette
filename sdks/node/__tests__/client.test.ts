@@ -171,11 +171,9 @@ describe('OwletteClient retry policy', () => {
 });
 
 /**
- * Trial-countdown advisory (billing-system wave 3.3).
- *
- * The api sets `X-Owlette-Billing-Warning` while the account's free trial is
- * running. The sdk never prints — it hands the value to the consumer's
- * optional `onBillingWarning` callback and nothing else.
+ * Trial-countdown advisory. The api sets `X-Owlette-Billing-Warning` during a
+ * free trial; the sdk never prints it, only forwards it to the consumer's
+ * optional `onBillingWarning` callback.
  */
 describe('OwletteClient onBillingWarning', () => {
   const WARNING = 'trial ends 2026-08-15T00:00:00.000Z; choose a plan to keep API access';
@@ -255,8 +253,7 @@ describe('OwletteClient onBillingWarning', () => {
   });
 
   it('fires once per response, including retried attempts', async () => {
-    // Documented semantics: the sdk does not deduplicate — consumers that
-    // want at-most-once do it themselves.
+    // Documented: the sdk does not deduplicate; at-most-once is the consumer's job.
     const seen: string[] = [];
     const client = new OwletteClient({
       token: 'owk_live_x',

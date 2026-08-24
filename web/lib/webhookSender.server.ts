@@ -1,13 +1,8 @@
 /**
- * Webhook dispatch utility for owlette.
- *
- * Fires JSON payloads to all enabled webhooks for a site that subscribe to a
- * given event type.  Non-blocking — uses Promise.allSettled and never throws.
- *
- * Each delivery includes an HMAC-SHA256 signature in the X-owlette-Signature
- * header so receivers can verify authenticity.
- *
- * Auto-disables webhooks after 10 consecutive delivery failures.
+ * Webhook dispatch for owlette. Fires JSON payloads to every enabled webhook on a site
+ * subscribed to an event type. Non-blocking (Promise.allSettled), never throws.
+ * Each delivery carries an HMAC-SHA256 signature in X-owlette-Signature.
+ * A webhook auto-disables after 10 consecutive delivery failures.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
@@ -22,10 +17,6 @@ export interface WebhookPayload {
   site: { id: string; name: string };
   data: Record<string, unknown>;
 }
-
-/* ------------------------------------------------------------------ */
-/*  Platform detection & payload formatting                           */
-/* ------------------------------------------------------------------ */
 
 /** Detect the target platform from a webhook URL. */
 export function detectPlatform(url: string): WebhookPlatform {
@@ -42,10 +33,9 @@ interface EventMeta {
 
 const DEFAULT_META: EventMeta = { title: 'owlette Event', colorHex: '#6366f1', discordColor: 6526705 };
 
-// Color tokens — keep duplicates aligned with the existing process.* entries
-// so a Slack/Discord receiver can deduce severity from color alone across
-// event categories. Red = critical, amber = warning, green = healthy,
-// indigo = informational.
+// Color tokens — keep aligned with the process.* entries so a Slack/Discord receiver can
+// deduce severity from color alone: red critical, amber warning, green healthy,
+// indigo informational.
 const COLOR_RED_HEX = '#dc2626';
 const COLOR_RED_DISCORD = 14427686;
 const COLOR_AMBER_HEX = '#ca8a04';
@@ -60,12 +50,9 @@ const EVENT_META: Record<string, EventMeta> = {
   'machine.online':      { title: 'Machine Online',       colorHex: COLOR_GREEN_HEX, discordColor: COLOR_GREEN_DISCORD },
   'threshold.breached':  { title: 'Threshold Alert',      colorHex: COLOR_AMBER_HEX, discordColor: COLOR_AMBER_DISCORD },
 
-  // [B1.2] Display events — colors match the severity decisions in plan.md.
-  // Critical (red): hardware lost, apply died, sync dropped — operator must
-  // notice within seconds. Warning (amber): drift/swap/mosaic — worth a chat
-  // channel ping but not loud enough to email. Success (green) and added
-  // (neutral) are mostly for the dashboard recent-events feed; they only
-  // surface as webhooks if an operator opts in via the routing table.
+  // [B1.2] Display events. Critical (red): hardware lost, apply died, sync dropped.
+  // Warning (amber): drift/swap/mosaic. Success/added are mostly for the dashboard feed
+  // and only reach webhooks if an operator opts in via the routing table.
   'display.monitor_removed':       { title: 'Display Removed',          colorHex: COLOR_RED_HEX,   discordColor: COLOR_RED_DISCORD },
   'display.apply_failed':          { title: 'Display Apply Failed',     colorHex: COLOR_RED_HEX,   discordColor: COLOR_RED_DISCORD },
   'display.auto_revert_fired':     { title: 'Display Auto-Reverted',    colorHex: COLOR_RED_HEX,   discordColor: COLOR_RED_DISCORD },
@@ -78,9 +65,8 @@ const EVENT_META: Record<string, EventMeta> = {
   'display.apply_succeeded':       { title: 'Display Apply Succeeded',  colorHex: COLOR_GREEN_HEX, discordColor: COLOR_GREEN_DISCORD },
 };
 
-// Sanity check: the 10 display.* event names registered above must align
-// with the central routing table. Missing entries surface as a load-time
-// console warning rather than a silent drift between the two sources.
+// Sanity check: the 10 display.* names above must match the central routing table.
+// Missing entries warn at load time rather than drifting silently.
 if (process.env.NODE_ENV !== 'production') {
   const missing = Object.values(DISPLAY_EVENT_ROUTING)
     .map((r) => r.webhookEventName)
@@ -102,17 +88,14 @@ function extractFields(eventType: string, data: Record<string, unknown>) {
 
   const details = (data.errorMessage ?? data.details ?? '') as string;
 
-  // Threshold-specific
   const metric = data.metric as string | undefined;
   const value = data.value as string | number | undefined;
   const threshold = data.threshold as string | number | undefined;
 
-  // [B1.2] Display-specific. `monitor` is the per-event subject (friendly
-  // name + port for the render; edidHash for receivers that want stable
-  // identity). `changes` is the per-field list emitted by the agent on
-  // drift events (e.g. ["resolution.width", "position.x"]). Neither field
-  // is required — view-tab events like `monitor_added` may carry only the
-  // monitor; `apply_failed` may carry only an error message.
+  // [B1.2] Display-specific. `monitor` is the per-event subject (friendly name + port for
+  // the render, edidHash for stable identity); `changes` is the drifted-field list from the
+  // agent. Neither is required — monitor_added may carry only the monitor, apply_failed
+  // only an error.
   const monitor = data.monitor as Record<string, unknown> | undefined;
   const monitorName = (monitor?.friendlyName ?? monitor?.id ?? '') as string;
   const monitorPort = (monitor?.port ?? '') as string;
@@ -135,12 +118,9 @@ function extractFields(eventType: string, data: Record<string, unknown>) {
 }
 
 /**
- * Format a webhook payload for the target platform.
- * Returns the JSON body string to send.
- *
- * Exported for the talon webhook output (`@/lib/talons/outputs.server`), which
- * delivers on its own signing path but must render Slack/Discord bodies
- * identically to the subscription fan-out below.
+ * Format a webhook payload for the target platform; returns the JSON body string.
+ * Exported for the talon webhook output (`@/lib/talons/outputs.server`), which signs on
+ * its own path but must render Slack/Discord bodies identically to the fan-out below.
  */
 export function formatForPlatform(
   platform: WebhookPlatform,
@@ -161,27 +141,21 @@ export function formatForPlatform(
     changes,
   } = extractFields(payload.event, payload.data);
 
-  // Build a summary line for fallback / description
   const summaryParts = [meta.title];
-  // For display events the monitor is the more useful subject than the
-  // process; substitute it into the summary so Slack's preview text reads
-  // "Display Drift Detected: DELL P2415Q on lobby-kiosk-01" rather than
-  // generic "Display Drift Detected: on lobby-kiosk-01".
+  // For display events the monitor is a more useful subject than the process, so Slack's
+  // preview reads "Display Drift Detected: DELL P2415Q on lobby-kiosk-01".
   const isDisplayEvent = payload.event.startsWith('display.');
   if (isDisplayEvent && monitorName) summaryParts.push(monitorName);
   else if (processName) summaryParts.push(processName);
   if (machineName) summaryParts.push(`on ${machineName}`);
   const summary = summaryParts.join(': ');
 
-  // Build a details string
   let detailText = details;
   if (metric && value !== undefined && threshold !== undefined) {
     detailText = `${metric}: ${value} (threshold: ${threshold})`;
   }
-  // Display events surface the per-field change list as the detail body —
-  // shows the operator exactly which field(s) drifted without forcing them
-  // back to the dashboard. Falls back to the generic detail string when
-  // the event doesn't carry changes (e.g. apply_failed only has an error).
+  // Display events surface the per-field change list as the detail body so the operator
+  // sees which fields drifted. Falls back to the generic detail when there are none.
   if (isDisplayEvent && changes.length > 0) {
     detailText = `Changes: ${changes.join(', ')}`;
   }
@@ -191,9 +165,8 @@ export function formatForPlatform(
       { type: 'header', text: { type: 'plain_text', text: meta.title } },
     ];
 
-    // Fields section. For display events we surface monitor (+ port when
-    // present) instead of process, since process isn't meaningful to the
-    // operator looking at a display alert.
+    // Fields section. Display events show monitor (+ port) instead of process, which means
+    // nothing to an operator reading a display alert.
     const sectionFields: Record<string, unknown>[] = [];
     if (machineName) sectionFields.push({ type: 'mrkdwn', text: `*Machine:*\n${machineName}` });
     if (isDisplayEvent && monitorName) {
@@ -208,12 +181,10 @@ export function formatForPlatform(
       blocks.push({ type: 'section', fields: sectionFields });
     }
 
-    // Details section
     if (detailText) {
       blocks.push({ type: 'section', text: { type: 'mrkdwn', text: detailText } });
     }
 
-    // Context footer
     const ts = new Date(payload.timestamp).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
     blocks.push({
       type: 'context',
@@ -253,10 +224,8 @@ export function formatForPlatform(
 }
 
 /**
- * Fire all enabled webhooks for a site that subscribe to the given event.
- * Non-blocking — uses Promise.allSettled, never throws.
- *
- * @returns The number of webhooks that were successfully delivered.
+ * Fire all enabled webhooks for a site subscribed to the given event. Non-blocking
+ * (Promise.allSettled), never throws. Returns the number delivered successfully.
  */
 export async function fireWebhooks(
   siteId: string,
@@ -266,7 +235,6 @@ export async function fireWebhooks(
 ): Promise<number> {
   const db = getAdminDb();
 
-  // Query enabled webhooks that subscribe to this event
   const snapshot = await db
     .collection(`sites/${siteId}/webhooks`)
     .where('enabled', '==', true)
@@ -290,7 +258,7 @@ export async function fireWebhooks(
       const platform = detectPlatform(webhook.url);
       const body = formatForPlatform(platform, payload);
 
-      // Build headers — skip HMAC for Slack/Discord (they don't use it)
+      // Skip HMAC for Slack/Discord — they don't use it.
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'User-Agent': 'owlette-Webhooks/1.0',
@@ -314,7 +282,6 @@ export async function fireWebhooks(
 
       const newFailCount = response.ok ? 0 : (webhook.failCount || 0) + 1;
 
-      // Update delivery status
       await doc.ref.update({
         lastTriggered: new Date(),
         lastStatus: response.status,
@@ -347,17 +314,14 @@ export async function fireWebhooks(
   return successCount;
 }
 
-/**
- * Send a test payload to a specific webhook. Returns the HTTP status code
- * or 0 on network error.
- */
+/** Send a test payload to one webhook. Returns the HTTP status, or 0 on network error. */
 export async function testWebhook(
   url: string,
   secret: string
 ): Promise<{ status: number; error?: string }> {
   const platform = detectPlatform(url);
 
-  // Use a realistic test payload so Slack/Discord render a proper preview
+  // Realistic payload so Slack/Discord render a proper preview.
   const payload: WebhookPayload = {
     event: 'process.crashed',
     timestamp: new Date().toISOString(),
@@ -371,7 +335,7 @@ export async function testWebhook(
 
   const body = formatForPlatform(platform, payload);
 
-  // Build headers — skip HMAC for Slack/Discord
+  // Skip HMAC for Slack/Discord.
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'User-Agent': 'owlette-Webhooks/1.0',

@@ -1,36 +1,19 @@
 /**
- * security config reader (security-boundary-migration wave 2.1).
+ * Reads the authorization stack's kill switches from `global/security_config`
+ * with a 5s module-scoped cache (fast enough that a flip lands fleet-wide in
+ * seconds, slow enough that hot endpoints don't read per request) and an env-var
+ * fallback when firestore is down.
  *
- * Reads the global kill-switch state for the authorization stack from
- * `global/security_config` (firestore) with an in-memory ttl cache and
- * env-var fallback when firestore is unavailable.
+ * `capability_enforcement` / `rate_limit_enforcement` = false bypasses that
+ * check in `authorizedSiteHandler` / `authorizedPlatformHandler` and stamps
+ * `metadata.enforcement_bypassed` on the audit row.
  *
- * Two boolean flags:
- *   - `capability_enforcement` — when `false`, capability checks in
- *     `authorizedSiteHandler` / `authorizedPlatformHandler` are bypassed.
- *     Audit row carries `metadata.enforcement_bypassed: 'capability'`.
- *   - `rate_limit_enforcement` — when `false`, rate-limit checks in the
- *     same wrappers are bypassed. Audit row carries
- *     `metadata.enforcement_bypassed: 'rate_limit'`.
- *
- * The api-key scope check is NEVER bypassed by these flags — that's
- * defense against the confused-deputy bug where a downgraded key would
+ * The api-key scope check is NEVER bypassed — otherwise a downgraded key would
  * gain elevated effective rights during an enforcement outage.
  *
- * Auto-expiry: when the firestore document carries a `*_expiresAt` field
- * whose timestamp is in the past, that flag is treated as `true`
- * (re-enabled) regardless of its stored boolean. The kill-switch route
- * sets a 4h default expiry so an operator can't accidentally leave the
- * fleet unguarded indefinitely.
- *
- * Cache: 5-second module-scoped ttl. Sized to be short enough that an
- * operator flipping the switch sees fleet-wide effect within seconds,
- * but long enough that a hot endpoint isn't doing one firestore read
- * per request.
- *
- * Observability: every flip-state-change (between consecutive reads
- * that made it through the cache) emits a `logger.warn` entry. Wave 8.2
- * will replace the warn line with a real metric counter.
+ * Auto-expiry: a `*_expiresAt` in the past forces that flag back to `true`
+ * regardless of the stored boolean (kill-switch route defaults to 4h), so the
+ * fleet can't be left unguarded indefinitely.
  */
 
 import { Timestamp } from 'firebase-admin/firestore';
@@ -38,20 +21,15 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import logger from '@/lib/logger';
 import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
 
-/* -------------------------------------------------------------------------- */
-/*  types                                                                     */
-/* -------------------------------------------------------------------------- */
+// types
 
 export interface SecurityConfig {
   capability_enforcement: boolean;
   rate_limit_enforcement: boolean;
   /** Server-time epoch ms of the last successful firestore read (or 0). */
   lastUpdated: number;
-  /**
-   * Server-time epoch ms when the cache entry expires. Distinct from the
-   * per-flag firestore expiresAt fields — that's the auto-re-enable time
-   * for the kill switch itself.
-   */
+  /** Cache-entry expiry (epoch ms) — not the per-flag firestore expiresAt, which
+   *  is the kill switch's auto-re-enable time. */
   expiresAt: number;
 }
 
@@ -62,9 +40,7 @@ interface RawSecurityConfigDoc {
   rate_limit_enforcement_expiresAt?: Timestamp | { toMillis?: () => number } | number | null;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  constants                                                                 */
-/* -------------------------------------------------------------------------- */
+// constants
 
 export const SECURITY_CONFIG_PATH = 'global/security_config';
 export const CACHE_TTL_MS = 5_000;
@@ -72,9 +48,7 @@ export const CACHE_TTL_MS = 5_000;
 const SECURITY_CONFIG_COLLECTION = 'global';
 const SECURITY_CONFIG_DOC = 'security_config';
 
-/* -------------------------------------------------------------------------- */
-/*  cache                                                                     */
-/* -------------------------------------------------------------------------- */
+// cache
 
 interface CachedConfig {
   config: SecurityConfig;
@@ -87,9 +61,7 @@ let lastObservedFlags: {
   rate_limit_enforcement: boolean;
 } | null = null;
 
-/* -------------------------------------------------------------------------- */
-/*  helpers                                                                   */
-/* -------------------------------------------------------------------------- */
+// helpers
 
 function envFlag(name: string): boolean {
   const v = process.env[name];
@@ -115,10 +87,7 @@ function envFallback(reason: string, err?: unknown): SecurityConfig {
   };
 }
 
-/**
- * Coerce one of the firestore Timestamp shapes (or epoch ms number) into an
- * epoch-ms number. Returns `null` for missing / unparseable values.
- */
+/** Any firestore Timestamp shape (or epoch ms) → epoch ms; `null` if unparseable. */
 function toMillis(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (value && typeof (value as { toMillis?: () => number }).toMillis === 'function') {
@@ -192,9 +161,8 @@ function emitFlipMetric(prev: { capability_enforcement: boolean; rate_limit_enfo
     };
   }
   if (Object.keys(changes).length > 0) {
-    // wave 8.2 will replace this with a real metric counter; the warn
-    // level is the right interim signal because operators want to see
-    // every kill-switch flip in their primary logs.
+    // warn level on purpose: operators want every kill-switch flip in their
+    // primary logs (a metric counter is the eventual replacement).
     logger.warn('[securityConfig] enforcement flag changed', {
       context: 'securityConfig',
       data: { changes },
@@ -206,16 +174,13 @@ function emitFlipMetric(prev: { capability_enforcement: boolean; rate_limit_enfo
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/*  public api                                                                */
-/* -------------------------------------------------------------------------- */
+// public api
 
 export const securityConfig = {
   /**
-   * Read the current effective config. Cached for `CACHE_TTL_MS` per
-   * process. On firestore failure, falls back to env-var booleans
-   * (default-on) and caches that fallback for the same ttl so a sustained
-   * outage doesn't hammer firestore.
+   * Effective config, cached for `CACHE_TTL_MS` per process. On firestore failure
+   * falls back to env-var booleans (default-on) and caches that too, so a
+   * sustained outage doesn't hammer firestore.
    */
   async read(): Promise<SecurityConfig> {
     const now = Date.now();

@@ -1,0 +1,206 @@
+{
+  "$schema-note": "Canonical registry of Owlette's externally scheduled endpoints — the cron-job.org jobs. PATHS + metadata only; secret VALUES never live here, only the NAME of the env var that carries them. Edit this file when you add, remove, retime, or re-auth a scheduled route, then run `npm test -- cronJobs` from web/. See docs/runbooks/talons.md and web/content/docs/setup/web-deployment.mdx.",
+  "readme": [
+    "SOURCE OF TRUTH. This file is the canonical list of every endpoint an EXTERNAL scheduler calls on a timer. If a scheduled route is not listed here, treat it as unregistered.",
+    "DRIFT-TESTED. web/__tests__/infra/cronJobs.test.ts fails the build if a route.ts appears under web/app/api/cron/ without an entry here, if an entry points at a route file that no longer exists, or if an entry's declared authHeader no longer appears in its route source. Adding the route is not enough — the registry entry is part of shipping it.",
+    "NO SECRETS. Only env var NAMES appear here, in authEnvVar. The values live in the hosting provider and are registered per environment via scripts/env-manifest.json. The drift test scans every string in this file for secret-shaped values and fails on a hit.",
+    "PER ENVIRONMENT. Every job must be registered TWICE on cron-job.org — once against dev.owlette.app and once against owlette.app — each carrying that environment's own CRON_SECRET. A prod secret sent to the dev host correctly answers 401 and fires nothing. A registry that lists one job per path under-counts by half.",
+    "SILENT BY DEFAULT. Almost every failure mode here is silent: no error, no email, no records, the work simply never happens. An unscheduled job is indistinguishable from a feature nobody configured. Read failureMode before assuming a quiet endpoint is a healthy one.",
+    "SCOPE. Externally scheduled HTTP endpoints only. The nine onSchedule Cloud Functions under functions/src are a separate surface, created as a side effect of `firebase deploy --only functions`, and are deliberately not listed here."
+  ],
+  "scheduler": {
+    "provider": "cron-job.org",
+    "configLocation": "vendor UI only — no repo config, no CLI, no Terraform for these jobs",
+    "healthyResponse": "HTTP 200. 401 means the header name or its value is wrong for that environment. 500 means the handler threw — check the host logs for the route's own log prefix, e.g. `[retention] failed:`. Do not assert on an ok:true body: /api/hoot/escalation answers `success:true` with no ok field at all (route.ts:117), and /api/cron/status-ping derives ok from aggregate component health (route.ts:262), so a successful sweep legitimately reports ok:false while a monitored component is down.",
+    "note": "Not Railway, and not Cloud Scheduler (docs/runbooks/talons.md:105; web/app/api/cron/talons/route.ts:4). Three route docstrings still say 'Railway cron config (set in Railway dashboard)' — health-check:23, process-alerts:21, display-alerts:26. Those are stale; this registry is correct.",
+    "risk": "Free tier, no SLA. If cron-job.org stops quietly, health alerts, status pings, and talon dispatch stop with it until someone notices by hand (roadmap.md:15)."
+  },
+  "hosts": {
+    "dev": {
+      "host": "dev.owlette.app",
+      "baseUrl": "https://dev.owlette.app",
+      "servedBy": "Railway service owlette-dev",
+      "authEnvVarSource": "the dev value of CRON_SECRET (target railway-dev in scripts/env-manifest.json)"
+    },
+    "prod": {
+      "host": "owlette.app",
+      "baseUrl": "https://owlette.app",
+      "servedBy": "Railway service owlette-prod, fronted by the Cloudflare failover load balancer",
+      "authEnvVarSource": "the prod value of CRON_SECRET (target railway-prod in scripts/env-manifest.json)"
+    }
+  },
+  "jobs": [
+    {
+      "id": "cron-health-check",
+      "path": "/api/cron/health-check",
+      "method": "GET",
+      "authHeader": "X-Cron-Secret",
+      "authScheme": "raw",
+      "authEnvVar": "CRON_SECRET",
+      "schedule": "*/5 * * * *",
+      "cadenceLabel": "every 5 minutes",
+      "minTimeoutSeconds": 60,
+      "environments": ["dev", "prod"],
+      "urls": {
+        "dev": "https://dev.owlette.app/api/cron/health-check",
+        "prod": "https://owlette.app/api/cron/health-check"
+      },
+      "purpose": "Scans every site and machine for stale heartbeats past OFFLINE_THRESHOLD_MS (5 minutes, route.ts:33), debounces with a per-machine staleSince marker (STALE_CONFIRM_MS, route.ts:55), aggregates per site behind a settling window, then sends one consolidated 'machines offline' email per site, fires machine.offline webhooks, taps the talon matcher with the machine_offline event, and clears stale rebooting/shuttingDown latches at the source.",
+      "failureMode": {
+        "silent": true,
+        "description": "Nobody is ever emailed that a machine went offline, machine.offline webhooks never fire, and machine_offline talons never fire at all — this route is the only dispatcher for that event, since an offline machine cannot report its own absence. Stale rebooting/shuttingDown latches are also never cleared, so a machine that shut down cleanly or failed a reboot keeps pulsing the 'restarting' status pill for every client indefinitely."
+      },
+      "detectedBy": "nothing — no status component and no watchdog covers this route",
+      "sourceFile": "web/app/api/cron/health-check/route.ts",
+      "note": "Runtime is genuinely unbounded: it iterates every site, then every machine within it, with serial Firestore writes and serial per-recipient sends. Runtime scales with fleet size and there is no internal cap, which is why the timeout floor is 60s rather than the default."
+    },
+    {
+      "id": "cron-process-alerts",
+      "path": "/api/cron/process-alerts",
+      "method": "GET",
+      "authHeader": "X-Cron-Secret",
+      "authScheme": "raw",
+      "authEnvVar": "CRON_SECRET",
+      "schedule": "*/3 * * * *",
+      "cadenceLabel": "every 3 minutes",
+      "minTimeoutSeconds": 30,
+      "environments": ["dev", "prod"],
+      "urls": {
+        "dev": "https://dev.owlette.app/api/cron/process-alerts",
+        "prod": "https://owlette.app/api/cron/process-alerts"
+      },
+      "purpose": "Drains the pending_process_alerts queue after a 2-minute accumulation window (ACCUMULATION_WINDOW_MS, route.ts:28), groups by site, filters per-recipient muted machines, sends one digest email per recipient with an individual unsubscribe link, then deletes the processed queue documents in batches.",
+      "failureMode": {
+        "silent": true,
+        "description": "The agent only queues process crash and start-failure alerts; this route is what turns them into email. Unscheduled, the queue grows without bound and no operator is ever notified of a crashed process."
+      },
+      "detectedBy": "the alert_delivery status component (web/lib/healthChecks.server.ts:277) counts stale pending_process_alerts and degrades — published by /api/cron/status-ping. alert_delivery is also the only component whose degrade transition pages Sentry (SENTRY_ALERTING_COMPONENTS, status-ping/route.ts:22).",
+      "sourceFile": "web/app/api/cron/process-alerts/route.ts"
+    },
+    {
+      "id": "cron-display-alerts",
+      "path": "/api/cron/display-alerts",
+      "method": "GET",
+      "authHeader": "X-Cron-Secret",
+      "authScheme": "raw",
+      "authEnvVar": "CRON_SECRET",
+      "schedule": "*/3 * * * *",
+      "cadenceLabel": "every 3 minutes",
+      "minTimeoutSeconds": 30,
+      "environments": ["dev", "prod"],
+      "urls": {
+        "dev": "https://dev.owlette.app/api/cron/display-alerts",
+        "prod": "https://owlette.app/api/cron/display-alerts"
+      },
+      "purpose": "Same shape as process-alerts, for the pending_display_alerts queue: drains display and monitor events older than the 2-minute accumulation window (ACCUMULATION_WINDOW_MS, route.ts:39), groups by site, respects the displayAlerts opt-out and per-user mutedMachines, and emails one digest per recipient.",
+      "failureMode": {
+        "silent": true,
+        "description": "Display drift, monitor-config change, and similar events are queued and never emailed."
+      },
+      "detectedBy": "the alert_delivery status component (web/lib/healthChecks.server.ts:277) counts stale pending_display_alerts and degrades — published by /api/cron/status-ping",
+      "sourceFile": "web/app/api/cron/display-alerts/route.ts",
+      "note": "Two display events bypass this queue on purpose and email inline from /api/agent/alert: display_monitor_removed and display_auto_revert_fired. They are unaffected by this job's schedule."
+    },
+    {
+      "id": "cron-status-ping",
+      "path": "/api/cron/status-ping",
+      "method": "GET",
+      "authHeader": "X-Cron-Secret",
+      "authScheme": "raw",
+      "authEnvVar": "CRON_SECRET",
+      "schedule": "* * * * *",
+      "cadenceLabel": "every minute",
+      "minTimeoutSeconds": 30,
+      "environments": ["dev", "prod"],
+      "urls": {
+        "dev": "https://dev.owlette.app/api/cron/status-ping",
+        "prod": "https://owlette.app/api/cron/status-ping"
+      },
+      "purpose": "Runs the nine status components (dashboard, api, agent_registry, webhook_delivery, alert_delivery, talon_dispatch, r2_uploads, firestore, cortex_chat), writes a status_pings document, computes degrade and recover transitions against the two previous pings, publishes component status to Instatus, and raises a Sentry event on the degrade transition for alert_delivery only (SENTRY_ALERTING_COMPONENTS, route.ts:22).",
+      "failureMode": {
+        "silent": true,
+        "description": "The public status page freezes at whatever it last showed, and the two stall detectors that exist only inside this route — alert_delivery for a stuck digest cron, talon_dispatch for a stuck talon sweep — never run, so a second failed cron produces no signal at all. Sentry never fires for a degraded alert pipeline."
+      },
+      "detectedBy": "nothing — this route IS the watchdog for the others, so its own failure is unobserved except by the status page going stale",
+      "sourceFile": "web/app/api/cron/status-ping/route.ts",
+      "note": "Its own response body reports fleet health, not job health: ok mirrors whether all nine components passed (route.ts:262), so judge this job by the 200 alone. Instatus publishing also degrades quietly when a component id env var is missing — setInstatusComponentStatus returns skipped rather than throwing (instatusClient.ts:104), so the route still answers 200 while that component never updates. Verify with `node scripts/check-status-page-ready.mjs`."
+    },
+    {
+      "id": "cron-retention",
+      "path": "/api/cron/retention",
+      "method": "GET",
+      "authHeader": "X-Cron-Secret",
+      "authScheme": "raw",
+      "authEnvVar": "CRON_SECRET",
+      "schedule": "0 4 * * *",
+      "cadenceLabel": "daily at 04:00",
+      "minTimeoutSeconds": 30,
+      "environments": ["dev", "prod"],
+      "urls": {
+        "dev": "https://dev.owlette.app/api/cron/retention",
+        "prod": "https://owlette.app/api/cron/retention"
+      },
+      "purpose": "Deletes metrics_history buckets by document-id range and site logs by indexed timestamp, past a 400-day window (METRICS_RETENTION_DAYS / LOGS_RETENTION_DAYS). Bounded at MAX_DELETES_PER_RUN = 2000 documents per invocation (route.ts:59), oldest-first so progress is monotonic across runs.",
+      "failureMode": {
+        "silent": true,
+        "description": "Nothing errors, but data past 400 days is retained forever, which contradicts the retention commitment in the privacy policy section 6 — the route's own header comment states this job is the only thing enforcing that claim. Deliberately not a Firestore TTL policy, so there is no fallback mechanism."
+      },
+      "detectedBy": "nothing — read the response body instead: truncated:true means the run hit its 2000-document ceiling and older data still remains",
+      "sourceFile": "web/app/api/cron/retention/route.ts",
+      "note": "Against a large first-time backlog, schedule hourly until a run reports truncated:false, then drop back to daily. Any quiet hour works; 04:00 is the documented default."
+    },
+    {
+      "id": "cron-talons",
+      "path": "/api/cron/talons",
+      "method": "GET",
+      "authHeader": "X-Cron-Secret",
+      "authScheme": "raw",
+      "authEnvVar": "CRON_SECRET",
+      "schedule": "* * * * *",
+      "cadenceLabel": "every minute",
+      "minTimeoutSeconds": 60,
+      "environments": ["dev", "prod"],
+      "urls": {
+        "dev": "https://dev.owlette.app/api/cron/talons",
+        "prod": "https://owlette.app/api/cron/talons"
+      },
+      "purpose": "The talon scheduler sweep, and the only thing that fires a schedule-triggered talon. Three passes per run: close out runs abandoned mid-flight, fire delayed event triggers whose runAfterAt has come due, then claim due schedules transactionally so two overlapping sweeps cannot double-fire. Anything more than MISSED_FIRE_GRACE_MS (10 minutes, route.ts:82) late is recorded as a missed run rather than executed, so a stalled scheduler does not replay an hour of automations on recovery.",
+      "failureMode": {
+        "silent": true,
+        "description": "No error, no email, no run records — every scheduled talon simply never fires, and a talon that stopped firing looks identical to a talon nobody configured. Pending deferrals past their 10-minute grace are written off permanently."
+      },
+      "detectedBy": "the talon_dispatch status component (web/lib/healthChecks.server.ts:321), published by /api/cron/status-ping",
+      "sourceFile": "web/app/api/cron/talons/route.ts",
+      "note": "The only route with an explicit wall-clock budget: SWEEP_BUDGET_MS is 50_000 ms (route.ts:74), with 25 claims and 25 deferral claims per sweep. A healthy sweep may use up to ~50s, so the scheduler timeout must be at least 60s or a good run gets cut off mid-flight."
+    },
+    {
+      "id": "hoot-escalation",
+      "path": "/api/hoot/escalation",
+      "method": "GET",
+      "authHeader": "Authorization",
+      "authScheme": "bearer",
+      "authEnvVar": "CRON_SECRET",
+      "schedule": "*/5 * * * *",
+      "cadenceLabel": "every 5 minutes",
+      "minTimeoutSeconds": 30,
+      "environments": ["dev", "prod"],
+      "urls": {
+        "dev": "https://dev.owlette.app/api/hoot/escalation",
+        "prod": "https://owlette.app/api/hoot/escalation"
+      },
+      "purpose": "Backstop poller for autonomous hoot. Scans every site's cortex-events subcollection for documents flagged escalationPending, sends the escalation email via Resend, and clears the flag regardless of send outcome. The flag is written by the agent (write_escalation_flag in agent/src/cortex_firestore.py) and this route is its only reader.",
+      "failureMode": {
+        "silent": true,
+        "description": "Escalation emails are never sent and escalationPending stays true forever on those event documents. Only matters where autonomous hoot is enabled; the docs frame the route as a backstop, so a missed run delays rather than loses escalations — but with the route entirely unscheduled there is no other drain."
+      },
+      "detectedBy": "nothing",
+      "sourceFile": "web/app/api/hoot/escalation/route.ts",
+      "alias": {
+        "path": "/api/cortex/escalation",
+        "sourceFile": "web/app/api/cortex/escalation/route.ts",
+        "note": "Back-compat re-export of the same handlers, kept because the shipped @owlette/cli and the SDKs still call the old path. Existing schedules pointing at it keep working; register anything new against the canonical /api/hoot/ path. Do not list it as a separate job."
+      },
+      "note": "THE ODD ONE OUT, twice over. It reads the Authorization header as `Bearer <CRON_SECRET>`, not X-Cron-Secret; sending the wrong header shape returns 401 with no other symptom. The GET handler strips the prefix with an unanchored replace, so a bare value also authenticates — do not rely on that. It is also the one job that does not answer with an ok field: a healthy run returns `success:true` (route.ts:117). The POST handler in the same file is a different surface entirely (x-cortex-secret against CORTEX_INTERNAL_SECRET, server-to-server) and is not scheduled."
+    }
+  ]
+}

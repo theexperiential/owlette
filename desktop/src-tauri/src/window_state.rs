@@ -1,27 +1,18 @@
-//! Layout memory: how big the window was, and how wide the process list was.
+//! Layout memory: window size and process-list width.
 //!
-//! This is shell geometry, not user state, so it is deliberately device-local:
-//! a per-user JSON in `%APPDATA%\app.owlette.desktop\layout.json`, written with
-//! plain `std::fs`. It is per-*user* rather than per-machine (the owlette data
-//! root in ProgramData) because two operators sharing a kiosk should not inherit
-//! each other's window size — and the same reason rules out putting it in
-//! `config.json`, which the service owns and uploads.
+//! Shell geometry, not user state, so it is device-local: a per-user JSON at
+//! `%APPDATA%\app.owlette.desktop\layout.json`. Per-*user* rather than the
+//! ProgramData root so two operators sharing a kiosk don't inherit each other's
+//! window size — the same reason it isn't in `config.json`, which the service
+//! owns and uploads.
 //!
-//! Three deliberate decisions:
+//! * Size and maximised, never position: a remembered position is how an app ends
+//!   up opening on a monitor that has since been unplugged.
+//! * Logical pixels, so the file survives a move to a differently-scaled display.
+//! * A namespaced document (`{"window": {...}, "sidebar": {...}}`); every write
+//!   preserves sections it does not own, so a later key needs no migration.
 //!
-//! * **Size and maximised, never position.** A remembered position is how an
-//!   app ends up opening on a monitor that has since been unplugged. Restoring
-//!   the size and re-centring cannot do that.
-//! * **Logical pixels.** The file survives a move to a differently-scaled
-//!   display; physical pixels would restore a window a third of the size on a
-//!   150 % monitor.
-//! * **A namespaced document.** The file is `{"window": {...}, "sidebar": {...}}`
-//!   and every write preserves the sections it does not own, so a later key can
-//!   join without a migration and without a race between two writers costing a
-//!   section.
-//!
-//! Nothing here is load-bearing: a missing, truncated or hand-mangled file falls
-//! back to the `tauri.conf.json` defaults in silence.
+//! Nothing here is load-bearing: an unreadable file falls back to `tauri.conf.json`.
 
 use std::fs;
 use std::io;
@@ -40,25 +31,21 @@ const KEY_SIDEBAR: &str = "sidebar";
 const KEY_WIDTH: &str = "width";
 const KEY_COLLAPSED: &str = "collapsed";
 
-/// The window minimums declared in `tauri.conf.json`. Restoring anything below
-/// them would be corrected by the window manager on the first paint, so they are
-/// applied here instead — and a test asserts these two constants still match the
-/// config they mirror.
+/// The window minimums declared in `tauri.conf.json`. Applied here because the
+/// window manager would correct anything smaller on first paint; a test asserts
+/// these constants still match the config they mirror.
 pub const MIN_WINDOW_WIDTH: f64 = 780.0;
 pub const MIN_WINDOW_HEIGHT: f64 = 540.0;
 
-/// Above this a stored dimension is corruption rather than a preference: no
-/// logical desktop is this wide, and restoring it would put the titlebar out of
-/// reach. Such a file is discarded, not clamped.
+/// Above this a stored dimension is corruption rather than a preference — the
+/// titlebar would be out of reach. Such a file is discarded, not clamped.
 const MAX_WINDOW_DIMENSION: f64 = 32_000.0;
 
-/// Sidebar bounds. The divider applies the same numbers while dragging
-/// (`src/lib/sidebarWidth.ts`), but this side is the authority — the frontend
-/// cannot write a width the host has not clamped.
+/// Sidebar bounds. `src/lib/sidebarWidth.ts` applies the same numbers while
+/// dragging, but this side is the authority — the frontend cannot bypass the clamp.
 pub const MIN_SIDEBAR_WIDTH: f64 = 200.0;
 pub const MAX_SIDEBAR_WIDTH: f64 = 400.0;
-/// `w-72`: the width the sidebar had before it became resizable, and what a
-/// machine with no layout file still gets.
+/// `w-72`: the width before the sidebar became resizable, and the no-file default.
 pub const DEFAULT_SIDEBAR_WIDTH: f64 = 288.0;
 
 /// The window half of the document, in logical pixels.
@@ -66,9 +53,8 @@ pub const DEFAULT_SIDEBAR_WIDTH: f64 = 288.0;
 pub struct WindowLayout {
   pub width: f64,
   pub height: f64,
-  /// Whether the window was maximised when it was last put away. The size above
-  /// is still the *un*-maximised one, so restoring down lands where the operator
-  /// left it rather than on the config default.
+  /// Maximised when last put away. `width`/`height` stay the *un*-maximised size so
+  /// restoring down lands where the operator left it.
   #[serde(default)]
   pub maximized: bool,
 }
@@ -110,11 +96,8 @@ pub fn clamp_sidebar_width(width: f64) -> f64 {
   width.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH).round()
 }
 
-// ─── document ───────────────────────────────────────────────────────────────
-
-/// Read the whole document. Anything unreadable — missing file, truncated
-/// write, a hand-edited array — is an empty document: layout memory is a
-/// convenience and must never be a reason a launch behaves oddly.
+/// Read the whole document. Anything unreadable — missing, truncated, hand-edited
+/// — is an empty document; layout memory must never be why a launch behaves oddly.
 fn read_document(path: &Path) -> Map<String, Value> {
   let text = match fs::read_to_string(path) {
     Ok(text) => text,
@@ -125,9 +108,8 @@ fn read_document(path: &Path) -> Map<String, Value> {
     }
   };
 
-  // A file that has been through Notepad or `Set-Content -Encoding utf8` keeps
-  // a UTF-8 BOM, which serde_json refuses outright. Dropping it costs one
-  // comparison and turns "your layout was forgotten" into a correct read.
+  // Notepad and `Set-Content -Encoding utf8` leave a UTF-8 BOM, which serde_json
+  // refuses outright. Stripping it turns "layout forgotten" into a correct read.
   match serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) {
     Ok(Value::Object(map)) => map,
     Ok(_) => {
@@ -148,11 +130,8 @@ fn write_section(path: &Path, key: &str, section: Value) -> io::Result<()> {
   })
 }
 
-/// Set one key inside a section, leaving the rest of that section alone.
-///
-/// The sidebar section holds two independent settings — how wide it is and
-/// whether it is collapsed — written by two different gestures. Replacing the
-/// whole section for either would drop the other.
+/// Set one key inside a section, leaving the rest alone: the sidebar's width and
+/// collapsed flag are written by different gestures and must not clobber each other.
 fn write_section_key(path: &Path, section: &str, key: &str, value: Value) -> io::Result<()> {
   write_document(path, |document| {
     match document.get_mut(section) {
@@ -180,9 +159,8 @@ fn write_document(path: &Path, edit: impl FnOnce(&mut Map<String, Value>)) -> io
   }
   let text = serde_json::to_string_pretty(&Value::Object(document)).map_err(io::Error::other)?;
 
-  // Scratch file plus rename, like every other file this app owns: a reader
-  // that catches us mid-write gets the previous document rather than half of
-  // this one.
+  // Scratch file plus rename: a reader that catches us mid-write gets the previous
+  // document rather than half of this one.
   let temp = path.with_extension(format!("{}.tmp", std::process::id()));
   if let Err(error) = fs::write(&temp, text) {
     let _ = fs::remove_file(&temp);
@@ -240,20 +218,16 @@ pub fn save_sidebar_collapsed(path: &Path, collapsed: bool) -> io::Result<()> {
   write_section_key(path, KEY_SIDEBAR, KEY_COLLAPSED, collapsed.into())
 }
 
-// ─── managed state ──────────────────────────────────────────────────────────
-
 /// Managed state: where the file lives, plus the geometry the window events keep
 /// current so a save never has to ask a window that may already be gone.
 ///
-/// The path is optional because it comes from Tauri's path resolver, which can
-/// in principle fail; when it does, layout memory turns itself off rather than
-/// taking the app down with it.
+/// `path` is optional because Tauri's path resolver can fail; layout memory then
+/// turns itself off rather than taking the app down.
 pub struct LayoutState {
   path: Option<PathBuf>,
   window: Mutex<WindowLayout>,
-  /// Serialises the read-modify-write of the document. The window is saved from
-  /// the main thread and the sidebar from a command worker, and without this the
-  /// two could interleave and drop a section.
+  /// Serialises the document read-modify-write: the window saves from the main
+  /// thread and the sidebar from a command worker, which could otherwise interleave.
   file: Mutex<()>,
 }
 
@@ -270,9 +244,8 @@ impl LayoutState {
     self.path.as_deref()
   }
 
-  /// Record a resize. `maximized` is always kept; the size is kept only while
-  /// the window is *not* maximised, so what is stored stays the size the window
-  /// restores down to.
+  /// Record a resize. `maximized` is always kept; the size only while *not*
+  /// maximised, so what is stored stays the size the window restores down to.
   pub fn record(&self, width: f64, height: f64, maximized: bool) {
     let Ok(mut window) = self.window.lock() else {
       log::error!("layout state lock poisoned");
@@ -355,15 +328,11 @@ impl LayoutState {
   }
 }
 
-// ─── window glue ────────────────────────────────────────────────────────────
-
-/// Restore the remembered geometry onto the main window and build the state to
-/// manage.
+/// Restore the remembered geometry onto the main window and build the managed state.
 ///
-/// Called from `setup`, which is the only place where every launch converges
-/// *before* the window is first shown — `--tray` leaves it hidden for the tray
-/// to open later, a plain launch shows it at the end of setup, and a second
-/// instance is forwarded into a window this has already sized.
+/// Called from `setup` — the only point every launch converges on *before* the window
+/// is first shown (`--tray` leaves it hidden for the tray to open later; a second
+/// instance is forwarded into a window this has already sized).
 pub fn restore(app: &AppHandle) -> LayoutState {
   let path = match app.path().app_data_dir() {
     Ok(dir) => Some(dir.join(LAYOUT_FILE)),
@@ -393,9 +362,9 @@ pub fn restore(app: &AppHandle) -> LayoutState {
     log::warn!("could not restore the window size: {error}");
     return LayoutState::new(path, configured);
   }
-  // Position is deliberately not remembered, and growing from the config's
-  // centred origin would leave a restored window off-centre — or off-screen on
-  // a display that has since shrunk. Re-centring is the whole restore.
+  // Position is deliberately not remembered, and growing from the config's centred
+  // origin would leave a restored window off-centre — or off-screen on a display
+  // that has since shrunk. Re-centring is the whole restore.
   if let Err(error) = window.center() {
     log::warn!("could not centre the window: {error}");
   }
@@ -429,11 +398,9 @@ fn configured_size(window: &tauri::WebviewWindow) -> WindowLayout {
   }
 }
 
-/// Fold a resize into the state, in logical pixels.
-///
-/// A minimised window reports 0x0 and is not maximised even when it will restore
-/// to maximised, so those events are dropped before they can rewrite either
-/// half of the record.
+/// Fold a resize into the state, in logical pixels. A minimised window reports 0x0
+/// and reports not-maximised even when it will restore maximised, so those events
+/// are dropped before they can rewrite either half of the record.
 pub fn record_resize(window: &Window, state: &LayoutState, size: PhysicalSize<u32>) {
   if window.is_minimized().unwrap_or(false) {
     return;
@@ -666,9 +633,9 @@ mod tests {
     let scratch = Scratch::new("sidebar-pair");
     let path = scratch.file();
 
-    // The width is written by a drag and the collapsed flag by the rail toggle,
-    // and the two arrive in whatever order the operator produces them. Either
-    // one replacing the whole section would forget the other.
+    // Width comes from a drag and the collapsed flag from the rail toggle, in
+    // whatever order the operator produces them; either replacing the whole
+    // section would forget the other.
     save_sidebar_width(&path, 340.0).expect("width");
     save_sidebar_collapsed(&path, true).expect("collapsed");
     assert_eq!(load_sidebar_width(&path), Some(340.0));

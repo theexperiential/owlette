@@ -1,13 +1,10 @@
 /**
  * Screenshot — monitor capability card preview (api-sprint wave 4.3).
  *
- * Output: `web/public/landing-screens/monitor.png`
- * Used by: the landing page monitor capability card (wired up by wave 4.5).
- *
- * Drives the dashboard into the `monitor-single-machine` scenario: one
- * machine seeded with a 60-sample historical_metrics series, then opens the
- * inline MetricsDetailPanel by clicking the CPU sparkline on the card. The
- * panel renders the deterministic sparkline data from the seeded series.
+ * Output `web/public/landing-screens/monitor.png`, for the landing page's monitor
+ * capability card. Drives the `monitor-single-machine` scenario (one machine, a
+ * 60-sample historical_metrics series) and opens the inline MetricsDetailPanel via the
+ * CPU sparkline, which renders deterministic data from the seeded series.
  */
 import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
@@ -37,15 +34,13 @@ test('monitor capability card preview', async ({ page }) => {
       .filter({ hasText: ctx.machineId! });
     await expect(card).toBeVisible();
 
-    // Open the inline MetricsDetailPanel via the CPU sparkline tile — same
-    // path the dashboard's onMetricClick handler wires up. Match the exact
-    // "cpu" label inside the metric tile to avoid hitting the CPU model
-    // text or any other "cpu"-containing string on the card.
+    // Open the inline MetricsDetailPanel via the CPU sparkline tile — the same path
+    // onMetricClick wires up. Match the exact "cpu" tile label so we don't hit the CPU
+    // model text or another "cpu"-containing string on the card.
     await card.getByText('cpu', { exact: true }).first().click();
 
-    // The MetricsDetailPanel renders at page-level above the machines list,
-    // not inside the card. Scroll back to the page top so the panel's
-    // header (with metric tabs / time-range selector) is fully visible.
+    // The panel renders at page level above the machines list, not inside the card;
+    // scroll back to the top so its header (tabs / time-range selector) is visible.
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
 
     // dashboard has persistent firestore websockets — network never idles. wait for paint instead.

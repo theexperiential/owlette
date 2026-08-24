@@ -1,19 +1,13 @@
 #!/usr/bin/env node
 /**
- * probe-capture.mjs — hard-gate smoke test for the tutorial-video capture pipeline.
- *
- * Validates on THIS machine that ffmpeg can:
- *   1. encode through h264_nvenc with the production NVENC params,
- *   2. capture the real Windows desktop via the ddagrab filter (DXGI Desktop Duplication),
- *   3. produce a 60fps 1920x1080 H.264 mp4 that ffprobe accepts.
- *
- * Also captures via gdigrab + libx264 so the fallback path is proven before we'd ever
- * need it. Outputs go to a tmp dir and are deleted on success — nothing committed.
+ * Hard-gate smoke test for the tutorial-video capture pipeline. Proves on THIS
+ * machine that ffmpeg can encode through h264_nvenc with the production NVENC
+ * params, capture the real desktop via ddagrab (DXGI Desktop Duplication), and
+ * emit a 60fps 1920x1080 H.264 mp4 ffprobe accepts. Also exercises the
+ * gdigrab + libx264 fallback. Outputs land in a tmp dir, deleted on success.
  *
  * Run:  cd web && node scripts/probe-capture.mjs
- * Exit: 0  primary  (ddagrab + h264_nvenc) works → ready for production
- *       1  degraded (primary failed, fallback works) → can still record at lower quality
- *       2  hard stop (no working pipeline)
+ * Exit: 0 primary works | 1 degraded (fallback only) | 2 no working pipeline
  */
 
 import { spawnSync } from 'node:child_process';
@@ -82,12 +76,11 @@ function describeMeta(m) {
 
 /**
  * Validate the file is a real 1920x1080 h264 mp4 of roughly the right length.
- * Pass `checkFps: true` only for SYNTHETIC sources (testsrc2). For real-desktop
- * captures the framerate is determined by how often the desktop actually updates —
- * an idle desktop emits far fewer than 60 fps via DXGI Desktop Duplication, so
- * gating on 60fps would falsely fail a perfectly healthy pipeline. The probe's job
- * is to verify the pipeline encodes a valid file; the *live capture* against an
- * animating Chromium is what produces true 60fps.
+ *
+ * `checkFps: true` only for SYNTHETIC sources (testsrc2): a real-desktop
+ * capture's framerate tracks how often the desktop updates, and an idle desktop
+ * emits far fewer than 60 fps over DXGI — gating on 60 would fail a healthy
+ * pipeline. True 60fps comes from live capture against animating Chromium.
  */
 function assertMeta(m, { checkFps = false } = {}) {
   if (m.width !== 1920 || m.height !== 1080) return `size ${m.width}x${m.height} != 1920x1080`;
@@ -100,7 +93,7 @@ function assertMeta(m, { checkFps = false } = {}) {
 
 function cleanup(path) { try { if (existsSync(path)) unlinkSync(path); } catch {} }
 
-// ─── 1. ffmpeg present ─────────────────────────────────────────────────────────
+// 1. ffmpeg present
 header('1. ffmpeg + capability detection');
 let r = run('ffmpeg', ['-hide_banner', '-version']);
 if (r.code !== 0) {
@@ -125,7 +118,7 @@ note(`gdigrab : ${has.gdigrab ? 'available' : 'MISSING'}`);
 note(`h264_nvenc : ${has.nvenc   ? 'available' : 'MISSING'}`);
 note(`libx264 : ${has.libx264 ? 'available' : 'MISSING'}`);
 
-// ─── 2. DPI scaling sanity (warn-only) ─────────────────────────────────────────
+// 2. DPI scaling sanity (warn-only)
 header('2. primary monitor DPI (LOGPIXELSX, 96 = 100%)');
 const psCmd = `Add-Type @"
   using System;
@@ -147,7 +140,7 @@ if (!Number.isFinite(dpi)) {
   else fail(`DPI ${dpi} (${scalingPct}% scaling) — set primary monitor to 100% before recording, or ddagrab's 1920x1080 region will not match Chromium's 1920x1080 viewport`);
 }
 
-// ─── 3. NVENC encoder smoke (synthetic) ────────────────────────────────────────
+// 3. NVENC encoder smoke (synthetic)
 header('3. NVENC encoder smoke  (testsrc2 → h264_nvenc with production params)');
 let nvencEncoderOk = false;
 if (has.nvenc) {
@@ -176,7 +169,7 @@ if (has.nvenc) {
   fail('h264_nvenc not present — skipping');
 }
 
-// ─── 4. PRIMARY: ddagrab → h264_nvenc (real desktop) ───────────────────────────
+// 4. PRIMARY: ddagrab -> h264_nvenc (real desktop)
 header('4. PRIMARY pipeline smoke  (ddagrab desktop → h264_nvenc)');
 let primaryOk = false;
 if (has.ddagrab && has.nvenc) {
@@ -205,7 +198,7 @@ if (has.ddagrab && has.nvenc) {
   fail('ddagrab or h264_nvenc missing — skipping primary');
 }
 
-// ─── 5. FALLBACK: gdigrab → libx264 ────────────────────────────────────────────
+// 5. FALLBACK: gdigrab -> libx264
 header('5. FALLBACK pipeline smoke (gdigrab desktop → libx264)');
 let fallbackOk = false;
 if (has.gdigrab && has.libx264) {
@@ -234,7 +227,7 @@ if (has.gdigrab && has.libx264) {
   fail('gdigrab or libx264 missing — skipping fallback');
 }
 
-// ─── 6. summary + exit ─────────────────────────────────────────────────────────
+// 6. summary + exit
 header('summary');
 console.log(`  NVENC encoder           : ${nvencEncoderOk ? 'OK' : 'FAIL'}`);
 console.log(`  ddagrab + h264_nvenc    : ${primaryOk     ? 'OK (PRIMARY)'  : 'FAIL'}`);

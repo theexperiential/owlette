@@ -1,10 +1,8 @@
 /**
- * PreToolUse Hook — Pre-Commit Build Check
+ * PreToolUse hook — pre-commit build check.
  *
- * Before git commit/push, checks session-edits.json for recently edited files.
- * Runs TypeScript check for web/ changes, Python syntax check for agent/ changes.
- * Runs Jest tests for web/ changes, pytest for agent/ changes.
- * Blocks the commit if errors are found.
+ * On git commit/push, reads session-edits.json and runs tsc + jest for web/
+ * changes and py_compile + pytest for agent/ changes. Blocks on any error.
  */
 
 import { readFileSync, existsSync } from 'fs'
@@ -16,7 +14,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const SESSION_FILE = join(__dirname, '..', 'session-edits.json')
 const PROJECT_ROOT = join(__dirname, '..', '..')
 
-// Read stdin
 let input = ''
 for await (const chunk of process.stdin) {
   input += chunk
@@ -26,7 +23,6 @@ try {
   const data = JSON.parse(input)
   const toolInput = data.tool_input || {}
 
-  // Only check on git commit and git push commands
   const command = toolInput.command || ''
   const isCommit = /\bgit\s+(commit|push)\b/.test(command)
   if (!isCommit) {
@@ -34,17 +30,14 @@ try {
     process.exit(0)
   }
 
-  // Read recently edited files
   const editedFiles = getEditedFiles()
   if (editedFiles.length === 0) {
     process.stdout.write(JSON.stringify({ decision: 'approve' }))
     process.exit(0)
   }
 
-  // Determine affected areas
   const hasWeb = editedFiles.some(f => /[/\\]web[/\\]/.test(f))
-  // Match the Python agent dir only — NOT web routes that merely live under an
-  // /agent/ path (e.g. web/app/api/agent/*), which are TypeScript, not Python.
+  // The Python agent dir only — web/app/api/agent/* is TypeScript, not Python.
   const hasAgent = editedFiles.some(f => /[/\\]agent[/\\]/.test(f) && !/[/\\]web[/\\]/.test(f))
 
   if (!hasWeb && !hasAgent) {
@@ -54,7 +47,6 @@ try {
 
   const errors = []
 
-  // TypeScript check for web changes
   if (hasWeb) {
     try {
       execSync('npx tsc --noEmit', {
@@ -71,7 +63,6 @@ try {
     }
   }
 
-  // Python syntax check for agent changes
   if (hasAgent) {
     const pyFiles = editedFiles
       .filter(f => /[/\\]agent[/\\]/.test(f) && f.endsWith('.py'))
@@ -91,12 +82,10 @@ try {
     }
   }
 
-  // Jest tests for web changes
   if (hasWeb) {
     try {
-      // 300s: the suite outgrew the original 90s budget during the billing
-      // sprint (~2900 tests, ~100-140s wall-clock warm) — user-approved bump
-      // 2026-08-01. execSync's timeout kill surfaces as a bare "Jest tests
+      // 300s: the suite outgrew 90s during the billing sprint (~2900 tests,
+      // 100-140s warm). An execSync timeout kill surfaces as a bare "Jest tests
       // failed" with no summary, which reads like a red suite when it isn't.
       execSync('npx jest --bail --forceExit', {
         cwd: join(PROJECT_ROOT, 'web'),
@@ -114,22 +103,41 @@ try {
     }
   }
 
-  // Pytest for agent changes
   if (hasAgent) {
+    // Captured on both paths: a green run's stdout still carries the skip
+    // summary, and that is the only place the module-skip check below can read.
+    let output = ''
     try {
-      execSync('python -m pytest agent/tests/ -x -q --tb=line', {
+      output = execSync('python -m pytest agent/tests/ -x -q --tb=line', {
         cwd: PROJECT_ROOT,
         timeout: 60000,
         stdio: 'pipe'
-      })
+      }).toString()
     } catch (err) {
-      const output = (err.stdout?.toString() || '') + (err.stderr?.toString() || '')
+      output = (err.stdout?.toString() || '') + (err.stderr?.toString() || '')
       const lines = output.split('\n')
       const summary = lines.find(l => /\d+ (failed|passed|error)/.test(l))
       const failTests = lines.filter(l => /^FAILED\s/.test(l))
       errors.push(`Agent: ${summary?.trim() || 'pytest failed'}`)
       failTests.slice(0, 5).forEach(t => errors.push(`  ${t.trim()}`))
       if (failTests.length > 5) errors.push(`  ... and ${failTests.length - 5} more`)
+    }
+
+    // A test module whose imports blow up skips itself with
+    // pytest.skip(..., allow_module_level=True), so the suite still exits 0 and
+    // a broken source file passes the gate silently. agent/pytest.ini's `-ra`
+    // prints those SKIPPED lines on every run, so match the import-shaped
+    // reasons ("... not importable: ...", "... import failed: ...") and block.
+    // The suite's six deliberate platform skips (posix-only, win32gui) carry
+    // none of those words and keep passing silently.
+    const importSkips = output
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => /^SKIPPED \[\d+\]/.test(l) && /not importable|import failed/i.test(l))
+    if (importSkips.length > 0) {
+      errors.push(`Agent: ${importSkips.length} test module(s) skipped on a failed import`)
+      importSkips.slice(0, 5).forEach(s => errors.push(`  ${s}`))
+      if (importSkips.length > 5) errors.push(`  ... and ${importSkips.length - 5} more`)
     }
   }
 
@@ -144,7 +152,7 @@ try {
   }
 
 } catch (err) {
-  // On error, don't block — fail open
+  // Fail open.
   process.stdout.write(JSON.stringify({ decision: 'approve' }))
 }
 

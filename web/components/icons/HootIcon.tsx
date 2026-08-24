@@ -1,37 +1,16 @@
 import type { SVGProps } from 'react';
 
 /**
- * hoot's owl.
+ * hoot's owl. Hand-drawn — no mainstream line-icon set ships an owl that matches a 2px-stroke UI
+ * language. Follows lucide's conventions (24×24 grid, currentColor 2px round strokes, no fill) so
+ * it composes with lucide siblings. Precedent: `components/landing/OwletteEye.tsx`.
  *
- * Hand-drawn because no mainstream line-icon set ships one — lucide,
- * heroicons, phosphor, tabler, and font awesome's free set are all owl-less,
- * and the packs that do have owls (emoji sets, game-icon packs) don't match
- * a 2px-stroke UI language. Drawn to lucide's conventions (24×24 grid,
- * currentColor 2px round strokes, no fill) so it composes with lucide
- * siblings anywhere an icon component is expected. Custom-icon precedent:
- * `components/landing/OwletteEye.tsx`.
- *
- * ## Why this shape
- *
- * Rendered and compared at 14/16/20/24/32/48px on both surfaces before
- * landing, because the icon's most common size in-app is the 16–20px nav
- * glyph, and a first pass that looked fine at 48px was mush at 16px.
- * Three findings drove the geometry:
- *
- *  - **Ring eyes, not dots.** The eye *holes* are what survive downscaling;
- *    they carry the owl read on their own. Solid dots plus a tufted head
- *    render as a cat at every size.
- *  - **A plain circle head.** Nothing else competes with the eyes for the
- *    narrow width, so at 16px there are only four strokes across the middle
- *    with real gaps between them. Ear tufts are *notches* cut into that one
- *    circle (same centre, same radius) rather than a separate shape — the
- *    head reads as a head, and pointed corner ears would read as a cat's.
- *  - **The beak is load-bearing.** Without it, two rings under a brow read
- *    as spectacles or goggles. The solid wedge is the cheapest cue that
- *    survives to 14px.
- *
- * Anatomy: circular head with two ear-tuft notches, two ring eyes set high,
- * a wedge beak below.
+ * Geometry is tuned for the 16–20px nav glyph, its most common size in-app:
+ *  - Ring eyes, not dots — the holes are what survive downscaling. Solid dots plus a tufted head
+ *    read as a cat at every size.
+ *  - Plain circle head, so at 16px only four strokes cross the middle with real gaps. Ear tufts
+ *    are notches cut into that circle (same centre, same radius); pointed corner ears read as a cat.
+ *  - The beak is load-bearing — without it two rings under a brow read as spectacles.
  */
 export function HootIcon(props: SVGProps<SVGSVGElement>) {
   return (

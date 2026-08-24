@@ -1,28 +1,14 @@
 /** @jest-environment node */
 
 /**
- * Unit tests for `chatStorage.server`.
- *
- * Covers:
- * - createConversation / getConversation round-trip
- * - listConversations: site-id filter, owner filter, soft-delete exclusion,
- *   chunking >30 sites, page-token cursor
- * - appendMessage: under-cap append, at-cap spill, messageCount progression
- * - softDeleteConversation: idempotent re-delete returns the original
- *   deletedAt, missing-conversation 404
- * - renameConversation: 404 on missing, normalisation truncation
- * - normalizeTitle / generateConversationId / generateMessageId edge cases
- *
- * The Firestore admin sdk is replaced with an in-memory store keyed by
- * `<collection>/<docId>` paths — keeps the tests deterministic and fast
- * while exercising the real read-modify-write semantics inside transactions.
+ * Unit tests for `chatStorage.server`. The Firestore admin sdk is replaced with an
+ * in-memory store keyed by `<collection>/<docId>`, so transactions still exercise
+ * real read-modify-write semantics.
  */
 
 import { Timestamp } from 'firebase-admin/firestore';
 
-/* -------------------------------------------------------------------------- */
-/*  In-memory firestore admin mock                                             */
-/* -------------------------------------------------------------------------- */
+// in-memory firestore admin mock
 
 type DocPath = string;
 type StoreShape = Record<DocPath, Record<string, unknown>>;
@@ -58,8 +44,7 @@ function buildCollection(prefix: string): Record<string, unknown> {
     };
   };
 
-  // collection-level query state — built fresh per chained query so two
-  // concurrent `where().get()` chains don't share filters.
+  // fresh per chained query so two concurrent where().get() chains can't share filters
   const queryBuilder = (state: {
     whereClauses: Array<{ field: string; op: string; value: unknown }>;
     orderByField: string | null;
@@ -83,8 +68,7 @@ function buildCollection(prefix: string): Record<string, unknown> {
       return queryBuilder({ ...state, startAfterId: snap.id });
     },
     async get() {
-      // Match every doc whose path begins with `<prefix>/` and has no
-      // trailing subcollection segment.
+      // docs directly under `<prefix>/`, excluding subcollection paths
       const allDocs = Object.entries(store)
         .filter(([p]) => {
           if (!p.startsWith(prefix + '/')) return false;
@@ -144,7 +128,7 @@ function buildCollection(prefix: string): Record<string, unknown> {
 const fakeDb = {
   collection: (name: string) => buildCollection(name),
   runTransaction: jest.fn(async (fn: (txn: unknown) => Promise<unknown>) => {
-    // Minimal txn: txn.get / txn.set / txn.update bound to the same store.
+    // txn.get / set / update, all bound to the same store
     const txn = {
       get: async (ref: { _path: string }) => freshSnap(ref._path),
       set: (ref: { _path: string }, data: Record<string, unknown>) => {
@@ -185,17 +169,13 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Helpers                                                                   */
-/* -------------------------------------------------------------------------- */
+// helpers
 
 function tsBefore(c: { createdAt: Timestamp }, d: { createdAt: Timestamp }) {
   return c.createdAt.toMillis() - d.createdAt.toMillis();
 }
 
-/* -------------------------------------------------------------------------- */
-/*  ID generators + normalizers                                               */
-/* -------------------------------------------------------------------------- */
+// id generators + normalizers
 
 describe('id generators + normalizers', () => {
   it('generateConversationId produces unique conv_<base64url> ids', () => {
@@ -226,9 +206,7 @@ describe('id generators + normalizers', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Create + read                                                             */
-/* -------------------------------------------------------------------------- */
+// create + read
 
 describe('createConversation + getConversation', () => {
   it('round-trips a minimal conversation', async () => {
@@ -274,9 +252,7 @@ describe('createConversation + getConversation', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  List                                                                      */
-/* -------------------------------------------------------------------------- */
+// list
 
 describe('listConversations', () => {
   it('returns empty when siteIds is empty', async () => {
@@ -295,14 +271,13 @@ describe('listConversations', () => {
 
   it('orders newest first', async () => {
     const a = await createConversation({ siteId: 's', ownerUid: 'u' });
-    // Force a millisecond gap so the sort order is deterministic
+    // ms gap keeps the sort deterministic
     await new Promise((res) => setTimeout(res, 5));
     const b = await createConversation({ siteId: 's', ownerUid: 'u' });
     const r = await listConversations({ siteIds: ['s'] });
     const ids = r.conversations.map((c) => c.conversationId);
     expect(ids[0]).toBe(b.conversationId);
     expect(ids[1]).toBe(a.conversationId);
-    // Sanity-check tsBefore helper is referenced
     expect(tsBefore(a, b)).toBeLessThanOrEqual(0);
   });
 
@@ -336,9 +311,7 @@ describe('listConversations', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Append message + spill                                                    */
-/* -------------------------------------------------------------------------- */
+// append message + spill
 
 describe('appendMessage', () => {
   it('appends under the cap without spilling', async () => {
@@ -366,9 +339,8 @@ describe('appendMessage', () => {
   it('spills oldest into subcollection once the embedded array is full', async () => {
     const c = await createConversation({ siteId: 's', ownerUid: 'u' });
 
-    // Fill embedded array to capacity directly via the store to keep the
-    // test fast (the per-message `appendMessage` path is exercised in the
-    // first case). Each message has a unique content marker.
+    // Fill to capacity through the store for speed; appendMessage itself is
+    // covered by the first case. Each message carries a unique content marker.
     const seeded = Array.from({ length: MAX_EMBEDDED_MESSAGES }, (_, i) => ({
       role: 'user' as const,
       content: `seed-${i}`,
@@ -390,11 +362,9 @@ describe('appendMessage', () => {
 
     const refreshed = await getConversation(c.conversationId);
     expect(refreshed!.messages).toHaveLength(MAX_EMBEDDED_MESSAGES);
-    // Oldest seed-0 should have spilled
     expect(refreshed!.messages[0].content).toBe('seed-1');
     expect(refreshed!.messages[refreshed!.messages.length - 1].content).toBe('overflow');
 
-    // Spill subcollection now contains a row for seed-0
     const spillKeys = Object.keys(store).filter((k) =>
       k.startsWith(`chat_conversations/${c.conversationId}/chat_messages/`),
     );
@@ -403,9 +373,7 @@ describe('appendMessage', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Soft delete                                                               */
-/* -------------------------------------------------------------------------- */
+// soft delete
 
 describe('softDeleteConversation', () => {
   it('marks deletedAt and is true-idempotent on re-call', async () => {
@@ -416,7 +384,7 @@ describe('softDeleteConversation', () => {
 
     const second = await softDeleteConversation(c.conversationId);
     expect(second.alreadyDeleted).toBe(true);
-    // The original deletedAt must persist — re-deleting must not advance it.
+    // re-deleting must not advance deletedAt
     expect(second.deletedAt.toMillis()).toBe(first.deletedAt.toMillis());
   });
 
@@ -427,9 +395,7 @@ describe('softDeleteConversation', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Rename                                                                    */
-/* -------------------------------------------------------------------------- */
+// rename
 
 describe('renameConversation', () => {
   it('updates the title and normalizes', async () => {
@@ -454,9 +420,7 @@ describe('renameConversation', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Serializers                                                               */
-/* -------------------------------------------------------------------------- */
+// serializers
 
 describe('serializers', () => {
   it('serializeConversationSummary drops messages and ISO-formats timestamps', async () => {

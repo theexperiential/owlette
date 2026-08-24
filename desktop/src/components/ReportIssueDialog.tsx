@@ -45,10 +45,10 @@ interface ReportIssueDialogProps {
 /**
  * Feedback, with the machine's own diagnostics attached.
  *
- * Nothing is gathered here: `configure_site.py --report-issue` collects the
- * system metrics and the last ~100 lines of the service log, and posts them with
- * the agent's own token — the same shape the legacy `report_issue.py` submitted,
- * landing in `bug_reports` with `source: 'agent'`.
+ * Nothing is gathered here: `configure_site.py --report-issue` collects the system
+ * metrics and the last ~100 lines of the service log and posts them with the agent's own
+ * token — same shape as the legacy `report_issue.py`, landing in `bug_reports` with
+ * `source: 'agent'`.
  */
 export function ReportIssueDialog({ open, onClose }: ReportIssueDialogProps) {
   const [category, setCategory] = useState<string>('bug')

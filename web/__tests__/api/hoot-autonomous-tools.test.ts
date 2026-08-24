@@ -3,18 +3,14 @@
 /**
  * Tool-wiring coverage for POST /api/hoot/autonomous.
  *
- * The autonomous investigator builds its own tool set (`buildAutonomousTools`)
- * rather than sharing `buildExecutableTools`. This suite pins the routing
- * contract of that builder, exercised through the real route so the assertions
- * cover the wiring the LLM actually receives:
- *
- *   - SERVER_SIDE_TOOLS execute on the web server via `executeServerSideTool`
- *     and are NEVER relayed to the agent (agent/src/mcp_tools.py has no
- *     handler for them — a relay returns `{'error': 'Unknown tool: …'}`)
+ * The autonomous investigator builds its own tool set (`buildAutonomousTools`) rather
+ * than sharing `buildExecutableTools`. Exercised through the real route, this pins:
+ *   - SERVER_SIDE_TOOLS run on the web server via `executeServerSideTool` and are NEVER
+ *     relayed to the agent (mcp_tools.py has no handler — a relay returns Unknown tool)
  *   - EXISTING_COMMAND_MAPPINGS tools still dispatch as legacy-typed commands
  *   - every other tool still dispatches as a generic mcp tool call
- *   - talon authoring / enable-toggle tools are excluded from the tool set
- *     entirely (policy: an unattended run must not author automations)
+ *   - talon authoring / enable-toggle tools are excluded entirely (an unattended run
+ *     must not author automations)
  */
 
 import { NextRequest } from 'next/server';
@@ -24,7 +20,7 @@ jest.mock('@sentry/nextjs', () => ({
   captureMessage: jest.fn(),
 }));
 
-/* ── ai sdk ───────────────────────────────────────────────────────────── */
+/* ai sdk */
 
 const mockGenerateText = jest.fn();
 
@@ -37,7 +33,7 @@ jest.mock('ai', () => ({
   jsonSchema: (schema: unknown) => schema,
 }));
 
-/* ── firestore primitives ─────────────────────────────────────────────── */
+/* firestore primitives */
 
 jest.mock('firebase-admin/firestore', () => ({
   Timestamp: {
@@ -47,7 +43,7 @@ jest.mock('firebase-admin/firestore', () => ({
   FieldValue: { serverTimestamp: () => ({ __op: 'serverTimestamp' }) },
 }));
 
-/* ── hoot collaborators ─────────────────────────────────────────────── */
+/* hoot collaborators */
 
 jest.mock('@/lib/llm', () => ({
   createModel: jest.fn(() => ({ id: 'test-model' })),
@@ -95,7 +91,7 @@ jest.mock('@/lib/mcp-tools', () => {
   };
 });
 
-/* ── fake firestore ───────────────────────────────────────────────────── */
+/* fake firestore */
 
 const SITE = 'site-a';
 const MACHINE = 'mach-1';
@@ -164,7 +160,7 @@ const { getToolsByTier: realGetToolsByTier } = jest.requireActual('@/lib/mcp-too
   getToolsByTier: (maxTier: 1 | 2 | 3) => McpToolDefinition[];
 };
 
-/* ── helpers ──────────────────────────────────────────────────────────── */
+/* helpers */
 
 interface ExecutableTool {
   execute: (params: Record<string, unknown>) => Promise<unknown>;
@@ -231,7 +227,7 @@ afterEach(() => {
   delete process.env.CORTEX_INTERNAL_SECRET;
 });
 
-/* ── tests ────────────────────────────────────────────────────────────── */
+/* tests */
 
 describe('autonomous tool dispatch routing', () => {
   it('executes get_site_logs server-side instead of relaying it to the agent', async () => {

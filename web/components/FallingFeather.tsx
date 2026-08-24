@@ -3,20 +3,15 @@
 import { OwletteFeather } from '@/components/icons/OwletteFeather';
 
 /**
- * Two golden owl feathers drifting down in mirrored pendulum arcs — the
- * boot-splash idle animation. Pure CSS (keyframes in globals.css), no JS per
- * frame. Each nested layer animates one axis (descent / sway / arc-bob /
- * tilt) so every axis gets its own easing; composed, they trace the
- * falling-leaf path: dive through the middle of each glide, stall and lift
- * at each turnaround.
+ * Two golden feathers drifting down in mirrored pendulum arcs — the boot-splash
+ * idle animation. Pure CSS (keyframes in globals.css). Each nested layer
+ * animates one axis (descent / sway / arc-bob / tilt) so each gets its own
+ * easing; composed they trace the falling-leaf path. The second feather is
+ * mirrored and phase-shifted half a descent.
  *
- * The second feather is horizontally mirrored and phase-shifted exactly half
- * a descent, so the pair trace identical opposite arcs around the center
- * line — symmetrical choreography, natural physics. No overflow clipping:
- * the fall keyframes fade each feather in and out, so nothing crops mid-air.
- * Hidden under prefers-reduced-motion: the global motion clamp freezes
- * keyframes at their end state, which would leave feathers hanging, so it
- * opts out entirely.
+ * No overflow clipping — the fall keyframes fade each feather in and out.
+ * Hidden under prefers-reduced-motion: the global motion clamp freezes keyframes
+ * at their end state, which would leave feathers hanging mid-air.
  */
 export function FallingFeather() {
   return (
@@ -35,9 +30,7 @@ export function FallingFeather() {
           </div>
         </div>
       </div>
-      {/* Mirrored sibling — the wrapper's scaleX(-1) flips its whole flight
-          path (and the artwork), so the pair swing as reflections of each
-          other. The mirror lives on the wrapper because the fall animation
+      {/* Mirrored sibling: scaleX(-1) on the WRAPPER, because the fall animation
           owns `transform` on the element below it. */}
       <div className="absolute left-[70%] top-4 -ml-3.5 -scale-x-100">
         <div className="feather-delayed feather-fall">

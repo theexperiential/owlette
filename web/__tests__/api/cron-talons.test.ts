@@ -2,16 +2,16 @@
 
 import { NextRequest } from 'next/server';
 
-// --- Mocks (declared before importing the route) -----------------------------
+// Mocks — must precede the route import (jest hoists jest.mock).
 
 const runTalonMock = jest.fn();
 const getSiteTimezoneMock = jest.fn();
 const getTalonMock = jest.fn();
 
 /**
- * Talon documents keyed `${siteId}/${talonId}`. The claim transaction reads and
- * writes THROUGH this map, so a second sweep over the same (now stale) query
- * result sees the advanced `nextRunAt` exactly as it would in Firestore.
+ * Talon docs keyed `${siteId}/${talonId}`. The claim transaction reads and
+ * writes THROUGH this map, so a second sweep over a stale query result sees
+ * the advanced `nextRunAt` exactly as it would in Firestore.
  */
 const talonStore = new Map<string, Record<string, unknown>>();
 
@@ -23,11 +23,7 @@ const staleRunUpdate = jest.fn();
 const transactionUpdate = jest.fn();
 const deferralUpdate = jest.fn();
 
-/**
- * A document reference, carrying the map it reads and writes THROUGH so the
- * transaction mock can serve talons and deferrals without knowing which is
- * which.
- */
+/** Doc ref carrying its backing map, so the transaction mock can serve talons and deferrals alike. */
 interface RefMock {
   id: string;
   key: string;
@@ -56,9 +52,9 @@ const talonQuery = {
 };
 
 /**
- * `talon_runs` carries BOTH collection-group queries — the stale-run janitor
- * (`status == 'running'`) and the deferral pass (`status == 'pending'`) — so
- * the fake records its filters and answers from the matching fixture.
+ * `talon_runs` backs both collection-group queries (janitor `running`,
+ * deferral pass `pending`), so the fake records filters and answers from the
+ * matching fixture.
  */
 function talonRunQuery(filters: [string, unknown][] = []) {
   const query = {
@@ -179,8 +175,6 @@ jest.mock('@/lib/talons/store.server', () => ({
 
 import { GET } from '@/app/api/cron/talons/route';
 
-// --- Helpers -----------------------------------------------------------------
-
 const MIN = 60_000;
 
 function request(secret?: string) {
@@ -268,13 +262,10 @@ async function sweep(secret = 'cron-secret') {
   return { status: response.status, body: await response.json() };
 }
 
-// --- Tests -------------------------------------------------------------------
-
 const originalSecret = process.env.CRON_SECRET;
 
-// File-scoped: both sweeps (schedules and deferrals) share every fixture and
-// every mock, and a leaked `runTalonMock` implementation would silently change
-// what the other suite is asserting.
+// File-scoped: both sweeps share every fixture and mock, and a leaked
+// `runTalonMock` would silently change what the other suite asserts.
 beforeEach(() => {
     process.env.CRON_SECRET = 'cron-secret';
     talonStore.clear();
@@ -289,8 +280,7 @@ beforeEach(() => {
     getSiteTimezoneMock.mockReset();
     getSiteTimezoneMock.mockResolvedValue('UTC');
     getTalonMock.mockReset();
-    // Enabled and unchanged by default — the deferral tests override this to
-    // exercise the "switched off while it waited" paths.
+    // Deferral tests override this for the "switched off while it waited" paths.
     getTalonMock.mockImplementation(async (_db: unknown, siteId: string, talonId: string) => {
       const data = talonStore.get(`${siteId}/${talonId}`);
       return data ? { id: talonId, ...data } : null;
@@ -354,8 +344,7 @@ describe('GET /api/cron/talons', () => {
     dueRefs = [seedTalon('node-pa', 'talon-1', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) }))];
 
     const first = await sweep();
-    // Same (now stale) query result: the transaction re-read sees the advanced
-    // `nextRunAt` and the loser does nothing at all.
+    // Stale query result: the re-read sees the advanced `nextRunAt`, loser no-ops.
     const second = await sweep();
 
     expect(first.body).toMatchObject({ due: 1, executed: 1 });
@@ -380,8 +369,7 @@ describe('GET /api/cron/talons', () => {
   });
 
   it('records a missed run without executing when the fire window has passed', async () => {
-    // The sweep was down for 20 minutes. Firing now would be a burst of stale
-    // automations — the one thing the scheduler must never do.
+    // Sweep down 20 minutes: firing now is a burst of stale automations.
     dueRefs = [
       seedTalon(
         'node-pa',
@@ -466,8 +454,7 @@ describe('GET /api/cron/talons', () => {
   });
 
   it('keeps dispatching when the stale-run janitor fails', async () => {
-    // Most likely cause in production: the collection-group index is still
-    // building. Schedules must keep firing regardless.
+    // Usually a still-building collection-group index; schedules must keep firing.
     staleQueryFails = true;
     dueRefs = [seedTalon('node-pa', 'talon-1', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) }))];
 
@@ -497,8 +484,7 @@ describe('GET /api/cron/talons', () => {
 
     expect(body).toMatchObject({ due: 3, executed: 1, deferred: 2 });
     expect(runTalonMock).toHaveBeenCalledTimes(1);
-    // The deferred talons keep their original due instant, so the next sweep
-    // claims them.
+    // Deferred talons keep their due instant, so the next sweep claims them.
     expect((talonStore.get('node-pa/talon-3')?.nextRunAt as Date).getTime()).toBeLessThan(base);
 
     nowSpy.mockRestore();
@@ -533,10 +519,6 @@ describe('GET /api/cron/talons', () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  the deferral pass                                                         */
-/* -------------------------------------------------------------------------- */
-
 describe('GET /api/cron/talons — delayed event triggers', () => {
   /** The talon a seeded deferral points at, enabled unless told otherwise. */
   function seedDelayedTalon(overrides: Record<string, unknown> = {}) {
@@ -552,9 +534,8 @@ describe('GET /api/cron/talons — delayed event triggers', () => {
 
   beforeEach(() => {
     seedDelayedTalon();
-    // A fire that produces a run is the normal outcome here — the empty list
-    // the schedule suite defaults to means "cooled down" on this path, which
-    // is its own test below.
+    // A run is the normal outcome here; the schedule suite's empty-list default
+    // means "cooled down" on this path, tested separately below.
     runTalonMock.mockResolvedValue([{ runId: 'run-real', status: 'succeeded', outputs: [] }]);
   });
 
@@ -596,8 +577,8 @@ describe('GET /api/cron/talons — delayed event triggers', () => {
   });
 
   it('leaves a deferral alone until its delay has elapsed', async () => {
-    // The query would not return it in production; the claim re-checks anyway,
-    // because a claim that trusts a stale query result fires early.
+    // Production's query wouldn't return it, but a claim trusting a stale query
+    // result fires early — so the claim re-checks.
     dueDeferralRefs = [
       seedDeferral('node-pa', 'run-1', deferral({ runAfterAt: new Date(Date.now() + 2 * MIN) })),
     ];
@@ -613,8 +594,7 @@ describe('GET /api/cron/talons — delayed event triggers', () => {
     dueDeferralRefs = [seedDeferral('node-pa', 'run-1')];
 
     const first = await sweep();
-    // Same (now stale) query result: the loser re-reads a document that is no
-    // longer pending and does nothing at all.
+    // Stale query result: the loser re-reads a no-longer-pending doc and no-ops.
     const second = await sweep();
 
     expect(first.body).toMatchObject({ deferredDue: 1, deferredFired: 1 });
@@ -623,8 +603,8 @@ describe('GET /api/cron/talons — delayed event triggers', () => {
   });
 
   it('writes off a deferral that is past its grace window without running it', async () => {
-    // The sweep was down for 20 minutes. A "wait 3 minutes then look at the
-    // wall" is not something to carry out 23 minutes after the crash.
+    // Sweep down 20 minutes: a "wait 3 minutes then look at the wall" must not
+    // run 23 minutes late.
     dueDeferralRefs = [
       seedDeferral('node-pa', 'run-1', deferral({ runAfterAt: new Date(Date.now() - 20 * MIN) })),
     ];
@@ -677,8 +657,7 @@ describe('GET /api/cron/talons — delayed event triggers', () => {
   });
 
   it('records the cooldown skip the engine itself never writes down', async () => {
-    // `runTalon` returns no summaries when the talon is still cooling down and
-    // records nothing, so the crumb is the only place that fact can live.
+    // A cooling-down `runTalon` records nothing, so the crumb is the only trace.
     dueDeferralRefs = [seedDeferral('node-pa', 'run-1')];
     runTalonMock.mockResolvedValue([]);
 

@@ -1,19 +1,16 @@
 /**
- * Mobile — /add machine pairing
+ * Mobile — /add machine pairing. Viewport / isMobile / hasTouch come from the
+ * `mobile-chromium` project in playwright.config.ts.
  *
- * Viewport / isMobile / hasTouch come from the `mobile-chromium` project in
- * playwright.config.ts, which owns every spec under specs/mobile/**.
+ * `mobile/responsive-acceptance.spec.ts` only measures /add; this one operates
+ * it. Superadmin (not member) is deliberate: a member auto-selects their single
+ * site, skipping the one control that needs proving on a phone — the Radix
+ * `Select` whose listbox is portalled to `document.body` and so escapes every
+ * layout constraint on the card.
  *
- * `mobile/responsive-acceptance.spec.ts` only measures /add; this spec
- * operates it. Superadmin (not member) is deliberate: a member resolves to a
- * single site and the page auto-selects it, which skips the one control that
- * actually needs proving on a phone — the Radix `Select` whose listbox is
- * portalled to `document.body` and therefore escapes every layout constraint
- * on the card. Superadmin sees every site, so the picker must be tapped.
- *
- * The agent API is stubbed (same as `onboarding/add-cli.spec.ts`): the real
- * device-code exchange needs a paired agent, and this spec is about the
- * browser surface, not the pairing backend.
+ * The agent API is stubbed (as in `onboarding/add-cli.spec.ts`): the real
+ * device-code exchange needs a paired agent, and this is about the browser
+ * surface, not the pairing backend.
  */
 
 import { test, expect } from '@playwright/test';

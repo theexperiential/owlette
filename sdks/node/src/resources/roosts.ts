@@ -1,18 +1,7 @@
 /**
- * `owlette.roosts.*` resource.
- *
- * Flagship methods:
- *   push(dir, roostId, opts)    — chunk → dedup → upload → publish
- *   rollback(roostId, opts)     — POST /api/roosts/{id}/rollback
- *   deploy(roostId, opts)       — POST /api/roosts/{id}/deploy
- *
- * Plus CRUD:
- *   list(opts), get(roostId, opts), create(opts), patch(roostId, opts),
- *   remove(roostId, opts).
- *
- * `push` accepts an `onProgress` callback that fires during both the
- * chunk-hashing phase and the upload phase so UI code can render a
- * unified progress bar.
+ * `owlette.roosts.*` resource: push (chunk → dedup → upload → publish), rollback, deploy,
+ * plus CRUD. `push`'s `onProgress` fires during both the hashing and upload phases so a
+ * caller can drive one progress bar.
  */
 
 import { EventEmitter } from 'events';
@@ -31,10 +20,6 @@ import {
 const UPLOAD_CONCURRENCY = 8;
 const CHECK_BATCH_SIZE = 900;
 const PUSH_MAX_RETRIES = 5;
-
-/* --------------------------------------------------------------------- */
-/*  types                                                                */
-/* --------------------------------------------------------------------- */
 
 export interface RoostSummary {
   roostId: string;
@@ -97,12 +82,8 @@ export interface PatchRoostOptions {
 
 export interface RollbackOptions {
   siteId: string;
-  /**
-   * Target version to roll back to. Accepts a version number (`3`), a
-   * stringified number (`'3'`), a stable `vrs_*` id, or an alias
-   * (`'current'` / `'previous'` / `'first'`). Server-side resolver
-   * interprets the raw value — don't pre-parse on the client.
-   */
+  /** Version number (3 or '3'), a `vrs_*` id, or an alias ('current'/'previous'/'first').
+   * The server resolves the raw value — do not pre-parse it here. */
   targetVersion?: string | number;
   idempotencyKey?: string;
 }
@@ -137,10 +118,7 @@ export interface RollbackResult {
 }
 
 export interface PushOptions {
-  /**
-   * Site the roost belongs to — required because a single api key may span
-   * multiple sites.
-   */
+  /** Required: one api key can span multiple sites. */
   siteId: string;
   /** Optional display name passed through to the server on first publish. */
   name?: string;
@@ -148,10 +126,7 @@ export interface PushOptions {
   targets?: string[];
   /** Override the agent's extract root for this deploy. */
   extractPath?: string;
-  /**
-   * Optional plaintext description for the new version (≤500 chars).
-   * Persisted on the version doc and surfaced in the ui version history.
-   */
+  /** Plaintext version description, ≤500 chars; shown in the UI version history. */
   description?: string;
   /** Progress emitter for UI. Listen for 'progress' events. */
   onProgress?: (evt: PushProgressEvent) => void;
@@ -189,10 +164,6 @@ export interface PushResult {
     uploadedChunks: number;
   };
 }
-
-/* --------------------------------------------------------------------- */
-/*  resource                                                             */
-/* --------------------------------------------------------------------- */
 
 export class Roosts {
   constructor(
@@ -289,12 +260,9 @@ export class Roosts {
   }
 
   /**
-   * Publish a directory as a new version on an existing roost. This is
-   * the end-to-end pipeline — the most common sdk entry point.
-   *
-   * Returns the publish result AND mirrors the progress callback onto
-   * the returned object as an `events` EventEmitter so callers can
-   * choose whichever style fits. Emitter event name: `'progress'`.
+   * Publish a directory as a new version — the end-to-end pipeline.
+   * The result also carries an `events` EventEmitter mirroring `onProgress`
+   * (event name: `'progress'`), so callers can use either style.
    */
   async push(
     dir: string,
@@ -532,10 +500,6 @@ export class Roosts {
     throw lastErr ?? new Error('version publish failed after retries');
   }
 }
-
-/* --------------------------------------------------------------------- */
-/*  helpers                                                              */
-/* --------------------------------------------------------------------- */
 
 function summarise(files: readonly ChunkedFileEntry[]): {
   fileCount: number;

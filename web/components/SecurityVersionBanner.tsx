@@ -1,22 +1,12 @@
 'use client';
 
 /**
- * SecurityVersionBanner
+ * UX NUDGE, NOT ENFORCEMENT — real enforcement is server-side (see lib/securityVersion.ts).
  *
- * !! THIS IS UX, NOT SAFETY !!
- *
- * Renders a non-dismissible top banner when the server reports a
- * `x-security-version` newer than the one baked into the loaded bundle.
- * Intentionally has no close affordance — the only remediation is a real
- * page reload, which fetches the new bundle. Hiding the banner without
- * reloading would defeat the entire point of nudging stale tabs.
- *
- * The banner is rendered from the root layout so it sits above every
- * page. It returns `null` until a mismatch is detected, so there's no
- * SSR cost and no layout shift in the common case.
- *
- * Real security enforcement lives server-side; this component is purely
- * a UX nudge. See `lib/securityVersion.ts` for the rationale.
+ * Non-dismissible banner shown when the server's `x-security-version` is newer than the one
+ * baked into the loaded bundle. No close affordance on purpose: the only remediation is a
+ * reload that fetches the new bundle. Rendered from the root layout, and returns null until a
+ * mismatch is seen, so there's no SSR cost or layout shift in the common case.
  */
 
 import { useSecurityVersion } from '@/hooks/useSecurityVersion';

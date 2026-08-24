@@ -1,16 +1,10 @@
 'use client';
 
 /**
- * PreUploadSummary — confirmation screen shown after hashing and before
- * the operator kicks off the actual upload (roost wave 3.4).
- *
- * Answers four questions in one view: how big / how long / fits-on-disk /
- * fits-in-quota. All decision logic lives in web/lib/preUploadCheck.ts;
- * this component is presentation + action.
- *
- * The "start upload" button is disabled while any blocking check is
- * active — shows the operator exactly what needs to change before the
- * upload can proceed.
+ * Confirmation screen between hashing and the upload: how big / how long /
+ * fits-on-disk / fits-in-quota. Presentation + action only — the decisions live
+ * in web/lib/preUploadCheck.ts. "start upload" stays disabled while any
+ * blocking check is active.
  */
 
 import { useMemo } from 'react';
@@ -41,19 +35,13 @@ import {
 } from '@/lib/preUploadCheck';
 
 interface PreUploadSummaryProps {
-  /**
-   * Post-hash chunked entries. Required when `sizeSummary` is omitted —
-   * the component then computes the SizeSummary itself (with dedup
-   * preview if `alreadyPresent` is supplied).
-   */
+  /** Post-hash chunked entries. Required when `sizeSummary` is omitted; the
+   * component then computes it (with dedup preview if `alreadyPresent` is set). */
   entries?: VersionFileEntry[];
   /**
-   * Pre-hash size summary. Use when the confirmation step runs BEFORE
-   * the hashing pass (e.g. straight after FolderDropzone). Takes
-   * precedence over `entries` when both are provided.
-   *
-   * Constructed via `summariseRawFiles()`; `uploadBytes === totalBytes`
-   * and `dedupRatio === 0` because dedup isn't known until hashing.
+   * Pre-hash size summary, for when confirmation runs BEFORE hashing (straight
+   * after FolderDropzone). Wins over `entries`. From `summariseRawFiles()`, so
+   * `uploadBytes === totalBytes` and `dedupRatio === 0` — dedup is unknown yet.
    */
   sizeSummary?: SizeSummary;
   targets: PreUploadTarget[];
@@ -168,10 +156,6 @@ export function PreUploadSummary({
 }
 
 export default PreUploadSummary;
-
-/* --------------------------------------------------------------------- */
-/*  Internal                                                             */
-/* --------------------------------------------------------------------- */
 
 interface StatTileProps {
   icon: React.ReactNode;

@@ -1,13 +1,11 @@
 /**
- * Public Scoped Process API — list + create
+ * Public scoped process API — list + create.
  *
- * `GET  /api/sites/{siteId}/machines/{machineId}/processes`
- * `POST /api/sites/{siteId}/machines/{machineId}/processes`
+ * `GET|POST /api/sites/{siteId}/machines/{machineId}/processes`
  *
- * Wave 2 / Track 2B of the api-sprint. Canonical site-scoped process surface
- * with public scoping (`machine=<id>:read|write`), RFC-7807 problem+json
- * errors, idempotency-key on POST create, and the race-safe `withProcessLock`
- * transaction helper.
+ * api-sprint wave 2 / track 2B: canonical site-scoped process surface with
+ * public scoping (`machine=<id>:read|write`), RFC-7807 errors, Idempotency-Key
+ * on create, and the race-safe `withProcessLock` transaction helper.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -33,9 +31,7 @@ interface RouteContext {
   params: Promise<{ siteId: string; machineId: string }>;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  GET — list processes (config + live status merge)                         */
-/* -------------------------------------------------------------------------- */
+// GET — list processes (config + live status merge)
 
 export const GET = withRateLimit(
   async (request: NextRequest, context: RouteContext) => {
@@ -86,9 +82,7 @@ export const GET = withRateLimit(
   { strategy: 'api', identifier: 'ip' }
 );
 
-/* -------------------------------------------------------------------------- */
-/*  POST — create a new process                                               */
-/* -------------------------------------------------------------------------- */
+// POST — create a new process
 
 const postWrapped = authorizedSiteHandler<{ siteId: string; machineId: string }>({
   capability: 'MACHINE_CONFIG_WRITE',
@@ -153,10 +147,6 @@ export const POST = withRateLimit(postWrapped, {
   identifier: 'ip',
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Helpers                                                                   */
-/* -------------------------------------------------------------------------- */
-
 function shapeProcessForResponse(
   p: PublicProcessConfig,
   live: Record<string, unknown>
@@ -171,9 +161,8 @@ function shapeProcessForResponse(
     visibility: p.visibility || 'Show',
     time_delay: p.time_delay || '0',
     time_to_init: p.time_to_init || '10',
-    // 0 is meaningful — "relaunch forever, never escalate to a machine
-    // restart" — so it must survive the round trip. `|| '3'` treated it as
-    // absent and handed the operator back a 3 they never set.
+    // 0 is meaningful — "relaunch forever, never escalate to a machine restart" —
+    // so it must survive the round trip; `|| '3'` handed back a 3 nobody set.
     relaunch_attempts:
       p.relaunch_attempts === undefined || p.relaunch_attempts === null || p.relaunch_attempts === ''
         ? '3'

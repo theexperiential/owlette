@@ -1,21 +1,13 @@
 /**
- * Rate Limiting Utilities
- *
- * Uses Upstash Redis for distributed rate limiting across serverless deployments.
- * Supports multiple rate limiting strategies:
- * - Sliding window: Smooths out traffic spikes
- * - Fixed window: Simple time-based limits
- * - Token bucket: Burst-tolerant rate limiting
- *
- * FREE TIER: Upstash provides 10,000 requests/day free
+ * Distributed rate limiting via Upstash Redis, with a per-process in-memory
+ * fallback when Redis isn't configured.
  */
 
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { NextRequest } from 'next/server';
 
-// Initialize Redis client
-// Gracefully handle missing credentials (allows local dev without Redis)
+// Missing credentials are tolerated so local dev works without Redis.
 let redis: Redis | null = null;
 
 if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
@@ -25,13 +17,9 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
   });
   console.log('[RateLimit] Upstash Redis initialized');
 } else {
-  // NOT "disabled" — `checkRateLimit` falls back to `checkInMemoryRateLimit`,
-  // a per-process fixed window. The message used to say "disabled", which is
-  // both wrong and dangerously reassuring in the wrong direction: the real
-  // consequence is that every endpoint silently collapses to the SAME flat
-  // 15/min/identifier budget, per replica. For a tight limiter like
-  // `signupRateLimit` (10/hr) that is roughly a 90x loosening before you even
-  // multiply by the replica count.
+  // Not "disabled": every endpoint collapses to the same flat 15/min/identifier
+  // budget, per replica — a ~90x loosening for signupRateLimit (10/hr) before
+  // you multiply by replica count. Say so plainly.
   console.warn(
     '[RateLimit] Upstash Redis not configured — falling back to a per-process ' +
     'in-memory limiter (15 req/min/identifier, NOT shared across replicas). ' +
@@ -42,25 +30,16 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
 }
 
 /**
- * Whether the distributed (Upstash-backed) rate limiter is active.
- *
- * When false, rate limiting still happens, but only via the per-process
- * in-memory fallback — see the warning above for why that matters in
- * production. Consumed by the startup check in `instrumentation.ts`.
+ * Whether the Upstash-backed limiter is active; false means the per-process
+ * in-memory fallback. Consumed by the startup check in `instrumentation.ts`.
  */
 export function isDistributedRateLimitEnabled(): boolean {
   return redis !== null;
 }
 
-// Environment detection for dev-aware rate limits
 const isDevEnv = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.includes('-dev');
 
-// Rate limiting strategies for different endpoints
-
-/**
- * Sliding window rate limiter for general auth endpoints
- * Allows 10 requests per minute per IP
- */
+/** General auth endpoints: 10/min per IP. */
 export const authRateLimit = redis
   ? new Ratelimit({
       redis,
@@ -71,12 +50,10 @@ export const authRateLimit = redis
   : null;
 
 /**
- * Self-serve signup limiter — guards POST /api/users/bootstrap, the write
- * that creates a `users/{uid}` doc (i.e. a row in the admin user table).
- * Account creation from a single IP is a rare event, so this is far tighter
- * than the general auth limiter — it blunts a bot spraying signups without
- * touching a human onboarding their team.
- * Prod: 10/hr per IP. Dev: 100/hr to keep local iteration unblocked.
+ * Self-serve signup — guards POST /api/users/bootstrap, which creates a
+ * `users/{uid}` doc. Deliberately far tighter than the general auth limiter:
+ * signups from one IP are rare, so 10/hr blunts a spraying bot without
+ * blocking a human onboarding a team. Dev gets 100/hr.
  */
 export const signupRateLimit = redis
   ? new Ratelimit({
@@ -87,11 +64,7 @@ export const signupRateLimit = redis
     })
   : null;
 
-/**
- * Rate limiter for token exchange / device code operations
- * Prod: 60/hr (supports bulk deployment of many machines from one IP)
- * Dev: 200/hr (allows rapid iteration during testing)
- */
+/** Token exchange / device code. 60/hr prod — bulk deploys share one IP. Dev 200/hr. */
 export const tokenExchangeRateLimit = redis
   ? new Ratelimit({
       redis,
@@ -101,11 +74,7 @@ export const tokenExchangeRateLimit = redis
     })
   : null;
 
-/**
- * Token refresh rate limiter (more lenient)
- * Allows 120 refreshes per hour per IP (agents refresh every hour,
- * so 120 supports ~120 machines behind one NAT)
- */
+/** Token refresh: 120/hr per IP — agents refresh hourly, so ~120 machines per NAT. */
 export const tokenRefreshRateLimit = redis
   ? new Ratelimit({
       redis,
@@ -115,10 +84,7 @@ export const tokenRefreshRateLimit = redis
     })
   : null;
 
-/**
- * User-based rate limiter for authenticated operations
- * Allows 10 operations per hour per user
- */
+/** Authenticated user operations: 60/hr per user. */
 export const userRateLimit = redis
   ? new Ratelimit({
       redis,
@@ -128,10 +94,7 @@ export const userRateLimit = redis
     })
   : null;
 
-/**
- * Agent alert rate limiter
- * Allows 5 alerts per hour per IP — prevents a broken agent from spamming emails
- */
+/** Agent alerts: 5/hr per IP — a broken agent must not spam email. */
 export const agentAlertRateLimit = redis
   ? new Ratelimit({
       redis,
@@ -141,11 +104,7 @@ export const agentAlertRateLimit = redis
     })
   : null;
 
-/**
- * Installer upload rate limiter
- * Prod: 5 uploads per hour per IP (prevent storage abuse)
- * Dev: 30 per hour (allows iterating without hitting walls)
- */
+/** Installer uploads: 5/hr per IP against storage abuse; 30/hr in dev. */
 export const uploadRateLimit = redis
   ? new Ratelimit({
       redis,
@@ -155,10 +114,7 @@ export const uploadRateLimit = redis
     })
   : null;
 
-/**
- * API key consumer rate limiter (higher limits for automated testing/CI)
- * Allows 300 operations per hour per IP
- */
+/** API key consumers: 300/hr per IP — headroom for CI. */
 export const apiRateLimit = redis
   ? new Ratelimit({
       redis,
@@ -168,10 +124,7 @@ export const apiRateLimit = redis
     })
   : null;
 
-/**
- * Process alert rate limiter
- * Allows 3 alerts per hour per machineId:processName combo — prevents crash-loop spam
- */
+/** Process alerts: 3/hr per machineId:processName — crash loops must not spam. */
 export const processAlertRateLimit = redis
   ? new Ratelimit({
       redis,
@@ -181,13 +134,7 @@ export const processAlertRateLimit = redis
     })
   : null;
 
-/**
- * Display alert rate limiter — 1 per hour per (machineId, eventType).
- * Mirrors the process-alert convention so the agent's alert dispatch path
- * has a uniform back-pressure model regardless of category. The drift event
- * gets a tighter window via `displayDriftRateLimit` below; everything else
- * uses this default.
- */
+/** Display alerts: 1/hr per (machineId, eventType). Drift overrides below. */
 export const displayAlertRateLimit = redis
   ? new Ratelimit({
       redis,
@@ -198,11 +145,9 @@ export const displayAlertRateLimit = redis
   : null;
 
 /**
- * Drift-specific limiter at 1 per 4h. Drift events flap the most under
- * real-world conditions (rack vibration, EDID handshake retries, intermittent
- * cable issues) — a 1h window would still let an unstable cable email the
- * operator six times a day. The 4h window keeps drift signal alive without
- * burying the operator's inbox in noise from a single bad piece of hardware.
+ * Drift: 1 per 4h. Drift flaps the most in the field (rack vibration, EDID
+ * handshake retries, bad cables); a 1h window still lets one loose cable email
+ * the operator six times a day.
  */
 export const displayDriftRateLimit = redis
   ? new Ratelimit({
@@ -213,12 +158,7 @@ export const displayDriftRateLimit = redis
     })
   : null;
 
-/**
- * Pick the right display-event rate limiter for a given event type. Drift
- * gets the tighter 4h window; every other display event uses the default
- * 1h limiter. Returns `null` when Redis isn't configured (mirrors the
- * existing limiters' nullability so callers can short-circuit).
- */
+/** Drift gets the 4h window, everything else the 1h default. Null without Redis. */
 export function getDisplayAlertRateLimit(eventType: string) {
   return eventType === 'display_drift'
     ? displayDriftRateLimit
@@ -226,29 +166,21 @@ export function getDisplayAlertRateLimit(eventType: string) {
 }
 
 /**
- * Extract the client IP from a request, resistant to header spoofing.
+ * Client IP, resistant to header spoofing. Precedence runs from
+ * infrastructure-controlled to weakest — only headers a trusted hop overwrites
+ * or appends are safe:
  *
- * A client can set any request header, so header precedence runs from
- * infrastructure-controlled (unforgeable) to weakest — the only safe sources
- * are ones a trusted hop OVERWRITES or APPENDS:
+ *   1. `CF-Connecting-IP` — rewritten at the Cloudflare edge, so a
+ *      client-supplied value never survives. Authoritative in prod.
+ *   2. `X-Forwarded-For`, read RIGHT-TO-LEFT: each proxy appends, so the
+ *      right-most entry is our own edge's and everything left of it is
+ *      client-seeded. Reading left-most let a caller rotate the header to mint
+ *      a fresh bucket per request and defeat the per-IP cap (issue #23).
+ *   3. `X-Real-IP` / `X-Railway-IP`.
+ *   4. `'unknown'` — all such callers share one bucket.
  *
- *   1. `CF-Connecting-IP` — Cloudflare rewrites this at its edge on every
- *      request, so a client-supplied value never survives. owlette.app is
- *      fronted by a Cloudflare load balancer (see `infra/cloudflare/`,
- *      Railway primary + Vercel standby), making this authoritative in prod.
- *   2. `X-Forwarded-For`, read RIGHT-TO-LEFT. Each proxy APPENDS the address
- *      it received the connection from, so the right-most entry is the one our
- *      own edge added; everything to its left is whatever the client
- *      pre-seeded. Taking the LEFT-most (the previous behaviour) let a caller
- *      rotate `X-Forwarded-For` to mint a fresh rate-limit bucket per request
- *      and defeat the per-IP cap (issue #23). We take the right-most entry,
- *      which the single trusted hop in front of the app (Railway/Vercel edge,
- *      when Cloudflare is not fronting — e.g. local/dev) controls.
- *   3. `X-Real-IP` / `X-Railway-IP` — single-value proxy headers.
- *   4. `'unknown'` — no usable signal; such callers share one bucket.
- *
- * The chosen value is shape-clamped (IP charset, ≤64 chars) so a malformed
- * header can't become an oversized or injected rate-limit key.
+ * The result is shape-clamped (IP charset, <=64 chars) so a hostile header
+ * can't become an oversized or injected Redis key.
  */
 export function getClientIp(request: NextRequest): string {
   const cfConnectingIp = request.headers.get('cf-connecting-ip');
@@ -258,8 +190,7 @@ export function getClientIp(request: NextRequest): string {
 
   const forwardedFor = request.headers.get('x-forwarded-for');
   if (forwardedFor) {
-    // Right-most = appended by the trusted edge closest to us; entries to its
-    // left are client-controlled. See the doc comment above.
+    // Right-most = appended by our edge; everything left is client-controlled.
     const ips = forwardedFor.split(',');
     return normalizeIp(ips[ips.length - 1]);
   }
@@ -269,20 +200,17 @@ export function getClientIp(request: NextRequest): string {
     return normalizeIp(realIp);
   }
 
-  // Railway-specific header
   const railwayIp = request.headers.get('x-railway-ip');
   if (railwayIp) {
     return normalizeIp(railwayIp);
   }
 
-  // Fallback to connection IP (may not work in serverless)
   return 'unknown';
 }
 
 /**
- * Trim and shape-clamp an IP token. Returns 'unknown' when the value isn't
- * IP-like, so a junk or hostile header can't become a Redis rate-limit key.
- * Accepts the IPv4/IPv6 charset only (digits, hex, '.', ':').
+ * Trim and shape-clamp an IP token to the IPv4/IPv6 charset. 'unknown' for
+ * anything else, so a hostile header can't become a Redis key.
  */
 function normalizeIp(value: string): string {
   const trimmed = value.trim();
@@ -292,10 +220,7 @@ function normalizeIp(value: string): string {
   return trimmed.slice(0, 64);
 }
 
-/**
- * Simple in-memory rate limiter as fallback when Redis is unavailable.
- * Uses a sliding window approach with automatic cleanup.
- */
+/** Per-process fallback when Redis is unavailable. Fixed window, self-cleaning. */
 const inMemoryStore = new Map<string, { count: number; resetAt: number }>();
 const IN_MEMORY_WINDOW_MS = 60_000; // 1 minute
 const IN_MEMORY_MAX_REQUESTS = 15; // per window per identifier
@@ -340,7 +265,7 @@ function checkInMemoryRateLimit(identifier: string): {
   };
 }
 
-// Periodically clean up expired entries to prevent memory leaks
+// Evict expired entries — unbounded growth otherwise.
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of inMemoryStore) {
@@ -353,12 +278,7 @@ if (typeof cleanupTimer.unref === 'function') {
   cleanupTimer.unref();
 }
 
-/**
- * Check rate limit and return result
- * @param ratelimiter - The Ratelimit instance to use
- * @param identifier - Unique identifier (IP address, user ID, etc.)
- * @returns Rate limit result with success/failure and metadata
- */
+/** Check a limit for `identifier` (IP, user id, ...); falls back to in-memory. */
 export async function checkRateLimit(
   ratelimiter: Ratelimit | null,
   identifier: string
@@ -369,15 +289,12 @@ export async function checkRateLimit(
   reset?: number;
   retryAfter?: number;
 }> {
-  // E2E escape hatch: Playwright runs many back-to-back admin API calls
-  // across specs, which trips the 15/min in-memory bucket and causes
-  // flaky 429s. Only honored when explicitly set in the webServer env
-  // (playwright.config.ts) — production ignores this var entirely.
+  // E2E escape hatch: back-to-back admin calls across specs trip the 15/min
+  // in-memory bucket. Set only in playwright.config.ts's webServer env.
   if (process.env.E2E_DISABLE_RATE_LIMIT === 'true') {
     return { success: true };
   }
 
-  // If rate limiting is disabled (no Redis configured), use in-memory fallback
   if (!ratelimiter) {
     return checkInMemoryRateLimit(identifier);
   }
@@ -394,16 +311,12 @@ export async function checkRateLimit(
     };
   } catch (error) {
     console.error('[RateLimit] Redis error, falling back to in-memory rate limit:', error);
-    // Fall back to in-memory rate limiting instead of allowing all requests
+    // Degrade to in-memory rather than fail open.
     return checkInMemoryRateLimit(identifier);
   }
 }
 
-/**
- * Reason taxonomy for 429 responses. Emitted as the
- * `Roost-Rate-Limited-Reason` header so clients can decide whether a
- * retry is worthwhile and over what horizon.
- */
+/** 429 reason taxonomy, emitted as the `Roost-Rate-Limited-Reason` header. */
 export type RateLimitedReason =
   | 'global-rate'
   | 'endpoint-rate'
@@ -411,11 +324,10 @@ export type RateLimitedReason =
   | 'site-concurrency';
 
 /**
- * Format rate limit headers for HTTP response.
- *
- * Emits BOTH the IETF draft-standard names (`RateLimit-*` — no `X-`
- * prefix) and the legacy `X-RateLimit-*` names so existing clients keep
- * working through the transition.
+ * Rate limit response headers. Emits both the IETF draft names (`RateLimit-*`)
+ * and the legacy `X-RateLimit-*` ones so existing clients keep working.
+ * Note the reset units differ: `RateLimit-Reset` is delta-seconds,
+ * `X-RateLimit-Reset` is an epoch-ms timestamp.
  */
 export function getRateLimitHeaders(result: {
   limit?: number;

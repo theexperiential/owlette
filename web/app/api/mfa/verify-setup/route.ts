@@ -1,20 +1,18 @@
 /**
- * MFA Verify Setup API
+ * POST /api/mfa/verify-setup — verify the TOTP code, then encrypt + store the
+ * secret. Body `{ userId, code, backupCodes? }`; `backupCodes` is deprecated
+ * (server mints the sheet when omitted) and survives only for the browser-side
+ * generation in `app/setup-2fa/page.tsx`. Response returns the plaintext sheet
+ * once; only hashes are stored.
  *
- * Verifies TOTP code during setup, then encrypts and stores the secret
- *
- * POST /api/mfa/verify-setup
- * Request: { userId: string, code: string, backupCodes: string[] }
- * Response: { success: boolean }
- *
- * SECURITY:
- * - Verifies the TOTP code is correct before enabling MFA
- * - Encrypts the secret using server-side key before storing
- * - Clears pending setup data after successful verification
+ * Security: adding a factor to an account that already holds one requires an
+ * MFA-verified session (`lib/mfaEnrollmentGate.server.ts`), and an existing TOTP
+ * secret is never overwritten — that path is disable-then-enroll.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyTOTP, hashBackupCode } from '@/lib/totp';
+import { issueBackupCodes, type IssuedBackupCodes } from '@/lib/backupCodes.server';
 import { encrypt, isEncryptionConfigured } from '@/lib/encryption.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -22,13 +20,15 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, assertActiveUser, requireSessionUser } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
 import { markSessionMfaVerified } from '@/lib/sessionManager.server';
+import { applyMfaFactorChange } from '@/lib/mfaFactors.server';
+import { emitMutation } from '@/lib/auditLogClient';
+import { checkMfaEnrollmentGate } from '@/lib/mfaEnrollmentGate.server';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     const body = await request.json();
     const { userId, code, backupCodes } = body;
 
-    // Validate inputs
     if (!userId || typeof userId !== 'string') {
       return NextResponse.json(
         { error: 'Invalid user ID' },
@@ -43,7 +43,16 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    if (!Array.isArray(backupCodes) || backupCodes.length === 0) {
+    // Optional: minted here when omitted. A client-supplied set is honoured
+    // because setup-2fa generates codes in the browser and is already showing
+    // them — storing a different set would leave the user holding dead strings.
+    // A malformed/empty array is a client bug, so still a 400.
+    if (
+      backupCodes !== undefined &&
+      (!Array.isArray(backupCodes) ||
+        backupCodes.length === 0 ||
+        !backupCodes.every((c) => typeof c === 'string' && c.length > 0))
+    ) {
       return NextResponse.json(
         { error: 'Backup codes are required' },
         { status: 400 }
@@ -51,9 +60,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     await requireSessionUser(request, userId);
-    const userDataPre = await assertActiveUser(userId);
+    await assertActiveUser(userId);
 
-    // Check encryption is configured
     if (!isEncryptionConfigured()) {
       console.error('[MFA Verify Setup] MFA_ENCRYPTION_KEY not configured');
       return NextResponse.json(
@@ -64,27 +72,31 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     const db = getAdminDb();
 
-    // SECURITY: refuse to overwrite existing MFA state via this route.
-    // Without this guard, an attacker with a captured session who has
-    // already passed primary auth (but NOT MFA — `/api/*` routes are not
-    // gated by the proxy MFA check) could call /api/mfa/setup to mint a
-    // new pending secret, then call this route to overwrite the victim's
-    // mfaSecret+backupCodes with the attacker's, and even mark the
-    // session mfaVerified — full MFA bypass. Re-enrollment must go
-    // through /api/mfa/disable first (which requires proof of current
-    // factor possession), and only then through setup+verify-setup.
-    if (userDataPre.mfaEnrolled === true) {
+    // Enrollment gate: an account that already holds a factor must present an
+    // MFA-verified session to add another. `/api/*` is not proxy-MFA-gated, so
+    // without this a captured pre-MFA session could overwrite the victim's
+    // factors. Do not narrow this without keeping the per-factor check below —
+    // together they replaced the old blanket `mfaEnrolled` refusal, which
+    // universal 2FA can't use (passkey-only accounts must still add TOTP).
+    const gate = await checkMfaEnrollmentGate(userId);
+    if (gate.denied) {
+      return gate.denied;
+    }
+
+    // Never overwrite a live TOTP secret: even a verified session must go
+    // through /api/mfa/disable (proof of possession of the current factor)
+    // first, so a hijacked session can't silently swap the secret.
+    if (gate.factors.totp) {
       return NextResponse.json(
         {
           error:
-            'MFA is already enrolled. Disable it via /api/mfa/disable (which requires proof of your current factor) before re-enrolling.',
+            'TOTP is already enrolled. Disable it via /api/mfa/disable (which requires proof of your current factor) before re-enrolling.',
           code: 'mfa_already_enrolled',
         },
         { status: 409 },
       );
     }
 
-    // Get pending setup
     const pendingDoc = await db.collection('mfa_pending').doc(userId).get();
     if (!pendingDoc.exists) {
       return NextResponse.json(
@@ -101,7 +113,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Check if setup expired
     const expiresAt = pendingData.expiresAt?.toDate?.() || new Date(pendingData.expiresAt);
     if (expiresAt < new Date()) {
       await db.collection('mfa_pending').doc(userId).delete();
@@ -111,7 +122,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Verify TOTP code
     const secret = pendingData.secret;
     const isValid = verifyTOTP(code, secret);
 
@@ -122,33 +132,64 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Encrypt the secret for storage
     const encryptedSecret = encrypt(secret);
 
-    // Hash backup codes for storage
-    const hashedBackupCodes = backupCodes.map(hashBackupCode);
+    // The ONE place recovery codes are issued without separate proof of
+    // possession — safe only because a TOTP code was just verified above and the
+    // enrollment gate already refused unverified sessions holding a factor.
+    // Every other issuance goes through POST /api/mfa/backup-codes. Do not
+    // generalise this branch. Client-supplied codes are the transitional path
+    // for setup-2fa's browser-side generation.
+    const issued: IssuedBackupCodes = Array.isArray(backupCodes)
+      ? { plaintext: backupCodes, hashed: backupCodes.map(hashBackupCode) }
+      : issueBackupCodes();
+    const hashedBackupCodes = issued.hashed;
 
-    // Save encrypted MFA configuration to user document
-    await db.collection('users').doc(userId).update({
-      mfaEnrolled: true,
-      mfaSecret: encryptedSecret, // Now encrypted!
-      backupCodes: hashedBackupCodes,
-      mfaEnrolledAt: FieldValue.serverTimestamp(),
-      requiresMfaSetup: false,
-    });
+    // The factor-inventory module is the ONLY writer of `mfaEnrolled` /
+    // `requiresMfaSetup`; it folds both into the same merge write as the secret,
+    // so the account can never hold a secret without the flags or vice versa.
+    const factorResult = await applyMfaFactorChange(
+      userId,
+      { totp: true },
+      {
+        extraUpdate: {
+          mfaSecret: encryptedSecret, // Now encrypted!
+          backupCodes: hashedBackupCodes,
+          // One field for sheet age, advanced by every route that regenerates.
+          backupCodesGeneratedAt: FieldValue.serverTimestamp(),
+          mfaEnrolledAt: FieldValue.serverTimestamp(),
+        },
+      },
+    );
 
-    // Delete pending setup
     await db.collection('mfa_pending').doc(userId).delete();
 
-    // The user just proved possession of the new factor — promote the
-    // session straight to MFA-verified so they don't get bounced to the
-    // verify-2fa page on the next protected-path navigation. From this
-    // point on, `users/{uid}.mfaEnrolled === true` so every subsequent
-    // session-create will require a fresh challenge.
+    // Possession of the new factor was just proved — promote the session to
+    // MFA-verified so the next protected navigation isn't bounced to /verify-2fa.
+    // Subsequent session-creates still require a fresh challenge.
     await markSessionMfaVerified();
 
+    // Platform-tenant mutation (siteId = '') so the cloud function records it on
+    // the platform partition; mirrors the `mfa_disabled` row from /api/mfa/disable.
+    emitMutation({
+      kind: 'user_mutated',
+      siteId: '',
+      actor: `user:${userId}`,
+      targetId: userId,
+      attributes: {
+        endpoint: '/api/mfa/verify-setup',
+        method: 'POST',
+        verb: 'mfa_enrolled',
+        factor: 'totp',
+        backupCodesIssued: hashedBackupCodes.length,
+        passkeysEnrolled: factorResult.factors.passkeys,
+      },
+    });
+
+    // The plaintext sheet, returned exactly once — only hashes were stored.
     return NextResponse.json({
       success: true,
+      backupCodes: issued.plaintext,
     });
   } catch (error) {
     if (error instanceof ApiAuthError) {
