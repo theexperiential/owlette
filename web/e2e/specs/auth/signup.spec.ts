@@ -46,7 +46,9 @@ test('new signup writes role: member and redirects to /setup-2fa', async ({ page
   // The real assertion: new code MUST write 'member' directly, not rely on the
   // permission-model-split migration to re-flip a legacy 'user'.
   const db = getAdminDb();
-  const authAdmin = (await import('firebase-admin')).default.auth();
+  // Modular entrypoint: v14 dropped the default `admin` namespace export.
+  const { getAuth } = await import('firebase-admin/auth');
+  const authAdmin = getAuth();
   const userRecord = await authAdmin.getUserByEmail(email);
   const userDoc = await db.collection('users').doc(userRecord.uid).get();
   expect(userDoc.exists).toBe(true);

@@ -35,7 +35,7 @@ Each release also receives a future Apache License, Version 2.0 grant on the sec
 | **Firebase project** | Authentication, Firestore, Admin SDK credentials, and Firebase Storage for installer/screenshot flows |
 | **Cloudflare R2 bucket** | Object storage for roost chunk uploads, signed URLs, and version assembly |
 | **Railway account** (or any Node.js 22 host) | Web dashboard hosting for the Next.js app |
-| **Node.js 22.x** | Web builds (`web/package.json` `engines` pin); Node 20+ covers local development and Firebase Functions compatibility |
+| **Node.js 22.x** | Web builds, Firebase Functions, and local development. `firebase-admin` 14 requires `node >=22`, and Node 20 left security support on 2026-04-30 |
 | **GitHub repository** | Source code and CI/CD |
 | **Upstash Redis** | API rate limiting |
 | **Email provider** | Alert and welcome email delivery |
