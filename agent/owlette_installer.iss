@@ -180,6 +180,13 @@ Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "CLAUDE.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
+; Third-party attribution. THIRD_PARTY_NOTICES.md carries the MPL-2.0/LGPL-2.1
+; notices and source offers the temperature stack's licenses require of a
+; binary redistributor; LGPL-2.1.txt is the full text (the MPL and BSD texts
+; already ship inside the HardwareMonitor wheel — see the notices file).
+Source: "THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "vendor\LGPL-2.1.txt"; DestDir: "{app}"; Flags: ignoreversion
+
 [Dirs]
 ; Create ProgramData directories (proper location for Windows service data)
 Name: "{commonappdata}\Owlette"; Permissions: users-modify
@@ -368,12 +375,15 @@ Name: "{userstartup}\Owlette"; Filename: "{#MyAppExePath}"; Parameters: "--tray"
 ; needed. This must be an ACTIVE removal, not just a deleted line: upgrades
 ; never run the old uninstaller (see InitializeSetup), so machines upgrading
 ; from <= 3.1.0 would otherwise keep the exclusions forever. Also drops the
-; stale legacy exclusions older generations added: the whole-directory
-; {app}\python exclusion (2.0.48 era) and C:\Owlette\python from
-; pre-ProgramData installs. Appends the resulting exclusion set to
+; stale legacy exclusions older generations added — the set is the union of
+; every Add-MpPreference any historical installer ran (verified against git
+; history): the whole-install {app} exclusion (2.0.4x era), {app}\python,
+; the LibreHardwareMonitor site-packages path (2.12.x era), and the
+; C:\Owlette / C:\Owlette\python trees from pre-ProgramData installs.
+; Appends the resulting path AND process exclusion sets to
 ; logs\defender_setup.log so the retraction is diagnosable. Keep this line
 ; for at least one release cycle after the fleet is past 3.1.0.
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\python.sys' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\pythonw.sys' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath 'C:\Owlette\python' -ErrorAction SilentlyContinue; [void]((Get-Command Get-MpPreference -ErrorAction SilentlyContinue) -and (('owlette defender exclusions retracted @ ' + (Get-Date -Format s) + ' :: remaining=' + ((Get-MpPreference).ExclusionPath -join ';')) | Out-File -Append -Encoding utf8 '{commonappdata}\Owlette\logs\defender_setup.log'))"""; StatusMsg: "Removing legacy Windows Defender exclusions..."; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\LibreHardwareMonitor' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\python.sys' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\pythonw.sys' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath 'C:\Owlette' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath 'C:\Owlette\python' -ErrorAction SilentlyContinue; [void]((Get-Command Get-MpPreference -ErrorAction SilentlyContinue) -and (('owlette defender exclusions retracted @ ' + (Get-Date -Format s) + ' :: remaining_paths=' + ((Get-MpPreference).ExclusionPath -join ';') + ' :: remaining_procs=' + ((Get-MpPreference).ExclusionProcess -join ';')) | Out-File -Append -Encoding utf8 '{commonappdata}\Owlette\logs\defender_setup.log'))"""; StatusMsg: "Removing legacy Windows Defender exclusions..."; Flags: runhidden waituntilterminated
 
 ; The pairing handoff and the service install are handled in [Code]
 ; CurStepChanged() so the pairing branch can be chosen at runtime and the

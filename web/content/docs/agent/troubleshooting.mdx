@@ -250,7 +250,7 @@ The agent reads CPU temperatures through [LibreHardwareMonitor](https://github.c
 
 **Verify the driver**: `Get-Service PawnIO` should show `Running` (it is demand-start, so `Stopped` is also normal when nothing is reading sensors). If it is missing, CPU temperatures read as blank while GPU temperatures keep working through vendor APIs — reinstall it with `winget install namazso.PawnIO` or by re-running the agent installer.
 
-**Opt out of temperature monitoring**: set `"temperature": { "enabled": false }` in `C:\ProgramData\Owlette\config\config.json` and restart the service. All sensor reads stop; temperature fields simply disappear from the dashboard. A missing `temperature` section means enabled.
+**Opt out of temperature monitoring**: set `"temperature": { "enabled": false }` in `C:\ProgramData\Owlette\config\config.json` — it takes effect within one metrics tick, no restart needed. All sensor reads stop; temperature fields simply disappear from the dashboard. A missing `temperature` section means enabled.
 
 **Note**: PawnIO is a shared component (other tools such as FanControl use it too), so uninstalling the agent leaves it installed — remove it separately from installed apps if it is no longer needed.
 
