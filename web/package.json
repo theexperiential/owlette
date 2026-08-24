@@ -30,8 +30,8 @@
     "videos": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.videos.config.ts\"",
     "videos:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.videos.config.ts --headed --debug\"",
     "e2e:functions-build": "npm --prefix ../functions run build",
-    "e2e:functions": "npm run e2e:build && npm run e2e:functions-build && cd .. && firebase emulators:exec --only auth,firestore,storage,functions --project demo-playwright-e2e \"cd web && npx playwright test e2e/specs/functions --project=functions-triggers\"",
-    "e2e:functions:nobuild": "npm run e2e:functions-build && cd .. && firebase emulators:exec --only auth,firestore,storage,functions --project demo-playwright-e2e \"cd web && npx playwright test e2e/specs/functions --project=functions-triggers\""
+    "e2e:functions": "npm run e2e:build && npm run e2e:functions-build && cd .. && cross-env FUNCTIONS_DISCOVERY_TIMEOUT=120 firebase emulators:exec --only auth,firestore,storage,functions --project demo-playwright-e2e \"cd web && npx playwright test e2e/specs/functions --project=functions-triggers\"",
+    "e2e:functions:nobuild": "npm run e2e:functions-build && cd .. && cross-env FUNCTIONS_DISCOVERY_TIMEOUT=120 firebase emulators:exec --only auth,firestore,storage,functions --project demo-playwright-e2e \"cd web && npx playwright test e2e/specs/functions --project=functions-triggers\""
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.63",

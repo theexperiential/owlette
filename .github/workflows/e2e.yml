@@ -126,6 +126,13 @@ jobs:
         env:
           CI: 'true'
           SESSION_SECRET: 'ci-e2e-emulator-session-secret-do-not-reuse-in-prod'
+          # The functions emulator loads the built code to discover definitions
+          # under a hard 10s default. That is a budget, not a speed problem:
+          # initializeApp is 104ms and the whole lib/index.js load ~530ms, but
+          # spawn + scheduling on a loaded runner blows 10s intermittently — the
+          # same code passes and fails run to run. The npm script sets this too;
+          # it is repeated here so the CI value is visible at the call site.
+          FUNCTIONS_DISCOVERY_TIMEOUT: '120'
         run: npm run e2e:functions:nobuild
 
       # Upload the Playwright HTML report + traces / screenshots / videos on

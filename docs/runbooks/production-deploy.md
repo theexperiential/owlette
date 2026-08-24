@@ -196,12 +196,14 @@ the docs site.
     the live functions keep running their existing build. But it looks alarming
     and it stops the release. Raising the timeout is the fix; 120 is generous.
 
-    The underlying cause is module-scope Firestore init in four files
-    (`deploymentStatus.ts`, `deploymentSweeper.ts`, `distributionFanout.ts`,
-    `metricsHistory.ts` each run `const db = getFirestore()` at import time).
-    Making those lazy would remove the need for the override — Firebase's own
-    "avoid deployment timeouts during initialization" guidance is about exactly
-    this pattern.
+    It is a budget problem, not slow code. Measured on this codebase:
+    `initializeApp()` 104ms, `getFirestore()` 478ms, full `lib/index.js` load
+    530ms — about a second all in. The 10s default is blown by process spawn
+    and scheduling on a loaded machine, which is why it is intermittent: the
+    same code passes and fails run to run. Four files do initialise Firestore at
+    module scope (`deploymentStatus`, `deploymentSweeper`, `distributionFanout`,
+    `metricsHistory`), and making that lazy is still tidier, but the numbers say
+    it would not fix this — do not reach for that refactor expecting it to.
 
     **firebase-tools must be 15.x.** 13.x cannot deploy or emulate a
     `firebase-functions` 7 codebase: its runtime shim calls the removed
