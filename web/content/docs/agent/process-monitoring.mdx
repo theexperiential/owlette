@@ -143,5 +143,7 @@ At each heartbeat interval, the agent collects and reports (5s when the desktop 
 GPU monitoring uses separate sources for usage and temperature:
 
 - **GPU usage/VRAM**: GPUtil
-- **GPU temperature**: WinTmp, then pynvml/NVML
+- **GPU temperature**: LibreHardwareMonitor (via the PawnIO driver), then pynvml/NVML as an NVIDIA-only fallback
 - **No GPU**: Gracefully returns 0
+
+CPU temperature also comes from LibreHardwareMonitor and requires the PawnIO driver the installer deploys; without it the value is simply blank. Set `"temperature": { "enabled": false }` in `config.json` to disable all temperature reads.

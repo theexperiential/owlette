@@ -25,6 +25,7 @@ Step 6 of the full build compiles `desktop/` and step 8 copies the binary to `bu
 - The **quick build does not compile it** — it only re-copies `desktop/src-tauri/target/release/owlette-desktop.exe` if one is there, and fails loudly when the package has no desktop app at all (Inno errors on an empty `app\*` source anyway).
 - The full build **deletes `claude_agent_sdk/_bundled/claude.exe`** (242 MB) after pip install. It reappears on every clean install, which is why it is scripted; Cortex fetches its own CLI on demand instead.
 - The installer probes for the **WebView2 Evergreen runtime** and runs the bundled `vendor\MicrosoftEdgeWebview2Setup.exe` (`/silent /install`) when it is missing — LTSC/IoT kiosk images often lack it, and the app cannot create a window without it. Never fatal; the service works regardless.
+- The installer probes for the **PawnIO driver** (registry `Uninstall\PawnIO\DisplayVersion`) and runs the bundled `vendor\PawnIO_setup.exe` (`-install -silent`; exit 0/183/3010 all mean success) when absent or older than 2.2.0 — LibreHardwareMonitor reads CPU temps through it. Never fatal; without it CPU temps are None and GPU temps use vendor APIs.
 
 ### Version Bump Flow
 
@@ -133,7 +134,7 @@ curl -s -X PUT "$BASE_URL/api/installer/upload" \
 - **Never edit `owlette_installer.iss`** without reading `skills/resources/installer-build-system.md` first — the config backup/restore logic, OAuth flow, and silent install behavior are interconnected
 - **Never change the install path** from `C:\ProgramData\Owlette` — service registration, the host's own path resolution (it locates the install root two directories above `tools\owlette-host.exe`), and the Inno Setup script all use this via `{commonappdata}`
 - **Never modify `python311._pth`** without understanding embedded Python import resolution — breaking this kills all imports
-- **Never skip the Defender exclusion** in the installer — LibreHardwareMonitor's WinRing0 driver triggers false positives
+- **Never weaken the PawnIO version gate or its silent flags** — the installer must ship PawnIO >= 2.2.0 (2.1.0 BSOD/boot-loops Win10 1809/LTSC machines, and it is the version LHM itself still embeds), and `-install -silent` is what keeps the SYSTEM self-update path from hanging on an invisible dialog. The old WinRing0 Defender exclusions are now actively *retracted* by the `[Run]` step — never re-add them.
 - **Never change the child exit-code contract** — 0 = stop the service (graceful stop), 42/43 = relaunch immediately (restart flag, self-restart watchdog), anything else = relaunch with crash-loop backoff. `owlette_runner.py` and `agent/host/src/supervisor.rs` are the two halves of it; changing one without the other silently breaks restarts.
 - **Never drop `AppUserModelID: "app.owlette.desktop"`** from the two `[Icons]` entries that carry it (`{group}\Owlette` and `{userstartup}\Owlette`). Windows silently discards every toast an unpackaged app raises unless a Start-menu shortcut registers its AUMID — the notification API still reports success. The id must stay byte-identical to `tauri.conf.json`'s `identifier` and `startup_link.rs`'s `APP_USER_MODEL_ID`.
 - **Never add the AUMID to a third shortcut, and never rename either of those two.** Windows draws a toast's attribution line from the *name* of a registered shortcut and does not specify which it picks when several share an id — that is why `Owlette Configuration` carries no id and why the startup shortcut is `Owlette.lnk`. Both registrars must be named exactly `Owlette` or notifications get attributed to something else.
@@ -149,7 +150,7 @@ curl -s -X PUT "$BASE_URL/api/installer/upload" \
 | `build_installer_full.bat` | Downloads Python, pip, deps; builds the desktop app and the service host; assembles package | Medium |
 | `build_installer_quick.bat` | Copies source + desktop exe, compiles installer (fast iteration) | Low |
 | `desktop/` | Tauri 2 app — tray icon, config window, reboot prompt (replaced the python UI in 3.0.0) | Medium |
-| `agent/vendor/` | Hash-verified third-party binaries shipped with the build (the WebView2 bootstrapper; the NSSM zip went with 3.0.0) | Low |
+| `agent/vendor/` | Hash-verified third-party binaries shipped with the build (the WebView2 bootstrapper and the PawnIO 2.2.0 driver installer; the NSSM zip went with 3.0.0) | Low |
 | `scripts/install.bat` | Service registration — calls `owlette-host install` (run during install) | High |
 | `src/owlette_runner.py` | Host↔service bridge, SCM stop watcher, exit codes | High |
 | `src/owlette_updater.py` | Self-update: stop → download → silent install → verify | High |
@@ -201,7 +202,7 @@ The installer handles config preservation:
 | Desktop app never opens on a kiosk, service fine | WebView2 runtime absent and the bootstrapper failed | Check `SetupLog` for the `EnsureWebView2Runtime` lines |
 | Installer hangs on silent update | `ShouldConfigureSite()` returned true | Check config.json exists at `C:\ProgramData\Owlette\config\` |
 | Service won't start after update | Import errors from missing deps | Full rebuild needed |
-| Installer flagged by AV | Missing Defender exclusion | Check `Add-MpPreference` step ran |
+| CPU temps blank, GPU temps fine | PawnIO driver absent or failed to install | Check `SetupLog` for the `EnsurePawnIO` lines; `Get-Service PawnIO`; `winget install namazso.PawnIO` |
 
 ---
 

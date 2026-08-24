@@ -20,7 +20,7 @@ Logs live in two trees. The service and everything it launches write machine-wid
 | **hoot** | `cortex.log` | hoot runtime and CLI fetch. Only written when hoot is enabled. |
 | **Pairing** | `pairing_debug.log` | Device-code pairing and token setup |
 | **Self-update installer** | `installer_update.log` | Inno Setup log written during remote agent updates |
-| **Defender setup** | `defender_setup.log` | The installer's Defender-exclusion step — one entry per install |
+| **Defender setup** | `defender_setup.log` | The installer's Defender-exclusion retraction step (removes the exclusions pre-PawnIO versions added) — one entry per install |
 | **roost scrub reports** | `roost_scrub_reports\` | One JSON report per roost integrity scrub |
 | **Interactive installer** | Path passed with `/LOG=...` | Inno Setup log for manual installs; no fixed ProgramData installer log is written by default |
 
@@ -244,25 +244,15 @@ The service writes `service_status.json` immediately when important state change
 
 ---
 
-### windows defender blocking
+### temperature monitoring driver (pawnio)
 
-**Symptoms**: Agent files quarantined, service won't start after update.
+The agent reads CPU temperatures through [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor), which uses the [PawnIO](https://pawnio.eu/) kernel driver — a signed, sandboxed driver that runs vetted modules instead of exposing raw hardware access. The installer deploys PawnIO 2.2.0 automatically and it is Microsoft-signed, HVCI-compatible, and not on any vulnerable-driver blocklist, so no Defender exclusions are needed. (Versions up to 3.1.0 used the WinRing0 driver instead, extracted at runtime as `python.sys` — upgrading removes that driver, its `R0python` service, and the Defender exclusions it required.)
 
-**Cause**: The WinRing0 driver that LibreHardwareMonitor uses for CPU/GPU temperatures is extracted at runtime to `C:\ProgramData\Owlette\python\python.sys` (and `pythonw.sys` whenever a windowless python host reads temperatures — hoot and the user-session helpers still run under `pythonw.exe`) and loaded as kernel service `R0python` / `R0pythonw`. Defender's antivirus flags it as `VulnerableDriver:WinNT/Winring0` and may quarantine that `.sys` file. Process exclusions do not cover a kernel-driver file load, so the driver path itself must be excluded.
+**Verify the driver**: `Get-Service PawnIO` should show `Running` (it is demand-start, so `Stopped` is also normal when nothing is reading sensors). If it is missing, CPU temperatures read as blank while GPU temperatures keep working through vendor APIs — reinstall it with `winget install namazso.PawnIO` or by re-running the agent installer.
 
-**Fix**: The installer adds these exclusions automatically (2.12.12+). If the agent predates that, or the exclusion did not register, add them manually from an elevated PowerShell prompt, then restart the service:
+**Opt out of temperature monitoring**: set `"temperature": { "enabled": false }` in `C:\ProgramData\Owlette\config\config.json` and restart the service. All sensor reads stop; temperature fields simply disappear from the dashboard. A missing `temperature` section means enabled.
 
-```powershell
-# the runtime-extracted WinRing0 kernel driver — this is the file Defender quarantines
-Add-MpPreference -ExclusionPath "C:\ProgramData\Owlette\python\python.sys"
-Add-MpPreference -ExclusionPath "C:\ProgramData\Owlette\python\pythonw.sys"
-# the wrapper DLL + the python hosts (already added by the installer)
-Add-MpPreference -ExclusionPath "C:\ProgramData\Owlette\python\Lib\site-packages\WinTmp"
-Add-MpPreference -ExclusionProcess "C:\ProgramData\Owlette\python\python.exe"
-Add-MpPreference -ExclusionProcess "C:\ProgramData\Owlette\python\pythonw.exe"
-```
-
-If the driver was already quarantined, restore it from Windows Security → Protection history (or it re-extracts on the next temp read once excluded). Use a broader `C:\ProgramData\Owlette` exclusion only as a temporary diagnostic step after reviewing the security tradeoff.
+**Note**: PawnIO is a shared component (other tools such as FanControl use it too), so uninstalling the agent leaves it installed — remove it separately from installed apps if it is no longer needed.
 
 ---
 

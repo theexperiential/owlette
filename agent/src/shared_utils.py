@@ -32,7 +32,7 @@ def get_app_version():
 # GLOBAL VARS
 
 APP_VERSION = get_app_version()
-CONFIG_VERSION = '1.6.0'  # Added launch_mode (scheduling)
+CONFIG_VERSION = '1.7.0'  # Added temperature.enabled (PawnIO migration)
 # Color scheme matching web app dark theme (oklch hue 250 navy + cyan accent)
 WINDOW_COLOR = '#020b16'      # web --background oklch(0.145 0.03 250)
 FRAME_COLOR = '#0d1e2f'       # web --card oklch(0.23 0.04 250)
@@ -221,28 +221,29 @@ def get_cpu_name():
     logging.warning("All CPU detection methods failed")
     return "Unknown CPU"
 
-# WinTmp read suppression. A timed-out read (hung WinRing0 driver load) leaks its
-# worker thread — the watchdog can't kill it — so a persistent hang would leak one
-# per metrics tick. Latch a cooldown after any timeout. CPU + GPU share the latch
-# (same driver); GPU falls through to pynvml meanwhile. Monotonic: immune to
-# wall-clock changes.
-_WINTMP_TIMEOUT_COOLDOWN_S = 600
-_wintmp_suppressed_until = 0.0
+# Temperature read suppression. A timed-out read (hung driver bind or CLR
+# load) leaks its worker thread — the watchdog can't kill it — so a persistent
+# hang would leak one per metrics tick. Latch a cooldown after any timeout.
+# CPU + GPU share the latch (same LHM Computer); GPU falls through to pynvml
+# meanwhile. Monotonic: immune to wall-clock changes.
+_TEMP_TIMEOUT_COOLDOWN_S = 600
+_temp_suppressed_until = 0.0
 
 
-def _wintmp_read_with_timeout(label: str, fn, timeout: float = 3.0):
-    """Run a WinTmp temperature read under a watchdog.
+def _temp_read_with_timeout(label: str, fn, timeout: float = 3.0):
+    """Run a temp_sensors read under a watchdog.
 
-    WinTmp loads the WinRing0 ring-0 driver on first use. try/except catches a
-    *failed* load but not a *hung* one, and these reads sit on service startup
-    (firebase_client.start -> get_system_metrics) and the heartbeat thread. Bound
-    it so a hung load degrades to None. Mirrors _wmi_logical_disk_with_timeout.
-    A timeout latches _WINTMP_TIMEOUT_COOLDOWN_S so a persistent hang doesn't
-    spawn a leaked worker per call.
+    temp_sensors binds the PawnIO ring-0 driver (via LibreHardwareMonitor) on
+    first use. try/except catches a *failed* load but not a *hung* one, and
+    these reads sit on service startup (firebase_client.start ->
+    get_system_metrics) and the heartbeat thread. Bound it so a hung load
+    degrades to None. Mirrors _wmi_logical_disk_with_timeout. A timeout
+    latches _TEMP_TIMEOUT_COOLDOWN_S so a persistent hang doesn't spawn a
+    leaked worker per call.
     """
-    global _wintmp_suppressed_until
+    global _temp_suppressed_until
     now = time.monotonic()
-    if now < _wintmp_suppressed_until:
+    if now < _temp_suppressed_until:
         return None
     pool = ThreadPoolExecutor(max_workers=1)
     try:
@@ -250,10 +251,10 @@ def _wintmp_read_with_timeout(label: str, fn, timeout: float = 3.0):
         try:
             return future.result(timeout=timeout)
         except FuturesTimeoutError:
-            _wintmp_suppressed_until = now + _WINTMP_TIMEOUT_COOLDOWN_S
+            _temp_suppressed_until = now + _TEMP_TIMEOUT_COOLDOWN_S
             logging.warning(
-                f"[TEMP] {label} timed out after {timeout}s — WinRing0 driver may be "
-                f"blocked; suppressing WinTmp reads for {_WINTMP_TIMEOUT_COOLDOWN_S}s"
+                f"[TEMP] {label} timed out after {timeout}s — PawnIO driver or CLR "
+                f"load may be blocked; suppressing sensor reads for {_TEMP_TIMEOUT_COOLDOWN_S}s"
             )
             return None
         except Exception as e:
@@ -266,45 +267,52 @@ def _wintmp_read_with_timeout(label: str, fn, timeout: float = 3.0):
 
 
 def get_cpu_temperature():
-    """CPU temperature in Celsius via LibreHardwareMonitor (WinTmp), or None.
+    """CPU temperature in Celsius via LibreHardwareMonitor (PawnIO), or None.
 
-    Needs admin (the service has it); unsupported hardware yields None. Bounded
-    by _wintmp_read_with_timeout so a hung driver load can't stall startup or
-    the heartbeat.
+    Needs admin (the service has it); unsupported hardware or an absent PawnIO
+    driver yields None. Bounded by _temp_read_with_timeout so a hung driver
+    load can't stall startup or the heartbeat. temperature.enabled=false in
+    config disables all sensor reads; a missing key means enabled.
     """
+    if read_config(['temperature', 'enabled']) is False:
+        return None
     try:
-        import WinTmp
+        import temp_sensors
 
-        cpu_temp = _wintmp_read_with_timeout("CPU_Temp", WinTmp.CPU_Temp)
+        cpu_temp = _temp_read_with_timeout("CPU_Temp", temp_sensors.read_cpu_temperature)
 
         if cpu_temp is not None and 0 < cpu_temp < 150:
             return float(cpu_temp)
         return None
 
     except ImportError:
-        logging.debug("[TEMP] WinTmp not available")
+        logging.debug("[TEMP] HardwareMonitor not available")
         return None
 
     except Exception as e:
         # Broad boundary: callers (hardware_profile.collect_dynamic_metrics)
         # read this unguarded, so every failure must degrade to None.
-        logging.debug(f"[TEMP] WinTmp error: {e}")
+        logging.debug(f"[TEMP] sensor error: {e}")
         return None
 
 def get_gpu_temperatures():
     """GPU temperatures in Celsius: [{'index': 0, 'temperature': 72.0}], or [].
 
-    WinTmp (NVIDIA/AMD/Intel, needs admin) then pynvml (NVIDIA only, works
-    unprivileged). Always Celsius — the storage standard.
+    LibreHardwareMonitor (NVIDIA/AMD/Intel, needs admin) then pynvml (NVIDIA
+    only, works unprivileged). Always Celsius — the storage standard.
+    temperature.enabled=false in config disables all sensor reads; a missing
+    key means enabled.
     """
-    temps = []
+    if read_config(['temperature', 'enabled']) is False:
+        return []
 
-    # 1. WinTmp — NVIDIA, AMD, Intel
+    # 1. LibreHardwareMonitor via temp_sensors — NVIDIA, AMD, Intel
     try:
-        import WinTmp
-        all_temps = _wintmp_read_with_timeout("GPU_Temps", WinTmp.GPU_Temps)
+        import temp_sensors
+        all_temps = _temp_read_with_timeout("GPU_Temps", temp_sensors.read_gpu_temperatures)
 
         if all_temps:
+            temps = []
             for i, temp in enumerate(all_temps):
                 if temp is not None and 0 < temp < 150:
                     temps.append({
@@ -315,31 +323,33 @@ def get_gpu_temperatures():
                 return temps
 
     except ImportError:
-        pass
-    except Exception:
-        pass
+        logging.debug("[TEMP] HardwareMonitor not available")
+    except Exception as e:
+        logging.debug(f"[TEMP] sensor error: {e}")
 
     # 2. pynvml — NVIDIA only
     try:
-        from pynvml import nvmlInit, nvmlDeviceGetCount, nvmlDeviceGetHandleByIndex, nvmlDeviceGetTemperature, nvmlShutdown, NVML_TEMPERATURE_GPU, NVMLError
+        from pynvml import nvmlInit, nvmlDeviceGetCount, nvmlDeviceGetHandleByIndex, nvmlDeviceGetTemperature, nvmlShutdown, NVML_TEMPERATURE_GPU
 
+        temps = []
         nvmlInit()
-        gpu_count = nvmlDeviceGetCount()
+        try:
+            gpu_count = nvmlDeviceGetCount()
 
-        for i in range(gpu_count):
-            try:
-                handle = nvmlDeviceGetHandleByIndex(i)
-                temp = nvmlDeviceGetTemperature(handle, NVML_TEMPERATURE_GPU)
+            for i in range(gpu_count):
+                try:
+                    handle = nvmlDeviceGetHandleByIndex(i)
+                    temp = nvmlDeviceGetTemperature(handle, NVML_TEMPERATURE_GPU)
 
-                if temp is not None and 0 < temp < 150:
-                    temps.append({
-                        'index': i,
-                        'temperature': float(temp)
-                    })
-            except Exception as e:
-                logging.warning(f"[TEMP] pynvml failed for GPU {i}: {e}")
-
-        nvmlShutdown()
+                    if temp is not None and 0 < temp < 150:
+                        temps.append({
+                            'index': i,
+                            'temperature': float(temp)
+                        })
+                except Exception as e:
+                    logging.warning(f"[TEMP] pynvml failed for GPU {i}: {e}")
+        finally:
+            nvmlShutdown()
 
         if temps:
             return temps
@@ -1581,6 +1591,21 @@ def upgrade_config():
 
             write_json_to_file(ordered_config, CONFIG_PATH)
 
+        # Temperature toggle backfill (v1.7.0) — deliberately OUTSIDE the
+        # version gate: a remote config pull wholesale-replaces config.json
+        # (owlette_service.handle_config_update) and can drop the section
+        # until the cloud doc carries it. Readers treat a missing key as
+        # enabled (`is False` sentinel) so behavior never changes; this just
+        # keeps the toggle visible/editable and lets startup sync push it to
+        # Firestore. Idempotent — one dict lookup per boot once present.
+        if 'temperature' not in config:
+            config['temperature'] = {"enabled": True}
+            ordered_config = {'version': config['version']}
+            for key in config:
+                if key != 'version':
+                    ordered_config[key] = config[key]
+            write_json_to_file(ordered_config, CONFIG_PATH)
+            logging.info("Added temperature configuration to config.json (v1.7.0)")
 
     else:
         # CRITICAL: an existing-but-unreadable config (file lock) must NOT be
@@ -1792,6 +1817,9 @@ def generate_config_file(existing_config=None):
             "assigned": None,
             "auto_enforce": False,
             "remoteApplyEnabled": False
+        },
+        "temperature": {
+            "enabled": True
         },
         "watchdog": {
             "enabled": True,
@@ -2250,7 +2278,7 @@ def get_system_metrics_with_config(config=None, skip_gpu=False):
     metrics from hardware_profile.collect_dynamic_metrics() instead.
 
     config: reuse a dict to skip a disk read; None goes through the mtime cache.
-    skip_gpu: skip the nvidia-smi / WinTmp probes that flash a console window.
+    skip_gpu: skip the nvidia-smi / sensor probes that flash a console window.
     """
     if config is None:
         config = read_config()

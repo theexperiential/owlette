@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 
 # GPU temperature cache (used only when multiple GPUs are present to avoid
-# repeated nvidia-smi / WinTmp spawns inside a single metrics tick).
+# repeated nvidia-smi / sensor reads inside a single metrics tick).
 _gpu_temp_cache: dict = {}
 _gpu_temp_cache_time: float = 0.0
 _GPU_TEMP_TTL = 5.0

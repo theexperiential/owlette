@@ -146,6 +146,29 @@ Source: "build\installer_package\app\*"; DestDir: "{app}\app"; Flags: ignorevers
 ; time, so refreshing it is housekeeping, not a security-critical update.
 Source: "vendor\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
 
+; PawnIO driver installer. Same `dontcopy` + ExtractTemporaryFile pattern as the
+; WebView2 bootstrapper above: EnsurePawnIO() (see [Code]) runs it only when the
+; installed version is older than the vendored one. PawnIO is the signed,
+; sandboxed ring-0 driver LibreHardwareMonitor 0.9.6 uses for temperature
+; sensors — it replaced the blocklisted WinRing0 driver that WinTmp's bundled
+; LHM extracted at runtime as {app}\python\python.sys (service R0python).
+; MUST stay >= 2.2.0: 2.1.0 (the build LHM itself embeds) BSOD/boot-loops
+; Windows 10 1809/LTSC-class machines. `*.exe` is gitignored with a negation
+; for this one path — see /.gitignore.
+;
+;   Source:  https://github.com/namazso/PawnIO.Setup/releases  (v2.2.0)
+;   Version: 2.2.0, 3,410,960 bytes
+;   SHA256:  1F519A22E47187F70A1379A48CA604981C4FCF694F4E65B734AAA74A9FBA3032
+;            (matches the winget manifest for namazso.PawnIO 2.2.0)
+;   Signed:  CN=namazso.eu (Authenticode verified at vendor time); the driver
+;            catalogs inside carry Microsoft Hardware Dev Center signatures.
+;
+; To refresh: re-download the release, re-verify hash + signature against the
+; winget manifest, and update the three lines above. Silent CLI contract:
+; `-install -silent`, exit 0 = ok, 183 = already installed, 3010 = installed
+; but a reboot is required.
+Source: "vendor\PawnIO_setup.exe"; Flags: dontcopy
+
 ; Tools — owlette-host.exe, the Windows service host (replaced NSSM in 3.0.0)
 Source: "build\installer_package\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion
 
@@ -285,6 +308,21 @@ Type: files; Name: "{app}\scripts\launch_tray.bat"
 ; stopped in InitializeSetup, so nothing holds it open at this point.
 Type: files; Name: "{app}\tools\nssm.exe"
 
+; WinRing0. The temperature stack moved to LibreHardwareMonitor 0.9.6 + the
+; signed PawnIO driver in this release; WinTmp's bundled LHM was what extracted
+; the blocklisted WinRing0 driver at runtime as python.sys / pythonw.sys and
+; registered it as kernel service R0python / R0pythonw. InitializeSetup stops
+; and deletes those services before this section runs, so the files are
+; deletable here (a still-loaded driver image would survive until the next
+; boot — sc delete marks it for deletion). WinTmp itself is pruned so an
+; upgraded machine can never re-extract the driver; pythonnet/clr_loader STAY
+; (the HardwareMonitor replacement needs them), as does the wmi package (a
+; direct dependency of hardware_profile/shared_utils, now pinned explicitly).
+Type: files; Name: "{app}\python\python.sys"
+Type: files; Name: "{app}\python\pythonw.sys"
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\WinTmp"
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\WinTmp-1.2.0.dist-info"
+
 [Icons]
 ; Start Menu shortcuts. Exactly ONE Start-menu entry registers the
 ; AppUserModelID — and every shortcut that does is named "Owlette".
@@ -322,20 +360,20 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{userstartup}\Owlette"; Filename: "{#MyAppExePath}"; Parameters: "--tray"; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}\app"; AppUserModelID: "{#MyAppUserModelID}"
 
 [Run]
-; Step 0: Add Windows Defender exclusions for the WinRing0 driver used by LibreHardwareMonitor.
-; WinRing0 is flagged as VulnerableDriver:WinNT/Winring0 but is required for CPU/GPU temperature monitoring.
-; LibreHardwareMonitorLib.dll (inside the WinTmp package) extracts WinRing0 AT RUNTIME to
-; {app}\python\python.sys (and \pythonw.sys when a pythonw host reads temps) and loads it as kernel
-; service R0python / R0pythonw. The pythonw entries are still required in 3.0.0 even though the tray and
-; GUI that used to be the pythonw hosts are gone: shared_utils.get_python_exe_path() prefers pythonw.exe,
-; so every script the service launches into the user session runs under it — including owlette_cortex.py,
-; whose mcp_tools.get_system_info() calls shared_utils.get_system_metrics() and therefore reads WinTmp.
-; Process exclusions do NOT cover a kernel-driver FILE load, and the WinTmp
-; path exclusion is the DLL's subfolder — NOT where the .sys lands — so we MUST path-exclude the extracted
-; .sys files themselves (this is the file Defender actually quarantines; see docs/agent/troubleshooting.md).
-; We also drop a stale legacy C:\Owlette\python exclusion from pre-ProgramData installs, and append the
-; resulting exclusion set to logs\defender_setup.log so a silent failure is diagnosable.
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionPath '{app}\python\python.sys' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionPath '{app}\python\pythonw.sys' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath 'C:\Owlette\python' -ErrorAction SilentlyContinue; [void]((Get-Command Get-MpPreference -ErrorAction SilentlyContinue) -and (('owlette defender exclusions @ ' + (Get-Date -Format s) + ' :: ' + ((Get-MpPreference).ExclusionPath -join ';')) | Out-File -Append -Encoding utf8 '{commonappdata}\Owlette\logs\defender_setup.log'))"""; StatusMsg: "Configuring Windows Defender exclusion..."; Flags: runhidden waituntilterminated
+; Step 0: RETRACT the Windows Defender exclusions previous versions added for
+; the WinRing0 driver. The temperature stack moved to LibreHardwareMonitor
+; 0.9.6 + the signed PawnIO driver (see EnsurePawnIO in [Code]), so nothing
+; extracts a flagged .sys any more and none of the five legacy exclusions
+; (WinTmp path, python/pythonw process, python.sys/pythonw.sys paths) is
+; needed. This must be an ACTIVE removal, not just a deleted line: upgrades
+; never run the old uninstaller (see InitializeSetup), so machines upgrading
+; from <= 3.1.0 would otherwise keep the exclusions forever. Also drops the
+; stale legacy exclusions older generations added: the whole-directory
+; {app}\python exclusion (2.0.48 era) and C:\Owlette\python from
+; pre-ProgramData installs. Appends the resulting exclusion set to
+; logs\defender_setup.log so the retraction is diagnosable. Keep this line
+; for at least one release cycle after the fleet is past 3.1.0.
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\python.sys' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\pythonw.sys' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath 'C:\Owlette\python' -ErrorAction SilentlyContinue; [void]((Get-Command Get-MpPreference -ErrorAction SilentlyContinue) -and (('owlette defender exclusions retracted @ ' + (Get-Date -Format s) + ' :: remaining=' + ((Get-MpPreference).ExclusionPath -join ';')) | Out-File -Append -Encoding utf8 '{commonappdata}\Owlette\logs\defender_setup.log'))"""; StatusMsg: "Removing legacy Windows Defender exclusions..."; Flags: runhidden waituntilterminated
 
 ; The pairing handoff and the service install are handled in [Code]
 ; CurStepChanged() so the pairing branch can be chosen at runtime and the
@@ -374,7 +412,14 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Com
 ; registration. `uninstall` succeeds on a machine where the service is already
 ; gone, so this is safe to run twice.
 Filename: "{app}\tools\owlette-host.exe"; Parameters: "uninstall"; Flags: runhidden waituntilterminated
-; Remove Windows Defender exclusions (mirror the install set, incl. the .sys driver paths)
+; Retire the legacy WinRing0 kernel services on machines that never took a
+; PawnIO-era upgrade (current versions never register them). The service is
+; stopped by now, so the driver can unload and CurUninstallStepChanged's
+; DelTree of {app}\python can sweep the .sys files. PawnIO itself is
+; deliberately LEFT INSTALLED: it is a shared component other tools use
+; (FanControl, LibreHardwareMonitor), exactly like the WebView2 runtime.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""foreach ($svc in 'R0python', 'R0pythonw') {{ sc.exe stop $svc | Out-Null; sc.exe delete $svc | Out-Null }; exit 0"""; Flags: runhidden waituntilterminated
+; Remove Windows Defender exclusions (mirror the legacy install set, incl. the .sys driver paths)
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\python.sys' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\pythonw.sys' -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated
 
 [Code]
@@ -610,6 +655,115 @@ begin
     Log('WebView2 runtime still not detected - the desktop app may not open on this machine');
 end;
 
+// PawnIO detection contract: its installer registers a standard ARP entry, and
+// LibreHardwareMonitorLib itself detects the driver by reading exactly this
+// DisplayVersion value (LibreHardwareMonitor.PawnIo.PawnIo), so probing the
+// same key keeps our gate and the library's runtime view consistent.
+function PawnIOVersion(): String;
+begin
+  Result := '';
+  if not RegQueryStringValue(HKEY_LOCAL_MACHINE,
+      'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO',
+      'DisplayVersion', Result) then
+    Result := '';
+end;
+
+// Dotted-numeric version compare (up to four parts, missing parts read as 0).
+// Registry DisplayVersion is "2.2.0.0"-shaped; anything unparsable compares
+// as 0 and therefore triggers a (harmless, idempotent) reinstall.
+function NextVersionPart(var S: String): Integer;
+var
+  P: Integer;
+  PartStr: String;
+begin
+  P := Pos('.', S);
+  if P > 0 then
+  begin
+    PartStr := Copy(S, 1, P - 1);
+    Delete(S, 1, P);
+  end
+  else
+  begin
+    PartStr := S;
+    S := '';
+  end;
+  Result := StrToIntDef(Trim(PartStr), 0);
+end;
+
+function VersionAtLeast(Ver, MinVer: String): Boolean;
+var
+  A, B, i: Integer;
+begin
+  Result := True;
+  for i := 1 to 4 do
+  begin
+    A := NextVersionPart(Ver);
+    B := NextVersionPart(MinVer);
+    if A > B then Exit;
+    if A < B then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+end;
+
+// The agent reads CPU temperatures through LibreHardwareMonitor 0.9.6, which
+// talks to the signed PawnIO driver (this replaced WinTmp's runtime-extracted
+// WinRing0 — see the vendored file's comment in [Files]). Install it from the
+// bundled installer when absent or older than 2.2.0; the version gate matters
+// because 2.1.0 BSOD/boot-loops Windows 10 1809/LTSC-class machines.
+//
+// Never fatal: a machine without PawnIO still gets a fully working agent —
+// CPU temps read as None and GPU temps arrive via vendor userspace APIs. The
+// installer's silent CLI is safe under the SYSTEM self-update path (no UI),
+// and re-running it on a current install is a no-op (exit 183).
+procedure EnsurePawnIO();
+var
+  ResultCode: Integer;
+  Existing: String;
+begin
+  Existing := PawnIOVersion();
+  if (Existing <> '') and VersionAtLeast(Existing, '2.2.0') then
+  begin
+    Log('PawnIO present (v' + Existing + ') - skipping driver installer');
+    Exit;
+  end;
+
+  if Existing <> '' then
+    Log('PawnIO v' + Existing + ' is older than 2.2.0 - upgrading in place')
+  else
+    Log('PawnIO not found - running bundled driver installer');
+  if not WizardSilent() then
+    WizardForm.StatusLabel.Caption := 'Installing the PawnIO driver...';
+
+  try
+    ExtractTemporaryFile('PawnIO_setup.exe');
+  except
+    Log('Failed to extract the PawnIO installer: ' + GetExceptionMessage);
+    Exit;
+  end;
+
+  if Exec(ExpandConstant('{tmp}\PawnIO_setup.exe'), '-install -silent', '',
+          SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    // 0 = installed, 183 = ERROR_ALREADY_EXISTS (idempotent re-run),
+    // 3010 = ERROR_SUCCESS_REBOOT_REQUIRED (installed; binds after reboot).
+    if (ResultCode = 0) or (ResultCode = 183) or (ResultCode = 3010) then
+      Log('PawnIO installer exit code: ' + IntToStr(ResultCode) + ' (ok)')
+    else
+      Log('PawnIO installer exit code: ' + IntToStr(ResultCode) + ' - CPU temperatures may be unavailable');
+  end
+  else
+    Log('Could not start the PawnIO installer: ' + SysErrorMessage(ResultCode));
+
+  Existing := PawnIOVersion();
+  if Existing <> '' then
+    Log('PawnIO now present (v' + Existing + ')')
+  else
+    Log('PawnIO still not detected - CPU temperatures will be unavailable (GPU temps use vendor APIs)');
+end;
+
 // Called from CurStepChanged AFTER the service install - the only point at which
 // the claim "the Owlette service has been installed and started" is true, which
 // is why this lives here and not inside RunPairingHandoff. The
@@ -715,6 +869,10 @@ begin
     // Step 0: WebView2 runtime. First, because the handoff below refuses to run
     // without it and install.bat starts the service, which launches the app.
     EnsureWebView2Runtime();
+
+    // Step 0b: PawnIO driver, BEFORE the service install so the agent's very
+    // first heartbeat can already read CPU temperatures. Never fatal.
+    EnsurePawnIO();
 
     // Step 1: pairing handoff, BEFORE the service install. The order is
     // load-bearing: install.bat starts the service, OwletteService.__init__
@@ -998,6 +1156,23 @@ begin
     'Stop-Process -Force -ErrorAction SilentlyContinue"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Log('Module-based kill returned: ' + IntToStr(ResultCode));
+
+  // Retire the WinRing0 kernel services that pre-PawnIO versions registered
+  // (WinTmp's bundled LHM extracted python.sys/pythonw.sys and loaded them as
+  // R0python/R0pythonw). Ordering is load-bearing: the python hosts that held
+  // the driver open were just killed above, so the driver can actually unload
+  // here, and [InstallDelete] (which runs after InitializeSetup, before the
+  // file copy) can then delete the .sys files. Non-fatal by design — on a
+  // stubborn machine `sc delete` marks a still-loaded driver for deletion at
+  // next boot, and a leftover registration is inert once WinTmp is pruned.
+  // "sc" must be invoked as sc.exe: in PowerShell bare `sc` is Set-Content.
+  Log('Removing legacy WinRing0 driver services (R0python/R0pythonw)...');
+  Exec('powershell.exe',
+    '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"foreach ($svc in ''R0python'', ''R0pythonw'') { ' +
+    'sc.exe stop $svc | Out-Null; sc.exe delete $svc | Out-Null }; exit 0"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Log('WinRing0 service cleanup returned: ' + IntToStr(ResultCode));
 
   // Poll libcrypto-3.dll for exclusive-write availability instead of a fixed sleep.
   // OpenSSL is loaded by every Owlette Python process (via _ssl / _hashlib) and is

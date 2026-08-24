@@ -116,6 +116,7 @@ agent/installer/
 # the other one; 3.0.0 builds the service host from source in agent/host, so
 # there is nothing left to download for it.)
 !agent/vendor/MicrosoftEdgeWebview2Setup.exe
+!agent/vendor/PawnIO_setup.exe
 
 # Configuration files with secrets
 client_secrets.json

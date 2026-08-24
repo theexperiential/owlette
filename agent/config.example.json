@@ -1,5 +1,5 @@
 {
-  "version": "1.6.0",
+  "version": "1.7.0",
   "environment": "production",
   "processes": [],
   "logging": {
@@ -19,6 +19,9 @@
     "assigned": null,
     "auto_enforce": false,
     "remoteApplyEnabled": false
+  },
+  "temperature": {
+    "enabled": true
   },
   "watchdog": {
     "enabled": true,
