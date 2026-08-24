@@ -12,7 +12,7 @@
  */
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 
 const BATCH_LIMIT = 400;
@@ -25,7 +25,7 @@ interface SweepSummary {
 }
 
 export async function sweepExpiredApiKeys(now = Date.now()): Promise<SweepSummary> {
-  const db = admin.firestore();
+  const db = getFirestore();
   const summary: SweepSummary = {
     keysScanned: 0,
     keysMarkedExpired: 0,

@@ -1,8 +1,8 @@
 /** Owlette Cloud Functions entry point. */
 
-import * as admin from 'firebase-admin';
+import { initializeApp } from 'firebase-admin/app';
 
-admin.initializeApp();
+initializeApp();
 
 export { onMetricsWrite } from './metricsHistory';
 export { onCommandCompleted } from './deploymentStatus';

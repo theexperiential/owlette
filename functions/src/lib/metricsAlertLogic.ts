@@ -1,7 +1,7 @@
 /**
  * Pure helpers for metric-threshold alert gating. No firebase-admin side effects, so these
  * are unit-testable under `node --test` (importing metricsHistory.ts directly would run
- * `admin.firestore()` at module load).
+ * `getFirestore()` at module load).
  *
  * `onMetricsWrite` fires on EVERY machine-doc write, not just fresh telemetry: an offline
  * machine keeps its last metrics frozen, and unrelated server writes (the health-check

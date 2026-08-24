@@ -1,5 +1,6 @@
+import { type Auth } from 'firebase-admin/auth';
+import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import admin from 'firebase-admin';
 import {
   assertDevProject,
   createAdminApp,
@@ -79,8 +80,8 @@ function expectStatus(checks: CheckResult[], name: string, result: ApiResult, ex
 }
 
 async function seedAccountDeletionData(
-  db: admin.firestore.Firestore,
-  auth: admin.auth.Auth,
+  db: Firestore,
+  auth: Auth,
   uid: string,
   email: string,
   siteId: string,
@@ -104,7 +105,7 @@ async function seedAccountDeletionData(
     role: 'member',
     sites: [siteId],
     displayName: 'W8 Account Delete',
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
     mfaEnrolled: false,
     requiresMfaSetup: false,
   });
@@ -112,7 +113,7 @@ async function seedAccountDeletionData(
     name: 'W8 Account Delete Site',
     owner: uid,
     timezone: 'UTC',
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
 
   const siteRef = db.collection('sites').doc(siteId);

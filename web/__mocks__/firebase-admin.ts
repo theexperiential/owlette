@@ -92,10 +92,3 @@ export const resetAdminMocks = () => {
   mockFileSave.mockReset().mockResolvedValue(undefined);
 };
 
-// Matches `import admin from 'firebase-admin'`.
-export default {
-  apps: [{}], // non-empty = "SDK initialized"
-  auth: () => mockAuth,
-  firestore: () => mockDb,
-  storage: () => mockStorage,
-};

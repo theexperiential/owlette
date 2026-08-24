@@ -17,7 +17,7 @@
  */
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
   evaluateWave,
@@ -29,7 +29,7 @@ import {
 } from './lib/fanoutLogic';
 import { buildSyncPullCommand, syncPullCommandId } from './lib/syncPullCommand';
 
-const db = admin.firestore();
+const db = getFirestore();
 const FLEET_COMMAND_BATCH_SIZE = 400;
 
 interface Roost {

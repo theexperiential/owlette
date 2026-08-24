@@ -63,7 +63,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.3.0",
     "firebase": "^12.5.0",
-    "firebase-admin": "^13.5.0",
+    "firebase-admin": "^14.3.0",
     "fumadocs-core": "^16.8.12",
     "fumadocs-mdx": "^15.0.7",
     "fumadocs-ui": "^16.8.12",

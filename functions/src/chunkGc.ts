@@ -18,7 +18,7 @@
  */
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
   planGc,
@@ -229,7 +229,7 @@ function getDefaultScanner(): SiteScanner {
   // Firestore-backed implementation lands post wave 0.6. Reading every version nightly
   // is adequate at expected fleet size (≤ low thousands per site); a denormalised
   // refcount doc is the long-term fix.
-  const db = admin.firestore();
+  const db = getFirestore();
   return {
     async listSiteIds() {
       const snap = await db.collection('sites').listDocuments();
@@ -289,7 +289,7 @@ function getDefaultStore(): ObjectStore {
 }
 
 function getDefaultTombstoneStore(): TombstoneStore {
-  const db = admin.firestore();
+  const db = getFirestore();
   const col = (siteId: string) =>
     db.collection('sites').doc(siteId).collection('chunk_tombstones');
   return {

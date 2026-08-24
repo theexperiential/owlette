@@ -12,7 +12,7 @@
 
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import { requireInternalSecret } from './lib/requireInternalSecret';
 import {
@@ -265,7 +265,7 @@ export const preUploadCheck = onRequest(
 );
 
 function getDefaultDirectory(): SiteDirectory {
-  const db = admin.firestore();
+  const db = getFirestore();
   return {
     async listSiteIds() {
       const snap = await db.collection('sites').listDocuments();
@@ -275,7 +275,7 @@ function getDefaultDirectory(): SiteDirectory {
 }
 
 function getDefaultQuotaStore(): QuotaStore {
-  const db = admin.firestore();
+  const db = getFirestore();
   const quotaDoc = (siteId: string) =>
     db.collection('sites').doc(siteId).collection('roost').doc('quota');
   const pendingCol = (siteId: string) =>

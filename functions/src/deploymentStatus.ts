@@ -11,7 +11,7 @@
  */
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import {
   mapCommandToTargetStatus,
@@ -20,7 +20,7 @@ import {
   type DeploymentTarget,
 } from './lib/deploymentUtils';
 
-const db = admin.firestore();
+const db = getFirestore();
 
 /** Diffs before/after to find changed commands, then updates each one's
  * deployment doc. */

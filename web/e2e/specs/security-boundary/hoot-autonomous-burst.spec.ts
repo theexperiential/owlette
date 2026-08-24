@@ -1,6 +1,8 @@
+import { cert, getApps, initializeApp } from 'firebase-admin/app';
+import { type Auth } from 'firebase-admin/auth';
+import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
-import admin from 'firebase-admin';
 import {
   assertDevProject,
   createAdminApp,
@@ -88,7 +90,7 @@ function subjectDocId(subjectKey: string): string {
 }
 
 async function sumRateLimitShards(
-  db: admin.firestore.Firestore,
+  db: Firestore,
   siteId: string,
   bucket: 'system' | 'user',
   subjectKey: string,
@@ -115,8 +117,8 @@ async function sumRateLimitShards(
 }
 
 async function seedHootData(
-  db: admin.firestore.Firestore,
-  auth: admin.auth.Auth,
+  db: Firestore,
+  auth: Auth,
   ids: ReturnType<typeof makeRunIds>,
   machineIds: string[],
   memberUid: string,
@@ -144,7 +146,7 @@ async function seedHootData(
     name: 'W8.1 Hoot Site',
     owner: 'security-boundary-owner',
     timezone: 'UTC',
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
 
   await db.collection('users').doc(memberUid).set({
@@ -152,7 +154,7 @@ async function seedHootData(
     role: 'member',
     sites: [ids.siteId],
     displayName: 'W8.1 Hoot Member',
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
     mfaEnrolled: false,
     requiresMfaSetup: false,
   });
@@ -178,7 +180,7 @@ async function seedHootData(
     {
       capability_enforcement: true,
       rate_limit_enforcement: true,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedBy: 'w8.1-cortex-autonomous-burst',
     },
     { merge: true },
@@ -186,10 +188,10 @@ async function seedHootData(
 }
 
 function ensureDefaultAdminApp(projectId: string): void {
-  if (admin.apps.some((app) => app?.name === '[DEFAULT]')) return;
+  if (getApps().some((app) => app?.name === '[DEFAULT]')) return;
 
-  admin.initializeApp({
-    credential: admin.credential.cert({
+  initializeApp({
+    credential: cert({
       projectId,
       clientEmail: requireEnv('FIREBASE_CLIENT_EMAIL'),
       privateKey: requireEnv('FIREBASE_PRIVATE_KEY').replace(/\\n/g, '\n'),
@@ -203,7 +205,7 @@ function delay(ms: number): Promise<void> {
 }
 
 async function completePendingCommands(
-  db: admin.firestore.Firestore,
+  db: Firestore,
   siteId: string,
   machineIds: string[],
   shouldStop: () => boolean,
@@ -236,7 +238,7 @@ async function completePendingCommands(
           updates[commandId] = {
             status: 'success',
             result: 'w8.1 synthetic agent completion',
-            completedAt: admin.firestore.FieldValue.serverTimestamp(),
+            completedAt: FieldValue.serverTimestamp(),
           };
         }
         if (Object.keys(updates).length > 0) {

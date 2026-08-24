@@ -10,7 +10,7 @@
  */
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import {
   calculateDeploymentStatus,
@@ -19,7 +19,7 @@ import {
   type DeploymentTarget,
 } from './lib/deploymentUtils';
 
-const db = admin.firestore();
+const db = getFirestore();
 
 /** How long a target can sit at "pending" before we fail it (ms). */
 const PENDING_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes

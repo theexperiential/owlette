@@ -11,7 +11,7 @@
 
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { requireInternalSecret } from './lib/requireInternalSecret';
 import {
@@ -335,7 +335,7 @@ function getDefaultHttpClient(): HttpClient {
 }
 
 function getDefaultDeliveryStore(): DeliveryStore {
-  const db = admin.firestore();
+  const db = getFirestore();
   const col = db.collection('webhook_deliveries');
   return {
     async list({ dueBefore }) {
@@ -357,7 +357,7 @@ function getDefaultDeliveryStore(): DeliveryStore {
 }
 
 function getDefaultSubscriptionStore(): SubscriptionStore {
-  const db = admin.firestore();
+  const db = getFirestore();
   // Subscriptions are site-scoped at sites/{siteId}/webhooks/{id} for isolation;
   // listAll uses a collectionGroup query so emit() can filter by siteId without
   // enumerating sites.

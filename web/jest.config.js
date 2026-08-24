@@ -65,4 +65,26 @@ const config = {
 }
 
 // Exported as a call so next/jest can load the async Next.js config.
-module.exports = createJestConfig(config)
+//
+// next/jest PREPENDS its own node_modules patterns, and transformIgnorePatterns
+// is OR-ed — a file matching any entry is left untransformed. So appending an
+// exception to `config` above cannot work; next's pattern still matches first.
+// The resolved config has to be rewritten instead.
+//
+// Why: firebase-admin 14 reaches jose (via jwks-rsa), and jose 6 is ESM-only
+// (`type: module`, no CJS build), which jest's CJS runtime cannot parse. Suites
+// that mock `@/lib/firebase-admin` never load it; the few that exercise the real
+// bootstrap do, and they fail on `Unexpected token 'export'` without this.
+const ESM_ONLY_DEPS = ['jose']
+
+// Windows resolves module paths with backslashes, POSIX with slashes; match either.
+const SEP = '[\\\\/]'
+
+module.exports = async () => {
+  const resolved = await createJestConfig(config)()
+  resolved.transformIgnorePatterns = [
+    `node_modules${SEP}(?!(${ESM_ONLY_DEPS.join('|')})${SEP})`,
+    '^.+\\.module\\.(css|sass|scss)$',
+  ]
+  return resolved
+}

@@ -17,7 +17,7 @@
 
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import { requireInternalSecret } from './lib/requireInternalSecret';
 import {
   AUDIT_RETENTION_DAYS,
@@ -200,7 +200,7 @@ export const exportAuditDaily = onSchedule(
 );
 
 function getDefaultStore(): AuditStore {
-  const db = admin.firestore();
+  const db = getFirestore();
   const col = (siteId: string) =>
     db.collection('sites').doc(siteId).collection('audit_log');
   const headDoc = (siteId: string) =>
@@ -245,7 +245,7 @@ function getDefaultStore(): AuditStore {
 }
 
 function getDefaultDirectory() {
-  const db = admin.firestore();
+  const db = getFirestore();
   return {
     async listSiteIds() {
       const snap = await db.collection('sites').listDocuments();

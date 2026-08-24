@@ -10,7 +10,8 @@
  * incomplete, so it is automation-safe.
  */
 
-import admin from 'firebase-admin';
+import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
 import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, join, relative } from 'path';
 import { fileURLToPath } from 'url';
@@ -102,7 +103,7 @@ function parsePositiveNumber(value, name) {
 }
 
 function initializeAdmin() {
-  if (admin.apps.length === 0) {
+  if (getApps().length === 0) {
     const projectId =
       process.env.FIREBASE_PROJECT_ID ||
       process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
@@ -114,22 +115,22 @@ function initializeAdmin() {
       Boolean(process.env.FIREBASE_AUTH_EMULATOR_HOST);
 
     if (isEmulator) {
-      admin.initializeApp({ projectId: projectId || 'demo-playwright-e2e' });
+      initializeApp({ projectId: projectId || 'demo-playwright-e2e' });
     } else if (projectId && clientEmail && privateKey) {
-      admin.initializeApp({
-        credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+      initializeApp({
+        credential: cert({ projectId, clientEmail, privateKey }),
         projectId,
       });
     } else {
       const options = {
-        credential: admin.credential.applicationDefault(),
+        credential: applicationDefault(),
       };
       if (projectId) options.projectId = projectId;
-      admin.initializeApp(options);
+      initializeApp(options);
     }
   }
 
-  return admin.firestore();
+  return getFirestore();
 }
 
 async function fetchObservations(args) {

@@ -13,8 +13,9 @@
  * Pure decision logic (path parsing, verdict, alert payload) lives in lib/chunkVerifyLogic.ts.
  */
 
+import { getFirestore } from 'firebase-admin/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
-import * as admin from 'firebase-admin';
+import { getAuth } from 'firebase-admin/auth';
 import { createHash } from 'crypto';
 import {
   buildAlert,
@@ -163,8 +164,7 @@ async function alertViaLogAndFirestore(
   // per-site audit collection, for dashboard surfacing
   try {
     const siteId = payload.siteId ?? '__unknown__';
-    await admin
-      .firestore()
+    await getFirestore()
       .collection('sites')
       .doc(siteId)
       .collection('chunk_verify_alerts')
@@ -192,7 +192,7 @@ async function isAuthorizedCaller(
     return false;
   }
   try {
-    const decoded = await admin.auth().verifyIdToken(token);
+    const decoded = await getAuth().verifyIdToken(token);
     return allowlist.includes(decoded.uid);
   } catch {
     return false;

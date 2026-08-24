@@ -15,7 +15,8 @@
 
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import * as admin from 'firebase-admin';
+import { getAuth } from 'firebase-admin/auth';
+import { getFirestore } from 'firebase-admin/firestore';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { requireInternalSecret } from './lib/requireInternalSecret';
 import {
@@ -322,13 +323,13 @@ export async function isAuthorizedForSiteUsage(
   if (!token) return false;
   let uid: string;
   try {
-    const decoded = await admin.auth().verifyIdToken(token);
+    const decoded = await getAuth().verifyIdToken(token);
     uid = decoded.uid;
   } catch {
     return false;
   }
   try {
-    const userSnap = await admin.firestore().collection('users').doc(uid).get();
+    const userSnap = await getFirestore().collection('users').doc(uid).get();
     if (!userSnap.exists) return false;
     const data = userSnap.data() ?? {};
     if (data.role === 'superadmin') return true;
@@ -367,7 +368,7 @@ export const getUsageSummaryHttp = onRequest(
 );
 
 function getDefaultDirectory(): SiteDirectory {
-  const db = admin.firestore();
+  const db = getFirestore();
   return {
     async listSiteIds() {
       const snap = await db.collection('sites').listDocuments();
@@ -377,7 +378,7 @@ function getDefaultDirectory(): SiteDirectory {
 }
 
 function getDefaultEventStore(): EventStore {
-  const db = admin.firestore();
+  const db = getFirestore();
   const col = (siteId: string) =>
     db.collection('sites').doc(siteId).collection('usage_events');
 
@@ -430,7 +431,7 @@ function getDefaultEventStore(): EventStore {
 }
 
 function getDefaultSummaryStore(): SummaryStore {
-  const db = admin.firestore();
+  const db = getFirestore();
   const monthDoc = (siteId: string, yyyyMm: string) =>
     db
       .collection('sites')

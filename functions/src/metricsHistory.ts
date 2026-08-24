@@ -12,12 +12,12 @@
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import { metricsWriteDisposition } from './lib/metricsAlertLogic';
 import https = require('https');
 import http = require('http');
 
-const db = admin.firestore();
+const db = getFirestore();
 
 interface AlertRule {
   id: string;

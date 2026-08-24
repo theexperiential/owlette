@@ -1,5 +1,5 @@
+import { FieldValue } from 'firebase-admin/firestore';
 import { expect, test } from '@playwright/test';
-import admin from 'firebase-admin';
 import { type FirebaseApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import {
@@ -66,14 +66,14 @@ test('live dev rejects direct browser control-plane writes post-lockdown', async
       name: 'W8.1 Security Boundary',
       owner: 'security-boundary-owner',
       timezone: 'UTC',
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
     await adminDb.collection('users').doc(ids.uid).set({
       email: ids.email,
       role: 'member',
       sites: [ids.siteId],
       displayName: 'W8.1 Boundary User',
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
       mfaEnrolled: false,
       requiresMfaSetup: false,
     });

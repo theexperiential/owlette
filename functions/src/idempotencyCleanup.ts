@@ -9,7 +9,7 @@
  */
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 
 const BATCH_LIMIT = 400;
 
@@ -22,7 +22,7 @@ export interface CleanupSummary {
 export async function sweepExpiredIdempotencyCache(
   now = Date.now(),
 ): Promise<CleanupSummary> {
-  const db = admin.firestore();
+  const db = getFirestore();
   const summary: CleanupSummary = { scanned: 0, deleted: 0, errors: 0 };
 
   const expired = await db

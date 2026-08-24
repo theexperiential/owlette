@@ -6,7 +6,9 @@
  * `firebase emulators:exec`; we rely on the Admin SDK auto-detecting them.
  */
 
-import admin from 'firebase-admin';
+import { getApps, initializeApp, type App } from 'firebase-admin/app';
+import { getAuth, type Auth } from 'firebase-admin/auth';
+import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 
 export const EMULATOR_PROJECT_ID = 'demo-playwright-e2e';
 
@@ -27,22 +29,23 @@ export const E2E_BASE_URL = `http://127.0.0.1:${E2E_PORT}`;
  * app. Requires the *_EMULATOR_HOST env vars, which `firebase emulators:exec`
  * sets around global-setup.
  */
-export function getAdminApp(): admin.app.App {
-  if (admin.apps.length > 0 && admin.apps[0]) {
-    return admin.apps[0];
+export function getAdminApp(): App {
+  const existing = getApps();
+  if (existing.length > 0 && existing[0]) {
+    return existing[0];
   }
-  return admin.initializeApp({
+  return initializeApp({
     projectId: EMULATOR_PROJECT_ID,
     storageBucket: `${EMULATOR_PROJECT_ID}.firebasestorage.app`,
   });
 }
 
-export function getAdminAuth(): admin.auth.Auth {
-  return getAdminApp().auth();
+export function getAdminAuth(): Auth {
+  return getAuth(getAdminApp());
 }
 
-export function getAdminDb(): admin.firestore.Firestore {
-  return getAdminApp().firestore();
+export function getAdminDb(): Firestore {
+  return getFirestore(getAdminApp());
 }
 
 /** Wipe Firestore via the emulator's REST endpoint (bypasses security rules). */
