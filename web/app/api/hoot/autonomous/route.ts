@@ -31,6 +31,7 @@ import {
 import { escalate } from '@/lib/hoot-escalation.server';
 import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
 import { hootInternalSecret } from '@/lib/hootInternalSecret';
+import { sanitizeForLog } from '@/lib/logSanitize';
 
 const MAX_STEPS = 15;
 const MAX_CONCURRENT_SESSIONS = 3;
@@ -194,7 +195,7 @@ export async function POST(request: NextRequest) {
 
     if (!recentEvents.empty) {
       const existingEvent = recentEvents.docs[0].data();
-      console.log(`[hoot/autonomous] Dedup: skipping ${machineId}:${processName} (existing event ${existingEvent.status})`);
+      console.log(`[hoot/autonomous] Dedup: skipping ${sanitizeForLog(machineId)}:${sanitizeForLog(processName)} (existing event ${existingEvent.status})`);
       return NextResponse.json({ accepted: false, reason: 'cooldown_active' });
     }
 
@@ -202,7 +203,7 @@ export async function POST(request: NextRequest) {
       const nonceRef = db.doc(`sites/${siteId}/cortex-nonces/${nonce}`);
       const nonceDoc = await nonceRef.get();
       if (nonceDoc.exists) {
-        console.log(`[hoot/autonomous] Nonce replay blocked: ${nonce}`);
+        console.log(`[hoot/autonomous] Nonce replay blocked: ${sanitizeForLog(nonce)}`);
         return NextResponse.json({ accepted: false, reason: 'duplicate_nonce' });
       }
       // No TTL and no pruner: cortex-nonces docs are write-once and stay.
@@ -223,7 +224,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!canProceed) {
-      console.warn(`[hoot/autonomous] Concurrency limit reached for site ${siteId}`);
+      console.warn(`[hoot/autonomous] Concurrency limit reached for site ${sanitizeForLog(siteId)}`);
       return NextResponse.json({ accepted: false, reason: 'concurrency_limit' });
     }
 
@@ -251,7 +252,7 @@ export async function POST(request: NextRequest) {
       eventType,
     });
 
-    console.log(`[hoot/autonomous] Accepted: ${eventId} — ${processName} ${eventType} on ${machineName}`);
+    console.log(`[hoot/autonomous] Accepted: ${sanitizeForLog(eventId)} — ${sanitizeForLog(processName)} ${eventType} on ${sanitizeForLog(machineName)}`);
 
     // Fire and forget — the response goes back before this finishes.
     runAutonomousInvestigation(db, {
@@ -259,7 +260,7 @@ export async function POST(request: NextRequest) {
       errorMessage: errorMessage || '', agentVersion: agentVersion || '',
       eventId, chatId, settings,
     }).catch(err => {
-      console.error(`[hoot/autonomous] Investigation failed for ${eventId}:`, err);
+      console.error(`[hoot/autonomous] Investigation failed for ${sanitizeForLog(eventId)}:`, err);
     });
 
     return NextResponse.json({ accepted: true, eventId, chatId });
@@ -312,7 +313,7 @@ async function runAutonomousInvestigation(
         );
       }
 
-      console.log(`[hoot/autonomous] ${eventId}: escalated (machine offline)`);
+      console.log(`[hoot/autonomous] ${sanitizeForLog(eventId)}: escalated (machine offline)`);
       emitHootEventMetric('cortex_events_processed_total', {
         siteId,
         machineId,
@@ -341,7 +342,7 @@ async function runAutonomousInvestigation(
         );
       }
 
-      console.log(`[hoot/autonomous] ${eventId}: escalated (hoot disabled)`);
+      console.log(`[hoot/autonomous] ${sanitizeForLog(eventId)}: escalated (hoot disabled)`);
       emitHootEventMetric('cortex_events_processed_total', {
         siteId,
         machineId,
@@ -427,7 +428,7 @@ async function runAutonomousInvestigation(
       await escalate(siteId, eventId, machineName, processName, finalText);
     }
 
-    console.log(`[hoot/autonomous] ${eventId}: ${status} in ${Date.now() - startTime}ms (${actions.length} tool calls)`);
+    console.log(`[hoot/autonomous] ${sanitizeForLog(eventId)}: ${status} in ${Date.now() - startTime}ms (${actions.length} tool calls)`);
     emitHootEventMetric('cortex_events_processed_total', {
       siteId,
       machineId,
@@ -439,7 +440,7 @@ async function runAutonomousInvestigation(
 
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : 'Unknown error';
-    console.error(`[hoot/autonomous] ${eventId} error:`, err);
+    console.error(`[hoot/autonomous] ${sanitizeForLog(eventId)} error:`, err);
 
     await eventRef.update({
       status: 'failed',
@@ -471,9 +472,9 @@ async function runAutonomousInvestigation(
         break; // Success
       } catch (err) {
         if (attempt === 0) {
-          console.warn(`[hoot/autonomous] Lock release failed for ${eventId}, retrying...`, err);
+          console.warn(`[hoot/autonomous] Lock release failed for ${sanitizeForLog(eventId)}, retrying...`, err);
         } else {
-          console.error(`[hoot/autonomous] Lock release failed permanently for ${eventId} — counter may be stale:`, err);
+          console.error(`[hoot/autonomous] Lock release failed permanently for ${sanitizeForLog(eventId)} — counter may be stale:`, err);
         }
       }
     }

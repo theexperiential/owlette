@@ -68,6 +68,7 @@ import {
 } from '@/lib/hoot/turnStore.server';
 import { categorizeNewChat } from '@/lib/hoot/categorizeChat.server';
 import { UNTITLED_CHAT_TITLE } from '@/lib/hoot/untitledChat';
+import { sanitizeForLog } from '@/lib/logSanitize';
 
 /** Sentinel machineId for site-wide mode (mirrors /api/hoot). */
 const SITE_TARGET_ID = '__site__';
@@ -391,7 +392,7 @@ export function startTurn(
         });
       if (repairedToolCallIds.length > 0) {
         console.warn(
-          `[hoot] repaired ${repairedToolCallIds.length} dangling tool part(s) in chat ${chatId}: ${repairedToolCallIds.join(', ')}`,
+          `[hoot] repaired ${repairedToolCallIds.length} dangling tool part(s) in chat ${sanitizeForLog(chatId)}: ${sanitizeForLog(repairedToolCallIds.join(', '))}`,
         );
       }
       repairedHistory = repairedMessages;
@@ -405,7 +406,7 @@ export function startTurn(
         }
       } catch (error) {
         // Recoverable via stream doc + repair; must not reject into the stream.
-        console.error(`[hoot] turn-start persist failed for chat ${chatId}:`, error);
+        console.error(`[hoot] turn-start persist failed for chat ${sanitizeForLog(chatId)}:`, error);
       }
 
       const isSiteMode = params.machineId === SITE_TARGET_ID;
@@ -510,7 +511,7 @@ export function startTurn(
       } catch (error) {
         // Must not reject into the stream machinery; content survives in the
         // stream doc and repair recovers it on the next send.
-        console.error(`[hoot] final persist failed for chat ${chatId}:`, error);
+        console.error(`[hoot] final persist failed for chat ${sanitizeForLog(chatId)}:`, error);
       }
     },
   });
@@ -534,7 +535,7 @@ export function startTurn(
     }
   })()
     .catch(async (error) => {
-      console.error(`[hoot] snapshot pump failed for chat ${chatId}:`, error);
+      console.error(`[hoot] snapshot pump failed for chat ${sanitizeForLog(chatId)}:`, error);
       if (turnError === null) turnError = errorText(error);
     })
     .finally(async () => {
