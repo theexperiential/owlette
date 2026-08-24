@@ -1,0 +1,64 @@
+name: cloud functions
+
+# functions/ carries 241 tests that nothing ran in CI until this workflow: no
+# job existed for it, and `functions/**` appeared in no other workflow's path
+# filter, so a functions-only change reached dev and main completely ungated.
+on:
+  pull_request:
+    paths:
+      - 'functions/**'
+      - '.github/workflows/functions.yml'
+  push:
+    branches: [main, dev]
+    paths:
+      - 'functions/**'
+      - '.github/workflows/functions.yml'
+
+concurrency:
+  group: functions-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege default: this job only reads the repo.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: build and test
+    runs-on: ubuntu-latest
+    # No emulator and no browser download — this is a tsc build plus
+    # node --test. It should finish inside a couple of minutes.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      # Node 22: functions/package.json pins `engines.node: 22` (the nodejs22
+      # Cloud Functions runtime), and firebase-admin 14 requires >=22.
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: install
+        working-directory: functions
+        run: npm ci
+
+      # Build first: `npm test` compiles test/ against the same tsconfig and
+      # runs the emitted JS, so a broken src/ build surfaces here rather than
+      # as a confusing module-resolution error inside the test run.
+      - name: build
+        working-directory: functions
+        run: npm run build
+
+      # No lint step: functions/package.json carries a vestigial
+      # `lint: eslint --ext .ts src/` script, but eslint is not a dependency
+      # there and there is no eslint config in functions/, so it exits 1 on
+      # "'eslint' is not recognized". Wiring a gate onto a script that cannot
+      # run would just be a red X. Adding eslint to functions/ is a separate
+      # call (it means a new dependency).
+      - name: test
+        working-directory: functions
+        run: npm test
