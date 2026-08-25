@@ -252,7 +252,7 @@ export async function POST(request: NextRequest) {
       eventType,
     });
 
-    console.log(`[hoot/autonomous] Accepted: ${sanitizeForLog(eventId)} — ${sanitizeForLog(processName)} ${eventType} on ${sanitizeForLog(machineName)}`);
+    console.log(`[hoot/autonomous] Accepted: ${sanitizeForLog(eventId)} — ${sanitizeForLog(processName)} ${sanitizeForLog(eventType)} on ${sanitizeForLog(machineName)}`);
 
     // Fire and forget — the response goes back before this finishes.
     runAutonomousInvestigation(db, {
