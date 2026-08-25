@@ -35,9 +35,15 @@ async function deleteRefsInChunks(
 /**
  * POST /api/sites/{siteId}/agent-tokens/revoke — revoke agent refresh tokens
  * by site, machine or token id, or prune only provably-dead docs.
+ *
+ * Site-scoped AGENT_TOKEN_REVOKE: site admins on their assigned sites,
+ * superadmins anywhere. Every branch filters on ctx.siteId (and the tokenId
+ * branch re-checks the doc's siteId), so an admin can never reach another
+ * site's tokens. Not GLOBAL_SETTINGS_WRITE — that was inherited from the old
+ * /api/admin/tokens/revoke path and 403'd the dashboard's own menu item.
  */
 export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
-  capability: 'GLOBAL_SETTINGS_WRITE',
+  capability: 'AGENT_TOKEN_REVOKE',
   siteIdParam: 'path',
 })(async (request: NextRequest, ctx) => {
   try {

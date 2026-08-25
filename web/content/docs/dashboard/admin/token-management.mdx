@@ -101,7 +101,7 @@ This is a site-wide action. Every agent in the selected site must be re-register
 
 ### machine-scoped revoke
 
-The revoke API also accepts a `machineId` and can delete all token records for that machine in the selected site. The current admin page does not expose a machine-scoped bulk action; it only exposes per-token revoke and site-wide revoke all.
+The revoke API also accepts a `machineId` and can delete all token records for that machine in the selected site. The current admin page does not expose a machine-scoped bulk action; it only exposes per-token revoke and site-wide revoke all. The dashboard machine context menu exposes it instead — site admins can revoke a machine's current token, or every token for its hostname, on sites they are assigned to (`AGENT_TOKEN_REVOKE`). This admin page remains superadmin-only.
 
 ---
 

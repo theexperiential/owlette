@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useCurrentSite } from '@/hooks/useCurrentSite';
 import { NoSitesEmptyState } from '@/components/NoSitesEmptyState';
 import { Card } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageHeader } from '@/components/PageHeader';
 import { collection, query, orderBy, limit, getDocs, where, startAfter, Query, DocumentData, Timestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -121,25 +121,97 @@ const toYMD = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const fromYMD = (s: string): Date | undefined => (s ? new Date(s + 'T00:00:00') : undefined);
 
-// Action type labels for filtering
-const ACTION_TYPES = [
-  { value: 'all', label: 'all actions' },
-  { value: 'agent_started', label: 'agent started' },
-  { value: 'agent_stopped', label: 'agent stopped' },
-  { value: 'process_started', label: 'process started' },
-  { value: 'process_killed', label: 'process killed' },
-  { value: 'process_crash', label: 'process crashed' },
-  { value: 'process_start_failed', label: 'start failed' },
-  { value: 'command_executed', label: 'command executed' },
-  { value: 'deployment_completed', label: 'deployment completed' },
-  { value: 'deployment_failed', label: 'deployment failed' },
-  { value: 'deployment_cancelled', label: 'deployment cancelled' },
-  { value: 'scheduled_reboot', label: 'scheduled restart' },
-  { value: 'talon_triggered', label: 'talon triggered' },
-  { value: 'talon_succeeded', label: 'talon succeeded' },
-  { value: 'talon_failed', label: 'talon failed' },
-  { value: 'talon_skipped', label: 'talon skipped' },
+/**
+ * Action-type filter options, grouped for the select. Every `value` is a string a
+ * real writer puts in `sites/{siteId}/logs.action` — an option nothing emits is a
+ * dead filter, which `scheduled_reboot` was: the agent only ever writes the five
+ * `scheduled_reboot_*` outcomes. Wire values keep the legacy "reboot" spelling on
+ * purpose (see 9b8b52fd); only the labels say "restart". Display labels match
+ * DISPLAY_EVENT_LABEL in lib/emailTemplates.server.ts so the feed, the alert email
+ * and the talon tooltip name an event the same way.
+ */
+const ACTION_TYPE_GROUPS: { group: string | null; options: { value: string; label: string }[] }[] = [
+  { group: null, options: [{ value: 'all', label: 'all actions' }] },
+  {
+    group: 'agent',
+    options: [
+      { value: 'agent_started', label: 'agent started' },
+      { value: 'agent_stopped', label: 'agent stopped' },
+      { value: 'update_success', label: 'agent update succeeded' },
+      { value: 'update_failed', label: 'agent update failed' },
+      { value: 'update_unknown', label: 'agent update version mismatch' },
+      { value: 'watchdog_restart', label: 'watchdog restart' },
+      { value: 'watchdog_budget_exhausted', label: 'watchdog budget exhausted' },
+      { value: 'unexpected_service_restart', label: 'unexpected service restart' },
+    ],
+  },
+  {
+    group: 'processes',
+    options: [
+      { value: 'process_started', label: 'process started' },
+      { value: 'process_restarted', label: 'process restarted' },
+      { value: 'process_stopped', label: 'process stopped' },
+      { value: 'process_killed', label: 'process killed' },
+      { value: 'process_crash', label: 'process crashed' },
+      { value: 'process_start_failed', label: 'process start failed' },
+      { value: 'process_launch_failed', label: 'process launch failed' },
+      { value: 'exe_missing', label: 'executable missing' },
+    ],
+  },
+  { group: 'commands', options: [{ value: 'command_executed', label: 'command executed' }] },
+  {
+    group: 'deployments',
+    options: [
+      { value: 'deployment_completed', label: 'deployment completed' },
+      { value: 'deployment_failed', label: 'deployment failed' },
+      { value: 'deployment_cancelled', label: 'deployment cancelled' },
+    ],
+  },
+  {
+    group: 'restarts',
+    options: [
+      { value: 'scheduled_reboot_announced', label: 'scheduled restart announced' },
+      { value: 'scheduled_reboot_success', label: 'scheduled restart completed' },
+      { value: 'scheduled_reboot_failed', label: 'scheduled restart failed' },
+      { value: 'scheduled_reboot_missed', label: 'scheduled restart missed' },
+      { value: 'scheduled_reboot_cancelled', label: 'scheduled restart cancelled' },
+      { value: 'external_reboot', label: 'external restart' },
+      { value: 'unexpected_reboot', label: 'unexpected restart' },
+    ],
+  },
+  {
+    group: 'displays',
+    options: [
+      { value: 'display_monitor_added', label: 'monitor added' },
+      { value: 'display_monitor_removed', label: 'monitor removed' },
+      { value: 'display_monitor_swapped', label: 'monitor swapped' },
+      { value: 'display_drift', label: 'display drift detected' },
+      { value: 'display_sync_lost', label: 'display sync lost' },
+      { value: 'display_mosaic_disabled', label: 'nvidia mosaic disabled' },
+      { value: 'display_apply_succeeded', label: 'display apply succeeded' },
+      { value: 'display_apply_failed', label: 'display apply failed' },
+      { value: 'display_apply_refused_mosaic', label: 'display apply refused (mosaic active)' },
+      { value: 'display_apply_acked', label: 'display apply acknowledged' },
+      { value: 'display_auto_revert_fired', label: 'display auto-reverted' },
+      { value: 'display_revert_deferred', label: 'display revert deferred' },
+      { value: 'display_auto_restore_fired', label: 'display auto-restored' },
+      { value: 'display_auto_restore_skipped_unfixable', label: 'display auto-restore skipped' },
+      { value: 'display_auto_restore_circuit_breaker_tripped', label: 'display auto-restore disabled' },
+    ],
+  },
+  {
+    group: 'talons',
+    options: [
+      { value: 'talon_triggered', label: 'talon triggered' },
+      { value: 'talon_succeeded', label: 'talon succeeded' },
+      { value: 'talon_failed', label: 'talon failed' },
+      { value: 'talon_skipped', label: 'talon skipped' },
+    ],
+  },
 ];
+
+/** Flat view for value→label lookups (the clear-logs scope copy). */
+const ACTION_TYPES = ACTION_TYPE_GROUPS.flatMap((group) => group.options);
 
 // Level badges styling
 const getLevelBadge = (level: string) => {
@@ -350,7 +422,7 @@ const LogRow = React.memo(function LogRow({
 
 export default function LogsPage() {
   const router = useRouter();
-  const { user, loading, userPreferences } = useAuth();
+  const { user, loading, userPreferences, isSiteAdmin } = useAuth();
   const {
     sites,
     sitesLoading,
@@ -363,6 +435,14 @@ export default function LogsPage() {
     updateSite,
     deleteSite,
   } = useCurrentSite();
+
+  // `clear logs` calls DELETE /api/sites/{siteId}/logs, gated on
+  // Capability.SITE_LOGS_MANAGE (app/api/sites/[siteId]/logs/route.ts) — admins on
+  // their own sites, superadmins anywhere. Same predicate the server evaluates, so a
+  // member never sees a control that would 403. Hidden, not disabled, matching the
+  // dashboard's write-action gating.
+  const canManageLogs = !!currentSiteId && isSiteAdmin(currentSiteId);
+
   const [logs, setLogs] = useState<LogEvent[]>([]);
   const [logsLoading, setLogsLoading] = useState(true);
   const [lastDoc, setLastDoc] = useState<DocumentData | null>(null);
@@ -904,15 +984,18 @@ export default function LogsPage() {
               <Filter className="w-4 h-4" />
               {showFilters ? 'hide filters' : 'show filters'}
             </Button>
-            <Button
-              onClick={() => setShowClearDialog(true)}
-              disabled={isClearing || logs.length === 0}
-              variant="outline"
-              className="gap-2 border-red-400/60 text-red-400 hover:bg-red-950/50 hover:text-red-300 dark:hover:bg-red-950/50 dark:hover:text-red-300 transition-colors cursor-pointer"
-            >
-              <Trash2 className="w-4 h-4" />
-              {isClearing ? 'clearing...' : 'clear logs'}
-            </Button>
+            {canManageLogs && (
+              <Button
+                onClick={() => setShowClearDialog(true)}
+                disabled={isClearing || logs.length === 0}
+                variant="outline"
+                data-testid="logs-clear"
+                className="gap-2 border-red-400/60 text-red-400 hover:bg-red-950/50 hover:text-red-300 dark:hover:bg-red-950/50 dark:hover:text-red-300 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" />
+                {isClearing ? 'clearing...' : 'clear logs'}
+              </Button>
+            )}
           </div>
         </div>
 
@@ -929,10 +1012,17 @@ export default function LogsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {ACTION_TYPES.map(type => (
-                      <SelectItem key={type.value} value={type.value}>
-                        {type.label}
-                      </SelectItem>
+                    {ACTION_TYPE_GROUPS.map(group => (
+                      <SelectGroup key={group.group ?? 'all'}>
+                        {group.group && (
+                          <SelectLabel className="text-muted-foreground">{group.group}</SelectLabel>
+                        )}
+                        {group.options.map(type => (
+                          <SelectItem key={type.value} value={type.value}>
+                            {type.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
                     ))}
                   </SelectContent>
                 </Select>

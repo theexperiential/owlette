@@ -43,7 +43,7 @@ test('filters by action, machine, level, and custom date; reset restores rows', 
 
   await page.getByRole('button', { name: /reset filters/i }).click();
   await page.getByTestId('logs-filter-action').click();
-  await page.getByRole('option', { name: /scheduled restart/i }).click();
+  await page.getByRole('option', { name: 'scheduled restart completed', exact: true }).click();
   await expect(page.getByText(/no logs found for this site/i)).toBeVisible();
 
   await page.getByRole('button', { name: /reset filters/i }).click();

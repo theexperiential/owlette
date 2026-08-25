@@ -29,6 +29,7 @@ const SITE_SCOPED: Capability[] = [
   Capability.WEBHOOK_MANAGE,
   Capability.SITE_LOGS_MANAGE,
   Capability.TALON_MANAGE,
+  Capability.AGENT_TOKEN_REVOKE,
 ];
 
 const GLOBAL_CAPABILITIES: Capability[] = ALL_CAPABILITIES.filter(
@@ -70,6 +71,7 @@ describe('Capability enum', () => {
         'WEBHOOK_MANAGE',
         'SITE_LOGS_MANAGE',
         'TALON_MANAGE',
+        'AGENT_TOKEN_REVOKE',
         'USER_ROLE_MANAGE',
         'USER_DELETE',
         'SYSTEM_PRESET_MANAGE',
@@ -106,6 +108,7 @@ describe('RoleCapabilityMatrix', () => {
         'SITE_LOGS_MANAGE',
         'SITE_MEMBER_MANAGE',
         'TALON_MANAGE',
+        'AGENT_TOKEN_REVOKE',
       ].sort()
     );
   });

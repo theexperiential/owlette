@@ -132,7 +132,7 @@ test('episode 11 — team & alerts', async ({ browser }) => {
         await slowScrollToBottom(page, 6);
         const memberRoleCard = page
           .locator('div')
-          .filter({ hasText: /standard access to assigned sites/i })
+          .filter({ hasText: /read-only access to assigned sites/i })
           .first();
         await centerInView(page, memberRoleCard);
         await highlight(page, memberRoleCard, 1800);

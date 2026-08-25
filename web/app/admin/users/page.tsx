@@ -39,10 +39,15 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
+/**
+ * User-facing summary of `RoleCapabilityMatrix` in `@/lib/capabilities`. Keep in
+ * sync with it: any change to MEMBER_CAPABILITIES / SITE_ADMIN_CAPABILITIES must
+ * be reflected here. Shown on the role cards and inside the change-role dialog.
+ */
 const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
-  member: 'standard access to assigned sites — view machines, dispatch commands, toggle per-machine settings.',
-  admin: 'site-scoped elevated tier — everything a member can do, plus delete machines, edit stored display layouts, and manage site webhooks/settings on assigned sites.',
-  superadmin: 'platform-wide god-mode — access every site, manage users and roles, upload installer versions, configure global settings. reserve for platform operators.',
+  member: 'read-only access to assigned sites — view machines, capture screenshots, open live view, and set their own alert preferences. no commands, no config edits.',
+  admin: 'site-scoped elevated tier — everything a member can do, plus dispatch commands and restarts, edit machine and process settings, remove machines, author talons, run deployments, and manage presets, webhooks, and members on assigned sites.',
+  superadmin: 'platform-wide god-mode — every admin power on every site, plus manage users and roles, revoke agent tokens, upload installers, and configure alerts and global settings. reserve for platform operators.',
 };
 
 const ROLE_LABELS: Record<UserRole, string> = {

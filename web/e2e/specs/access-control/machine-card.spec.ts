@@ -141,6 +141,28 @@ test.describe('machine card — admin on site-A', () => {
     await expect(menu.getByTestId('machine-context-menu-revoke-token')).toBeVisible();
   });
 
+  test('site admin can actually revoke a machine token (route accepts the call)', async ({ page }) => {
+    // The menu item is gated on isSiteAdmin, so the route must accept a site
+    // admin. Rendering alone is not the contract — before AGENT_TOKEN_REVOKE
+    // this endpoint 403'd every admin who clicked it. The call runs inside the
+    // page (same bare cookie-authenticated fetch MachineContextMenu makes):
+    // Playwright's request context drops the Secure session cookie on http
+    // loopback, so page.request would 401 regardless of the capability.
+    await page.goto('/dashboard');
+    const status = await page.evaluate(
+      async ({ siteId, machineId }) => {
+        const res = await fetch(`/api/sites/${encodeURIComponent(siteId)}/agent-tokens/revoke`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ machineId, latestOnly: true }),
+        });
+        return res.status;
+      },
+      { siteId: SITE_ID, machineId: BASELINE_MACHINE_ID },
+    );
+    expect(status).toBe(200);
+  });
+
   test('cancel-countdown pill during active reboot is clickable', async ({ page }) => {
     const card = await cardFor(page, REBOOTING_MACHINE_ID);
 
