@@ -4,8 +4,10 @@
  *
  * Playwright drives a HEADED chromeless window (`playwright.videos.config.ts`);
  * an external ffmpeg (`FfmpegRecorder`) captures the desktop via ddagrab +
- * h264_nvenc. Playwright's `recordVideo` is deliberately unused — ~25fps VP8
- * with opportunistic frame grabs is fine for debugging, not for tutorials.
+ * h264_nvenc, falling back to gdigrab + libx264 on a box without DXGI/NVENC
+ * (pin one path with `OWLETTE_VIDEO_CAPTURE_PATH=primary|fallback`). Playwright's
+ * `recordVideo` is deliberately unused — ~25fps VP8 with opportunistic frame
+ * grabs is fine for debugging, not for tutorials.
  *
  * Scenes draw a fake cursor (ffmpeg runs `draw_mouse=0`, so there is exactly one
  * pointer in frame) and `narrate()` dwells are sized to the rendered VO MP3s.
@@ -20,7 +22,7 @@ import path from 'node:path';
 import type { Browser, Locator, Page } from '@playwright/test';
 import { disableAnimations } from '../screenshots/docs-helpers';
 import { FIXED_NOW_MS } from '../screenshots/fixtures';
-import { FfmpegRecorder, buildPrimaryFfmpegArgs } from './ffmpeg-recorder';
+import { FfmpegRecorder, planCapturePaths } from './ffmpeg-recorder';
 
 /** Clean, named .mp4 output lands here. */
 export const VIDEO_OUT_DIR = path.resolve(__dirname, '..', '.output', 'videos');
@@ -126,7 +128,7 @@ export async function recordScene(
 
   const recorder = new FfmpegRecorder({
     outPath,
-    args: buildPrimaryFfmpegArgs({
+    paths: planCapturePaths({
       offsetX: 0,
       offsetY: captureOffsetY,
       width: VIEWPORT_WIDTH,

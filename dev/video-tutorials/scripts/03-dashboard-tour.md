@@ -22,7 +22,7 @@ machines are online out of your total, and how many processes owlette is managin
 you. that's your whole operation in one glance.
 
 ## [b02] the machines section
-**SCREEN:** slow pan across the card grid — online machines (green pill), high-load machines (amber/red usage bars), one offline machine (red pill), just-restarted cards.
+**SCREEN:** slow pan across the card grid — online machines (green pill), high-load machines (amber/red usage bars), one offline machine (red pill).
 **VOICEOVER:**
 below that, every machine in the site gets a card, and the colors tell the story
 instantly: a green pill means online, a red pill means offline, and the usage bars climb

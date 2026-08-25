@@ -96,7 +96,7 @@ test('episode 13 — logs & troubleshooting', async ({ browser }) => {
       {
         id: 'log-scheduled-reboot',
         timestamp: ago(60 * 60 * 18),
-        action: 'scheduled_reboot',
+        action: 'scheduled_reboot_success',
         level: 'info',
         machineId: 'lobby-display',
         machineName: 'lobby-display',

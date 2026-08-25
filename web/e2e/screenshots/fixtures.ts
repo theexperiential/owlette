@@ -309,8 +309,8 @@ async function writeMachineMetrics(
 }
 
 /**
- * Plausible fleet — 10 machines mixing running, alerting, offline and
- * just-restarted; CPU/mem hand-tuned so it reads as a real operations view.
+ * Plausible fleet — 10 machines mixing running, alerting and offline;
+ * CPU/mem hand-tuned so it reads as a real operations view.
  */
 async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
   const siteId = 'site-A';
@@ -318,13 +318,12 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
 
   type Spec = {
     machineId: string;
-    state: 'running' | 'alerting' | 'offline' | 'just-restarted';
+    state: 'running' | 'alerting' | 'offline';
     sample: MetricsSample;
     seedOpts?: SeedMachineOptions;
-    secondsSinceRestart?: number;
   };
 
-  // 10 machines: 3 running, 4 alerting, 1 offline, 2 just-restarted.
+  // 10 machines: 5 running, 4 alerting, 1 offline.
   const specs: Spec[] = [
     { machineId: 'lobby-display', state: 'running',
       sample: { cpuPct: 22, memPct: 38, memUsedGb: 12.1, gpuPct: 18, diskPct: 41 } },
@@ -345,9 +344,9 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
     { machineId: 'touring-rig-04', state: 'offline',
       sample: { cpuPct: 0, memPct: 0, memUsedGb: 0, gpuPct: 0, diskPct: 0 } },
 
-    { machineId: 'lobby-2', state: 'just-restarted', secondsSinceRestart: 90,
+    { machineId: 'lobby-2', state: 'running',
       sample: { cpuPct: 12, memPct: 22, memUsedGb: 7.0, gpuPct: 8, diskPct: 33 } },
-    { machineId: 'mainstage-led', state: 'just-restarted', secondsSinceRestart: 240,
+    { machineId: 'mainstage-led', state: 'running',
       sample: { cpuPct: 18, memPct: 29, memUsedGb: 9.2, gpuPct: 14, diskPct: 38 } },
   ];
 
@@ -373,21 +372,6 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
         gpuBase: spec.sample.gpuPct,
         seed: seedFor(spec.machineId),
       });
-    }
-
-    if (spec.state === 'just-restarted' && spec.secondsSinceRestart !== undefined) {
-      // Recent reboot completion lights the "just restarted" chip.
-      await getAdminDb()
-        .collection('sites')
-        .doc(siteId)
-        .collection('machines')
-        .doc(spec.machineId)
-        .set(
-          {
-            lastRebootCompletedAt: FIXED_NOW_SEC - spec.secondsSinceRestart,
-          },
-          { merge: true },
-        );
     }
   }
 

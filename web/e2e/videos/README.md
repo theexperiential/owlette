@@ -23,6 +23,12 @@ npm run videos -- --grep "dashboard" # one scene (grep matches the test title)
 npm run videos:debug                 # headed + inspector, to tune selectors/pacing
 ```
 
+Capture path: ffmpeg records via ddagrab + h264_nvenc and falls back to gdigrab +
+libx264 on a machine without DXGI/NVENC; the chosen path is logged as
+`[ffmpeg] capture path: …`. Pin it with `OWLETTE_VIDEO_CAPTURE_PATH=primary`
+(fail rather than shoot degraded footage) or `=fallback` (exercise the GDI path
+on an NVENC box). Verify the hardware first with `node scripts/probe-capture.mjs`.
+
 Prereqs are identical to the E2E suite (JDK 21, firebase-tools 15, chromium installed).
 Output: `web/e2e/.output/videos/<scene>.webm`.
 

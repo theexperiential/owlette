@@ -9,6 +9,12 @@
  * (codebase rule: feedback_targeted_process_kill.md). Success renames .tmp.mp4
  * to the final path, so a half-captured file never looks valid downstream.
  *
+ * Two capture paths, tried in order: ddagrab+NVENC, then gdigrab+libx264. A box
+ * without DXGI or NVENC fails ffmpeg in under a second (exit 8 "Unknown encoder"
+ * / "No such filter", exit 127 on a DXGI enumerate error), so the retry costs
+ * nothing where the primary path works. `OWLETTE_VIDEO_CAPTURE_PATH` pins one
+ * path: auto (default) | primary | fallback.
+ *
  * SIGINT/SIGTERM/beforeExit hooks reap the subprocess, or Ctrl+C mid-scene
  * orphans ffmpeg holding the encoder.
  */
@@ -30,11 +36,18 @@ function registerShutdownHooks(): void {
   process.on('beforeExit', drain);
 }
 
+export interface FfmpegCapturePath {
+  /** Short label for the log line, e.g. 'primary (ddagrab + h264_nvenc)'. */
+  label: string;
+  /** ffmpeg args EXCLUDING the output filename — the recorder appends the temp path. */
+  args: string[];
+}
+
 export interface FfmpegRecorderOptions {
   /** Final output path. */
   outPath: string;
-  /** ffmpeg args EXCLUDING the output filename — the recorder appends the temp path. */
-  args: string[];
+  /** Capture paths tried in order until one reaches first-frame (see planCapturePaths). */
+  paths: FfmpegCapturePath[];
   /** Watchdog for `q\n` shutdown, ms (default 10_000). */
   shutdownTimeoutMs?: number;
   /** First-frame readiness timeout, ms (default 8_000). */
@@ -43,42 +56,115 @@ export interface FfmpegRecorderOptions {
   onStderr?: (line: string) => void;
 }
 
+/**
+ * Startup failure of ONE attempt. `retryable` is false only when the next path
+ * cannot possibly do better — i.e. the ffmpeg binary itself never launched.
+ */
+class FfmpegStartError extends Error {
+  constructor(message: string, readonly retryable: boolean) {
+    super(message);
+    this.name = 'FfmpegStartError';
+  }
+}
+
+/**
+ * Name the capability gap behind a failed attempt, for the fallback log line.
+ * Diagnosis only — it never gates the retry, so a build that words these errors
+ * differently still falls back instead of hard-failing.
+ */
+export function diagnoseCaptureFailure(stderr: string): string | null {
+  if (/No such filter: 'ddagrab'/i.test(stderr)) return 'this ffmpeg build has no ddagrab filter';
+  if (/Unknown encoder 'h264_nvenc'/i.test(stderr)) return 'this ffmpeg build has no h264_nvenc encoder';
+  if (/nvEncodeAPI|NVENC capable|Nvidia driver|OpenEncodeSessionEx/i.test(stderr)) return 'no usable NVENC device or driver';
+  if (/DXGI|duplicate output|Desktop Duplication/i.test(stderr)) return 'DXGI desktop duplication unavailable (locked session, RDP, or no such display)';
+  return null;
+}
+
 export class FfmpegRecorder {
   private proc: ChildProcess | null = null;
+  private exited = false;
   private exitPromise: Promise<{ code: number | null; signal: NodeJS.Signals | null }> | null = null;
   private tmpPath: string;
   private stderrBuf = '';
   private stopped = false;
+  private chosenPath: string | null = null;
 
   constructor(private readonly opts: FfmpegRecorderOptions) {
     this.tmpPath = this.opts.outPath + '.tmp.mp4';
   }
 
+  /** Label of the path that actually recorded, once start() has resolved. */
+  get capturePath(): string | null {
+    return this.chosenPath;
+  }
+
   /**
-   * Spawn ffmpeg and resolve once frames are confirmed flowing. Rejects on early
-   * exit (bad args, missing capture device) or first-frame timeout.
+   * Try each configured capture path until one is confirmed producing frames.
+   * A machine without DXGI/NVENC fails in under a second, so the retry is free
+   * where the primary path works — and the alternative is a dead run.
    */
   async start(): Promise<void> {
     registerShutdownHooks();
+    const paths = this.opts.paths;
+    if (paths.length === 0) throw new Error('FfmpegRecorder: opts.paths is empty');
+
+    const failures: string[] = [];
+    for (let i = 0; i < paths.length; i++) {
+      const candidate = paths[i];
+      try {
+        await this.startAttempt(candidate);
+        this.chosenPath = candidate.label;
+        console.log(`[ffmpeg] capture path: ${candidate.label}${i > 0 ? ' (primary path failed)' : ''}`);
+        return;
+      } catch (err) {
+        const reason = diagnoseCaptureFailure(this.stderrBuf);
+        const detail = err instanceof Error ? err.message : String(err);
+        failures.push(`${candidate.label} — ${reason ?? 'see stderr'}`);
+        // Kill before the next spawn: a first-frame timeout leaves ffmpeg alive,
+        // and two ffmpegs writing one temp file is a corrupt capture.
+        this.discardAttempt();
+
+        const retryable = err instanceof FfmpegStartError ? err.retryable : true;
+        if (!retryable || i === paths.length - 1) {
+          throw new Error(
+            `ffmpeg capture failed to start:\n${failures.map((f) => `  - ${f}`).join('\n')}\n${detail}`,
+          );
+        }
+        console.warn(
+          `[ffmpeg] ${candidate.label} failed to start (${reason ?? 'see stderr below'}); ` +
+          `retrying with ${paths[i + 1].label}`,
+        );
+        console.warn(detail);
+      }
+    }
+  }
+
+  /** Spawn ONE capture path and resolve once stderr proves frames are flowing. */
+  private async startAttempt(capturePath: FfmpegCapturePath): Promise<void> {
     mkdirSync(path.dirname(this.tmpPath), { recursive: true });
     if (existsSync(this.tmpPath)) {
       try { unlinkSync(this.tmpPath); } catch { /* best-effort */ }
     }
 
-    this.proc = spawn('ffmpeg', [...this.opts.args, this.tmpPath], {
+    this.stderrBuf = '';
+    this.exited = false;
+
+    const proc = spawn('ffmpeg', [...capturePath.args, this.tmpPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
+    this.proc = proc;
     ACTIVE.add(this);
 
     this.exitPromise = new Promise((resolve) => {
-      this.proc!.once('exit', (code, signal) => {
+      proc.once('exit', (code, signal) => {
+        this.exited = true;
         ACTIVE.delete(this);
         resolve({ code, signal });
       });
     });
 
-    this.proc.stderr!.on('data', (chunk: Buffer) => {
+    proc.stderr!.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       this.stderrBuf += text;
       if (this.opts.onStderr) {
@@ -91,7 +177,7 @@ export class FfmpegRecorder {
 
     // Readiness comes from stderr `frame=N`, NOT file size: `+faststart` makes
     // the muxer buffer until close so the .mp4 stays ftyp-header-sized for the
-    // whole capture. The stats line is the only signal frames are really flowing.
+    // whole capture. `[1-9]` matters — gdigrab prints `frame=    0` first.
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       const finish = (err?: Error): void => {
@@ -102,25 +188,44 @@ export class FfmpegRecorder {
         else resolve();
       };
 
+      // A failed spawn (ffmpeg not on PATH) emits 'error' and never 'exit'; an
+      // unhandled 'error' would take down the worker. No other path helps here.
+      proc.once('error', (err: Error) => {
+        this.exited = true;
+        ACTIVE.delete(this);
+        finish(new FfmpegStartError(`ffmpeg failed to spawn: ${err.message} — is ffmpeg on PATH?`, false));
+      });
+
       this.exitPromise!.then(({ code, signal }) => {
-        if (!settled) {
-          finish(new Error(
-            `ffmpeg exited during startup (code=${code} signal=${signal})\n` +
-            `stderr tail:\n${this.stderrBuf.slice(-1500)}`,
-          ));
-        }
+        finish(new FfmpegStartError(
+          `ffmpeg exited during startup (code=${code} signal=${signal})\n` +
+          `stderr tail:\n${this.stderrBuf.slice(-1500)}`,
+          true,
+        ));
       });
 
       const poll = setInterval(() => {
         if (/frame=\s*[1-9]\d*/.test(this.stderrBuf)) finish();
         else if (Date.now() - startedAt > startTimeoutMs) {
-          finish(new Error(
+          finish(new FfmpegStartError(
             `ffmpeg first-frame timeout after ${startTimeoutMs}ms (no frame=N in stderr)\n` +
             `stderr tail:\n${this.stderrBuf.slice(-1500)}`,
+            true,
           ));
         }
       }, 50);
     });
+  }
+
+  /** Tear down a failed attempt so the next one starts clean. */
+  private discardAttempt(): void {
+    if (this.proc && !this.exited) this.killTreeSync();
+    ACTIVE.delete(this);
+    this.proc = null;
+    this.exitPromise = null;
+    if (existsSync(this.tmpPath)) {
+      try { unlinkSync(this.tmpPath); } catch { /* the next attempt's -y overwrites */ }
+    }
   }
 
   /**
@@ -229,6 +334,9 @@ export function buildPrimaryFfmpegArgs(region: CaptureRegion): string[] {
 /**
  * Fallback (GDI → libx264) for machines without DXGI/NVENC. Slower and CPU-heavy,
  * but format-identical so downstream tooling needs no special case.
+ *
+ * Offsets are virtual-desktop coordinates (ddagrab's are relative to output_idx=0),
+ * so the two agree only while the primary monitor sits at virtual (0,0).
  */
 export function buildFallbackFfmpegArgs(region: CaptureRegion): string[] {
   return [
@@ -248,6 +356,38 @@ export function buildFallbackFfmpegArgs(region: CaptureRegion): string[] {
     '-color_trc', 'bt709',
     '-movflags', '+faststart',
   ];
+}
+
+export type CapturePathMode = 'auto' | 'primary' | 'fallback';
+
+/**
+ * `OWLETTE_VIDEO_CAPTURE_PATH`: `auto` (default — primary, then fallback),
+ * `primary` (fail loudly rather than quietly shoot degraded footage), or
+ * `fallback` (exercise the gdigrab path on a machine that has NVENC).
+ */
+export function resolveCapturePathMode(env: NodeJS.ProcessEnv = process.env): CapturePathMode {
+  const raw = (env.OWLETTE_VIDEO_CAPTURE_PATH ?? '').trim().toLowerCase();
+  if (raw === 'auto' || raw === 'primary' || raw === 'fallback') return raw;
+  if (raw) console.warn(`[ffmpeg] ignoring OWLETTE_VIDEO_CAPTURE_PATH=${raw} (expected auto|primary|fallback)`);
+  return 'auto';
+}
+
+/** Ordered capture paths for one region, honoring the env pin. */
+export function planCapturePaths(
+  region: CaptureRegion,
+  mode: CapturePathMode = resolveCapturePathMode(),
+): FfmpegCapturePath[] {
+  const primary: FfmpegCapturePath = {
+    label: 'primary (ddagrab + h264_nvenc)',
+    args: buildPrimaryFfmpegArgs(region),
+  };
+  const fallback: FfmpegCapturePath = {
+    label: 'fallback (gdigrab + libx264)',
+    args: buildFallbackFfmpegArgs(region),
+  };
+  if (mode === 'primary') return [primary];
+  if (mode === 'fallback') return [fallback];
+  return [primary, fallback];
 }
 
 /**

@@ -5,7 +5,7 @@
  * dashboard capability card (wired up in wave 4.5).
  *
  * Drives the `dashboard-mixed-states` scenario (10 machines: running / alerting /
- * offline / just-restarted), flips to list view — denser and more legible at
+ * offline), flips to list view — denser and more legible at
  * page-hero scale — and captures.
  */
 import { test, expect } from '@playwright/test';
