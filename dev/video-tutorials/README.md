@@ -51,10 +51,12 @@ it, so syncing in the editor is drag-and-drop, not guesswork.
 |---|---|---|
 | **Web dashboard** | Next.js app | **Playwright** (`web/e2e/videos/`) drives it at 1080p against the seeded emulator demo fleet. Fully scriptable / repeatable. |
 | **Installer** | Inno Setup `.exe` wizard | **pywinauto** (`capture-native/`) — Playwright cannot touch native windows. |
-| **Agent GUI + tray** | Tkinter window + notification-area icon | **pywinauto** (or manual over Parsec/OBS — these flows are short and one-time). |
+| **Desktop app + tray** | Tauri/WebView2 window (`desktop/`) + notification-area icon | Window: **WebView2 CDP** — a video sibling of `web/e2e/desktop-screenshots/` (real selectors, fixture ProgramData, deterministic pairing phrase). Tray icon/menu: **pywinauto/UIA**. |
 
 pywinauto is the desktop equivalent of Playwright (drives Win32/WinForms/WPF). It is
-the maintained choice in 2026 — WinAppDriver is paused, FlaUI is .NET-only.
+the maintained choice in 2026 — WinAppDriver is paused, FlaUI is .NET-only. It is NOT
+used for the desktop app's window content — WebView2 exposes CSS classes to UIA, not
+stable names; drive the window over CDP instead (see `DRIFT-AUDIT-2026-08.md`).
 
 ---
 
