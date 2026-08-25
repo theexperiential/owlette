@@ -26,6 +26,7 @@ import {
   requireMachineAuthAndScope,
 } from '../../../../../../_shared';
 import { getAdminDb, getAdminStorage } from '@/lib/firebase-admin';
+import { sanitizeForLog } from '@/lib/logSanitize';
 
 interface RouteParams {
   params: Promise<{ siteId: string; machineId: string }>;
@@ -263,12 +264,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         await docSnap.ref.delete();
       }
       console.log(
-        `[screenshots/finalize] pruned ${toDelete.length} old screenshots for ${machineId}`,
+        `[screenshots/finalize] pruned ${toDelete.length} old screenshots for ${sanitizeForLog(machineId)}`,
       );
     }
 
     console.log(
-      `[screenshots/finalize] ${machineId} (${sizeKB}KB, monitor=${monitor}) → ${body.storagePath}`,
+      `[screenshots/finalize] ${sanitizeForLog(machineId)} (${sizeKB}KB, monitor=${sanitizeForLog(monitor)}) → ${sanitizeForLog(body.storagePath)}`,
     );
 
     return applyAuthDeprecations(

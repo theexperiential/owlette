@@ -9,6 +9,7 @@ import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.ser
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { getResend, FROM_EMAIL, ENV_LABEL, isProduction } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, escapeHtml, safeEmailSubject } from '@/lib/emailTemplates.server';
+import { sanitizeForLog } from '@/lib/logSanitize';
 
 export async function escalate(
   siteId: string,
@@ -19,7 +20,7 @@ export async function escalate(
 ): Promise<boolean> {
   const recipients = await getSiteAlertRecipients(siteId, 'cortexAlerts');
   if (recipients.length === 0) {
-    console.warn(`[hoot/escalation] No admin emails found for site ${siteId}`);
+    console.warn(`[hoot/escalation] No admin emails found for site ${sanitizeForLog(siteId)}`);
     return false;
   }
 
@@ -51,14 +52,14 @@ export async function escalate(
     });
 
     if (result.error) {
-      console.error(`[hoot/escalation] Resend error for ${recipient.email}:`, result.error);
+      console.error(`[hoot/escalation] Resend error for ${sanitizeForLog(recipient.email)}:`, result.error);
     } else {
       anySent = true;
     }
   }
 
   if (anySent) {
-    console.log(`[hoot/escalation] Escalation sent for ${processName} on ${machineName} (${eventId})`);
+    console.log(`[hoot/escalation] Escalation sent for ${sanitizeForLog(processName)} on ${sanitizeForLog(machineName)} (${sanitizeForLog(eventId)})`);
   }
   return anySent;
 }
