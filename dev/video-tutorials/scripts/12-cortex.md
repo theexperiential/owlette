@@ -6,7 +6,7 @@ est_duration: "8:00"
 capture: web
 scenario: diagnose-cortex-chat
 voice: null
-model: null
+model: eleven_v3
 ---
 
 # episode 12 — cortex: manage machines by chat

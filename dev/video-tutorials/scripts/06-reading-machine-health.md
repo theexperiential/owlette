@@ -6,7 +6,7 @@ est_duration: "5:00"
 capture: web
 scenario: monitor-single-machine
 voice: null
-model: null
+model: eleven_v3
 ---
 
 # episode 6 — reading machine health

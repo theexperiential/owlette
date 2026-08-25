@@ -18,18 +18,25 @@ Usage
     # render every script in ../scripts/
     python generate.py --all
 
-    # re-render a single beat after editing its copy
-    python generate.py ../scripts/02-install-and-pair.md --only-beat b07
+    # re-render specific beats after editing their copy (repeatable / comma-separated)
+    python generate.py ../scripts/02-install-and-pair.md --only-beat b04,b06
+
+    # re-render only beats whose spoken text differs from the episode manifest
+    # (pairs with --dry-run to preview the re-render list without spending credits)
+    python generate.py ../scripts/02-install-and-pair.md --changed
 
 Configuration (env or .env in this directory; see .env.example)
     ELEVENLABS_API_KEY    required for real generation
     ELEVENLABS_VOICE_ID   the voice to use (override per-script via front matter `voice:`)
-    ELEVENLABS_MODEL_ID   default eleven_multilingual_v2 (front matter `model:` overrides)
+    ELEVENLABS_MODEL_ID   fallback model (front matter `model:` overrides; every series
+                          script pins `model: eleven_v3`)
 
 Notes
 -----
-* eleven_multilingual_v2 is the default (stable long-form); eleven_v3 is more
-  expressive, for intro episodes.
+* The series' production settings are locked (A/B-picked 2026-05): eleven_v3,
+  stability 0.30, style 0.0. They are recorded in each episode's manifest.json and
+  re-used on re-renders — a beat rendered at other settings will not sit cleanly
+  next to its neighbors.
 * v3 "audio tags" ([warm], [pause]) pass through ONLY on eleven_v3 — otherwise
   they are stripped, so v2 never reads "warm" aloud.
 """
@@ -55,6 +62,11 @@ DEFAULT_SCRIPTS_DIR = (SCRIPT_DIR / ".." / "scripts").resolve()
 DEFAULT_OUT_DIR = SCRIPT_DIR / "out"
 DEFAULT_MODEL = "eleven_multilingual_v2"
 DEFAULT_OUTPUT_FORMAT = "mp3_44100_128"
+# Locked production settings (A/B sweep 2026-05, see README). CLI > manifest > these.
+DEFAULT_STABILITY = 0.30
+DEFAULT_STYLE = 0.0
+SIMILARITY_BOOST = 0.75
+USE_SPEAKER_BOOST = True
 API_BASE = "https://api.elevenlabs.io/v1/text-to-speech"
 
 # Lines beginning with these labels are stage direction, never spoken.
@@ -223,9 +235,9 @@ def synthesize(
             "model_id": model_id,
             "voice_settings": {
                 "stability": stability,
-                "similarity_boost": 0.75,
+                "similarity_boost": SIMILARITY_BOOST,
                 "style": style,
-                "use_speaker_boost": True,
+                "use_speaker_boost": USE_SPEAKER_BOOST,
             },
         },
         timeout=120,
@@ -262,10 +274,28 @@ def resolve_model(meta: Dict[str, object], cli_model: Optional[str]) -> str:
     )
 
 
+def load_prior_manifest(out_dir: Path) -> Tuple[Dict[str, Dict[str, object]], Dict[str, object]]:
+    """Read an episode's existing manifest.json → ({beat_id: entry}, voice_settings)."""
+    path = out_dir / "manifest.json"
+    if not path.exists():
+        return {}, {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}, {}
+    beats = {
+        str(e.get("id")): e
+        for e in data.get("beats", [])
+        if isinstance(e, dict) and e.get("id")
+    }
+    settings = data.get("voice_settings")
+    return beats, settings if isinstance(settings, dict) else {}
+
+
 def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
     """Print the plan and, unless --dry-run, synthesize per-beat MP3s.
 
-    Returns (total_chars, estimated_credits).
+    Returns (chars_to_render, estimated_credits).
     """
     model_id = resolve_model(ep.meta, args.model)
     strip_tags = not model_id.lower().startswith("eleven_v3")
@@ -274,26 +304,65 @@ def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
     out_dir = Path(args.out).resolve() / ep.out_name
     cpc = credits_per_char(model_id)
 
+    prior_beats, prior_settings = load_prior_manifest(out_dir)
+    # CLI > this episode's manifest > locked production default.
+    prior_stability = prior_settings.get("stability")
+    prior_style = prior_settings.get("style")
+    stability = args.stability if args.stability is not None else (
+        float(prior_stability) if isinstance(prior_stability, (int, float)) else DEFAULT_STABILITY
+    )
+    style = args.style if args.style is not None else (
+        float(prior_style) if isinstance(prior_style, (int, float)) else DEFAULT_STYLE
+    )
+
     resolved = {b.id: b.resolved(strip_tags=strip_tags) for b in ep.beats}
     spoken_beats = [b for b in ep.beats if resolved[b.id]]
-    total_chars = sum(len(resolved[b.id]) for b in spoken_beats)
+
+    def fname_for(b: Beat) -> str:
+        return f"ep{ep.number:02d}-{b.id}.mp3"
+
+    def skip_reason(b: Beat) -> Optional[str]:
+        """None = render this beat; otherwise why it is being left alone."""
+        if args.only_beat:
+            return None if b.id in args.only_beat else "not targeted"
+        if args.changed:
+            prior = prior_beats.get(b.id)
+            if (
+                prior
+                and prior.get("text") == resolved[b.id]
+                and (out_dir / fname_for(b)).exists()
+            ):
+                return "unchanged"
+        return None
+
+    targets = [b for b in spoken_beats if skip_reason(b) is None]
+    chars_to_render = sum(len(resolved[b.id]) for b in targets)
 
     print(f"\n=== episode {ep.number:02d} - {ep.meta.get('title', ep.slug)} ===")
     print(f"  source : {ep.path}")
     print(f"  model  : {model_id}   voice: {voice_id or '(unset)'}")
-    print(f"  beats  : {len(ep.beats)} ({len(spoken_beats)} spoken)")
-    print(f"  chars  : {total_chars}  ~= {int(total_chars * cpc)} credits")
+    print(f"  voice_settings : stability {stability}  style {style}")
+    print(f"  beats  : {len(ep.beats)} ({len(spoken_beats)} spoken, {len(targets)} to render)")
+    print(f"  chars  : {chars_to_render} to render  ~= {int(chars_to_render * cpc)} credits")
 
     for b in ep.beats:
         text = resolved[b.id]
-        flag = "" if text else " (b-roll, no vo)"
+        if not text:
+            print(f"    [{b.id}] {b.title} (b-roll, no vo)")
+            continue
+        reason = skip_reason(b)
+        flag = f" ({reason} - keeps {fname_for(b)})" if reason else ""
         print(f"    [{b.id}] {b.title}{flag}")
-        if text:
+        if not reason:
             print(f'          "{text}"')
 
     if args.dry_run:
         print("  -- dry run: no audio generated --")
-        return total_chars, int(total_chars * cpc)
+        return chars_to_render, int(chars_to_render * cpc)
+
+    if not targets:
+        print("  -- nothing to render: every beat is up to date --")
+        return 0, 0
 
     if not api_key:
         raise SystemExit("ELEVENLABS_API_KEY is not set (env or .env) — cannot generate audio")
@@ -301,24 +370,31 @@ def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
         raise SystemExit("no voice id — set ELEVENLABS_VOICE_ID, front matter `voice:`, or --voice")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Full manifest every run, so --only-beat can't drop other beats' metadata.
+    # Full manifest every run, so targeted renders can't drop other beats' metadata.
     manifest: List[Dict[str, object]] = []
     for b in ep.beats:
         text = resolved[b.id]
         if not text:
             manifest.append({"id": b.id, "title": b.title, "chars": 0, "file": None})
             continue
-        fname = f"ep{ep.number:02d}-{b.id}.mp3"
-        if args.only_beat and b.id != args.only_beat:
-            # Untargeted beat: reuse a prior run's MP3, skip resynthesis.
+        fname = fname_for(b)
+        if skip_reason(b) is not None:
+            # Untargeted beat: reuse the prior MP3 and carry the manifest text the
+            # audio was actually rendered from — never the current script text, or
+            # a later --changed pass would treat stale audio as up to date.
             existing = (out_dir / fname).exists()
+            prior = prior_beats.get(b.id)
+            carried = prior.get("text") if (existing and prior and prior.get("text")) else text
+            if existing and not (prior and prior.get("text")):
+                print(f"    !! {fname} exists but has no prior manifest text — "
+                      f"assuming it matches the current script", file=sys.stderr)
             manifest.append(
                 {
                     "id": b.id,
                     "title": b.title,
-                    "chars": len(text),
+                    "chars": len(str(carried)),
                     "file": fname if existing else None,
-                    "text": text,
+                    "text": carried,
                 }
             )
             continue
@@ -328,8 +404,8 @@ def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
             model_id=model_id,
             api_key=api_key,
             output_format=args.output_format,
-            stability=args.stability,
-            style=args.style,
+            stability=stability,
+            style=style,
         )
         (out_dir / fname).write_bytes(audio)
         print(f"    ok {fname}  ({len(audio):,} bytes)")
@@ -346,6 +422,13 @@ def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
                 "title": ep.meta.get("title"),
                 "model": model_id,
                 "voice": voice_id,
+                "voice_settings": {
+                    "stability": stability,
+                    "style": style,
+                    "similarity_boost": SIMILARITY_BOOST,
+                    "use_speaker_boost": USE_SPEAKER_BOOST,
+                },
+                "output_format": args.output_format,
                 "beats": manifest,
             },
             indent=2,
@@ -354,7 +437,7 @@ def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
         encoding="utf-8",
     )
     print(f"  -> {out_dir}")
-    return total_chars, int(total_chars * cpc)
+    return chars_to_render, int(chars_to_render * cpc)
 
 
 def main() -> None:
@@ -365,11 +448,33 @@ def main() -> None:
     parser.add_argument("--voice", default=None, help="ElevenLabs voice id (overrides env + front matter)")
     parser.add_argument("--model", default=None, help="model id (overrides env + front matter)")
     parser.add_argument("--output-format", default=DEFAULT_OUTPUT_FORMAT, help="ElevenLabs output_format")
-    parser.add_argument("--stability", type=float, default=0.5, help="voice stability 0-1 (default 0.5)")
-    parser.add_argument("--style", type=float, default=0.0, help="style exaggeration 0-1 (default 0.0)")
-    parser.add_argument("--only-beat", default=None, help="render just this beat id, e.g. b07")
+    parser.add_argument(
+        "--stability", type=float, default=None,
+        help=f"voice stability 0-1 (default: the episode manifest's recorded value, else {DEFAULT_STABILITY} — the locked production setting)",
+    )
+    parser.add_argument(
+        "--style", type=float, default=None,
+        help=f"style exaggeration 0-1 (default: manifest value, else {DEFAULT_STYLE})",
+    )
+    parser.add_argument(
+        "--only-beat", action="append", default=None, metavar="BEAT",
+        help="render just these beat id(s); repeatable or comma-separated, e.g. --only-beat b04,b06",
+    )
+    parser.add_argument(
+        "--changed", action="store_true",
+        help="render only beats whose spoken text differs from the episode manifest (others keep their MP3s)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="parse + estimate cost, make no API calls")
     args = parser.parse_args()
+
+    only_ids: List[str] = []
+    for chunk in args.only_beat or []:
+        only_ids.extend(part.strip() for part in chunk.split(",") if part.strip())
+    args.only_beat = only_ids
+    if args.only_beat and args.all:
+        raise SystemExit("--only-beat with --all would target the same beat id in every episode — pass the script path explicitly")
+    if args.only_beat and args.changed:
+        raise SystemExit("--only-beat and --changed are different targeting modes — pick one")
 
     # Em-dashes etc. in the dry-run preview; harmless where unsupported.
     try:

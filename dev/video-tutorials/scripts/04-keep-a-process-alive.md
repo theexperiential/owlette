@@ -6,7 +6,7 @@ est_duration: "6:00"
 capture: web
 scenario: control-process-restarting
 voice: null
-model: null
+model: eleven_v3
 ---
 
 # episode 4 — keep a process alive

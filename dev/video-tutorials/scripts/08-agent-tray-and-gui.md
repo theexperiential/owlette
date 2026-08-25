@@ -6,7 +6,7 @@ est_duration: "5:00"
 capture: native
 scenario: null
 voice: null
-model: null
+model: eleven_v3
 ---
 
 # episode 8 — the agent on the machine: tray & local gui

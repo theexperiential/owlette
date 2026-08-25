@@ -6,7 +6,7 @@ est_duration: "6:00"
 capture: web
 scenario: automate-schedule-editor
 voice: null
-model: null
+model: eleven_v3
 ---
 
 # episode 5 — run apps on a schedule

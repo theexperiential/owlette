@@ -6,7 +6,7 @@ est_duration: "5:00"
 capture: web
 scenario: control-process-restarting
 voice: null
-model: null
+model: eleven_v3
 ---
 
 # episode 13 — logs & troubleshooting

@@ -6,7 +6,7 @@ est_duration: "5:00"
 capture: web
 scenario: dashboard-mixed-states
 voice: null
-model: null
+model: eleven_v3
 ---
 
 # episode 3 — the dashboard, end to end

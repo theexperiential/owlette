@@ -6,7 +6,7 @@ est_duration: "6:00"
 capture: native
 scenario: null
 voice: null
-model: null
+model: eleven_v3
 ---
 
 # episode 2 — install owlette & pair your first machine

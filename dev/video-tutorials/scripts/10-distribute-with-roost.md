@@ -6,7 +6,7 @@ est_duration: "9:00"
 capture: web
 scenario: deploy-roost-rolling
 voice: null
-model: null
+model: eleven_v3
 ---
 
 # episode 10 — distribute project folders with roost
