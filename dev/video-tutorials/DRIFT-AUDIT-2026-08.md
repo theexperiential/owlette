@@ -250,17 +250,31 @@ Gaps, in order:
 
 1. Member role card says members "dispatch commands" — contradicts capabilities.ts
    (web/app/admin/users/page.tsx:43). Blocks filming ep11 b03.
+   **FIXED e0c8341a (2026-08-25)** — all three cards rewritten against the matrix.
 2. "revoke token" menu item renders for site admins; route requires superadmin → 403 on
    click (MachineContextMenu.tsx:354-367 vs revoke/route.ts:40). Affects ep07 b07.
+   **FIXED e0c8341a** — route moved to a new site-scoped AGENT_TOKEN_REVOKE capability
+   (granted to site admins; strict subset of MACHINE_REMOVE); round-trip e2e with a
+   verified 403→200 negative control.
 3. "clear logs" button renders for members who lack SITE_LOGS_MANAGE → error-on-click
-   (ep13).
+   (ep13). **FIXED e0c8341a** — hidden behind isSiteAdmin; access-control spec added.
 4. Logs action-type filter offers "scheduled_reboot", which nothing emits; the agent's
    actual scheduled_reboot_*/process_restarted events aren't selectable (ep13).
+   **FIXED e0c8341a** — grouped list of 46 emitter-verified options.
 5. `lastRebootCompletedAt` is seeded by fixtures but read by nothing — the "just
-   restarted" chip was never built (ep03).
+   restarted" chip was never built (ep03). **FIXED 10bb80a5** — dead field + camera
+   direction removed; building the chip for real = agent-release feature, backlog.
 6. ffmpeg-recorder's written non-NVENC fallback is never invoked (web harness).
+   **FIXED 10bb80a5** — retry wiring + OWLETTE_VIDEO_CAPTURE_PATH pin + jest coverage
+   (negative control recorded); also fixed the orphan-on-timeout and unhandled-ENOENT
+   defects found during wiring.
 7. roost page ships a "developer preview" badge — in frame for ep10 b01 (decision, not
-   defect).
+   defect). **PENDING USER DECISION** — investigation (2026-08-25) recommends removal:
+   the badge's premise (site-tier gate) was deleted with billing, cancel + resume are
+   fixed, and the one open gap (auto webhook dispatch) is already disclosed on the
+   webhooks page. Bonus finding filed from that investigation:
+   sync_state.list_pending_distributions() has no production caller — interrupted
+   syncs resume only on server re-dispatch, not at agent startup.
 
 ## Execution order (per the playbook's §6 repair loop)
 
