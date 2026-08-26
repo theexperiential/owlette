@@ -211,6 +211,16 @@ interface MetricsSample {
   memUsedGb: number;
   gpuPct: number;
   diskPct: number;
+  /**
+   * Round-trip latency in ms. The card's COLLAPSED summary row is the only
+   * place this renders: <=50 green, >50 amber, >100 red. Defaults to 12 (green).
+   */
+  latencyMs?: number;
+  /**
+   * Packet loss %. Also collapsed-row only, and the chip is HIDDEN at 0 — a
+   * scene that needs it on camera must seed a non-zero value. Defaults to 0.
+   */
+  packetLossPct?: number;
 }
 
 /** v2-shaped metrics doc; caller picks the sample so each card renders distinctly. */
@@ -260,7 +270,11 @@ async function writeMachineMetrics(
             'C:': { readBps: 3_000_000, writeBps: 4_000_000, busyPct: 8, maxBps: 500_000_000 },
             'D:': { readBps: 80_000_000, writeBps: 12_000_000, busyPct: 35, maxBps: 3_000_000_000 },
           },
-          network: { latencyMs: 12, packetLossPct: 0, gatewayIp: '192.168.1.1' },
+          network: {
+            latencyMs: sample.latencyMs ?? 12,
+            packetLossPct: sample.packetLossPct ?? 0,
+            gatewayIp: '192.168.1.1',
+          },
           primary: { cpu: 'CPU0', disk: 'C:', gpu: 'NVIDIA RTX A5000', nic: 'Ethernet 1' },
         },
       },
@@ -308,9 +322,92 @@ async function writeMachineMetrics(
     });
 }
 
+/** One managed process as the agent reports it. */
+interface ProcEntry {
+  id: string;
+  name: string;
+  status: 'RUNNING' | 'LAUNCHING' | 'STOPPED';
+  pid: number;
+  exe_path: string;
+  file_path?: string;
+  cwd: string;
+  /** Seconds before FIXED_NOW that the agent last touched this row. */
+  last_updated_offset: number;
+  responsive?: boolean;
+}
+
+/**
+ * Write a machine's managed processes to BOTH places the dashboard needs them.
+ *
+ * The card's process list renders from the agent-written status map
+ * (`machines/{id}.metrics.processes`, useFirestore.ts:1012) and the dashboard's
+ * "processes" stat tile counts exactly that map (page.tsx:804) — so a fixture
+ * that writes only the config doc leaves both empty. The config doc
+ * (`config/{siteId}/machines/{id}.processes`) is what the launch-mode and
+ * schedule controls read back.
+ */
+async function writeMachineProcesses(
+  siteId: string,
+  machineId: string,
+  processes: ProcEntry[],
+): Promise<void> {
+  const db = getAdminDb();
+
+  const processMap: Record<string, unknown> = {};
+  processes.forEach((p, idx) => {
+    processMap[p.id] = {
+      name: p.name,
+      status: p.status,
+      pid: p.pid,
+      autolaunch: true,
+      launch_mode: 'always',
+      exe_path: p.exe_path,
+      file_path: p.file_path ?? '',
+      cwd: p.cwd,
+      priority: 'Normal',
+      visibility: 'Show',
+      time_delay: '0',
+      time_to_init: '5',
+      relaunch_attempts: '3',
+      responsive: p.responsive ?? true,
+      last_updated: FIXED_NOW_SEC - p.last_updated_offset,
+      index: idx,
+    };
+  });
+
+  await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('machines')
+    .doc(machineId)
+    .set({ metrics: { processes: processMap } }, { merge: true });
+
+  await db
+    .collection('config')
+    .doc(siteId)
+    .collection('machines')
+    .doc(machineId)
+    .set(
+      {
+        processes: processes.map((p) => ({
+          id: p.id,
+          name: p.name,
+          launch_mode: 'always',
+          schedules: null,
+        })),
+      },
+      { merge: true },
+    );
+}
+
 /**
  * Plausible fleet — 10 machines mixing running, alerting and offline;
  * CPU/mem hand-tuned so it reads as a real operations view.
+ *
+ * Counts every consumer depends on, and which must not drift: 10 machines, of
+ * which exactly one (`touring-rig-04`) is offline. Five machines carry managed
+ * processes — nine in total, so the dashboard's "processes" stat tile reads 9;
+ * `lobby-display` deliberately carries none.
  */
 async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
   const siteId = 'site-A';
@@ -321,6 +418,24 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
     state: 'running' | 'alerting' | 'offline';
     sample: MetricsSample;
     seedOpts?: SeedMachineOptions;
+    /**
+     * Managed processes as the agent reports them. Deliberately absent on
+     * `lobby-display`, which `machine-card.spec.ts` and
+     * `add-process-dialog.spec.ts` frame — those docs screenshots want the bare
+     * card and the empty-state "add process" button.
+     */
+    processes?: ProcEntry[];
+    /**
+     * Per-device history overrides. Only `media-server-stage` carries them: the
+     * MetricsDetailPanel discovers its disk / gpu / nic tabs from the samples'
+     * `ds` / `gs` / `n` arrays, and ep07 b06 films that variety on the same
+     * fleet that trips the >5-machine title-bar switcher.
+     */
+    history?: {
+      disks?: HistoryDiskSpec[];
+      gpus?: HistoryGpuSpec[];
+      nics?: HistoryNicSpec[];
+    };
   };
 
   // 10 machines: 5 running, 4 alerting, 1 offline.
@@ -332,22 +447,149 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
     { machineId: 'museum-kiosk-2', state: 'running',
       sample: { cpuPct: 27, memPct: 40, memUsedGb: 12.7, gpuPct: 21, diskPct: 49 } },
 
-    { machineId: 'media-server-stage', state: 'alerting',
-      sample: { cpuPct: 86, memPct: 78, memUsedGb: 49.8, gpuPct: 71, diskPct: 88 } },
-    { machineId: 'nyc-signage-01', state: 'alerting',
-      sample: { cpuPct: 72, memPct: 81, memUsedGb: 25.9, gpuPct: 64, diskPct: 76 } },
-    { machineId: 'unreal-render-1', state: 'alerting',
-      sample: { cpuPct: 91, memPct: 65, memUsedGb: 41.4, gpuPct: 94, diskPct: 58 } },
-    { machineId: 'td-control-room', state: 'alerting',
-      sample: { cpuPct: 79, memPct: 70, memUsedGb: 22.4, gpuPct: 55, diskPct: 67 } },
+    {
+      machineId: 'media-server-stage',
+      state: 'alerting',
+      sample: { cpuPct: 86, memPct: 78, memUsedGb: 49.8, gpuPct: 71, diskPct: 88 },
+      processes: [
+        {
+          id: 'proc-mediaserver-main',
+          name: 'media-server.exe',
+          status: 'RUNNING',
+          pid: 7320,
+          exe_path: 'C:\\Owlette\\bin\\media-server.exe',
+          cwd: 'C:\\Owlette\\bin',
+          last_updated_offset: 12,
+        },
+        {
+          id: 'proc-td-playback',
+          name: 'TouchDesigner.exe',
+          status: 'RUNNING',
+          pid: 4218,
+          exe_path: 'C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe',
+          file_path: 'C:\\Owlette\\projects\\stage-show\\main.toe',
+          cwd: 'C:\\Owlette\\projects\\stage-show',
+          last_updated_offset: 18,
+        },
+        {
+          id: 'proc-watchtower',
+          name: 'watchtower.exe',
+          status: 'RUNNING',
+          pid: 2884,
+          exe_path: 'C:\\Owlette\\bin\\watchtower.exe',
+          cwd: 'C:\\Owlette\\bin',
+          last_updated_offset: 44,
+        },
+      ],
+      // Mirrors monitor-single-machine's focus specs so both scenarios show the
+      // same device set — 2 disks (each with a paired I/O tab), 2 nics, 1 gpu.
+      history: {
+        disks: [
+          { id: 'C:', pctBase: 88, ioReadBpsBase: 3_000_000, ioWriteBpsBase: 4_000_000, maxBps: 500_000_000 },
+          { id: 'D:', pctBase: 74, ioReadBpsBase: 80_000_000, ioWriteBpsBase: 12_000_000, maxBps: 3_000_000_000 },
+        ],
+        gpus: [{ id: 'NVIDIA RTX A5000', usageBase: 71, tempBase: 72 }],
+        nics: [
+          { id: 'Ethernet 1', txBpsBase: 250_000, rxBpsBase: 1_200_000, txUtilBase: 2, rxUtilBase: 12 },
+          { id: 'Tailscale', txBpsBase: 80_000, rxBpsBase: 95_000, txUtilBase: 0.5, rxUtilBase: 0.6 },
+        ],
+      },
+    },
+    {
+      machineId: 'nyc-signage-01',
+      state: 'alerting',
+      // The network-degraded machine: >100ms reads red on the collapsed row's
+      // ping chip, and the loss chip only renders above zero. ep07 b04 films it.
+      sample: {
+        cpuPct: 72, memPct: 81, memUsedGb: 25.9, gpuPct: 64, diskPct: 76,
+        latencyMs: 128, packetLossPct: 2.4,
+      },
+      processes: [
+        {
+          id: 'proc-signage-player',
+          name: 'BrightSignSigner.exe',
+          status: 'RUNNING',
+          pid: 1180,
+          exe_path: 'C:\\Owlette\\signage\\BrightSignSigner.exe',
+          cwd: 'C:\\Owlette\\signage',
+          last_updated_offset: 8,
+        },
+      ],
+    },
+    {
+      machineId: 'unreal-render-1',
+      state: 'alerting',
+      sample: { cpuPct: 91, memPct: 65, memUsedGb: 41.4, gpuPct: 94, diskPct: 58 },
+      processes: [
+        {
+          id: 'proc-unreal-render',
+          name: 'UnrealEditor.exe',
+          status: 'RUNNING',
+          pid: 6602,
+          exe_path: 'C:\\Program Files\\Epic Games\\UE_5.4\\Engine\\Binaries\\Win64\\UnrealEditor.exe',
+          file_path: 'C:\\Owlette\\projects\\tour\\Tour.uproject',
+          cwd: 'C:\\Owlette\\projects\\tour',
+          last_updated_offset: 21,
+        },
+        {
+          id: 'proc-render-queue',
+          name: 'render-queue.exe',
+          status: 'RUNNING',
+          pid: 6741,
+          exe_path: 'C:\\Owlette\\bin\\render-queue.exe',
+          cwd: 'C:\\Owlette\\bin',
+          last_updated_offset: 90,
+        },
+      ],
+    },
+    {
+      machineId: 'td-control-room',
+      state: 'alerting',
+      sample: { cpuPct: 79, memPct: 70, memUsedGb: 22.4, gpuPct: 55, diskPct: 67 },
+      processes: [
+        {
+          id: 'proc-td-control',
+          name: 'TouchDesigner.exe',
+          status: 'RUNNING',
+          pid: 3390,
+          exe_path: 'C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe',
+          file_path: 'C:\\Owlette\\projects\\control\\control.toe',
+          cwd: 'C:\\Owlette\\projects\\control',
+          last_updated_offset: 15,
+        },
+        {
+          id: 'proc-obs-stream',
+          name: 'obs64.exe',
+          status: 'RUNNING',
+          pid: 5102,
+          exe_path: 'C:\\Program Files\\obs-studio\\bin\\64bit\\obs64.exe',
+          cwd: 'C:\\Program Files\\obs-studio\\bin\\64bit',
+          last_updated_offset: 600,
+        },
+      ],
+    },
 
     { machineId: 'touring-rig-04', state: 'offline',
       sample: { cpuPct: 0, memPct: 0, memUsedGb: 0, gpuPct: 0, diskPct: 0 } },
 
     { machineId: 'lobby-2', state: 'running',
       sample: { cpuPct: 12, memPct: 22, memUsedGb: 7.0, gpuPct: 8, diskPct: 33 } },
-    { machineId: 'mainstage-led', state: 'running',
-      sample: { cpuPct: 18, memPct: 29, memUsedGb: 9.2, gpuPct: 14, diskPct: 38 } },
+    {
+      machineId: 'mainstage-led',
+      state: 'running',
+      sample: { cpuPct: 18, memPct: 29, memUsedGb: 9.2, gpuPct: 14, diskPct: 38 },
+      processes: [
+        {
+          id: 'proc-resolume',
+          name: 'avenue.exe',
+          status: 'RUNNING',
+          pid: 9024,
+          exe_path: 'C:\\Program Files\\Resolume Avenue\\Avenue.exe',
+          cwd: 'C:\\Program Files\\Resolume Avenue',
+          last_updated_offset: 30,
+        },
+      ],
+    },
   ];
 
   // Per-machine PRNG seed (stable: machineId → seed) so traces differ per row.
@@ -362,6 +604,10 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
     });
     await writeMachineMetrics(siteId, spec.machineId, spec.sample, heartbeatOffset);
 
+    if (spec.processes) {
+      await writeMachineProcesses(siteId, spec.machineId, spec.processes);
+    }
+
     // metrics_history so each row's inline sparkline renders; centered on the
     // machine's current sample so the trace flows into the present.
     if (spec.state !== 'offline') {
@@ -371,6 +617,7 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
         diskBase: spec.sample.diskPct,
         gpuBase: spec.sample.gpuPct,
         seed: seedFor(spec.machineId),
+        ...spec.history,
       });
     }
   }
@@ -624,17 +871,6 @@ async function seedControlProcessRestarting(): Promise<ScreenshotFixture> {
   const focusProcessId = 'proc-touchdesigner-main';
   await seedScreenshotSite(siteId, 'flagship');
 
-  type ProcEntry = {
-    id: string;
-    name: string;
-    status: 'RUNNING' | 'LAUNCHING' | 'STOPPED';
-    pid: number;
-    exe_path: string;
-    file_path?: string;
-    cwd: string;
-    last_updated_offset: number;
-    responsive?: boolean;
-  };
   type MachineSpec = {
     id: string;
     metrics: { cpuPct: number; memPct: number; memUsedGb: number; gpuPct: number; diskPct: number };
@@ -724,58 +960,11 @@ async function seedControlProcessRestarting(): Promise<ScreenshotFixture> {
     },
   ];
 
-  const db = getAdminDb();
-  for (let mi = 0; mi < machines.length; mi++) {
-    const m = machines[mi];
+  for (const m of machines) {
     await seedMachine(siteId, m.id, { heartbeatOffsetSec: 5 });
     await writeMachineMetrics(siteId, m.id, m.metrics, 5);
     await writeMetricsHistory(siteId, m.id, m.history);
-
-    const processMap: Record<string, unknown> = {};
-    m.processes.forEach((p, idx) => {
-      processMap[p.id] = {
-        name: p.name,
-        status: p.status,
-        pid: p.pid,
-        autolaunch: true,
-        launch_mode: 'always',
-        exe_path: p.exe_path,
-        file_path: p.file_path ?? '',
-        cwd: p.cwd,
-        priority: 'Normal',
-        visibility: 'Show',
-        time_delay: '0',
-        time_to_init: '5',
-        relaunch_attempts: '3',
-        responsive: p.responsive ?? true,
-        last_updated: FIXED_NOW_SEC - p.last_updated_offset,
-        index: idx,
-      };
-    });
-
-    await db
-      .collection('sites')
-      .doc(siteId)
-      .collection('machines')
-      .doc(m.id)
-      .set({ metrics: { processes: processMap } }, { merge: true });
-
-    await db
-      .collection('config')
-      .doc(siteId)
-      .collection('machines')
-      .doc(m.id)
-      .set(
-        {
-          processes: m.processes.map((p) => ({
-            id: p.id,
-            name: p.name,
-            launch_mode: 'always',
-            schedules: null,
-          })),
-        },
-        { merge: true },
-      );
+    await writeMachineProcesses(siteId, m.id, m.processes);
   }
 
   return {
@@ -905,6 +1094,27 @@ async function seedDeployRoostRolling(): Promise<ScreenshotFixture> {
   };
 }
 
+/**
+ * Conversation ids `diagnose-cortex-chat` writes, so a spec or a capture scene
+ * navigates to `/hoot/<id>` without re-deriving the naming. `ScreenshotFixture`
+ * carries only site/machine/process ids, and widening it for one scenario would
+ * push four optional fields onto every other consumer.
+ *
+ * The `cortex` spelling is the deliberate wire name (`lib/hoot/WIRE_NAMES.md`);
+ * the product and every word on screen say hoot.
+ */
+export const hootFocusConversationId = (siteId: string): string =>
+  `screenshot-cortex-${siteId}`;
+/** Tier-3 approve/deny card awaiting a decision. */
+export const hootApprovalConversationId = (siteId: string): string =>
+  `screenshot-cortex-approval-${siteId}`;
+/** A tool part left executing, so the turn survives a page reload. */
+export const hootRunningConversationId = (siteId: string): string =>
+  `screenshot-cortex-running-${siteId}`;
+/** Autonomous investigation — carries the sidebar's `auto` badge. */
+export const hootAutonomousConversationId = (siteId: string): string =>
+  `screenshot-cortex-auto-${siteId}`;
+
 /** Hoot chat with a realistic incident-investigation conversation. */
 async function seedDiagnoseHootChat(): Promise<ScreenshotFixture> {
   const siteId = 'site-A';
@@ -926,7 +1136,7 @@ async function seedDiagnoseHootChat(): Promise<ScreenshotFixture> {
   });
 
   // Focus conversation — the spec opens this one for the screenshot.
-  const focusConversationId = `screenshot-cortex-${siteId}`;
+  const focusConversationId = hootFocusConversationId(siteId);
   await db.collection('chats').doc(focusConversationId).set({
     userId,
     siteId,
@@ -979,6 +1189,137 @@ async function seedDiagnoseHootChat(): Promise<ScreenshotFixture> {
     ],
     createdAt: tsAgo(60 * 60 * 9),
     updatedAt: tsAgo(60 * 30),
+  });
+
+  // Tier-3 approval gate — its own conversation, NOT a fourth turn on the focus
+  // thread: `cortex-chat.spec.ts` and `diagnose.spec.ts` frame that thread for
+  // docs/marketing stills, and an amber approve/deny banner inside it would
+  // rewrite both PNGs.
+  //
+  // What the separation protects is the TRANSCRIPT, not every pixel.
+  // `cortex-chat.spec.ts` scopes its shot to `main` (:34-37) while the
+  // conversation list is an `<aside>` sibling, so it is fully insulated.
+  // `diagnose.spec.ts` shoots the viewport (`fullPage: false`, :74-77) with that
+  // sidebar in frame, so `preview-diagnose.png` DOES pick up the three
+  // conversations added below — accepted: the framed answer is unchanged and the
+  // landing asset re-bakes on the next `npm run screenshots`.
+  //
+  // `state: 'approval-requested'` + `approval.id` is what ChatWindow.tsx reads
+  // to hand ToolCallCard `approvalState: 'requested'`.
+  await db.collection('chats').doc(hootApprovalConversationId(siteId)).set({
+    userId,
+    siteId,
+    title: 'free up disk on media-server-stage',
+    category: 'Operations',
+    targetType: 'machine',
+    targetMachineId: machineId,
+    machineName: machineId,
+    source: 'user',
+    messages: [
+      {
+        id: 'msg-approval-user-1',
+        role: 'user',
+        parts: [
+          {
+            type: 'text',
+            text: 'clear the render cache on media-server-stage — it is at 88% disk.',
+          },
+        ],
+      },
+      {
+        id: 'msg-approval-assistant-1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'text',
+            text:
+              'the cache lives outside the paths my file tools can reach, so this needs a shell command. it will delete everything under C:\\Owlette\\projects\\stage-show\\renders older than 30 days — nothing the current roost manifest references.',
+          },
+          {
+            type: 'tool-run_powershell',
+            toolCallId: 'tool-run-powershell-1',
+            state: 'approval-requested',
+            approval: { id: 'approval-run-powershell-1' },
+            args: {
+              machineId,
+              script:
+                "Get-ChildItem 'C:\\Owlette\\projects\\stage-show\\renders' -Recurse -File | Where-Object LastWriteTime -lt (Get-Date).AddDays(-30) | Remove-Item -Force",
+            },
+          },
+        ],
+      },
+    ],
+    createdAt: tsAgo(60 * 25),
+    updatedAt: tsAgo(60 * 4),
+  });
+
+  // Async turns — a tool part still executing. `running` in ChatWindow.tsx is
+  // derived (no result, not awaiting approval, not denied), so a part with a
+  // state that never resolves is the whole trick; it survives a reload, which
+  // is exactly what ep12 b07 films. The matching `toolCommands` entry that
+  // would add a per-tool "cancel" button comes from the live turn runner and
+  // cannot be seeded — see the scene's note.
+  await db.collection('chats').doc(hootRunningConversationId(siteId)).set({
+    userId,
+    siteId,
+    title: 'restart the show stack',
+    category: 'Operations',
+    targetType: 'machine',
+    targetMachineId: machineId,
+    machineName: machineId,
+    source: 'user',
+    messages: [
+      {
+        id: 'msg-running-user-1',
+        role: 'user',
+        parts: [{ type: 'text', text: 'restart touchdesigner on media-server-stage.' }],
+      },
+      {
+        id: 'msg-running-assistant-1',
+        role: 'assistant',
+        parts: [
+          { type: 'text', text: 'restarting touchdesigner now — i will confirm once it reports back.' },
+          {
+            type: 'tool-restart_process',
+            toolCallId: 'tool-restart-process-1',
+            state: 'input-available',
+            args: { machineId, processName: 'TouchDesigner' },
+          },
+        ],
+      },
+    ],
+    createdAt: tsAgo(60 * 3),
+    updatedAt: tsAgo(20),
+  });
+
+  // Autonomous investigation — the `auto` badge ep12 b08 frames in the sidebar.
+  // There is no dashboard control that turns autonomous mode on, so the beat
+  // films the RESULT, never a switch.
+  await db.collection('chats').doc(hootAutonomousConversationId(siteId)).set({
+    siteId,
+    title: 'auto: touchdesigner crash on td-control-room',
+    category: 'Autonomous',
+    targetType: 'machine',
+    targetMachineId: 'td-control-room',
+    machineName: 'td-control-room',
+    source: 'autonomous',
+    autonomousSummary:
+      'touchdesigner exited 0xC0000005 at 03:14 and auto-restarted; no operator action needed.',
+    messages: [
+      {
+        id: 'msg-auto-assistant-1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'text',
+            text:
+              'touchdesigner exited with 0xC0000005 at 03:14 and the agent relaunched it 8 seconds later. logs point at the same CUDA driver fault as the earlier incident; the machine has been stable since. no escalation raised.',
+          },
+        ],
+      },
+    ],
+    createdAt: tsAgo(60 * 60 * 11),
+    updatedAt: tsAgo(60 * 60 * 10),
   });
 
   // Sidebar fillers — 1-turn conversations so the sidebar reads as real.

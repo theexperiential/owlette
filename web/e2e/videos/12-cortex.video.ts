@@ -1,22 +1,33 @@
 /**
- * Scene — episode 12, "hoot — manage machines by chat". All SCREEN capture,
- * no B-ROLL. VO durations from voiceover/out/12-cortex/ (ffprobe):
- *   b01 what hoot is             ~20.8s  → seeded incident chat at /hoot/<id>
- *   b02 one-time setup             ~21.2s  → account settings → hoot tab
- *   b03 pick what it's talking to  ~16.4s  → MachineSelector at the top of the chat
- *   b04 ask a question             ~23.0s  → scroll the user→assistant turn
- *   b05 ask it to act              ~36.8s  → scroll to the act/tool-call turn
- *   b06 guardrails                 ~30.3s  → per-machine hoot active/inactive toggle
+ * Scene — episode 12, "hoot: manage machines by chat". All SCREEN capture.
  *
- * b04/b05 scroll and highlight, never type: a real prompt needs a live LLM, so
- * the seeded conversation already holds the turn being narrated.
+ * Rendered VO (voiceover/out/12-cortex/, ffprobe):
+ *   b01 19.4s what hoot is · b02 32.5s one key, one place
+ *   b03 18.7s point it at something · b04 21.5s the diagnosis
+ *   b05 20.7s asking it to act · b06 25.4s the guardrails
+ *   b07 17.0s the tab isn't the boss · b08 23.6s hoot on its own
+ * EVERY beat was re-recorded for the v2 series — the 2026-05-30 take predates
+ * the rename, the approval gate and async turns. Do not reuse any of it.
  *
- * b05 must NOT script a "hoot pauses to confirm" beat — `requiresConfirmation`
- * is unimplemented and tier-3 tools auto-run.
+ * WIRE NAMES: this file, its scene id and the fixture key keep `cortex` on
+ * purpose (web/lib/hoot/WIRE_NAMES.md). Every word on screen says hoot.
  *
- * Reuses the screenshots harness verbatim (`diagnose-cortex-chat` fixture:
- * LLM key bypass, focus conversation `screenshot-cortex-${siteId}`, filler
- * chats, media-server-stage machine + 03:14 incident transcript).
+ * NEVER TYPE A PROMPT. A real answer needs a live LLM, so every beat films
+ * pre-seeded conversations by navigating and scrolling.
+ *
+ * Fixture `diagnose-cortex-chat`, which now seeds four conversations:
+ *   focus     — the 03:14 incident transcript (b01, b04)
+ *   approval  — a tier-3 `run_powershell` call awaiting approve/deny (b05)
+ *   running   — a tool part still executing, so it survives a reload (b07)
+ *   autonomous— an `auto`-badged investigation in the sidebar (b08)
+ * The approval and running parts live in their OWN conversations rather than as
+ * extra turns on the focus thread: `screenshots/cortex-chat.spec.ts` and
+ * `diagnose.spec.ts` capture that thread for docs, and an amber approval banner
+ * or a permanent spinner in it would rewrite both stills. That keeps the
+ * TRANSCRIPT identical in both; cortex-chat.spec.ts (scoped to `main`) is
+ * untouched, while diagnose.spec.ts shoots the viewport with the conversation
+ * sidebar in frame and so gains these three rows — accepted, and it re-bakes on
+ * the next `npm run screenshots`.
  *
  * Run:  cd web && npm run videos -- --grep "episode 12"
  * Out:  web/e2e/.output/videos/12-cortex.mp4
@@ -26,7 +37,12 @@ import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
 import { getAdminDb, E2E_BASE_URL } from '../helpers/emulator';
 import { TEST_USERS } from '../helpers/seed';
-import { seedScreenshotFixtures } from '../screenshots/fixtures';
+import {
+  seedScreenshotFixtures,
+  hootFocusConversationId,
+  hootApprovalConversationId,
+  hootRunningConversationId,
+} from '../screenshots/fixtures';
 import {
   recordScene,
   openForCapture,
@@ -36,9 +52,11 @@ import {
   centerInView,
 } from './video-helpers';
 
-test('episode 12 — hoot — manage machines by chat', async ({ browser }) => {
+test('episode 12 — hoot: manage machines by chat', async ({ browser }) => {
+  // ~200s of scripted dwell; the 300s default leaves too little slack if
+  // seeding slows. Same guard as the other long scenes (13/15/17).
+  test.setTimeout(8 * 60_000);
   const ctx = await seedScreenshotFixtures('diagnose-cortex-chat');
-  const conversationId = `screenshot-cortex-${ctx.siteId}`;
   try {
     // Auto-select the seeded site on load.
     await getAdminDb()
@@ -51,18 +69,18 @@ test('episode 12 — hoot — manage machines by chat', async ({ browser }) => {
       '12-cortex',
       { baseURL: E2E_BASE_URL, storageState: roleState('admin').storageState },
       async (page) => {
-        // [b01] what hoot is — settle on the seeded incident chat (~20.8s VO).
-        await openForCapture(page, `/hoot/${conversationId}`);
-        // Title + the assistant's "access violation" answer should be visible.
+        // [b01] what hoot is (~19.4s) — settle on the seeded incident chat with
+        // the `hoot` nav item highlighted in the header.
+        await openForCapture(page, `/hoot/${hootFocusConversationId(ctx.siteId)}`);
         await expect(
           page.getByText('03:14 incident', { exact: false }).first(),
         ).toBeVisible();
-        await expect(
-          page.getByText('access violation', { exact: false }),
-        ).toBeVisible();
-        await narrate(page, 'b01 hoot chat — settle', 21);
+        await expect(page.getByText('access violation', { exact: false })).toBeVisible();
+        await narrate(page, 'b01 hoot chat — settle', 20);
 
-        // [b02] one-time setup — account settings → hoot tab (~21.2s VO).
+        // [b02] one key, one place (~32.5s) — account settings → the hoot
+        // section: provider, model, and the api key field with its "encrypted
+        // with AES-256 and never leaves the server" line.
         const userMenuTrigger = page.getByTestId('user-menu-trigger');
         await clickWithCursor(page, userMenuTrigger);
         const accountSettingsItem = page.getByRole('menuitem', { name: /account settings/i });
@@ -73,80 +91,153 @@ test('episode 12 — hoot — manage machines by chat', async ({ browser }) => {
         await expect(settingsDialog).toBeVisible();
         const hootTab = settingsDialog.getByRole('button', { name: /^hoot$/i }).first();
         await clickWithCursor(page, hootTab);
-        // Provider + model + api key fields render.
         await expect(settingsDialog.locator('#llmProvider')).toBeVisible();
-        await expect(settingsDialog.locator('#llmApiKey')).toBeVisible();
-        await narrate(page, 'b02 hoot setup tab', 21);
+        await narrate(page, 'b02 provider + model', 14);
+        await centerInView(page, settingsDialog.locator('#llmApiKey'));
+        await highlight(page, settingsDialog.locator('#llmApiKey'), 2600);
+        await narrate(page, 'b02 the key, encrypted, server-side only', 19);
 
-        // Close the dialog before navigating back to the chat surface.
         await page.keyboard.press('Escape');
         await expect(settingsDialog).not.toBeVisible();
         await page.waitForTimeout(400);
 
-        // [b03] pick what it's talking to — machine selector at the top (~16.4s VO).
+        // [b03] point it at something (~18.7s). Opening the selector is enough —
+        // switching the target here would reset the chat before b04 films it.
         const machineSelector = page.getByLabel('hoot target');
         await centerInView(page, machineSelector);
         await highlight(page, machineSelector, 1800);
-        // Open the selector to surface the "All Machines" + per-machine options.
         await clickWithCursor(page, machineSelector);
         await page.waitForTimeout(400);
-        const allMachinesOption = page
-          .getByRole('option', { name: /All Machines/i })
-          .first();
+        const allMachinesOption = page.getByRole('option', { name: /All Machines/i }).first();
         await expect(allMachinesOption).toBeVisible();
-        await highlight(page, allMachinesOption, 1400);
-        await narrate(page, 'b03 selector open', 11);
-        // Close it without changing selection.
+        await highlight(page, allMachinesOption, 1600);
+        await narrate(page, 'b03 all machines vs one machine', 14);
         await page.keyboard.press('Escape');
         await page.waitForTimeout(300);
         await narrate(page, 'b03 close selector', 5);
 
-        // [b04] ask a question — frame the user→assistant turn (~23.0s VO).
+        // [b04] the diagnosis (~21.5s) — the question, the answer, and the
+        // inline checkLogs tool card, expanded.
         const userQuestion = page.getByText('what crashed at 3am?', { exact: false });
         await centerInView(page, userQuestion);
         await highlight(page, userQuestion, 1800);
-        await narrate(page, 'b04 user question', 6);
+        await narrate(page, 'b04 the question', 5);
         const assistantAnswer = page.getByText('access violation', { exact: false });
         await centerInView(page, assistantAnswer);
         await highlight(page, assistantAnswer, 2200);
-        await narrate(page, 'b04 hoot diagnosis', 11);
-        // The inline tool-call card the assistant turn renders.
-        const toolCard = page.getByText(/checklogs|checkLogs|matches/i).first(); // VERIFY — ToolCallCard label format
-        await centerInView(page, toolCard);
-        await highlight(page, toolCard, 1800);
-        await narrate(page, 'b04 tool-call inline', 6);
-
-        // [b05] ask it to act — frame the follow-up turn (~36.8s VO).
-        const followUp = page.getByText('is it likely to recur tonight?', { exact: false });
-        await centerInView(page, followUp);
-        await highlight(page, followUp, 1800);
-        await narrate(page, 'b05 follow-up question', 8);
-        const recurrenceAnswer = page.getByText('low risk for tonight', { exact: false });
-        await centerInView(page, recurrenceAnswer);
-        await highlight(page, recurrenceAnswer, 2200);
-        await narrate(page, 'b05 recurrence answer', 16);
-        // Highlight the ChatInput so viewers see where they'd type next.
-        const chatInput = page.getByRole('textbox').last(); // VERIFY — the ChatInput textarea is the last textbox on the page
-        await centerInView(page, chatInput);
-        await highlight(page, chatInput, 1800);
-        await narrate(page, 'b05 chat input frame', 13);
-
-        // [b06] guardrails — the per-machine hoot on/off toggle (~30.3s VO).
-        // Only renders for a SINGLE selected machine, so switch off "All
-        // Machines" onto media-server-stage.
-        await clickWithCursor(page, machineSelector);
-        await page.waitForTimeout(400);
-        const mediaServerOption = page
-          .getByRole('option', { name: /media-server-stage/i })
+        await narrate(page, 'b04 exit code, auto-restart, likely cause', 9);
+        // Scoped to the ToolCallCard root (`my-2 rounded-lg border
+        // overflow-hidden`, ToolCallCard.tsx:72-76) rather than to any text that
+        // happens to contain "checkLogs" — the bare text match used to resolve
+        // to the inner label span and the highlight framed one word.
+        const toolCard = page
+          .locator('div.rounded-lg.border.overflow-hidden')
+          .filter({ hasText: 'checkLogs' })
           .first();
-        await clickWithCursor(page, mediaServerOption);
-        await page.waitForTimeout(600);
+        await centerInView(page, toolCard);
+        await highlight(page, toolCard, 2000);
+        await clickWithCursor(page, toolCard.getByRole('button').first());
+        await narrate(page, 'b04 open the tool card', 8);
 
+        // [b05] asking it to act (~20.7s) — the tier-3 approve/deny card.
+        // Routine tools (restart a configured process, grab a screenshot) just
+        // run; a shell command stops and asks.
+        await openForCapture(page, `/hoot/${hootApprovalConversationId(ctx.siteId)}`);
+        const approvalCard = page
+          .locator('div.rounded-lg.border.overflow-hidden')
+          .filter({ hasText: 'hoot wants to run the privileged' })
+          .first();
+        await expect(approvalCard).toBeVisible();
+        await centerInView(page, approvalCard);
+        await highlight(page, approvalCard, 2800);
+        await narrate(page, 'b05 hoot wants to run run_powershell', 10);
+        await highlight(page, approvalCard.getByRole('button', { name: /^approve$/i }), 1800);
+        await highlight(page, approvalCard.getByRole('button', { name: /^deny$/i }), 1800);
+        // Neither is clicked: approving dispatches a real command to a machine
+        // that has no agent, and the card would fall into a spinner that never
+        // resolves.
+        await narrate(page, 'b05 approve, or deny', 11);
+
+        // [b06] the guardrails (~25.4s) — the shield toggle in the hoot header
+        // and the per-machine hoot switch.
+        // The shield's VISIBLE text is "approval required", but its accessible
+        // name is the tooltip (`aria-label={tooltip}`,
+        // HootApprovalToggle.tsx:65) — matching the on-screen label finds
+        // nothing.
+        const approvalToggle = page.getByRole('button', {
+          name: /require in-chat approval|run without approval/i,
+        });
+        await centerInView(page, approvalToggle);
+        await highlight(page, approvalToggle, 2400);
+        await narrate(page, 'b06 role ceiling + the site-wide approval gate', 12);
+
+        // The per-machine switch only renders for a SINGLE selected machine, so
+        // the target has to move off "all machines". Switching the target opens
+        // a FRESH conversation and empties the thread — that is the product
+        // behaviour b03 already narrated, so it reads as intentional here rather
+        // than as the chat losing its history.
+        const machineSelectorAgain = page.getByLabel('hoot target');
+        await clickWithCursor(page, machineSelectorAgain);
+        await page.waitForTimeout(400);
+        await clickWithCursor(
+          page,
+          page.getByRole('option', { name: /media-server-stage/i }).first(),
+        );
+        await page.waitForTimeout(600);
         const hootToggle = page.getByRole('button', { name: /hoot (active|inactive)/i });
         await expect(hootToggle).toBeVisible();
         await centerInView(page, hootToggle);
         await highlight(page, hootToggle, 2400);
-        await narrate(page, 'b06 hoot on/off toggle', 30);
+        await narrate(page, 'b06 per-machine hoot switch', 13);
+
+        // [b07] the tab isn't the boss (~17.0s) — a turn runs on the server.
+        //
+        // WHAT IS FILMABLE: the executing tool card, and that it is still there
+        // after a full reload. WHAT IS NOT: the per-tool "cancel" button and the
+        // square "stop response" button. Cancel needs a `toolCommands` entry
+        // keyed by toolCallId (ChatWindow.tsx:361-366) and stop needs the chat
+        // hook's live `isLoading` — both are written by the running turn, which
+        // no fixture can stand in for. Shoot those two controls on a dev site
+        // with a real key, or leave the beat on the reload.
+        await openForCapture(page, `/hoot/${hootRunningConversationId(ctx.siteId)}`);
+        const runningCard = page
+          .locator('div.rounded-lg.border.overflow-hidden')
+          .filter({ hasText: 'restart_process' })
+          .first();
+        await expect(runningCard).toBeVisible();
+        await expect(runningCard.getByText('executing...')).toBeVisible();
+        await centerInView(page, runningCard);
+        await highlight(page, runningCard, 2400);
+        await narrate(page, 'b07 a tool mid-execution', 7);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.waitForTimeout(1500);
+        const runningCardAfter = page
+          .locator('div.rounded-lg.border.overflow-hidden')
+          .filter({ hasText: 'restart_process' })
+          .first();
+        await expect(runningCardAfter.getByText('executing...')).toBeVisible();
+        await highlight(page, runningCardAfter, 2400);
+        await narrate(page, 'b07 reload — the turn is still there', 9);
+
+        // [b08] hoot on its own (~23.6s). There is NO dashboard control that
+        // turns autonomous mode on — `autonomousEnabled` is set out of band on
+        // sites/{siteId}/settings/cortex — so this beat films the RESULT (an
+        // `auto`-badged conversation in the sidebar) and the escalation-alerts
+        // switch, never a "switch it on" click.
+        const autoBadge = page.getByText('auto', { exact: true }).first();
+        await centerInView(page, autoBadge);
+        await highlight(page, autoBadge, 2600);
+        await narrate(page, 'b08 an autonomous investigation in the sidebar', 11);
+
+        await clickWithCursor(page, page.getByTestId('user-menu-trigger'));
+        await clickWithCursor(page, page.getByRole('menuitem', { name: /account settings/i }));
+        const settingsAgain = page.getByRole('dialog');
+        await expect(settingsAgain).toBeVisible();
+        await clickWithCursor(page, settingsAgain.getByRole('button', { name: /^alerts$/i }).first());
+        const escalationToggle = settingsAgain.getByText('hoot escalation alerts', { exact: false });
+        await centerInView(page, escalationToggle);
+        await highlight(page, escalationToggle, 2600);
+        await narrate(page, 'b08 escalation email instead of silence', 13);
       },
     );
   } finally {

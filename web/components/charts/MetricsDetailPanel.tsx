@@ -932,10 +932,14 @@ export function MetricsDetailPanel({
             </span>
           )}
           <div className="flex-1" />
+          {/* Icon-only, and the panel has no key handler — Escape does NOT close
+              it. The testid is the only stable way for a spec or a capture scene
+              to dismiss the panel. */}
           <Button
             variant="ghost"
             size="sm"
             onClick={onClose}
+            data-testid="metrics-detail-close-button"
             className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0 shrink-0"
           >
             <X className="h-4 w-4" />

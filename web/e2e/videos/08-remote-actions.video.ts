@@ -1,24 +1,35 @@
 /**
- * Scene — episode 7, "remote actions: reboot, screenshot, live view".
- * All seven beats are SCREEN beats. Rendered VO lengths
- * (voiceover/out/08-remote-actions/):
- *   b01 12.0s actions menu | b02 15.5s screenshot | b03 16.2s live view
- *   b04 18.1s reboot | b05 14.8s shutdown + schedule gear | b06 12.9s mute
- *   b07 46.8s permission tiers
+ * Scene — episode 8, "remote actions: restart, screenshot, live view".
  *
- * Fixture `dashboard-mixed-states`, admin storageState (site-admin on site-A so
- * every menu item renders). Target card `media-server-stage` is online, which
- * is what gates screenshot / live view / restart / shutdown.
+ * Rendered VO (voiceover/out/08-remote-actions/, ffprobe):
+ *   b01 12.0s the actions menu · b02 15.5s take a screenshot
+ *   b03 16.2s live view · b04 20.0s restart
+ *   b05 20.5s shutdown + restarts on a timer · b06 12.9s mute alerts
+ *   b07 26.4s who can do what · b08 15.2s when an action doesn't go through
+ * b04, b05 and b07 were revoiced for the v2 series.
  *
- * Testids: machine-context-menu-{trigger,reboot,shutdown,revoke-token,remove}.
- * screenshot / live view / mute alerts have no testid — matched by menu text
- * (marked VERIFY below).
+ * TWO CLIPS. The main pass runs as the site ADMIN, whose menu carries every
+ * item. b08 needs the same menu as a MEMBER sees it — the admin-only block
+ * simply absent — which is a different session, so it is a second `recordScene`
+ * with the member storageState, landing as `08-remote-actions-b08-member.mp4`.
+ * The beat's closing dissolve to the owlette desktop app is a native insert.
  *
- * Run:  cd web && npm run videos -- --grep "episode 7"
+ * ONE RULE THROUGHOUT: every press of the ⋮ trigger is `moveCursorTo` +
+ * `click({ force: true })`, never `clickWithCursor`. The trigger sits inside a
+ * Radix Tooltip (MachineContextMenu.tsx:187-207); hovering mounts the tooltip
+ * portal over it and an unforced click times out after 15s. There is no
+ * exception to this in the file — a single unforced press is what used to
+ * contradict the scene's own comment.
+ *
+ * Fixture `dashboard-mixed-states`. Target card `media-server-stage` is online,
+ * which is what gates screenshot / live view / restart / shutdown.
+ *
+ * Run:  cd web && npm run videos -- --grep "episode 8"
  * Out:  web/e2e/.output/videos/08-remote-actions.mp4
+ *       web/e2e/.output/videos/08-remote-actions-b08-member.mp4
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { roleState } from '../helpers/roles';
 import { getAdminDb, E2E_BASE_URL } from '../helpers/emulator';
 import { TEST_USERS } from '../helpers/seed';
@@ -33,13 +44,32 @@ import {
   moveCursorTo,
 } from './video-helpers';
 
-test('episode 7 — remote actions: reboot, screenshot, live view', async ({ browser }) => {
+/** The one safe way to press the ⋮ trigger — see the file header. */
+async function openMachineMenu(page: Page, trigger: Locator): Promise<void> {
+  await moveCursorTo(page, trigger);
+  await page.waitForTimeout(250);
+  await trigger.click({ force: true });
+  await page.waitForTimeout(600);
+}
+
+/**
+ * Close whatever dialog is open and reopen the menu. 900ms: the dialog's exit
+ * animation plus focus restore ends around 700ms, and reopening earlier leaves
+ * the menu DOM transitional and the next lookup times out.
+ */
+async function reopenMachineMenu(page: Page, trigger: Locator): Promise<void> {
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(900);
+  await openMachineMenu(page, trigger);
+}
+
+test('episode 8 — remote actions: restart, screenshot, live view', async ({ browser }) => {
   const ctx = await seedScreenshotFixtures('dashboard-mixed-states');
   try {
-    await getAdminDb()
-      .collection('users')
-      .doc(TEST_USERS.admin.uid)
-      .set({ lastSiteId: ctx.siteId }, { merge: true });
+    const db = getAdminDb();
+    for (const uid of [TEST_USERS.admin.uid, TEST_USERS.member.uid]) {
+      await db.collection('users').doc(uid).set({ lastSiteId: ctx.siteId }, { merge: true });
+    }
 
     await recordScene(
       browser,
@@ -49,117 +79,138 @@ test('episode 7 — remote actions: reboot, screenshot, live view', async ({ bro
         await openForCapture(page, '/dashboard');
         await expect(page.getByTestId('machine-card')).toHaveCount(10);
 
-        // The canonical target throughout: media-server-stage (online, alerting).
         const focusCard = page
           .getByTestId('machine-card')
           .filter({ hasText: 'media-server-stage' });
         await centerInView(page, focusCard);
-
-        // [b01] the actions menu (~12.0s VO).
-        //
-        // The ⋮ trigger sits inside a Radix Tooltip (MachineContextMenu.tsx:173-193):
-        // hovering mounts the tooltip portal over the trigger and the follow-up
-        // click times out after 15s. So every trigger press here is
-        // moveCursorTo (keeps cursor motion on camera) + click({ force: true })
-        // rather than clickWithCursor.
         const menuTrigger = focusCard.getByTestId('machine-context-menu-trigger');
-        await moveCursorTo(page, menuTrigger);
-        await page.waitForTimeout(250);
-        await menuTrigger.click({ force: true });
-        await page.waitForTimeout(600);
-        await narrate(page, 'b01 menu opens', 12);
 
-        // [b02] screenshot — ScreenshotDialog mounts with history sidebar and
-        // download/fullscreen controls. The sidebar renders even before a real
-        // capture returns, so the dialog reads immediately (~15.5s).
-        const screenshotItem = page.getByRole("menuitem", { name: "screenshot" }); // VERIFY: DropdownMenuItem text is exactly "screenshot"
+        // [b01] the actions menu (~12.0s).
+        await openMachineMenu(page, menuTrigger);
+        await narrate(page, 'b01 menu opens', 13);
+
+        // [b02] take a screenshot (~15.5s). The history sidebar renders before a
+        // real capture returns, so the dialog reads immediately.
+        const screenshotItem = page.getByRole('menuitem', { name: 'screenshot' });
         await clickWithCursor(page, screenshotItem);
         await page.waitForTimeout(900);
-        await narrate(page, 'b02 screenshot dialog', 15);
+        await narrate(page, 'b02 screenshot dialog', 16);
 
-        // Close and reopen the menu. Same forced click as b01. 900ms wait: the
-        // dialog's exit animation + focus restore ends ~700ms, and reopening
-        // earlier leaves the menu DOM transitional and the next lookup times out.
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(900);
-        await moveCursorTo(page, menuTrigger);
-        await page.waitForTimeout(250);
-        await menuTrigger.click({ force: true });
-        await page.waitForTimeout(700);
-
-        // [b03] live view — LiveViewModal with interval selector and start/stop
-        // (~16.2s). No `exact: true`: MachineContextMenu.tsx:296-299 renders
-        // `<Eye/>\n live view`, so the accessible name carries leading whitespace.
+        // [b03] live view (~16.2s). No `exact: true`: the item renders
+        // `<Eye/>\n live view`, so its accessible name carries leading space.
+        await reopenMachineMenu(page, menuTrigger);
         const liveViewItem = page.getByRole('menuitem', { name: 'live view' });
         await clickWithCursor(page, liveViewItem);
         await page.waitForTimeout(900);
-        await narrate(page, 'b03 live view modal', 16);
+        await narrate(page, 'b03 live view modal', 17);
 
-        // Close live view, reopen the menu (forced click as in b01).
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(400);
-        await moveCursorTo(page, menuTrigger);
-        await page.waitForTimeout(250);
-        await menuTrigger.click({ force: true });
-        await page.waitForTimeout(500);
-
-        // [b04] reboot — RestartDialog with the 30s countdown copy. Not
-        // confirmed; we only frame the safety window (~18.1s).
-        const rebootItem = focusCard.page().getByTestId('machine-context-menu-reboot');
+        // [b04] restart (~20.0s). RestartDialog with the 30s countdown copy. Not
+        // confirmed on camera: the countdown only starts after confirm, and the
+        // pill's cancel affordance hides in the final 5 seconds (Windows
+        // `shutdown /a` is unreliable that late), so a real cancel take needs
+        // time on the clock and belongs to a separate pass.
+        await reopenMachineMenu(page, menuTrigger);
+        const rebootItem = page.getByTestId('machine-context-menu-reboot');
         await clickWithCursor(page, rebootItem);
         await page.waitForTimeout(700);
-        await narrate(page, 'b04 reboot dialog', 18);
+        await narrate(page, 'b04 restart confirm + 30s copy', 21);
 
-        // Cancel the reboot confirmation and reopen the menu.
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(400);
-        await clickWithCursor(page, menuTrigger);
-        await page.waitForTimeout(500);
-
-        // [b05] shutdown — same 30s safety copy, then reopen the menu to show
-        // the inline "schedule restarts" gear (~14.8s, split half/half).
-        const shutdownItem = focusCard.page().getByTestId('machine-context-menu-shutdown');
+        // [b05] shutdown, and restarts on a timer (~20.5s).
+        await reopenMachineMenu(page, menuTrigger);
+        const shutdownItem = page.getByTestId('machine-context-menu-shutdown');
         await clickWithCursor(page, shutdownItem);
         await page.waitForTimeout(700);
-        await narrate(page, 'b05 shutdown dialog', 8);
-        // Forced click as in b01.
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(400);
-        await moveCursorTo(page, menuTrigger);
-        await page.waitForTimeout(250);
-        await menuTrigger.click({ force: true });
-        await page.waitForTimeout(500);
-        // Settings2 button in the "restart machine" row; no testid, so matched
-        // by its tooltip text.
-        const scheduleGear = page.getByRole('button', { name: 'schedule restarts' }); // VERIFY: tooltip text "schedule restarts" — the button itself has no aria-label, so this depends on TooltipTrigger surfacing the tooltip content as the accessible name
+        await narrate(page, 'b05 shutdown dialog', 10);
+        await reopenMachineMenu(page, menuTrigger);
+        // The gear in the "restart machine" row is icon-only and its label lives
+        // in a tooltip portal, so `getByRole('button', { name: 'schedule
+        // restarts' })` cannot resolve it — that name belongs to the standalone
+        // item an OFFLINE machine's menu shows instead. Testid added alongside
+        // this scene.
+        const scheduleGear = page.getByTestId('machine-context-menu-schedule-restarts-gear');
         await centerInView(page, scheduleGear);
         await highlight(page, scheduleGear, 2400);
-        await narrate(page, 'b05 schedule gear', 7);
+        await narrate(page, 'b05 schedule-restarts gear', 6);
+        // The offline machine's menu carries it as a full item — schedules are
+        // written to the config doc and applied when the agent reconnects.
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(600);
+        const offlineCard = page
+          .getByTestId('machine-card')
+          .filter({ hasText: 'touring-rig-04' });
+        await centerInView(page, offlineCard);
+        const offlineTrigger = offlineCard.getByTestId('machine-context-menu-trigger');
+        await openMachineMenu(page, offlineTrigger);
+        await highlight(
+          page,
+          page.getByTestId('machine-context-menu-schedule-restarts'),
+          2400,
+        );
+        await narrate(page, 'b05 schedulable while offline', 5);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(600);
 
-        // [b06] mute alerts — never gated by online state or role (~12.9s).
-        const muteItem = page.getByRole("menuitem", { name: "mute alerts" }); // VERIFY: DropdownMenuItem renders "mute alerts" when isMuted=false (default for the seed)
+        // [b06] mute alerts (~12.9s) — never gated by online state or role.
+        await centerInView(page, focusCard);
+        await openMachineMenu(page, menuTrigger);
+        const muteItem = page.getByRole('menuitem', { name: 'mute alerts' });
         await centerInView(page, muteItem);
         await highlight(page, muteItem, 2600);
-        await narrate(page, 'b06 mute alerts', 13);
+        await narrate(page, 'b06 mute alerts', 14);
 
-        // [b07] permission tiers, ~46.8s total:
-        //   member+:     screenshot, live view                    (~12s)
-        //   site-admin:  restart, shutdown, remove machine        (~14s)
-        //   superadmin:  revoke token                             (~10s)
-        //   everyone:    mute alerts                              (~11s)
-        await highlight(page, screenshotItem, 2400);
-        await highlight(page, liveViewItem, 2400);
-        await narrate(page, 'b07 perms — member', 12);
-        await highlight(page, rebootItem, 2400);
-        await highlight(page, shutdownItem, 2400);
-        const removeItem = focusCard.page().getByTestId('machine-context-menu-remove');
-        await highlight(page, removeItem, 2400);
-        await narrate(page, 'b07 perms — site admin', 14);
-        const revokeItem = focusCard.page().getByTestId('machine-context-menu-revoke-token');
-        await highlight(page, revokeItem, 2600);
-        await narrate(page, 'b07 perms — superadmin', 10);
-        await highlight(page, muteItem, 2600);
-        await narrate(page, 'b07 perms — everyone', 11);
+        // [b07] who can do what (~26.4s), grouped as the narration groups them.
+        //
+        // revoke token is a SITE ADMIN action as of e0c8341a — the site-scoped
+        // AGENT_TOKEN_REVOKE capability. It used to 403 for admins because the
+        // route still demanded a superadmin capability; do NOT reinstate the old
+        // "superadmin only" framing.
+        await highlight(page, screenshotItem, 2200);
+        await highlight(page, liveViewItem, 2200);
+        await highlight(page, page.getByTestId('machine-context-menu-view-displays'), 2200);
+        await narrate(page, 'b07 perms — any member on the site', 9);
+        await highlight(page, rebootItem, 2000);
+        await highlight(page, page.getByTestId('machine-context-menu-schedule-restarts-gear'), 2000);
+        await highlight(page, shutdownItem, 2000);
+        await highlight(page, page.getByTestId('machine-context-menu-revoke-token'), 2000);
+        await highlight(page, page.getByTestId('machine-context-menu-remove'), 2000);
+        await narrate(page, 'b07 perms — site admin', 12);
+        await highlight(page, muteItem, 2400);
+        await narrate(page, 'b07 perms — everyone', 6);
+
+        // The revoke dialog offers BOTH choices and the beat names them, so put
+        // them on camera before the menu closes.
+        await clickWithCursor(page, page.getByTestId('machine-context-menu-revoke-token'));
+        const revokeDialog = page.getByRole('dialog');
+        await expect(revokeDialog).toBeVisible();
+        await narrate(page, 'b07 revoke current vs revoke all for hostname', 4);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(500);
+      },
+    );
+
+    // ── b08, second clip: the same menu as a MEMBER sees it (~15.2s) ──────────
+    // Members get screenshot / live view / view displays / mute alerts and
+    // nothing else; the admin block is absent rather than disabled. The beat's
+    // closing dissolve to the owlette desktop app is a NATIVE insert, filmed by
+    // the desktop-screenshots video sibling.
+    await recordScene(
+      browser,
+      '08-remote-actions-b08-member',
+      { baseURL: E2E_BASE_URL, storageState: roleState('member').storageState },
+      async (page) => {
+        await openForCapture(page, '/dashboard');
+        const focusCard = page
+          .getByTestId('machine-card')
+          .filter({ hasText: 'media-server-stage' });
+        await centerInView(page, focusCard);
+        const menuTrigger = focusCard.getByTestId('machine-context-menu-trigger');
+        await openMachineMenu(page, menuTrigger);
+        // Proof the frame is worth cutting: the admin verbs are not in the DOM.
+        await expect(page.getByTestId('machine-context-menu-reboot')).toHaveCount(0);
+        await expect(page.getByTestId('machine-context-menu-shutdown')).toHaveCount(0);
+        await expect(page.getByTestId('machine-context-menu-revoke-token')).toHaveCount(0);
+        await expect(page.getByTestId('machine-context-menu-remove')).toHaveCount(0);
+        await narrate(page, 'b08 the member menu — admin block absent', 16);
       },
     );
   } finally {

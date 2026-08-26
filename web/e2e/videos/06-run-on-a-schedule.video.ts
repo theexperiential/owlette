@@ -1,23 +1,32 @@
 /**
- * Scene — episode 5, "run apps on a schedule". Every beat is a SCREEN beat.
- * (b06's "cut to the agent GUI" line is a native-capture shot assembled in the
- * editor; here we just hold on the web for the full dwell.)
+ * Scene — episode 6, "run apps on a schedule".
  *
- * Beats and rendered VO durations (voiceover/out/06-run-on-a-schedule/):
- *   b01 ≈ 20.0s — why schedule (frame the lobby-display card)
- *   b02 ≈ 12.8s — switch to scheduled (open process for edit, flip launch mode)
- *   b03 ≈ 19.5s — the schedule editor (configure-schedule dialog, day pills + time range)
- *   b04 ≈ 15.9s — overnight windows (set 23:00 → 06:00, "+1 day" badge appears)
- *   b05 ≈ 21.2s — presets (preset pills + new preset)
- *   b06 ≈ 22.7s — outside the window (save schedule + warning)
+ * Rendered VO (voiceover/out/06-run-on-a-schedule/, ffprobe):
+ *   b01 20.0s why schedule · b02 12.8s switch to scheduled
+ *   b03 19.5s the schedule editor · b04 15.9s overnight windows
+ *   b05 21.2s presets · b06 10.6s save it · b07 20.3s the machine can edit them too
+ *
+ * b07 IS A NATIVE SEGMENT. Its first half is the owlette desktop app's own
+ * schedule editor (aria-label "edit schedule", testid `edit-schedule`) — the
+ * Tauri app, driven over WebView2 CDP by the `desktop-screenshots` harness, not
+ * by this scene and NOT by pywinauto. All this scene supplies for b07 is cover
+ * footage plus the web-side contrast the beat lands on: the preset pills, which
+ * the local app does not have.
  *
  * Uses the `automate-schedule-editor` screenshot fixture + admin storageState.
- * That fixture seeds no processes (its stills frame the reboot schedule), so this
- * scene pre-seeds a "show player" in `launch_mode: 'always'`: b05/b06 need the
- * standalone ScheduleEditor dialog (preset bar + "save schedule") reached from
- * the row's gear, not the inline ProcessDialog editor.
+ * That fixture seeds no processes (its stills frame the reboot schedule), so
+ * this scene pre-seeds a "show player" in `launch_mode: 'always'`: b05/b06 need
+ * the standalone ScheduleEditor dialog (preset bar + "save schedule") reached
+ * from the row's gear, not the inline ProcessDialog editor.
  *
- * Run:  cd web && npm run videos -- --grep "episode 5"
+ * TIMEZONE: do NOT frame the chip under the "configure schedule" title, or the
+ * "times in …" label in the process dialog. The chip is labelled `source="site"`,
+ * but the agent can never read the site document (firestore.rules scopes it to
+ * its own machine subtree), so `site_timezone` is always None and every window
+ * is evaluated on the machine's own local clock. Site-time evaluation is
+ * designed, not wired. No timezone claim is spoken either way.
+ *
+ * Run:  cd web && npm run videos -- --grep "episode 6"
  * Out:  web/e2e/.output/videos/06-run-on-a-schedule.mp4
  */
 
@@ -25,7 +34,7 @@ import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
 import { getAdminDb, E2E_BASE_URL } from '../helpers/emulator';
 import { TEST_USERS } from '../helpers/seed';
-import { seedScreenshotFixtures } from '../screenshots/fixtures';
+import { seedScreenshotFixtures, FIXED_NOW_MS } from '../screenshots/fixtures';
 import {
   recordScene,
   openForCapture,
@@ -36,12 +45,9 @@ import {
   typewrite,
 } from './video-helpers';
 
-// Mirror of fixtures.ts FIXED_NOW_MS — duplicated here to avoid a new import
-// (per scene authoring rules). Keep in sync if the constant ever changes.
-const FIXED_NOW_MS = Date.UTC(2026, 3, 15, 14, 30, 0);
 const FIXED_NOW_SEC = Math.floor(FIXED_NOW_MS / 1000);
 
-test('episode 5 — run apps on a schedule', async ({ browser }) => {
+test('episode 6 — run apps on a schedule', async ({ browser }) => {
   const ctx = await seedScreenshotFixtures('automate-schedule-editor');
   try {
     const db = getAdminDb();
@@ -51,8 +57,8 @@ test('episode 5 — run apps on a schedule', async ({ browser }) => {
       .doc(TEST_USERS.admin.uid)
       .set({ lastSiteId: ctx.siteId }, { merge: true });
 
-    // Pre-seed a process on lobby-display so the user has something to "open
-    // for edit" in b02 and a row with a schedule gear to click for b03+.
+    // Pre-seed a process on lobby-display so b02 has something to "open for
+    // edit" and b03+ has a row with a schedule gear.
     const lobbyMachineId = 'lobby-display';
     const showProcId = 'proc-lobby-show';
     await db
@@ -120,87 +126,112 @@ test('episode 5 — run apps on a schedule', async ({ browser }) => {
         await expect(lobbyCard).toBeVisible();
         await centerInView(page, lobbyCard);
         await highlight(page, lobbyCard, 2600);
-        await narrate(page, 'b01 why schedule', 20);
+        await narrate(page, 'b01 why schedule', 21);
 
-        // [b02] switch to scheduled — open the process for edit, flip launch mode (~12.8s).
-        // The process list is EXPANDED by default (seed.ts user prefs and the
-        // AuthContext default), so the collapsed trigger doesn't exist on load and
-        // the single seeded process's pencil is the only edit button on this card.
+        // [b02] switch to scheduled (~12.8s). The process list is EXPANDED by
+        // default (seed.ts user prefs + the AuthContext default), so the single
+        // seeded process's pencil is the only edit button on this card.
         const editButton = lobbyCard.locator('button:has(svg.lucide-pencil)').first();
         await clickWithCursor(page, editButton);
-        await expect(page.getByRole('dialog')).toBeVisible();
-        // In the ProcessDialog launch-mode segmented control, click "scheduled".
-        // The inline schedule editor + WeekSummaryBar appear in the dialog.
-        const scheduledPill = page.getByRole('button', { name: 'scheduled' }); // VERIFY: segmented control button literal text
-        await clickWithCursor(page, scheduledPill);
-        await narrate(page, 'b02 flip to scheduled', 13);
+        const processDialog = page.getByRole('dialog');
+        await expect(processDialog).toBeVisible();
+        // Frame the gear while the mode still reads "always on": it opens the
+        // same schedule section in EVERY launch mode, storing the windows for
+        // later rather than switching anything.
+        await highlight(page, page.getByTestId('process-dialog-configure-schedule'), 2200);
+        await narrate(page, 'b02 the gear works in any mode', 6);
+        await clickWithCursor(page, processDialog.getByRole('button', { name: 'scheduled' }));
+        await narrate(page, 'b02 inline editor + week bar appear', 8);
 
-        // [b03] the schedule editor — save the process (now scheduled), then open
-        // the standalone configure-schedule dialog via the row's gear (~19.5s).
-        const saveProcessButton = page.getByRole('button', { name: 'save changes' }); // VERIFY: ProcessDialog footer in edit mode
-        await clickWithCursor(page, saveProcessButton);
-        await expect(page.getByRole('dialog')).not.toBeVisible();
-        // The row is now in scheduled mode; the gear (Settings2 icon) appears
-        // next to the "Scheduled" pill with tooltip "configure schedule".
-        await page.waitForTimeout(500);
+        // [b03] the schedule editor (~19.5s). Save the process (now scheduled),
+        // then open the STANDALONE configure-schedule dialog from the row gear —
+        // that is the one carrying the preset bar and "save schedule".
+        await clickWithCursor(page, processDialog.getByRole('button', { name: 'save changes' }));
+        await expect(processDialog).not.toBeVisible();
+        await page.waitForTimeout(600);
         const lobbyCardAfter = page
           .getByTestId('machine-card')
           .filter({ hasText: 'lobby-display' });
-        const scheduledRow = lobbyCardAfter
-          .locator('div')
-          .filter({ hasText: /^show-player\.exe/ })
-          .first(); // VERIFY: same row, re-located after Firestore listener tick
-        const gearButton = scheduledRow.getByRole('button', { name: /configure schedule/i }); // VERIFY: tooltip-driven accessible name on the gear button
-        await clickWithCursor(page, gearButton);
-        // Standalone ScheduleEditor dialog — title "configure schedule".
+        // Icon-only gear inside the "scheduled" segment; its label lives in a
+        // tooltip portal, so the testid is the only handle that resolves before
+        // a hover (added alongside this scene).
+        const rowGear = lobbyCardAfter.getByTestId('process-row-configure-schedule').first();
+        await centerInView(page, rowGear);
+        await clickWithCursor(page, rowGear);
         await expect(page.getByText('configure schedule', { exact: true })).toBeVisible();
-        await narrate(page, 'b03 schedule editor', 19);
+        await narrate(page, 'b03 day pills + time range', 20);
 
-        // [b04] overnight windows — change the time range to 23:00 → 06:00 (~15.9s).
-        // Default block is 08:00–17:00; the two TimePickers (start, stop) share a
-        // `title` prefix. Setting both renders the "+1 day" badge on the stop side.
-        const timeInputs = page.locator('input[title^="Type a time"]'); // VERIFY: TimePicker inputs in ScheduleBlocksEditor; default block has two (start/stop)
+        // [b04] overnight windows (~15.9s). The seeded admin preference is 12h
+        // and the default block ends 17:00, so a bare "06:00" parses as 6 PM and
+        // the frame would read 11pm→6pm — contradicting the narration. Type
+        // "6am" and let the picker normalise it.
+        const timeInputs = page.locator('input[title^="Type a time"]');
         await clickWithCursor(page, timeInputs.nth(0));
-        await timeInputs.nth(0).fill('23:00');
+        await timeInputs.nth(0).fill('11pm');
         await page.keyboard.press('Enter');
         await clickWithCursor(page, timeInputs.nth(1));
-        await timeInputs.nth(1).fill('06:00');
+        await timeInputs.nth(1).fill('6am');
         await page.keyboard.press('Enter');
-        // Highlight the "+1 day" badge that should now appear.
-        const plusOneDay = page.getByText('+1 day', { exact: true }); // VERIFY: literal label rendered by ScheduleBlocksEditor when range crosses midnight
-        await highlight(page, plusOneDay, 2000);
-        await narrate(page, 'b04 overnight + badge', 16);
+        const plusOneDay = page.getByText('+1 day', { exact: true });
+        await expect(plusOneDay).toBeVisible();
+        await highlight(page, plusOneDay, 2400);
+        await narrate(page, 'b04 crosses midnight, +1 day badge', 17);
 
-        // [b05] presets — pan the preset pill row, then click "new preset" (~21.2s).
-        const businessHoursPill = page.getByRole('button', { name: 'business hours' }); // VERIFY: built-in preset name; rendered as a pill <button>
-        const extendedHoursPill = page.getByRole('button', { name: 'extended hours' });
-        const weekday24Pill = page.getByRole('button', { name: 'weekday 24h' });
-        const allDayPill = page.getByRole('button', { name: '24/7' });
+        // [b05] presets (~21.2s).
+        const businessHoursPill = page.getByRole('button', { name: 'business hours' });
         await highlight(page, businessHoursPill, 1400);
-        await highlight(page, extendedHoursPill, 1400);
-        await highlight(page, weekday24Pill, 1400);
-        await highlight(page, allDayPill, 1400);
-        // Apply "business hours" so the block resets to a clean weekday 09–17.
+        await highlight(page, page.getByRole('button', { name: 'extended hours' }), 1400);
+        await highlight(page, page.getByRole('button', { name: 'weekday 24h' }), 1400);
+        await highlight(page, page.getByRole('button', { name: '24/7' }), 1400);
+        await narrate(page, 'b05 built-in preset pills', 10);
+        // Apply "business hours" so the block resets to a clean weekday 09–17 —
+        // FIXED_NOW is 07:30 in the site's timezone, i.e. OUTSIDE it, which is
+        // what puts b06's banner on screen.
         await clickWithCursor(page, businessHoursPill);
         await page.waitForTimeout(400);
-        // Click the "new preset" dashed-border pill.
-        const newPresetButton = page.getByRole('button', { name: /new preset/i }); // VERIFY: button text "new preset" with Plus icon
-        await clickWithCursor(page, newPresetButton);
-        // Inline input appears; type a name.
-        const presetNameInput = page.getByPlaceholder('preset name');
-        await typewrite(page, presetNameInput, 'opening hours', 55);
-        await narrate(page, 'b05 presets', 21);
+        await clickWithCursor(page, page.getByRole('button', { name: /new preset/i }));
+        await typewrite(page, page.getByPlaceholder('preset name'), 'opening hours', 55);
+        await narrate(page, 'b05 save your own preset', 11);
 
-        // [b06] outside the window — save and hold on the result (warning banner
-        // when FIXED_NOW is outside the window) (~22.7s). Escape first so the inline
-        // "new preset" form doesn't intercept the save click.
-        await page.keyboard.press('Escape');
+        // [b06] save it (~10.6s). Dismiss the inline "new preset" form with its
+        // own X, never Escape — Escape closes the WHOLE dialog and takes "save
+        // schedule" with it. The X is icon-only and unnamed, so it is reached
+        // through the form that owns it.
+        await clickWithCursor(
+          page,
+          page.locator('form:has(input[placeholder="preset name"]) button:has(svg.lucide-x)'),
+        );
         await page.waitForTimeout(300);
-        // Save the schedule — footer button "save schedule".
-        const saveScheduleButton = page.getByRole('button', { name: 'save schedule' }); // VERIFY: ScheduleEditor footer button
-        await highlight(page, saveScheduleButton, 1600);
-        await clickWithCursor(page, saveScheduleButton);
-        await narrate(page, 'b06 save + outside-window note', 23);
+        const outsideWindowBanner = page.getByText(
+          'this looks outside the current window — a machine outside it will stop the process shortly after saving.',
+          { exact: true },
+        );
+        await expect(outsideWindowBanner).toBeVisible();
+        await highlight(page, outsideWindowBanner, 2400);
+        await narrate(page, 'b06 outside-window warning', 6);
+        await clickWithCursor(page, page.getByRole('button', { name: 'save schedule' }));
+        await narrate(page, 'b06 saved', 5);
+
+        // [b07] the machine can edit them too (~20.3s) — NATIVE SEGMENT.
+        // The desktop app's own schedule editor is filmed by the
+        // desktop-screenshots video sibling (CDP over WebView2); this pass only
+        // supplies cover for the cut and the web-side contrast the beat lands
+        // on. Do not try to shoot the local app from here.
+        const lobbyCardFinal = page
+          .getByTestId('machine-card')
+          .filter({ hasText: 'lobby-display' });
+        await centerInView(page, lobbyCardFinal);
+        await highlight(page, lobbyCardFinal, 2600);
+        await narrate(page, 'b07 cover — the native insert goes here', 12);
+        // Reopen the editor so the pills — the thing the local app lacks — land
+        // the closing contrast.
+        await clickWithCursor(
+          page,
+          lobbyCardFinal.getByTestId('process-row-configure-schedule').first(),
+        );
+        await expect(page.getByText('configure schedule', { exact: true })).toBeVisible();
+        await highlight(page, page.getByRole('button', { name: 'business hours' }), 2400);
+        await narrate(page, 'b07 presets are the web-only half', 9);
       },
     );
   } finally {

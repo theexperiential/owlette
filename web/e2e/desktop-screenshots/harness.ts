@@ -202,8 +202,15 @@ function delay(ms: number): Promise<void> {
  *
  * The app rewrites this file on hide and again on exit, so the restore MUST run
  * after the capture instance is gone — hence {@link restoreLayout} in teardown.
+ *
+ * The geometry is a parameter because the video sibling (`e2e/desktop-videos`)
+ * needs a larger window than a docs column wants; the defaults are the stills
+ * geometry, so an existing caller writes the same bytes it always did.
  */
-export function snapshotLayout(): void {
+export function snapshotLayout(
+  windowSize: { width: number; height: number } = CAPTURE_WINDOW,
+  sidebarWidth: number = CAPTURE_SIDEBAR_WIDTH,
+): void {
   fs.mkdirSync(SESSION_DIR, { recursive: true })
   fs.rmSync(LAYOUT_BACKUP, { force: true })
   fs.rmSync(LAYOUT_ABSENT, { force: true })
@@ -216,8 +223,8 @@ export function snapshotLayout(): void {
     LAYOUT_FILE,
     `${JSON.stringify(
       {
-        sidebar: { width: CAPTURE_SIDEBAR_WIDTH },
-        window: { ...CAPTURE_WINDOW, maximized: false },
+        sidebar: { width: sidebarWidth },
+        window: { width: windowSize.width, height: windowSize.height, maximized: false },
       },
       null,
       2,
@@ -310,8 +317,17 @@ export async function cdpPageReady(port: number): Promise<boolean> {
  * The service tops the tray up on a 30s cooldown and can win the single-instance
  * lock between our kill and our launch — our process then exits immediately,
  * having forwarded argv. Hence the retry: each attempt re-kills the holder.
+ *
+ * `args` is the launch argv — empty (the default) opens the window on a plain
+ * launch, which is what the stills want. `['--pair', '--server', 'prod']` is the
+ * handoff the installer performs, and is how the video sibling films the pairing
+ * dialog without a second instance folding into this one.
  */
-export async function startDesktop(root: string, port: number): Promise<DesktopSession> {
+export async function startDesktop(
+  root: string,
+  port: number,
+  args: readonly string[] = [],
+): Promise<DesktopSession> {
   const exe = resolveDesktopExe()
   // One profile per run, in the OS temp dir.
   //
@@ -329,7 +345,7 @@ export async function startDesktop(root: string, port: number): Promise<DesktopS
       await waitForExit(holder)
     }
 
-    const child = spawn(exe, [], {
+    const child = spawn(exe, [...args], {
       detached: true,
       stdio: 'ignore',
       windowsHide: false,

@@ -1,27 +1,42 @@
 # Tutorial web-capture harness
 
-Drives the dashboard at 1080p against the seeded demo fleet and records one `.webm`
-per scene — the web-footage half of the tutorial pipeline (the other halves are
-ElevenLabs voiceover and pywinauto native capture; see `dev/video-tutorials/`).
+Drives the dashboard at 1080p against the seeded demo fleet and records one **`.mp4`**
+per scene — the web-footage half of the tutorial pipeline (the other halves are the
+ElevenLabs voiceover and the native/desktop capture; see `dev/video-tutorials/`).
 
-This is a **sibling of the screenshots harness** (`../screenshots/`). It reuses the
-same emulator boot, `global-setup` (role fixtures), `webServer`, and — crucially — the
-same deterministic demo data (`../screenshots/fixtures.ts`: a 10-machine AV/signage
-fleet, Cortex chats, roost rollouts, schedule presets).
+Playwright drives; an **external ffmpeg subprocess captures the desktop region** the
+browser content occupies. Playwright's own `recordVideo` is switched off
+(`playwright.videos.config.ts` sets `video: 'off'`) — 25fps VP8 with opportunistic frame
+grabs is fine for debugging and wrong for tutorial video.
 
-> **Status:** this harness currently ships **one worked example scene** — episode 3
-> (dashboard tour), beats b01–b04 (`dashboard-tour.video.ts`). The scenario→episode
-> table below is the **target map**; the remaining scenes are built by copying the
-> example.
+This is a **sibling of the screenshots harness** (`../screenshots/`). It reuses the same
+emulator boot, `global-setup` (role fixtures), `webServer`, and — crucially — the same
+deterministic demo data (`../screenshots/fixtures.ts`: a 10-machine AV/signage fleet,
+hoot chats, roost rollouts, schedule presets, talons).
+
+Eleven scenes ship today (`01`, `04`–`08`, `10`–`12`, `14`, `16`); the map at the bottom
+names what is still missing.
 
 ## Run
 
 ```bash
 cd web
-npm run videos                       # the implemented example scene(s)
+npm run videos                       # every scene
 npm run videos -- --grep "dashboard" # one scene (grep matches the test title)
 npm run videos:debug                 # headed + inspector, to tune selectors/pacing
 ```
+
+Grep by a **slug word**, not by episode number: the v2 renumbering (`d2387247`) renamed
+the files but not the `test('episode N — …')` titles inside them, so every scene title
+still carries its pre-renumbering number — `04-dashboard-tour.video.ts` is titled
+`episode 3`, and `--grep "episode 4"` therefore selects nothing. Until the titles are
+resynced, the map at the bottom of this file is the authority on which episode a scene
+serves. (If you renumber another episode, the title is part of the rename — one more step
+than `series-outline.md`'s migration-mechanics list currently names.)
+
+Never runs in CI — it needs a real desktop. Output: `web/e2e/.output/videos/<scene>.mp4`.
+A capture in flight writes `<scene>.mp4.tmp.mp4` and is renamed only after ffmpeg exits
+cleanly, so a half-written file never poses as a valid clip.
 
 Capture path: ffmpeg records via ddagrab + h264_nvenc and falls back to gdigrab +
 libx264 on a machine without DXGI/NVENC; the chosen path is logged as
@@ -29,8 +44,33 @@ libx264 on a machine without DXGI/NVENC; the chosen path is logged as
 (fail rather than shoot degraded footage) or `=fallback` (exercise the GDI path
 on an NVENC box). Verify the hardware first with `node scripts/probe-capture.mjs`.
 
-Prereqs are identical to the E2E suite (JDK 21, firebase-tools 15, chromium installed).
-Output: `web/e2e/.output/videos/<scene>.webm`.
+## Prereqs
+
+Everything the E2E suite needs (JDK 21, `firebase-tools@15`, chromium installed), **plus
+the ones the ffmpeg path added**:
+
+- **`ffmpeg` and `ffprobe` on PATH.** For the primary path the build needs the `ddagrab`
+  filter and the `h264_nvenc` encoder, on a machine with DXGI desktop duplication and an
+  NVENC-capable NVIDIA GPU. Without them the run degrades to gdigrab + libx264
+  automatically — slower, CPU-heavy, format-identical.
+- **An interactive, unlocked desktop session.** Capture is a desktop region, not an
+  in-browser recording, and the config runs `headless: false`. A headless box, a locked
+  workstation or an RDP session that has been disconnected produces no usable video
+  (DXGI desktop duplication is one of the first things to fail there).
+- **A primary display of at least 1920×1080 at 100% Windows scaling.** The browser is
+  launched at `--window-position=0,0 --window-size=1920,1200` so the page's *content* is
+  exactly 1920×1080; `recordScene` then measures the chrome-UI height and asks CDP to
+  slide the window up by it, putting the content at desktop y=0. Watch the
+  `[recordScene] capture region:` log line: `movedOffDisplay=true` is the good path.
+  `false` means Windows clamped the move, and the capture is cropped to
+  `1080 − chromeUI` from y=chromeUI — usable but short, and the display height in that
+  calculation is hardcoded to 1080, so a taller primary loses more than it needs to.
+  `openForCapture` asserts both the viewport and `devicePixelRatio === 1` and fails with
+  the fix in the message, so a scaled display is caught immediately rather than shipped
+  blurry.
+- Multi-monitor: gdigrab offsets are virtual-desktop coordinates while ddagrab's are
+  relative to `output_idx=0`, so the two agree only while the primary monitor sits at
+  virtual (0,0).
 
 ## How a scene works
 
@@ -53,37 +93,72 @@ test('episode N — title', async ({ browser }) => {
 });
 ```
 
-- File names end in `.video.ts` (the config's `testMatch`).
-- Each scene records its OWN context (`recordScene`) so the `.webm` is named after the
-  episode, not Playwright's auto hash.
-- `narrate(page, beat, seconds)` is a dwell sized to that beat's voiceover length — it's
-  what keeps the screen on a frame long enough to lay the MP3 underneath.
+- File names end in `.video.ts` (the config's `testMatch`), numbered to match the script
+  in `dev/video-tutorials/scripts/`.
+- Each scene records its OWN context (`recordScene`) so the `.mp4` is named after the
+  episode, not Playwright's auto hash. A throwing scene still stops the recorder in
+  `finally` — no orphaned ffmpeg.
+- `narrate(page, beat, seconds)` is a dwell sized to that beat's **rendered** voiceover,
+  never a guess — from the repo root:
+  `ffprobe -v error -show_entries format=duration -of csv=p=0 dev/video-tutorials/voiceover/out/NN-slug/epNN-bNN.mp3`,
+  rounded up ~0.5s. Re-voice a beat and its `narrate()` budget moves with it.
 - `installFakeCursor` (called by `recordScene`) draws a visible pointer + click ripple;
-  headless Chromium has no OS cursor, so without it clicks look like nothing happened.
+  the real OS cursor is excluded from capture (`draw_mouse=0`) so exactly one pointer is
+  ever in frame.
+- Other helpers in `video-helpers.ts`: `moveCursorTo`, `clickWithCursor`, `typewrite`,
+  `highlight`, `slowScrollToBottom`, `centerInView`.
+- `assertCaptureValid(outPath, expectedSeconds)` in `ffmpeg-recorder.ts` ffprobes a
+  finished clip (1920×1080 / h264 / yuv420p / duration). It is available but **not** wired
+  into `recordScene` — call it from a scene if you want that gate.
 
-## Why `recordVideo`, not OBS, for web
+## Why an external ffmpeg
 
-Built-in `recordVideo` at an explicit 1920×1080 (not the downscaled 800×800 default) is
-turnkey and repeatable — no human in the loop, regenerates whenever the UI changes. The
-frame rate is screencast-variable (fine for UI demos). If you ever want buttery 60fps
-for a hero moment, run `npm run videos:debug` (headed) and capture that window in OBS
-instead; the scene code is identical.
+`recordVideo` gives ~25fps VP8 with opportunistic frame grabs and a downscaled default —
+acceptable for a debugging artifact, not for footage that will sit in a timeline next to
+narration. The ffmpeg path records 60fps constant-GOP H.264 with bt709 metadata and
+`+faststart`, which an NLE can scrub frame-accurately. The cost is the desktop
+prerequisites above, which is why they are prerequisites and not suggestions.
 
 ## Determinism
 
 Inherited from the screenshots harness: fixed clock (`FIXED_NOW_MS`), disabled CSS
 animations, seeded PRNG sparklines, fixed machine ids. See `../screenshots/README.md`.
 
-## Target scenario → episode map
+One video-specific rule: the clock is frozen with a `Date`-only `addInitScript`, **not**
+`page.clock.*` — the clock API routes `requestAnimationFrame` through its controller and
+freezes in-page scroll animation. `openForCapture` rAF-smokes three frames so that
+regression fails at the top of a scene instead of 60s in.
 
-_Only the dashboard-tour example (ep3, b01–b04) is implemented today; the rest is the build plan._
+## Scenario → episode map
 
-| Scenario (fixtures.ts) | Episode |
-|---|---|
-| `dashboard-mixed-states` | 1 (b-roll), 3 (dashboard), 7 (remote actions) |
-| `monitor-single-machine` | 6 (machine health) |
-| `control-process-restarting` | 4 (keep alive), 13 (logs) |
-| `automate-schedule-editor` | 5 (schedule), 11 (alerts) |
-| `deploy-roost-rolling` | 9 (deploy), 10 (roost) |
-| `diagnose-cortex-chat` | 12 (cortex) |
-| `display-layout-editor` | optional display add-on |
+Scenarios come from `../screenshots/fixtures.ts`; each script declares the one it uses in
+its front matter (`dev/video-tutorials/scripts/NN-slug.md`).
+
+| Scenario (fixtures.ts) | Episodes | Scene file(s) |
+|---|---|---|
+| `dashboard-mixed-states` | 1 (b-roll), 3 (web beats), 4 (dashboard), 7 (health), 8 (remote actions), 17 (fleet maintenance) | `01-what-is-owlette`, `04-dashboard-tour`, `07-reading-machine-health`, `08-remote-actions` |
+| `control-process-restarting` | 5 (keep alive), 16 (logs) | `05-keep-a-process-alive`, `16-logs-and-troubleshooting` |
+| `automate-schedule-editor` | 6 (schedule), 14 (team & alerts) | `06-run-on-a-schedule`, `14-team-and-alerts` |
+| `deploy-roost-rolling` | 10 (deploy), 11 (roost) | `10-deploy-software`, `11-distribute-with-roost` |
+| `diagnose-cortex-chat` | 12 (hoot) | `12-cortex` |
+| `automate-talons-list` | 13 (talons) | — none yet |
+| `display-layout-editor` | 15 (display layouts) | — none yet |
+| `display-storyboard-frame-1/-2/-3` | — | marketing landing frames only (`../screenshots/display-storyboard.spec.ts`) |
+| `monitor-single-machine` | — | screenshots only (`../screenshots/monitor.spec.ts`, `machine-detail.spec.ts`); episode 7's scene deliberately uses `dashboard-mixed-states` instead |
+
+Episode 12 keeps the `cortex` spelling in its filename and in the
+`diagnose-cortex-chat` scenario key on purpose — the product renamed to **hoot** in the
+UI while wire- and storage-level names stayed put. The scene's copy and routes are
+already hoot.
+
+Still to write: scenes for **13** (talons) and **15** (display layouts), the web beats of
+**3** (install & pair), and **2** (day zero — signup/2FA, so no fixture scenario) and
+**17** (fleet maintenance). Not this harness at all: **3**'s installer wizard
+(`dev/video-tutorials/capture-native/`) and **9** (the owlette app on the machine), which
+is the desktop app over WebView2 CDP — `../desktop-screenshots/` is the harness to extend.
+
+## Per-episode workflow
+
+Script → voiceover → capture → assemble is documented once, in
+[`dev/video-tutorials/README.md`](../../../dev/video-tutorials/README.md). This file only
+covers the capture step for web episodes.

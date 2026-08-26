@@ -2,9 +2,14 @@
 """
 recorder.py — native-capture utilities for the tutorial pipeline.
 
-Playwright can't touch the installer wizard, the Tkinter agent GUI, or the tray icon —
-those are native windows. pywinauto is the desktop equivalent: it drives Win32/WinForms/
-WPF apps and moves the *real* mouse cursor, so the action reads on screen.
+Playwright can't touch the Inno Setup installer wizard or the notification-area tray
+icon — those are native windows. pywinauto is the desktop equivalent: it drives Win32/
+WinForms/WPF apps and moves the *real* mouse cursor, so the action reads on screen.
+
+NOT in that list: the owlette desktop app's window. It is WebView2 content (UIA sees
+Tailwind class names, not stable control names), and it is driven over CDP by
+web/e2e/desktop-screenshots/. The python tray + configuration GUI this module used to
+target were deleted in 3.0.0.
 
 This module gives scenes (in scenes/) two things:
   1. human-paced driving helpers (visible cursor glide, per-key typing, dwell beats),
@@ -12,7 +17,7 @@ This module gives scenes (in scenes/) two things:
      hand) is usually simpler and higher quality. Either works; the driving is the same.
 
 It is also handy for *tuning*: `dump_identifiers(window)` prints a control tree so you
-can find the real button/edit names in the wizard or GUI, which vary by build.
+can find the real button/edit names in the wizard, which vary by Inno build.
 
 Run elevated (Owlette installs a service → UAC). pywinauto cannot click the UAC secure-
 desktop prompt; either launch from an already-elevated shell or accept UAC by hand.

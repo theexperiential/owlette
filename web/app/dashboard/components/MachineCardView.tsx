@@ -848,8 +848,14 @@ function MachineCard({
                                         <span className={`w-px ${isActive ? 'bg-blue-400/50' : 'bg-border'}`} />
                                         <Tooltip>
                                           <TooltipTrigger asChild>
+                                            {/* Icon-only: the label lives in the
+                                                tooltip portal, which does not
+                                                surface as an accessible name
+                                                until the pointer hovers, so
+                                                role+name can never resolve it. */}
                                             <button
                                               onClick={() => onConfigureSchedule?.(process)}
+                                              data-testid="process-row-configure-schedule"
                                               className={`px-1.5 transition-colors cursor-pointer flex items-center ${isActive ? 'hover:bg-blue-500' : 'hover:bg-accent/50'}`}
                                             >
                                               <Settings2 className="h-3.5 w-3.5" />
