@@ -53,6 +53,17 @@ async function openMachineMenu(page: Page, trigger: Locator): Promise<void> {
   await moveCursorTo(page, trigger);
   await page.waitForTimeout(250);
   await trigger.click({ force: true });
+  // Assert the menu actually opened: a leftover overlay or an already-open
+  // dropdown eats the first pointer-down (Radix dismisses on outside press and
+  // consumes the click), which is how b05's offline-machine menu silently never
+  // opened in the validation batch. One more press is the documented cure.
+  try {
+    await expect(page.getByRole('menu')).toBeVisible({ timeout: 1_500 });
+  } catch {
+    await page.waitForTimeout(400);
+    await trigger.click({ force: true });
+    await expect(page.getByRole('menu')).toBeVisible({ timeout: 3_000 });
+  }
   await page.waitForTimeout(600);
 }
 

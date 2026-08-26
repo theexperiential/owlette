@@ -32,10 +32,10 @@
  *    navigation here uses WEBAUTHN_BASE_URL. See helpers/webauthn.ts.
  *
  * 3. NOT-CAPTURABLE BEATS, called out rather than faked:
- *    - b02's bot-check widget. `TurnstileWidget` renders nothing without
- *      `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, which the e2e build does not set, so
- *      the widget is simply absent from this take. Shoot that inch of the form
- *      against dev.owlette.app, or accept the form without it.
+ *    - b02's bot-check widget: ON CAMERA and auto-passing. The e2e build bakes
+ *      Cloudflare's always-pass TEST sitekey (scripts/e2e-build.mjs:33), so the
+ *      widget renders, solves itself a beat after load, and only then enables
+ *      "create account" — the scene waits for that instead of racing it.
  *    - b02's "continue with google". A real Google popup is out of scope for an
  *      emulator run; the button is framed, never clicked.
  *    - b04's "windows hello prompt". The virtual authenticator answers UV with
@@ -192,7 +192,11 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         await clickWithCursor(page, page.getByLabel(/i agree to the/i).first());
         await narrate(page, 'b02 form filled', 8);
 
-        await clickWithCursor(page, page.getByRole('button', { name: /^create account$/i }));
+        const createAccountBtn = page.getByRole('button', { name: /^create account$/i });
+        // Submit stays disabled until the always-pass Turnstile test widget
+        // (baked in by scripts/e2e-build.mjs) issues its token — wait, don't race.
+        await expect(createAccountBtn).toBeEnabled({ timeout: 20_000 });
+        await clickWithCursor(page, createAccountBtn);
         // Session-cookie timing can bounce through /login first; both URLs prove
         // the mandatory-2FA gate fired.
         await expect(page).toHaveURL(/\/setup-2fa|\/login\?redirect=%2Fsetup-2fa/, {
