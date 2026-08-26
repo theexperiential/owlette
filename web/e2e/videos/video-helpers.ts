@@ -66,6 +66,13 @@ export async function recordScene(
   // `page.clock.setFixedTime`: on the installed version it routes rAF through
   // Playwright's ClockController and freezes the in-page scroll animation.
   await page.addInitScript((fixedTime: number) => {
+    // Top frame ONLY. addInitScript runs in every frame, and a third-party
+    // iframe that measures elapsed time via Date.now() deltas never finishes
+    // against a frozen clock — Cloudflare Turnstile's auto-pass test widget
+    // stalled exactly this way and kept ep02's create-account disabled. The
+    // seeded relative-time labels all render in the top frame, so the freeze
+    // loses nothing by skipping subframes.
+    if (window.self !== window.top) return;
     const RealDate = Date;
     const FakeDate = class extends RealDate {
       constructor(...args: unknown[]) {
