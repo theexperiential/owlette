@@ -303,7 +303,13 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         await clickWithCursor(page, editSiteButton);
         await page.waitForTimeout(600);
         await narrate(page, 'b08 timezone picker open', 18);
-        await page.keyboard.press('Escape');
+        // ManageSitesDialog's Esc is a ladder (ManageSitesDialog.tsx:241-250):
+        // cancel edit → clear filter → close. The inline editor is open, so one
+        // Esc only cancels it; a second closes the dialog. Assert it, or
+        // signOut()'s user-menu click is eaten by the still-open overlay.
+        await page.keyboard.press('Escape'); // cancels the inline site editor
+        await page.keyboard.press('Escape'); // closes manage sites
+        await expect(manageDialog).not.toBeVisible({ timeout: 10_000 });
         await page.waitForTimeout(600);
 
         // ── [b04b] what sign-in becomes — SEPARATE TAKE (~27.1s, second half) ─

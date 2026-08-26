@@ -291,6 +291,21 @@ Gaps, in order:
    run on the SITE's timezone" claim was wrong about effective behavior; both scripts
    that touched it (ep02 day-zero, ep06 schedules) now narrate only what ships.
    Caught by the touchup:B reviewer; adjudicated in code.
+9. **NEW (capture validation, 2026-08-26): the bootstrap challenge gates calls, not
+   creation — dead recovery path for password accounts.** Every prod email/password
+   signup races two bootstraps: signUp's tokened call (200) and the auth listener's
+   tokenless call (AuthContext.tsx:502 passes no token; :169 only attaches
+   cf-turnstile-response when given one) → 403 "challenge verification failed"
+   (route.ts:89-103 demands the challenge before bootstrapUser's own already-exists
+   read at :136). Normally self-heals in ~150ms — cosmetic console/Sentry noise on
+   every signup. LATENT MEDIUM: the listener was designed as recovery after a failed
+   first bootstrap (5d105cc2), but that recovery 403s forever for password accounts —
+   a siteverify blip during signup leaves a Firebase Auth account with no users/{uid}
+   doc and no self-service way out. Recommended fix: hoist the existence read so the
+   challenge gates only actual creation (existing doc + no token → 200 alreadyExists);
+   test impact mapped in the 2026-08-26 investigation (users-bootstrap.test.ts:131/:161
+   need the doc-absent premise made explicit + one new recovery-case test with a
+   negative control). Separable from the video work; not applied yet.
    **DECIDED (user, 2026-08-25): relabel now, wire later** — the ScheduleEditor chip is
    replaced with "times run on each machine's own clock", the outside-window banner is
    reworded as a prediction (still evaluated in site tz — the best predictor, since
