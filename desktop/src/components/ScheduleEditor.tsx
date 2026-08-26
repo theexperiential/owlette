@@ -448,9 +448,13 @@ export function ScheduleEditor({ open, schedules, onClose, onSave }: ScheduleEdi
 
         <div className="flex min-h-0 flex-col gap-4">
           <DialogDescription>
+            {/* Machine-local is the truth: the agent's site_timezone is never
+                populated in production (deferred by design — see
+                firebase_client._fetch_site_name_from_api and drift-audit item 8),
+                so windows always run on this machine's clock. Mirrors the web
+                editor's relabel in cabdc2cf. */}
             the service runs this process during these windows and stops it outside them. times
-            follow the site&apos;s timezone, or this machine&apos;s local time when it is not
-            paired to one.
+            run on this machine&apos;s own clock.
           </DialogDescription>
 
           <div className="space-y-3 rounded-lg border border-blue-600/30 bg-blue-950/10 p-3">

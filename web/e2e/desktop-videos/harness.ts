@@ -322,15 +322,24 @@ export async function frameWindow(
 
 /** Attach to the app's webview. No browser is launched. */
 export async function attachDesktop(port: number): Promise<{ browser: Browser; page: Page }> {
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-  const pages = browser.contexts()[0]?.pages() ?? [];
-  const found = pages.find((candidate) => candidate.url().includes('tauri.localhost'));
-  if (!found) {
-    const seen = pages.map((candidate) => candidate.url()).join(', ');
+  // WebView2 parks at about:blank until the frontend navigates, and the CDP
+  // endpoint usually accepts connections before that — so poll instead of
+  // judging the first snapshot. A plain launch loses that race where --pair's
+  // slower startup path won it, which is how ep09 failed while ep03 passed.
+  const deadline = Date.now() + 15_000;
+  let lastSeen = '(none)';
+  for (;;) {
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+    const pages = browser.contexts()[0]?.pages() ?? [];
+    const found = pages.find((candidate) => candidate.url().includes('tauri.localhost'));
+    if (found) return { browser, page: found };
+    lastSeen = pages.map((candidate) => candidate.url()).join(', ') || '(none)';
     await browser.close();
-    throw new Error(`no owlette webview on the debug port (saw: ${seen})`);
+    if (Date.now() > deadline) {
+      throw new Error(`no owlette webview on the debug port after 15s (saw: ${lastSeen})`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  return { browser, page: found };
 }
 
 export interface DesktopTake {
