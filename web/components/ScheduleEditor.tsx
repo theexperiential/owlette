@@ -12,7 +12,6 @@ import { BLOCK_COLORS, BUILT_IN_PRESETS, ensureBlockColors } from '@/lib/schedul
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/lib/toast';
 import DayPillSelector from '@/components/DayPillSelector';
-import { TimezoneChip } from '@/components/TimezoneChip';
 
 // ─── Time Picker ─────────────────────────────────────────────────────────────
 
@@ -490,13 +489,13 @@ export default function ScheduleEditor({
       <DialogContent className="sm:max-w-lg bg-card border-border text-foreground gap-6">
         <DialogHeader>
           <DialogTitle>configure schedule</DialogTitle>
-          {siteTimezone && (
-            <DialogDescription asChild>
-              <div>
-                <TimezoneChip tz={siteTimezone} source="site" />
-              </div>
-            </DialogDescription>
-          )}
+          {/* Windows are evaluated on each machine's own clock (site-time
+              evaluation is deliberately deferred agent-side — see
+              firebase_client._fetch_site_name_from_api). Don't reintroduce a
+              source="site" chip here: it asserts semantics the agent doesn't
+              ship. The site tz is still the best *predictor* for the
+              outside-window banner below, since machines live at the site. */}
+          <DialogDescription>times run on each machine&rsquo;s own clock</DialogDescription>
         </DialogHeader>
 
         {/* Preset bar.
@@ -662,7 +661,7 @@ export default function ScheduleEditor({
 
         {currentLaunchMode === 'scheduled' && !isCurrentlyInSchedule(blocks, siteTimezone) && (
           <p className="text-xs text-amber-400/90 bg-amber-400/10 border border-amber-400/20 rounded-md px-3 py-2">
-            Current time is outside this schedule. The process will be stopped shortly after saving.
+            this looks outside the current window — a machine outside it will stop the process shortly after saving.
           </p>
         )}
 

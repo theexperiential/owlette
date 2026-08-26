@@ -269,7 +269,9 @@ Gaps, in order:
    (negative control recorded); also fixed the orphan-on-timeout and unhandled-ENOENT
    defects found during wiring.
 7. roost page ships a "developer preview" badge — in frame for ep10 b01 (decision, not
-   defect). **PENDING USER DECISION** — investigation (2026-08-25) recommends removal:
+   defect). **DECIDED (user, 2026-08-25): REMOVED** — badge + empty-state caveat deleted
+   per the investigation's recommendation; the /settings/webhooks banner stays (accurate,
+   correctly scoped to the one open gap). — investigation (2026-08-25) recommends removal:
    the badge's premise (site-tier gate) was deleted with billing, cancel + resume are
    fixed, and the one open gap (auto webhook dispatch) is already disclosed on the
    webhooks page. Bonus finding filed from that investigation:
@@ -289,6 +291,13 @@ Gaps, in order:
    run on the SITE's timezone" claim was wrong about effective behavior; both scripts
    that touched it (ep02 day-zero, ep06 schedules) now narrate only what ships.
    Caught by the touchup:B reviewer; adjudicated in code.
+   **DECIDED (user, 2026-08-25): relabel now, wire later** — the ScheduleEditor chip is
+   replaced with "times run on each machine's own clock", the outside-window banner is
+   reworded as a prediction (still evaluated in site tz — the best predictor, since
+   machines live at the site), and docs/dashboard/timezones.mdx row corrected. Wiring
+   real site-time evaluation (timezone field on /api/agent/site + dropping the agent's
+   name-only guard) is a PLANNED FEATURE needing its own rollout — it flips schedule
+   behavior fleet-wide for any site whose timezone differs from its machines' clocks.
 
 ## Execution order (per the playbook's §6 repair loop)
 

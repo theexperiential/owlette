@@ -54,7 +54,7 @@ schedule you reuse, like your venue's exact opening hours, save it as your own p
 reuse on any machine.
 
 ## [b06] save it
-**SCREEN:** (web) click "save schedule"; hold on the outside-window banner ("Current time is outside this schedule. The process will be stopped shortly after saving."), then the dialog closing back to the process row with its new schedule summary.
+**SCREEN:** (web) click "save schedule"; hold on the outside-window banner ("this looks outside the current window — a machine outside it will stop the process shortly after saving."), then the dialog closing back to the process row with its new schedule summary.
 **NOTE:** do NOT frame the timezone chip under the "configure schedule" title, or the "times in …" label in the process dialog. The chip is labelled `source="site"`, but the agent can never read the site document (firestore.rules scopes it to its own machine subtree), so `site_timezone` is always None and every window is evaluated on the machine's own local clock. Site-time evaluation is designed but not wired — both the agent and the API route document the flip as deferred. Framing the chip would assert behavior that does not ship. Conflict raised to the brief owner; no timezone claim is spoken either way.
 **VOICEOVER:**
 save it, and you're done. outside the scheduled window, owlette keeps the app stopped —
