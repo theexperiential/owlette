@@ -14,12 +14,16 @@
  * with the member storageState, landing as `08-remote-actions-b08-member.mp4`.
  * The beat's closing dissolve to the owlette desktop app is a native insert.
  *
- * ONE RULE THROUGHOUT: every press of the ⋮ trigger is `moveCursorTo` +
- * `click({ force: true })`, never `clickWithCursor`. The trigger sits inside a
- * Radix Tooltip (MachineContextMenu.tsx:187-207); hovering mounts the tooltip
- * portal over it and an unforced click times out after 15s. There is no
- * exception to this in the file — a single unforced press is what used to
- * contradict the scene's own comment.
+ * TWO RULES THROUGHOUT:
+ * 1. Every press of the ⋮ trigger is `moveCursorTo` + `click({ force: true })`,
+ *    never `clickWithCursor`. The trigger sits inside a Radix Tooltip
+ *    (MachineContextMenu.tsx:187-207); hovering mounts the tooltip portal over
+ *    it and an unforced click times out after 15s. There is no exception to this
+ *    in the file — a single unforced press is what used to contradict the
+ *    scene's own comment.
+ * 2. The screenshot and live-view overlays are closed by their own X, never by
+ *    Escape (they ignore it — see `closeOverlayDialog`). Escape is still the way
+ *    out of the restart/shutdown/revoke dialogs and of the menu itself.
  *
  * Fixture `dashboard-mixed-states`. Target card `media-server-stage` is online,
  * which is what gates screenshot / live view / restart / shutdown.
@@ -56,11 +60,38 @@ async function openMachineMenu(page: Page, trigger: Locator): Promise<void> {
  * Close whatever dialog is open and reopen the menu. 900ms: the dialog's exit
  * animation plus focus restore ends around 700ms, and reopening earlier leaves
  * the menu DOM transitional and the next lookup times out.
+ *
+ * NOT usable after the screenshot or live-view overlay — see
+ * `closeOverlayDialog`.
  */
 async function reopenMachineMenu(page: Page, trigger: Locator): Promise<void> {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(900);
   await openMachineMenu(page, trigger);
+}
+
+/**
+ * The two full-bleed overlays this scene opens — `ScreenshotDialog` and
+ * `LiveViewModal` — do NOT answer Escape. Measured on the 2026-08-26 batch
+ * (videos-results trace, b03): the screenshot dialog was still
+ * `capturing screenshot…` 1.2s AND 1.9s after `keyboard.press('Escape')`, so the
+ * ⋮ press that followed landed on the modal overlay, no menu opened, and
+ * `menuitem "live view"` timed out 15s later.
+ *
+ * Both suppress the shared close button (`showCloseButton={false}`) and render
+ * their own icon-only X at the end of the DialogTitle — ScreenshotDialog.tsx
+ * :430-437, LiveViewModal.tsx:294-301 — which carries no accessible name, so the
+ * title slot is the handle. Assert the overlay is gone before touching the card
+ * underneath, or the next failure surfaces on an unrelated locator.
+ */
+async function closeOverlayDialog(page: Page, name: RegExp): Promise<void> {
+  const dialog = page.getByRole('dialog', { name });
+  await clickWithCursor(
+    page,
+    dialog.locator('[data-slot="dialog-title"] button:has(svg.lucide-x)'),
+  );
+  await expect(dialog).toBeHidden();
+  await page.waitForTimeout(900);
 }
 
 test('episode 8 — remote actions: restart, screenshot, live view', async ({ browser }) => {
@@ -98,7 +129,8 @@ test('episode 8 — remote actions: restart, screenshot, live view', async ({ br
 
         // [b03] live view (~16.2s). No `exact: true`: the item renders
         // `<Eye/>\n live view`, so its accessible name carries leading space.
-        await reopenMachineMenu(page, menuTrigger);
+        await closeOverlayDialog(page, /screenshot — media-server-stage/i);
+        await openMachineMenu(page, menuTrigger);
         const liveViewItem = page.getByRole('menuitem', { name: 'live view' });
         await clickWithCursor(page, liveViewItem);
         await page.waitForTimeout(900);
@@ -109,7 +141,8 @@ test('episode 8 — remote actions: restart, screenshot, live view', async ({ br
         // pill's cancel affordance hides in the final 5 seconds (Windows
         // `shutdown /a` is unreliable that late), so a real cancel take needs
         // time on the clock and belongs to a separate pass.
-        await reopenMachineMenu(page, menuTrigger);
+        await closeOverlayDialog(page, /live view — media-server-stage/i);
+        await openMachineMenu(page, menuTrigger);
         const rebootItem = page.getByTestId('machine-context-menu-reboot');
         await clickWithCursor(page, rebootItem);
         await page.waitForTimeout(700);

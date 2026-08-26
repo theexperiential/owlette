@@ -19,7 +19,7 @@
  * Out:  web/e2e/.output/videos/11-distribute-with-roost.mp4
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { roleState } from '../helpers/roles';
 import { getAdminDb, E2E_BASE_URL } from '../helpers/emulator';
 import { TEST_USERS } from '../helpers/seed';
@@ -33,6 +33,35 @@ import {
   clickWithCursor,
   typewrite,
 } from './video-helpers';
+
+/**
+ * Dismiss `ProjectDistributionDialog` through its footer "cancel"
+ * (ProjectDistributionDialog.tsx:1222-1229) — NEVER Escape.
+ *
+ * `RoostsPageClient.tsx:155-179` puts a bubble-phase `window` keydown listener
+ * on the page that clears the roost selection on Escape whenever one is
+ * selected, and it neither checks `event.defaultPrevented` nor scopes itself to
+ * the page: Radix closes the dialog AND the panel disappears with it. Its one
+ * skip is an input/textarea/contenteditable target, which is why the b04 close
+ * survived (focus was still in `#extract-path`) and the b05 close did not
+ * (focus was on the dialog after a button click) — the 2026-08-26 batch failed
+ * on exactly that asymmetry, at `#roost-detail-panel` after b05.
+ */
+async function closeDistributionDialog(page: Page, name: RegExp): Promise<void> {
+  // Scoped by accessible name (DialogTitle, ProjectDistributionDialog.tsx
+  // :576-580) — a bare getByRole('dialog') is one confirm away from a
+  // strict-mode violation. The footer scope keeps "cancel" off the inline
+  // preset confirmations, which use the same word.
+  const dialog = page.getByRole('dialog', { name });
+  await clickWithCursor(
+    page,
+    dialog
+      .locator('[data-slot="dialog-footer"]')
+      .getByRole('button', { name: 'cancel', exact: true }),
+  );
+  await expect(dialog).toBeHidden();
+  await page.waitForTimeout(600);
+}
 
 test('episode 11 — distribute project folders with roost', async ({ browser }) => {
   const ctx = await seedScreenshotFixtures('deploy-roost-rolling');
@@ -110,8 +139,7 @@ test('episode 11 — distribute project folders with roost', async ({ browser })
         await narrate(page, 'b04 per-target status + rollup pill', 12);
 
         // Close the dialog and head back to the roost detail panel for b05.
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(600);
+        await closeDistributionDialog(page, /^new roost$/i);
         await expect(page.locator('#roost-detail-panel')).toBeVisible();
 
         // [b05] ship a new version (~19.6s) — "+ new version" in the
@@ -130,8 +158,7 @@ test('episode 11 — distribute project folders with roost', async ({ browser })
         await narrate(page, 'b05 destination and machine list are locked', 10);
 
         // Close and return to the detail panel for the rollback beat.
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(600);
+        await closeDistributionDialog(page, /publish new version of/i);
         await expect(page.locator('#roost-detail-panel')).toBeVisible();
 
         // [b06] roll back (~27.2s) — the per-row menu carries edit description,

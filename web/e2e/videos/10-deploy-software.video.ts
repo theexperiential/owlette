@@ -232,8 +232,11 @@ test('episode 10 — deploy software to many machines', async ({ browser }) => {
         await page.waitForTimeout(500);
         // With targets already selected the panel lists the real managed
         // processes rather than "select target machines to see managed
-        // processes".
-        await expect(dialog.getByText('managed processes', { exact: false })).toBeVisible();
+        // processes". `exact: true` matches only the checklist's <Label>: the
+        // panel's helper copy ("comma-separated exe names for non-managed
+        // process…") contains the phrase too, and a substring match resolves to
+        // both — a strict-mode violation.
+        await expect(dialog.getByText('managed processes', { exact: true })).toBeVisible();
         await narrate(page, 'b04 managed-process checklist', 10);
         const additionalProcesses = dialog.locator('#additional-processes');
         await typewrite(page, additionalProcesses, 'obs64.exe', 55);

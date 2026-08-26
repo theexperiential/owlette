@@ -13,8 +13,10 @@
  * Fixture `display-layout-editor` — `mainstage-led` with a four-monitor 2×2
  * profile, `remoteApplyEnabled: true` and `autoRestore.enabled: true`. Beats
  * b04-b07 each need a state the fixture does not ship, so the scene re-seeds
- * between them. Every write below is the same document the product writes; the
- * panel is live over onSnapshot, so no reload is needed.
+ * between them, and b08's events tab needs a log feed the fixture does not seed
+ * at all — written up front, before the recorder starts. Every write below is
+ * the same document the product writes; the panel is live over onSnapshot, so no
+ * reload is needed.
  *
  * THE ACTION-BAR SLOT is a three-way choice and drives the whole beat order:
  *   auto-restore ON                        → green "auto" chip   (b07)
@@ -73,6 +75,79 @@ test('episode 15 — display layouts: capture a wall, put it back', async ({ bro
       .doc(ctx.siteId)
       .collection('machines')
       .doc(machineId);
+
+    // b08's events tab reads `sites/{siteId}/logs` through `useDisplayEventFeed`
+    // and renders the `display-events-table` ONLY when that query returns rows —
+    // an empty feed paints "no display events yet" instead
+    // (DisplayLayoutPanel.tsx:787-800). The fixture seeds none, so the tab is
+    // empty without this block. Seeded the way episode 16 seeds `/logs`: Admin
+    // SDK Date → Timestamp, anchored on FIXED_NOW_MS because `recordScene`
+    // freezes the page's clock to it (wall-clock stamps would render months in
+    // the page's future).
+    //
+    // Actions, levels and `details` shapes are the ones the agent really writes,
+    // so the frame is not a fiction:
+    //   - `_emit_display_event` (owlette_service.py:4809-4840) JSON-serializes
+    //     its payload into `details`, which is what `parseEventDetails` reads
+    //     for the monitor and drift columns;
+    //   - display_manager's `_emit_audit` (display_manager.py:2307-2337) passes a
+    //     PLAIN STRING for apply-failed / auto-revert, so those two rows render
+    //     em-dashes in monitor + details. That is the product, not a gap here.
+    // Together they cover the five the narration names: added, removed, drift,
+    // apply failed, auto-reverted.
+    const eventAgo = (sec: number): Date => new Date(FIXED_NOW_MS - sec * 1000);
+    const logsRef = db.collection('sites').doc(ctx.siteId).collection('logs');
+    const displayEvents = [
+      {
+        id: 'log-display-monitor-added',
+        timestamp: eventAgo(60 * 60 * 26),
+        action: 'display_monitor_added',
+        level: 'info',
+        details: JSON.stringify({
+          monitorCount: 4,
+          monitor: { edidHash: `hash-${machineId}-3`, friendlyName: 'Mainstage 4', port: 'dp' },
+        }),
+      },
+      {
+        id: 'log-display-monitor-removed',
+        timestamp: eventAgo(60 * 60 * 20),
+        action: 'display_monitor_removed',
+        level: 'critical',
+        details: JSON.stringify({
+          monitorCount: 3,
+          monitor: { edidHash: `hash-${machineId}-2`, friendlyName: 'Mainstage 3', port: 'dp' },
+        }),
+      },
+      {
+        id: 'log-display-apply-failed',
+        timestamp: eventAgo(60 * 60 * 12),
+        action: 'display_apply_failed',
+        level: 'warning',
+        details: 'display helper exited 1 — target mode not supported',
+      },
+      {
+        id: 'log-display-auto-reverted',
+        timestamp: eventAgo(60 * 60 * 11),
+        action: 'display_auto_revert_fired',
+        level: 'error',
+        details: 'no ack received within 45s; auto-reverted',
+      },
+      {
+        id: 'log-display-drift-mainstage',
+        timestamp: eventAgo(60 * 40),
+        action: 'display_drift',
+        level: 'warning',
+        details: JSON.stringify({
+          monitorCount: 4,
+          monitor: { edidHash: `hash-${machineId}-1`, friendlyName: 'Mainstage 2', port: 'dp' },
+          changes: ['position.x', 'position.y'],
+        }),
+      },
+    ];
+    for (const e of displayEvents) {
+      const { id, ...data } = e;
+      await logsRef.doc(id).set({ ...data, machineId, machineName: machineId });
+    }
 
     await recordScene(
       browser,

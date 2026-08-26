@@ -23,6 +23,24 @@ const STORAGE_EMULATOR_HOST =
 const NEXT_DIST_DIR = process.env.OWLETTE_NEXT_DIST_DIR || '.next-e2e';
 const OUTPUT_DIR = process.env.E2E_VIDEOS_OUTPUT_DIR || './e2e/.output/videos-results';
 
+/**
+ * WebAuthn RP override for episode 2's passkey beats. Honored by
+ * `lib/webauthn.server.ts` only while `OWLETTE_E2E === '1'`; without it the
+ * production build signs ceremonies for RP `owlette.app` + https origins and no
+ * loopback ceremony can complete. `localhost`, not BASE_URL's `127.0.0.1` — an
+ * IP literal is not a valid RP ID, which is also why that scene navigates on
+ * `WEBAUTHN_BASE_URL` (`e2e/helpers/webauthn.ts:10-14`).
+ *
+ * Written back onto THIS process as well as the webServer's: 02-day-zero's
+ * precondition guard reads `process.env` in the test runner, so a webServer-only
+ * block would still throw before the scene records a frame. Mirrors
+ * `playwright.config.ts`'s webServer values so the two suites agree.
+ */
+const WEBAUTHN_RP_ID = process.env.WEBAUTHN_RP_ID || 'localhost';
+const WEBAUTHN_ORIGINS = process.env.WEBAUTHN_ORIGINS || `http://localhost:${PORT}`;
+process.env.WEBAUTHN_RP_ID = WEBAUTHN_RP_ID;
+process.env.WEBAUTHN_ORIGINS = WEBAUTHN_ORIGINS;
+
 export default defineConfig({
   testDir: './e2e/videos',
   testMatch: /\.video\.ts$/,
@@ -119,6 +137,8 @@ export default defineConfig({
       UPSTASH_REDIS_REST_TOKEN: '',
       E2E_DISABLE_RATE_LIMIT: 'true',
       OWLETTE_E2E: '1',
+      WEBAUTHN_RP_ID,
+      WEBAUTHN_ORIGINS,
     },
   },
 });

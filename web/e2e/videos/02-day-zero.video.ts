@@ -14,19 +14,19 @@
  *
  * ── THREE PRECONDITIONS ─────────────────────────────────────────────────────
  *
- * 1. WEBAUTHN ENV. `playwright.videos.config.ts` does not set `WEBAUTHN_RP_ID`
- *    / `WEBAUTHN_ORIGINS` the way `playwright.config.ts:147-148` does, so the
- *    server's `getRpId()` falls through to 'owlette.app' and no loopback
- *    ceremony can verify (lib/webauthn.server.ts:27-43 — the override is gated
- *    on OWLETTE_E2E=1, which the videos config DOES set). Playwright merges
- *    `webServer.env` over `process.env`, so exporting them before the run is
- *    enough; the guard below fails fast rather than dying mid-take:
+ * 1. WEBAUTHN ENV. Without `WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGINS` the server's
+ *    `getRpId()` falls through to 'owlette.app' and no loopback ceremony can
+ *    verify (lib/webauthn.server.ts:27-43 — the override is gated on
+ *    OWLETTE_E2E=1, which the videos config also sets). `npm run videos` is now
+ *    self-contained: `playwright.videos.config.ts` defaults both keys
+ *    (localhost / http://localhost:3100), writes them onto the runner's
+ *    `process.env` AND passes them through `webServer.env`, matching
+ *    `playwright.config.ts:147-148`. Exporting them by hand still wins — the
+ *    config only fills in what the shell left unset.
  *
- *      WEBAUTHN_RP_ID=localhost WEBAUTHN_ORIGINS=http://localhost:3100 \
- *        npm run videos -- --grep "episode 2"
- *
- *    Fix properly by adding both keys to the videos config's webServer env
- *    (that file belongs to the harness unit, not this one).
+ *    The guard below is kept as a safety net: if that block is ever dropped or a
+ *    scene is run under a config without it, this fails fast instead of dying
+ *    mid-take on an unverifiable ceremony.
  *
  * 2. `localhost`, NOT `127.0.0.1`. An IP literal is not a valid RP ID, so every
  *    navigation here uses WEBAUTHN_BASE_URL. See helpers/webauthn.ts.
@@ -131,9 +131,11 @@ async function signInWithPassword(page: Page, email: string, password: string): 
 test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ browser }) => {
   if (!process.env.WEBAUTHN_RP_ID || !process.env.WEBAUTHN_ORIGINS) {
     throw new Error(
-      'episode 2 needs WEBAUTHN_RP_ID + WEBAUTHN_ORIGINS exported before `npm run videos` — ' +
-      'without them the server signs ceremonies for owlette.app and the passkey beats cannot ' +
-      'complete. See the precondition block at the top of 02-day-zero.video.ts.',
+      'episode 2 needs WEBAUTHN_RP_ID + WEBAUTHN_ORIGINS — playwright.videos.config.ts sets ' +
+      'both (localhost / http://localhost:3100) for `npm run videos`, so reaching this means ' +
+      'the scene is running under a config without that block. Without them the server signs ' +
+      'ceremonies for owlette.app and the passkey beats cannot complete. See the precondition ' +
+      'block at the top of 02-day-zero.video.ts.',
     );
   }
 

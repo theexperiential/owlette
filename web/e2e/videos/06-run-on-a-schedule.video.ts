@@ -15,9 +15,10 @@
  *
  * Uses the `automate-schedule-editor` screenshot fixture + admin storageState.
  * That fixture seeds no processes (its stills frame the reboot schedule), so
- * this scene pre-seeds a "show player" in `launch_mode: 'always'`: b05/b06 need
- * the standalone ScheduleEditor dialog (preset bar + "save schedule") reached
- * from the row's gear, not the inline ProcessDialog editor.
+ * this scene pre-seeds a "show player" in `launch_mode: 'always'` — with stored
+ * schedule windows, which b02's save depends on (see the seed comment): b05/b06
+ * need the standalone ScheduleEditor dialog (preset bar + "save schedule")
+ * reached from the row's gear, not the inline ProcessDialog editor.
  *
  * TIMEZONE: do NOT frame the chip under the "configure schedule" title, or the
  * "times in …" label in the process dialog. The chip is labelled `source="site"`,
@@ -105,7 +106,20 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
               id: showProcId,
               name: 'show-player.exe',
               launch_mode: 'always',
-              schedules: null,
+              // Windows are stored even while the mode is `always` — the dialog
+              // says so ("saved with the process — switch to scheduled whenever
+              // you want these windows to run it", dashboard/page.tsx:1516), and
+              // b02 NEEDS them: clicking the `scheduled` segment only moves
+              // launch_mode, and the inline editor's default block is display-only
+              // until the user edits it (page.tsx:155-159), so a process seeded
+              // with `schedules: null` saves as scheduled-with-no-windows and the
+              // route 400s `missing_schedules` (processPayloadValidation.ts:326-331)
+              // — the dialog then stays open on the error toast. Mirrors
+              // DEFAULT_SCHEDULE (lib/scheduleDefaults.ts:49-51) so the frame is
+              // the same weekday 09–17 block the editor would have drawn.
+              schedules: [
+                { days: ['mon', 'tue', 'wed', 'thu', 'fri'], ranges: [{ start: '09:00', stop: '17:00' }] },
+              ],
             },
           ],
         },
@@ -133,7 +147,12 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
         // seeded process's pencil is the only edit button on this card.
         const editButton = lobbyCard.locator('button:has(svg.lucide-pencil)').first();
         await clickWithCursor(page, editButton);
-        const processDialog = page.getByRole('dialog');
+        // Scoped by accessible name (DialogTitle "edit process",
+        // dashboard/page.tsx:1306-1309): the dashboard mounts several dialogs
+        // and a bare getByRole('dialog') matches whichever one is open — a
+        // strict-mode violation waiting for the delete-confirm or the standalone
+        // schedule dialog to join it.
+        const processDialog = page.getByRole('dialog', { name: /edit process/i });
         await expect(processDialog).toBeVisible();
         // Frame the gear while the mode still reads "always on": it opens the
         // same schedule section in EVERY launch mode, storing the windows for
@@ -147,7 +166,10 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
         // then open the STANDALONE configure-schedule dialog from the row gear —
         // that is the one carrying the preset bar and "save schedule".
         await clickWithCursor(page, processDialog.getByRole('button', { name: 'save changes' }));
-        await expect(processDialog).not.toBeVisible();
+        // The dialog closes ONLY on a 2xx (handleSaveProcess, page.tsx:596-608);
+        // a rejected PATCH leaves it open behind an error toast, so this is the
+        // assertion that catches a bad payload rather than filming one.
+        await expect(processDialog).toBeHidden();
         await page.waitForTimeout(600);
         const lobbyCardAfter = page
           .getByTestId('machine-card')
