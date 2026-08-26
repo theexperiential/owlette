@@ -228,9 +228,35 @@ export async function installFakeCursor(page: Page): Promise<void> {
  * launch args = wrong capture region and blurry footage) and rAF-smokes 3 frames
  * in 500ms so a re-frozen rAF fails here, not 60s into the first scene.
  */
+/** Pages that already carry the persistent animation-kill init script. */
+const ANIM_KILL_PAGES = new WeakSet<Page>();
+
 export async function openForCapture(page: Page, urlPath: string): Promise<void> {
   // No `page.clock.*` here — the fake clock is Date-only via addInitScript in
   // recordScene; page.clock would re-freeze rAF.
+  // disableAnimations() below is an addStyleTag and dies on full navigations —
+  // multi-identity scenes (02-day-zero signs out and back in via /login) then
+  // run later documents with animations live, and an animating header never
+  // reports "stable", so clicks time out. Re-install the same kill-style on
+  // every future TOP-frame document; subframes (Turnstile) style themselves.
+  if (!ANIM_KILL_PAGES.has(page)) {
+    ANIM_KILL_PAGES.add(page);
+    await page.addInitScript(() => {
+      if (window.self !== window.top) return;
+      const install = () => {
+        const s = document.createElement('style');
+        s.textContent =
+          '*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;' +
+          'transition-duration:0s!important;transition-delay:0s!important}';
+        (document.head ?? document.documentElement).appendChild(s);
+      };
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', install);
+      } else {
+        install();
+      }
+    });
+  }
   await page.goto(urlPath, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1200);
   await disableAnimations(page);
