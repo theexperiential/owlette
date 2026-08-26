@@ -1,6 +1,6 @@
 /**
  * Scene — episode 4, "keep a process alive". All SCREEN beats, no B-ROLL.
- * VO durations (voiceover/out/04-keep-a-process-alive/):
+ * VO durations (voiceover/out/05-keep-a-process-alive/):
  *   b01 13.9s the promise · b02 9.1s add a process · b03 19.8s essential fields
  *   b04 23.8s resilience knobs · b05 12.0s save and watch · b06 26.3s crash
  *   b07 19.6s day-to-day controls
@@ -12,7 +12,7 @@
  * because the static screenshot specs frame other states).
  *
  * Run:  cd web && npm run videos -- --grep "episode 4"
- * Out:  web/e2e/.output/videos/04-keep-a-process-alive.mp4
+ * Out:  web/e2e/.output/videos/05-keep-a-process-alive.mp4
  */
 
 import { test, expect } from '@playwright/test';
@@ -41,7 +41,7 @@ test('episode 4 — keep a process alive', async ({ browser }) => {
 
     await recordScene(
       browser,
-      '04-keep-a-process-alive',
+      '05-keep-a-process-alive',
       { baseURL: E2E_BASE_URL, storageState: roleState('admin').storageState },
       async (page) => {
         await openForCapture(page, '/dashboard');

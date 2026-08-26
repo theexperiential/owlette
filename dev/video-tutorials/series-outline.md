@@ -92,7 +92,10 @@ version) → sign up (passwordless-first, email verify) → the choice: passkey
 authenticator app → enroll; sign out/in to show one ceremony clearing both steps →
 backup codes (save the sheet; regenerating asks you to prove a factor) → "trust this
 device for 30 days" → dashboard empty state: create your first site → **set the site
-timezone** (every schedule and date-scoped log clear runs on it; default is UTC) →
+timezone** (defaults to the creator's browser zone; the dashboard reads site times
+on it — schedule editor chips/banners, date-scoped log clears — while agents
+evaluate schedule windows on each machine's own clock; site-time evaluation is
+deliberately deferred, see drift-audit item 8) →
 locked out? a superadmin can reset 2FA from the admin users row.
 
 ### 3 — install & pair `[REWRITE of old 2]`

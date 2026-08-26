@@ -1,6 +1,6 @@
 /**
  * Scene — episode 3, "the dashboard, end to end". All SCREEN beats, no B-ROLL.
- * VO durations (voiceover/out/03-dashboard-tour/): b01 ≈21.1s, b02 ≈19.1s,
+ * VO durations (voiceover/out/04-dashboard-tour/): b01 ≈21.1s, b02 ≈19.1s,
  * b03 ≈26.2s, b04 ≈15.3s, b05 ≈19.5s, b06 ≈25.7s.
  *
  * Runs on the screenshots harness: `dashboard-mixed-states` fixture (10
@@ -8,7 +8,7 @@
  * specs.
  *
  * Run:  cd web && npm run videos -- --grep "episode 3"
- * Out:  web/e2e/.output/videos/03-dashboard-tour.mp4
+ * Out:  web/e2e/.output/videos/04-dashboard-tour.mp4
  */
 
 import { test, expect } from '@playwright/test';
@@ -37,7 +37,7 @@ test('episode 3 — the dashboard, end to end', async ({ browser }) => {
 
     await recordScene(
       browser,
-      '03-dashboard-tour',
+      '04-dashboard-tour',
       { baseURL: E2E_BASE_URL, storageState: roleState('admin').storageState },
       async (page) => {
         await openForCapture(page, '/dashboard');

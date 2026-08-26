@@ -3,7 +3,7 @@
  * (b06's "cut to the agent GUI" line is a native-capture shot assembled in the
  * editor; here we just hold on the web for the full dwell.)
  *
- * Beats and rendered VO durations (voiceover/out/05-run-on-a-schedule/):
+ * Beats and rendered VO durations (voiceover/out/06-run-on-a-schedule/):
  *   b01 ≈ 20.0s — why schedule (frame the lobby-display card)
  *   b02 ≈ 12.8s — switch to scheduled (open process for edit, flip launch mode)
  *   b03 ≈ 19.5s — the schedule editor (configure-schedule dialog, day pills + time range)
@@ -18,7 +18,7 @@
  * the row's gear, not the inline ProcessDialog editor.
  *
  * Run:  cd web && npm run videos -- --grep "episode 5"
- * Out:  web/e2e/.output/videos/05-run-on-a-schedule.mp4
+ * Out:  web/e2e/.output/videos/06-run-on-a-schedule.mp4
  */
 
 import { test, expect } from '@playwright/test';
@@ -108,7 +108,7 @@ test('episode 5 — run apps on a schedule', async ({ browser }) => {
 
     await recordScene(
       browser,
-      '05-run-on-a-schedule',
+      '06-run-on-a-schedule',
       { baseURL: E2E_BASE_URL, storageState: roleState('admin').storageState },
       async (page) => {
         await openForCapture(page, '/dashboard');

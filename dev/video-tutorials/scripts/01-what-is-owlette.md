@@ -2,7 +2,7 @@
 number: 1
 slug: what-is-owlette
 title: what is owlette?
-est_duration: "2:00"
+est_duration: "2:30"
 capture: web
 scenario: dashboard-mixed-states
 voice: null
@@ -29,26 +29,28 @@ kiosks, and media servers in places you're not. it watches the apps that matter,
 when one dies, it brings it back. all of it, from one dashboard, from anywhere.
 
 ## [b03] who it's for
-**SCREEN:** dashboard at /dashboard — the seeded fleet (lobby displays, museum kiosks, media servers, render nodes) scrolling slowly. Note the green "online" pills, one red "offline" pill, and usage bars at varying levels.
+**SCREEN:** dashboard at /dashboard — the seeded fleet (lobby-display, museum-kiosk-1/2, media-server-stage, nyc-signage-01, unreal-render-1, td-control-room, lobby-2, mainstage-led, plus the offline touring-rig-04) scrolling slowly. Green "online" pills, one red "offline" pill.
+**NOTE:** the left accent bar on each metric tile is a FIVE-band scale (emerald <30, violet <50, sky <70, amber <85, red ≥85 — web/lib/usageColorUtils.ts:8-20), so this fleet legitimately shows violet and sky bars on camera. Don't grade or re-time the shot to force a green-to-red look; the revoiced line describes headroom vs pinned, not a hue ramp.
 **VOICEOVER:**
-if you run unattended windows machines for a living — experiential installs, exhibits,
-broadcast, live events — owlette is built for you. here's a real fleet: lobby displays,
-museum kiosks, a media server mid-show, a couple of render nodes. online machines show a
-green pill, a machine that's dropped offline shows a red one, and the usage bars climb
-from green up toward red as a machine works harder. one glance tells you who's healthy,
-who's slammed, and who's gone dark.
+if you run unattended windows machines — experiential installs, exhibits, broadcast,
+live events — owlette is built for you. here's a real fleet: lobby displays, museum
+kiosks, a media server mid-show, a render node flat out. a green pill means online, a
+red one means offline, and each usage bar shifts color as load climbs — green when
+there's headroom, red when it's pinned.
 
 ## [b04] the one-glance promise
-**SCREEN:** slow zoom into one machine card — status pill, cpu/gpu/memory sparklines, the process list underneath.
+**SCREEN:** slow zoom into one machine card — status pill and last heartbeat, then the metric tiles in their real order (cpu, ram, disk, gpu, network) with sparklines behind them, then the displays section, then the process list.
+**NOTE:** the spoken word "memory" here maps to the tile the UI labels "ram" (MachineCardView.tsx:506) — audio is unchanged, so frame the zoom on the card as a whole rather than resting on that one label. Also: `dashboard-mixed-states` seeds NO processes (fixtures.ts writeMachineMetrics has no `metrics.processes`), so a card renders the empty "add process" button instead of a process list. Seed processes on the focus machine before recording, or the last clause of this beat has nothing on screen.
 **VOICEOVER:**
 every card is one machine. at a glance you get its heartbeat, its cpu, memory and gpu,
 and the exact apps it's supposed to be running. no remote desktop, no phone calls to
 whoever's nearest the building. you just look.
 
 ## [b05] what this series covers
-**B-ROLL:** quick montage — install wizard, the add-process dialog, a schedule editor, a deployment rolling out, the cortex chat.
+**B-ROLL:** quick montage, roughly one second each — the inno installer wizard; the "add process" dialog; the schedule editor; a deployment rolling out on /deployments; a roost version list on /roosts; a talons rule on /talons; the display layout panel on a machine card; and last, the hoot chat frame at /hoot (the nav label and the screen are "hoot" — nothing in the UI says cortex any more).
 **VOICEOVER:**
-in this series we'll go end to end: installing owlette on a fresh machine, keeping your
-apps alive, scheduling them, reading machine health, taking action remotely, and rolling
-software out to a whole fleet at once. [warm] by the end you'll have a setup that takes
-care of itself. let's start by getting owlette installed.
+in this series we'll go end to end. installing owlette, keeping your apps alive,
+scheduling them, reading machine health, acting remotely. then deploying software,
+distributing project folders with roost, automating with talons, managing displays,
+and hoot — the assistant built in. [warm] by the end you'll have a setup that takes
+care of itself. let's start with your account.

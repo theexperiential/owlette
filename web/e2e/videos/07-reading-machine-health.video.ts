@@ -1,7 +1,7 @@
 /**
  * Scene — episode 6, "reading machine health". Seven SCREEN beats, captured in
  * order; the narrate() durations match the rendered VO in
- * voiceover/out/06-reading-machine-health/.
+ * voiceover/out/07-reading-machine-health/.
  *
  * Fixture: `dashboard-mixed-states`, not the `monitor-single-machine` the
  * script's front matter names. b06 needs >5 machines to trip
@@ -13,7 +13,7 @@
  * selector the screenshot specs use.
  *
  * Run:  cd web && npm run videos -- --grep "episode 6"
- * Out:  web/e2e/.output/videos/06-reading-machine-health.mp4
+ * Out:  web/e2e/.output/videos/07-reading-machine-health.mp4
  */
 
 import { test, expect } from '@playwright/test';
@@ -41,7 +41,7 @@ test('episode 6 — reading machine health', async ({ browser }) => {
 
     await recordScene(
       browser,
-      '06-reading-machine-health',
+      '07-reading-machine-health',
       { baseURL: E2E_BASE_URL, storageState: roleState('admin').storageState },
       async (page) => {
         await openForCapture(page, '/dashboard');

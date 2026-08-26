@@ -275,6 +275,20 @@ Gaps, in order:
    webhooks page. Bonus finding filed from that investigation:
    sync_state.list_pending_distributions() has no production caller — interrupted
    syncs resume only on server re-dispatch, not at agent startup.
+8. **NEW (rewrite wave, 2026-08-25): the schedule editor asserts site-time evaluation
+   the agent does not perform.** The dialog shows a timezone chip labelled `source="site"`
+   (ScheduleEditor.tsx:493-496) and evaluates its own outside-window banner in the site
+   timezone (:663), but the agent evaluates every window machine-local:
+   `_cached_site_timezone` is never populated in production — the site lookup is
+   "name-only by design … which is deferred" (firebase_client.py:431-433) and the
+   Firestore fallback 403s under agent tokens (:476-478). A site whose timezone differs
+   from a machine's clock gets a banner/chip that lies about when the window fires.
+   **Needs a product decision**: wire site-time evaluation (return `timezone` from
+   /api/agent/site + drop the name-only guard — the agent plumbing is already in place)
+   or relabel the chip/banner as machine-local. The original audit critic's "schedules
+   run on the SITE's timezone" claim was wrong about effective behavior; both scripts
+   that touched it (ep02 day-zero, ep06 schedules) now narrate only what ships.
+   Caught by the touchup:B reviewer; adjudicated in code.
 
 ## Execution order (per the playbook's §6 repair loop)
 

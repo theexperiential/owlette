@@ -2,7 +2,7 @@
  * Scene — episode 11, "team & alerts".
  *
  * Every beat in this episode is SCREEN capture (no B-ROLL). Beat list with
- * rendered VO durations (voiceover/out/11-team-and-alerts/, ffprobe):
+ * rendered VO durations (voiceover/out/14-team-and-alerts/, ffprobe):
  *   b01 how the team works                ~18.5s  → /admin/users list
  *   b02 assign a role and sites           ~20.0s  → row menu → change role dialog
  *   b03 what each role can do             ~38.8s  → scroll the 3 role-description cards
@@ -16,7 +16,7 @@
  * email-alerts.spec.ts does.
  *
  * Run:  cd web && npm run videos -- --grep "episode 11"
- * Out:  web/e2e/.output/videos/11-team-and-alerts.mp4
+ * Out:  web/e2e/.output/videos/14-team-and-alerts.mp4
  */
 
 import { test, expect } from '@playwright/test';
@@ -90,7 +90,7 @@ test('episode 11 — team & alerts', async ({ browser }) => {
 
     await recordScene(
       browser,
-      '11-team-and-alerts',
+      '14-team-and-alerts',
       { baseURL: E2E_BASE_URL, storageState: roleState('superadmin').storageState },
       async (page) => {
         // [b01] how the team works — settle on the user-management page (~18.5s VO).

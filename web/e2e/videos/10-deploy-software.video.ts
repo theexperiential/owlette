@@ -1,7 +1,7 @@
 /**
  * Scene — episode 9, "deploy software to many machines". All screen capture,
  * no b-roll. Beats b01–b07 with VO durations
- * (voiceover/out/09-deploy-software/, ffprobe):
+ * (voiceover/out/10-deploy-software/, ffprobe):
  *   b01 the use case                    ~16.6s  deployments list, mixed statuses
  *   b02 new deployment + templates      ~19.1s  open dialog, open template select
  *   b03 installer url + silent flags    ~24.3s  type url, type flags
@@ -20,7 +20,7 @@
  * plus the admin role storageState.
  *
  * Run:  cd web && npm run videos -- --grep "episode 9"
- * Out:  web/e2e/.output/videos/09-deploy-software.mp4
+ * Out:  web/e2e/.output/videos/10-deploy-software.mp4
  */
 
 import { test, expect } from '@playwright/test';
@@ -49,7 +49,7 @@ test('episode 9 — deploy software to many machines', async ({ browser }) => {
 
     await recordScene(
       browser,
-      '09-deploy-software',
+      '10-deploy-software',
       { baseURL: E2E_BASE_URL, storageState: roleState('admin').storageState },
       async (page) => {
         await openForCapture(page, '/deployments');

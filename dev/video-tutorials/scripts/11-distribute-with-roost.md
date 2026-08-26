@@ -1,5 +1,5 @@
 ---
-number: 10
+number: 11
 slug: distribute-with-roost
 title: distribute project folders with roost
 est_duration: "9:00"
@@ -9,7 +9,7 @@ voice: null
 model: eleven_v3
 ---
 
-# episode 10 — distribute project folders with roost
+# episode 11 — distribute project folders with roost
 
 > After this you can upload a project folder once, sync it to a set of machines, and roll back to any previous version.
 
@@ -59,5 +59,5 @@ the updated folder and describe what changed. owlette pushes the difference to e
 and here's the safety net. every version stays in the history. opened to a venue this
 morning and the new build has a bug? open the version menu, pick rollback, and every
 machine returns to the previous version in moments. you can compare versions, see exactly
-which files changed, and never be more than one click from a known-good state. next, let's
-bring your team in and set up alerts so owlette tells you when something needs you.
+which files changed, and never be more than one click from a known-good state. next:
+running all of this by just asking — meet hoot, owlette's built-in assistant.

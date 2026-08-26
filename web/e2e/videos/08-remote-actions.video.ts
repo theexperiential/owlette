@@ -1,7 +1,7 @@
 /**
  * Scene — episode 7, "remote actions: reboot, screenshot, live view".
  * All seven beats are SCREEN beats. Rendered VO lengths
- * (voiceover/out/07-remote-actions/):
+ * (voiceover/out/08-remote-actions/):
  *   b01 12.0s actions menu | b02 15.5s screenshot | b03 16.2s live view
  *   b04 18.1s reboot | b05 14.8s shutdown + schedule gear | b06 12.9s mute
  *   b07 46.8s permission tiers
@@ -15,7 +15,7 @@
  * (marked VERIFY below).
  *
  * Run:  cd web && npm run videos -- --grep "episode 7"
- * Out:  web/e2e/.output/videos/07-remote-actions.mp4
+ * Out:  web/e2e/.output/videos/08-remote-actions.mp4
  */
 
 import { test, expect } from '@playwright/test';
@@ -43,7 +43,7 @@ test('episode 7 — remote actions: reboot, screenshot, live view', async ({ bro
 
     await recordScene(
       browser,
-      '07-remote-actions',
+      '08-remote-actions',
       { baseURL: E2E_BASE_URL, storageState: roleState('admin').storageState },
       async (page) => {
         await openForCapture(page, '/dashboard');

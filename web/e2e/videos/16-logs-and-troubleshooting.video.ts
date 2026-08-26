@@ -1,6 +1,6 @@
 /**
  * Scene — episode 13, "logs & troubleshooting". Every beat is SCREEN capture.
- * VO durations from voiceover/out/13-logs-and-troubleshooting/ (ffprobe):
+ * VO durations from voiceover/out/16-logs-and-troubleshooting/ (ffprobe):
  *   b01 the activity timeline       ~19.8s  → /logs page, seeded reverse-chrono list
  *   b02 reading an entry            ~20.3s  → highlight one row + its level badge
  *   b03 filtering the noise         ~24.1s  → show filters → step through dropdowns
@@ -13,7 +13,7 @@
  * web/app/logs/page.tsx.
  *
  * Run:  cd web && npm run videos -- --grep "episode 13"
- * Out:  web/e2e/.output/videos/13-logs-and-troubleshooting.mp4
+ * Out:  web/e2e/.output/videos/16-logs-and-troubleshooting.mp4
  */
 
 import { test, expect } from '@playwright/test';
@@ -141,7 +141,7 @@ test('episode 13 — logs & troubleshooting', async ({ browser }) => {
 
     await recordScene(
       browser,
-      '13-logs-and-troubleshooting',
+      '16-logs-and-troubleshooting',
       { baseURL: E2E_BASE_URL, storageState: roleState('admin').storageState },
       async (page) => {
         // [b01] the activity timeline — settle on /logs (~19.8s VO).

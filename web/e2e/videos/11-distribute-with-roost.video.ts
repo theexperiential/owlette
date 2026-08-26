@@ -1,6 +1,6 @@
 /**
  * Scene — episode 10, "distribute project folders with roost". All six beats
- * are SCREEN beats. VO durations (voiceover/out/10-distribute-with-roost/):
+ * are SCREEN beats. VO durations (voiceover/out/11-distribute-with-roost/):
  * b01 22.2s, b02 17.6s, b03 30.4s, b04 22.7s, b05 19.6s, b06 29.2s.
  *
  * Fixture `deploy-roost-rolling`: one roost "stage show", 4 versions, in-flight
@@ -11,7 +11,7 @@
  * matched by visible text or label.
  *
  * Run:  cd web && npm run videos -- --grep "episode 10"
- * Out:  web/e2e/.output/videos/10-distribute-with-roost.mp4
+ * Out:  web/e2e/.output/videos/11-distribute-with-roost.mp4
  */
 
 import { test, expect } from '@playwright/test';
@@ -39,7 +39,7 @@ test('episode 10 — distribute project folders with roost', async ({ browser })
 
     await recordScene(
       browser,
-      '10-distribute-with-roost',
+      '11-distribute-with-roost',
       { baseURL: E2E_BASE_URL, storageState: roleState('admin').storageState },
       async (page) => {
         // Pre-select stage-show so #roost-detail-panel is in frame from b01.
