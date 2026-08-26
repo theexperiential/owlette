@@ -139,6 +139,13 @@ export default defineConfig({
       OWLETTE_E2E: '1',
       WEBAUTHN_RP_ID,
       WEBAUTHN_ORIGINS,
+      // The build bakes the always-pass Turnstile TEST sitekey
+      // (scripts/e2e-build.mjs), so the SERVER needs the matching test secret
+      // or /api/users/bootstrap fails closed with 403 and a fresh signup never
+      // gets its requiresMfaSetup gate. Mirrors playwright.config.ts:154-155;
+      // the hostname list already admits localhost, which this suite runs on.
+      TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
+      TURNSTILE_HOSTNAMES: 'example.com,localhost,127.0.0.1',
     },
   },
 });
