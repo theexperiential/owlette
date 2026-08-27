@@ -236,3 +236,26 @@ Sanity checks once it has run:
 | `build_episode.py` | the in-app script — copy this into Resolve's Scripts folder |
 | `../gen-assembly.py` | writes the sheets and `../manifests/*.json` |
 | `../manifests/NN-slug.json` | per-episode: meta, absolute media paths, per-beat id / title / screen_note / duration / start |
+
+## addendum — deep-research findings (2026-08-26, verified against BMD sources)
+
+- **Do not update Resolve past 19.0.1 if you want the episode-picker dialog.**
+  UIManager script GUIs became Studio-only in Resolve 19.1 (BMD product manager,
+  Nov 2024 forum post); 19.0.1 — this machine's version — is the last free
+  release where the picker works. The `BUILD_EPISODE` constant fallback at the
+  top of build_episode.py survives any version, so the script itself stays
+  usable after an update; only the dialog dies.
+- Workspace → Scripts on the FREE edition is officially fine (BMD developer
+  support, Dec 2025: "loaded internally and executed, no differently to
+  copy/pasting into the console"). External/remote scripting stays Studio-only.
+- Resolve embeds no Python — it binds a system 64-bit install via the registry
+  (this box: 3.9.13 most likely). `resolve` / `fusion` / `bmd` are pre-injected
+  globals in-app; `import DaVinciResolveScript` is only for external use.
+- Never instantiate tkinter inside Resolve (documented crash on 16.x, unverified
+  on 19 — the script doesn't use it; keep it that way, or subprocess it).
+- Marker colors: exactly 16 valid names (Blue, Cyan, Green, Yellow, Red, Pink,
+  Purple, Fuchsia, Rose, Lavender, Sky, Mint, Lemon, Sand, Cocoa, Cream) —
+  capitalized strings, positional args only, note BEFORE duration.
+- `SetSetting` can return True and still not take — the script already
+  reads back and warns; trust the read-back, not the boolean.
+- Free-edition output ceiling is UHD — irrelevant at 1080p.
