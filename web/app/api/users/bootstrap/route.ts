@@ -9,7 +9,9 @@
  * nonexistent record. Uses `requireSessionOrIdToken` directly, like
  * `/api/webhooks/user-created`.
  *
- * Idempotent: a second call returns `alreadyExists: true`.
+ * Idempotent: a second call returns `alreadyExists: true` — including one that
+ * carries no Turnstile token, because the challenge gates creation of the doc,
+ * not the endpoint (see `onWillCreate` below).
  *
  * Body is `{ displayName?, timezone? }`. uid comes from the bearer/session and
  * email from `getUser(uid).email` — NEVER the body, so a caller can neither
@@ -90,17 +92,6 @@ async function handleBootstrap(request: NextRequest): Promise<NextResponse> {
         const federatedOnly =
           providers.length > 0 &&
           providers.every(provider => provider.providerId !== 'password');
-        if (!federatedOnly) {
-          const challenge = await verifyTurnstileToken(
-            request,
-            body[TURNSTILE_TOKEN_FIELD],
-            'register'
-          );
-          if (!challenge.ok) {
-            console.warn('[users/bootstrap] turnstile rejected:', challenge.reason);
-            return problemForbidden('challenge verification failed');
-          }
-        }
 
         if (!verifiedEmail || !EMAIL_REGEX.test(verifiedEmail)) {
           return problemValidation(
@@ -146,8 +137,25 @@ async function handleBootstrap(request: NextRequest): Promise<NextResponse> {
               typeof body.displayName === 'string' ? body.displayName : '',
             timezone:
               typeof body.timezone === 'string' ? body.timezone : undefined,
+            // The challenge gates CREATION, not calls: it runs inside
+            // bootstrapUser only when `users/{uid}` is absent. Gating the call
+            // instead 403'd the listener's tokenless retry forever, so an
+            // account whose first bootstrap failed had no way back (audit item 9).
+            onWillCreate: federatedOnly
+              ? undefined
+              : () =>
+                  verifyTurnstileToken(
+                    request,
+                    body[TURNSTILE_TOKEN_FIELD],
+                    'register'
+                  ),
           },
         );
+
+        if (result.kind === 'create_denied') {
+          console.warn('[users/bootstrap] turnstile rejected:', result.reason);
+          return problemForbidden('challenge verification failed');
+        }
 
         if (result.kind === 'already_exists') {
           return NextResponse.json({

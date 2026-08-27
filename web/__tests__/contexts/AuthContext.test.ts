@@ -1,12 +1,17 @@
 /**
- * The pure `computeIsSuperadmin` / `computeIsSiteAdmin` helpers, extracted from
- * AuthContext so they test without mounting the provider and its Firebase deps.
+ * The pure `computeIsSuperadmin` / `computeIsSiteAdmin` / `shouldListenerBootstrap`
+ * helpers, extracted from AuthContext so they test without mounting the provider
+ * and its Firebase deps.
  *
- * Matrix: {null, member, admin, superadmin} x {site in userSites, site not in
- * userSites}.
+ * Role matrix (compute*): {null, member, admin, superadmin} x {site in
+ * userSites, site not in userSites}.
  */
 
-import { computeIsSuperadmin, computeIsSiteAdmin } from '@/contexts/AuthContext';
+import {
+  computeIsSuperadmin,
+  computeIsSiteAdmin,
+  shouldListenerBootstrap,
+} from '@/contexts/AuthContext';
 
 const SITE_IN = 'site-A';
 const SITE_OUT = 'site-B';
@@ -82,5 +87,29 @@ describe('computeIsSiteAdmin', () => {
     it('is true even when userSites is empty', () => {
       expect(computeIsSiteAdmin('superadmin', [], SITE_OUT)).toBe(true);
     });
+  });
+});
+
+describe('shouldListenerBootstrap', () => {
+  it('bootstraps when nothing is in flight (google sign-in / cold recovery)', async () => {
+    await expect(shouldListenerBootstrap(null)).resolves.toBe(true);
+  });
+
+  it('stands down while the tokened signUp bootstrap is still in flight', async () => {
+    // The listener has no Turnstile token; racing signUp spent a rejected
+    // challenge on every email/password signup (drift-audit item 9).
+    let resolve!: (value: { alreadyExists: boolean }) => void;
+    const pending = new Promise<{ alreadyExists: boolean }>(r => { resolve = r; });
+
+    const decision = shouldListenerBootstrap(pending);
+    resolve({ alreadyExists: false });
+
+    await expect(decision).resolves.toBe(false);
+  });
+
+  it('still bootstraps when the signUp attempt actually failed — the recovery path', async () => {
+    // Standing down must not cost us the reason this path exists.
+    const failed = Promise.reject(new Error('siteverify blip'));
+    await expect(shouldListenerBootstrap(failed)).resolves.toBe(true);
   });
 });

@@ -9,9 +9,15 @@
  *     and store a clean one (or vice-versa);
  *   - a disposable verified email 400s BEFORE any DB write (bootstrapUser is
  *     never called);
- *   - the per-IP signup limit 429s before the handler runs.
- * A regression that re-trusted body.email, dropped the withRateLimit wrap, or
- * moved the disposable check after the write would pass the old tests, not these.
+ *   - the per-IP signup limit 429s before the handler runs;
+ *   - the bot challenge gates CREATION, not calls — it rides bootstrapUser's
+ *     `onWillCreate` hook, which fires only when `users/{uid}` is absent.
+ * A regression that re-trusted body.email, dropped the withRateLimit wrap,
+ * moved the disposable check after the write, or hoisted the challenge back
+ * ahead of the existence read would pass the old tests, not these.
+ *
+ * bootstrapUser is mocked, so the doc-existence premise each test runs under is
+ * stated by which fake it installs — `absentDocBootstrap` or `existingDocBootstrap`.
  */
 
 import { createMockRequest, parseResponse } from './helpers/utils';
@@ -67,19 +73,46 @@ function bootstrapReq(body: Record<string, unknown>) {
   return createMockRequest('/api/users/bootstrap', { method: 'POST', body });
 }
 
+type CreateGate = { ok: true } | { ok: false; reason: string };
+interface BootstrapInput {
+  onWillCreate?: () => Promise<CreateGate>;
+}
+
+/**
+ * Stands in for bootstrapUser when `users/{uid}` is ABSENT: it consults the
+ * caller's creation gate and honours the verdict, exactly as the real one does
+ * between its existence read and its write.
+ */
+async function absentDocBootstrap(_ctx: unknown, input: BootstrapInput) {
+  const verdict = await input.onWillCreate?.();
+  if (verdict && !verdict.ok) {
+    return { kind: 'create_denied', reason: verdict.reason };
+  }
+  return {
+    kind: 'created',
+    uid: 'uid-test',
+    email: 'real@gmail.com',
+    displayName: '',
+    timezone: 'UTC',
+    createdAt: 1,
+  };
+}
+
+/**
+ * Stands in for bootstrapUser when `users/{uid}` already EXISTS: it returns on
+ * the existence read, so the creation gate is never consulted.
+ */
+async function existingDocBootstrap() {
+  return { kind: 'already_exists', createdAt: 1 };
+}
+
 describe('POST /api/users/bootstrap — abuse controls', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRequireSessionOrIdToken.mockResolvedValue('uid-test');
     mockGetUser.mockResolvedValue({ uid: 'uid-test', email: 'real@gmail.com' });
-    mockBootstrapUser.mockResolvedValue({
-      kind: 'created',
-      uid: 'uid-test',
-      email: 'real@gmail.com',
-      displayName: '',
-      timezone: 'UTC',
-      createdAt: 1,
-    });
+    // Default premise: a brand-new account, no users/{uid} doc yet.
+    mockBootstrapUser.mockImplementation(absentDocBootstrap);
     mockCheckRateLimit.mockResolvedValue({
       success: true,
       limit: 10,
@@ -117,10 +150,12 @@ describe('POST /api/users/bootstrap — abuse controls', () => {
     expect(mockBootstrapUser).not.toHaveBeenCalled();
   });
 
-  describe('turnstile challenge (provider-gated)', () => {
+  describe('turnstile challenge (provider-gated, creation-only)', () => {
     // The route has two callers: the register form (carries a token) and the
     // AuthContext auth-state listener (cannot). The gate keys off the VERIFIED
-    // provider so Google sign-in keeps working — see the route comment.
+    // provider so Google sign-in keeps working — see the route comment. It also
+    // only fires on CREATION, so the listener's tokenless retry can recover an
+    // account whose first bootstrap failed.
     const REAL_SECRET = '1x0000000000000000000000000000000AA';
 
     afterEach(() => {
@@ -136,11 +171,38 @@ describe('POST /api/users/bootstrap — abuse controls', () => {
         email: 'real@gmail.com',
         providerData: [{ providerId: 'password' }],
       });
+      // No users/{uid} doc — this IS a creation, so the gate must run.
+      mockBootstrapUser.mockImplementation(absentDocBootstrap);
 
       const res = await POST(bootstrapReq({ displayName: 'Bot' }));
       const { status } = await parseResponse(res);
       expect(status).toBe(403);
-      expect(mockBootstrapUser).not.toHaveBeenCalled();
+      // The gate ran, and denied — nothing was written.
+      expect(mockBootstrapUser).toHaveBeenCalledTimes(1);
+      expect(await mockBootstrapUser.mock.results[0].value).toEqual({
+        kind: 'create_denied',
+        reason: 'missing_token',
+      });
+    });
+
+    it('lets a password account with an EXISTING doc through without a token — the recovery path', async () => {
+      // The AuthContext listener cannot carry a token (audit item 9). Gating the
+      // CALL rather than the creation 403'd it forever, stranding any account
+      // whose first bootstrap failed with no self-service way out.
+      process.env.TURNSTILE_SECRET = REAL_SECRET;
+      process.env.TURNSTILE_HOSTNAMES = 'owlette.app';
+      mockGetUser.mockResolvedValue({
+        uid: 'uid-test',
+        email: 'real@gmail.com',
+        providerData: [{ providerId: 'password' }],
+      });
+      mockBootstrapUser.mockImplementation(existingDocBootstrap);
+
+      const res = await POST(bootstrapReq({ displayName: 'Real Person' }));
+      const { status, body } = await parseResponse(res);
+      expect(status).toBe(200);
+      expect((body as { alreadyExists?: boolean }).alreadyExists).toBe(true);
+      expect(mockBootstrapUser).toHaveBeenCalledTimes(1);
     });
 
     it('lets a google-provider signup through without a token', async () => {
@@ -166,11 +228,16 @@ describe('POST /api/users/bootstrap — abuse controls', () => {
         email: 'real@gmail.com',
         providerData: [],
       });
+      // No users/{uid} doc — this IS a creation, so the gate must run.
+      mockBootstrapUser.mockImplementation(absentDocBootstrap);
 
       const res = await POST(bootstrapReq({ displayName: 'Unknown' }));
       const { status } = await parseResponse(res);
       expect(status).toBe(403);
-      expect(mockBootstrapUser).not.toHaveBeenCalled();
+      expect(await mockBootstrapUser.mock.results[0].value).toEqual({
+        kind: 'create_denied',
+        reason: 'missing_token',
+      });
     });
   });
 

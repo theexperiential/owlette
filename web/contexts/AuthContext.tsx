@@ -177,6 +177,27 @@ const bootstrapUserDocument = async (
   return response.json() as Promise<{ alreadyExists: boolean }>;
 };
 
+/**
+ * Should the auth-state listener run its own bootstrap for a user whose doc is
+ * missing? Not while signUp's is still in flight: that call carries the register
+ * form's Turnstile token and this path has none, so racing it spent a rejected
+ * challenge on every email/password signup. Waiting also preserves the reason
+ * this path exists — a signUp bootstrap that genuinely FAILED still falls
+ * through to the recovery attempt. Exported so it's testable without
+ * AuthProvider.
+ */
+export async function shouldListenerBootstrap(
+  pendingSignUpBootstrap: Promise<unknown> | null
+): Promise<boolean> {
+  if (!pendingSignUpBootstrap) return true;
+  try {
+    await pendingSignUpBootstrap;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 export type UserRole = 'member' | 'admin' | 'superadmin';
 
 /** Platform-wide superadmin? Exported so it's testable without AuthProvider. */
@@ -322,6 +343,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // `onAuthStateChanged` fires null on first load too, so an involuntary
   // sign-out only counts for a session that was actually signed in.
   const hadUserRef = useRef(false);
+  // signUp's in-flight bootstrap, held so the doc listener can wait on it
+  // instead of racing a second, tokenless one — see shouldListenerBootstrap.
+  const signUpBootstrapRef = useRef<Promise<{ alreadyExists: boolean }> | null>(null);
   const [lastSiteId, setLastSiteId] = useState<string | null>(null);
   const [lastMachineIds, setLastMachineIds] = useState<Record<string, string>>({});
 
@@ -496,6 +520,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
                 setLoading(false);
               } else {
+                if (!(await shouldListenerBootstrap(signUpBootstrapRef.current))) {
+                  // signUp's own bootstrap created the doc; leave loading true
+                  // and let the listener fire again with it.
+                  return;
+                }
                 console.log('⚠️ User document missing, creating now...');
                 try {
                   const displayName = user.displayName || '';
@@ -594,10 +623,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await updateProfile(userCredential.user, { displayName });
       }
 
-      // Bootstrap the user document server-side immediately.
+      // Bootstrap the user document server-side immediately. Published on the ref
+      // before the first await, because the doc listener is already live and
+      // sees the doc missing — and only this call carries the Turnstile token.
       try {
         const displayName = [firstName, lastName].filter(Boolean).join(' ') || '';
-        const bootstrap = await bootstrapUserDocument(userCredential.user, displayName, turnstileToken);
+        const pending = bootstrapUserDocument(userCredential.user, displayName, turnstileToken);
+        signUpBootstrapRef.current = pending;
+        const bootstrap = await pending;
         console.log('✅ User document created in Firestore:', userCredential.user.uid);
 
         if (!bootstrap.alreadyExists) {
@@ -612,6 +645,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('failed to bootstrap user document:', bootstrapError);
         console.error('Error message:', err?.message);
         // Don't throw: the onAuthStateChanged listener retries the bootstrap.
+      } finally {
+        signUpBootstrapRef.current = null;
       }
 
       toast.success('Account Created', {
