@@ -399,7 +399,7 @@ export async function endTake(take: DesktopTake | null): Promise<void> {
 
 /**
  * Run `scene` with ffmpeg filming the window, saving to
- * `e2e/.output/desktop-videos/{sceneName}.mp4`.
+ * `dev/video-tutorials/footage/desktop/{sceneName}.mp4`.
  *
  * A throwing scene still stops the recorder in `finally` — no orphaned ffmpeg —
  * and `FfmpegRecorder.stop`'s temp→final rename means a half-written file never
