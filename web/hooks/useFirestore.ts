@@ -351,6 +351,15 @@ export interface Site {
   createdAt: FirestoreTs;
   timezone?: string;  // IANA timezone, e.g., "America/New_York"
   owner?: string;  // UID of the user who owns this site
+  /**
+   * Whether process schedules are evaluated in the site's timezone instead of
+   * each machine's own clock. Three states, and `undefined` is a real one:
+   * `undefined` = never asked (legacy sites; schedules stay machine-local),
+   * `false` = the operator declined, `true` = site time. Do not collapse
+   * `undefined` into `false` — that is what distinguishes a site still owed the
+   * opt-in prompt from one that already answered no.
+   */
+  schedulesFollowSiteTime?: boolean;
 }
 
 // DELETE once all agents are >= 2.9.0
@@ -592,6 +601,11 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
                 createdAt: data.createdAt || Date.now(),
                 timezone: data.timezone,
                 owner: data.owner,
+                // Stays `undefined` when the field is absent — the third state.
+                schedulesFollowSiteTime:
+                  typeof data.schedulesFollowSiteTime === 'boolean'
+                    ? data.schedulesFollowSiteTime
+                    : undefined,
               });
             });
             siteData.sort((a, b) => a.name.localeCompare(b.name));
@@ -639,6 +653,11 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
                 createdAt: data.createdAt || Date.now(),
                 timezone: data.timezone,
                 owner: data.owner,
+                // Stays `undefined` when the field is absent — the third state.
+                schedulesFollowSiteTime:
+                  typeof data.schedulesFollowSiteTime === 'boolean'
+                    ? data.schedulesFollowSiteTime
+                    : undefined,
               });
             } else {
               siteDataMap.delete(siteId);
@@ -698,16 +717,22 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
     return siteId;
   };
 
-  const updateSite = async (siteId: string, updates: { name?: string; timezone?: string; timeFormat?: '12h' | '24h' }) => {
+  const updateSite = async (siteId: string, updates: { name?: string; timezone?: string; timeFormat?: '12h' | '24h'; schedulesFollowSiteTime?: boolean }) => {
     if (!db) throw new Error('Firebase not configured');
     if (updates.name !== undefined && !updates.name.trim()) {
       throw new Error('Site name cannot be empty');
     }
 
-    const updateData: Record<string, string> = {};
+    const updateData: Record<string, string | boolean> = {};
     if (updates.name) updateData.name = updates.name.trim();
     if (updates.timezone) updateData.timezone = updates.timezone;
     if (updates.timeFormat) updateData.timeFormat = updates.timeFormat;
+    // `!== undefined`, not truthiness: `false` is the escape hatch ("keep machine
+    // clocks") and a truthiness check would silently drop it, leaving the site in
+    // its unanswered state and re-prompting forever.
+    if (updates.schedulesFollowSiteTime !== undefined) {
+      updateData.schedulesFollowSiteTime = updates.schedulesFollowSiteTime;
+    }
 
     if (Object.keys(updateData).length === 0) return;
 

@@ -26,6 +26,13 @@ export interface CreateSiteInput {
   name: string;
   ownerUid: string;
   timezone?: string;
+  /**
+   * Opt the site's process schedules into site time instead of each machine's
+   * own clock. Three-state by design and NOT defaulted here: omit and the field
+   * is left off the document entirely, which is what "never asked" looks like —
+   * `false` means the operator declined and must not be confused with it.
+   */
+  schedulesFollowSiteTime?: boolean;
   /** Tests pass a mock; production omits. */
   db?: Firestore;
   /** Tests pass a fixed clock; production omits. */
@@ -49,6 +56,12 @@ export type CreateSiteResult =
       timezone: string;
       owner: string;
       createdAt: number;
+      /**
+       * Effective value, not the stored one: the document keeps three states
+       * (absent / false / true) but callers only ever act on "is site time on",
+       * so an omitted flag reports `false` here.
+       */
+      schedulesFollowSiteTime: boolean;
     };
 
 export async function createSite(
@@ -78,6 +91,14 @@ export async function createSite(
       ? input.timezone
       : 'UTC';
 
+  // Write the flag only when the caller stated one. Stamping `false` on every
+  // new site would spend its "never asked" state at creation and permanently
+  // suppress the opt-in prompt for sites nobody ever asked.
+  const schedulesFollowSiteTime =
+    typeof input.schedulesFollowSiteTime === 'boolean'
+      ? input.schedulesFollowSiteTime
+      : undefined;
+
   const db = input.db ?? getAdminDb();
   const siteRef = db.collection('sites').doc(input.siteId);
 
@@ -97,6 +118,7 @@ export async function createSite(
     createdAt: nowDate,
     owner: input.ownerUid,
     timezone,
+    ...(schedulesFollowSiteTime !== undefined ? { schedulesFollowSiteTime } : {}),
   });
   batch.update(db.collection('users').doc(input.ownerUid), {
     sites: FieldValue.arrayUnion(input.siteId),
@@ -114,6 +136,9 @@ export async function createSite(
       verb: 'created',
       owner: input.ownerUid,
       timezone,
+      // `null` distinguishes "flag not written" from an explicit `false` in the
+      // audit trail, which is the same distinction the document keeps.
+      schedulesFollowSiteTime: schedulesFollowSiteTime ?? null,
     },
   });
 
@@ -124,5 +149,6 @@ export async function createSite(
     timezone,
     owner: input.ownerUid,
     createdAt: nowDate.getTime(),
+    schedulesFollowSiteTime: schedulesFollowSiteTime === true,
   };
 }

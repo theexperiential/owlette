@@ -427,7 +427,11 @@ describe('/api/sites/{siteId}', () => {
     const res = await sitePATCH(
       createMockRequest('http://localhost/api/sites/site-a', {
         method: 'PATCH',
-        body: { name: 'New Name', timeFormat: '24h' },
+        // `schedulesFollowSiteTime: false` rides along as a boolean: the echoed
+        // `updated` map is no longer string-valued, and `false` in particular
+        // must survive the whole route → action → response path rather than
+        // being dropped by a truthiness check somewhere in it.
+        body: { name: 'New Name', timeFormat: '24h', schedulesFollowSiteTime: false },
       }),
       { params: Promise.resolve({ siteId: 'site-a' }) },
     );
@@ -435,11 +439,78 @@ describe('/api/sites/{siteId}', () => {
 
     expect(res.status).toBe(200);
     expect(body.changed).toBe(true);
-    expect(body.updated).toEqual({ name: 'New Name', timeFormat: '24h' });
+    expect(body.updated).toEqual({
+      name: 'New Name',
+      timeFormat: '24h',
+      schedulesFollowSiteTime: false,
+    });
     expect(docStore['sites/site-a']?.data).toMatchObject({
       name: 'New Name',
       timeFormat: '24h',
+      schedulesFollowSiteTime: false,
     });
+  });
+
+  it('enables site time when the same request supplies the timezone', async () => {
+    authedKey('admin-uid', 'superadmin', [siteScope('site-a', 'admin')]);
+    seedSite('site-a', { owner: 'admin-uid', timezone: '' });
+
+    const res = await sitePATCH(
+      createMockRequest('http://localhost/api/sites/site-a', {
+        method: 'PATCH',
+        body: { timezone: 'America/Los_Angeles', schedulesFollowSiteTime: true },
+      }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.updated).toEqual({
+      timezone: 'America/Los_Angeles',
+      schedulesFollowSiteTime: true,
+    });
+    expect(docStore['sites/site-a']?.data).toMatchObject({
+      timezone: 'America/Los_Angeles',
+      schedulesFollowSiteTime: true,
+    });
+  });
+
+  it('rejects enabling site time on a site with no timezone', async () => {
+    authedKey('admin-uid', 'superadmin', [siteScope('site-a', 'admin')]);
+    seedSite('site-a', { owner: 'admin-uid', timezone: '' });
+
+    const res = await sitePATCH(
+      createMockRequest('http://localhost/api/sites/site-a', {
+        method: 'PATCH',
+        body: { schedulesFollowSiteTime: true },
+      }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.errors?.['body.schedulesFollowSiteTime']).toBeDefined();
+    // Nothing written: a site that claimed site time without one would leave the
+    // agent endpoint returning null and schedules quietly on machine clocks.
+    expect(docStore['sites/site-a']?.data?.schedulesFollowSiteTime).toBeUndefined();
+  });
+
+  it('creates a site with the flag left unset when the request omits it', async () => {
+    authedKey('admin-uid', 'superadmin', [siteScope('*', 'admin')]);
+
+    const res = await sitesPOST(
+      createMockRequest('http://localhost/api/sites', {
+        method: 'POST',
+        body: { siteId: 'site-new', name: 'New Site', timezone: 'America/Los_Angeles' },
+      }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(body.schedulesFollowSiteTime).toBe(false);
+    // Absent, not `false`: the document keeps the "never asked" state so the
+    // site can still be prompted to opt in.
+    expect(docStore['sites/site-new']?.data).not.toHaveProperty('schedulesFollowSiteTime');
   });
 
   it('deletes a site through the site admin surface', async () => {

@@ -26,6 +26,13 @@ export interface UseCurrentSiteResult {
   currentSite: Site | undefined;
   /** IANA timezone of the selected site, for timestamp rendering. */
   siteTimezone: string | undefined;
+  /**
+   * Whether the selected site evaluates process schedules in site time.
+   * Three-state: `undefined` = never asked (schedules stay machine-local),
+   * `false` = declined, `true` = site time. `undefined` is meaningful — do not
+   * coalesce it to `false`.
+   */
+  schedulesFollowSiteTime: boolean | undefined;
   /** True while the site list is still resolving. */
   sitesLoading: boolean;
   /**
@@ -101,6 +108,7 @@ export function useCurrentSite(): UseCurrentSiteResult {
     currentSiteId,
     currentSite,
     siteTimezone: currentSite?.timezone,
+    schedulesFollowSiteTime: currentSite?.schedulesFollowSiteTime,
     sitesLoading,
     hasNoSites: !sitesLoading && sites.length === 0,
     selectSite,

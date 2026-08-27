@@ -677,6 +677,9 @@ describe('site CRUD actions', () => {
       name: '  new name  ',
       timezone: 'Not/AZone',
       timeFormat: '24h',
+      // The echoed `updated` map is string-or-boolean now; assert the boolean
+      // alongside the strings rather than in a separate shape.
+      schedulesFollowSiteTime: true,
       db: db.asFirestore(),
     });
 
@@ -686,12 +689,188 @@ describe('site CRUD actions', () => {
         name: 'new name',
         timezone: 'Not/AZone',
         timeFormat: '24h',
+        schedulesFollowSiteTime: true,
       },
     });
     expect(db.docs.get('sites/site-a')).toMatchObject({
       name: 'new name',
       timezone: 'Not/AZone',
       timeFormat: '24h',
+      schedulesFollowSiteTime: true,
+    });
+  });
+
+  describe('updateSite schedulesFollowSiteTime', () => {
+    it('enables site time when the stored timezone already covers it', async () => {
+      const db = new FakeDb();
+      db.seed('sites/site-a', { name: 'a', timezone: 'America/Los_Angeles' });
+
+      const result = await updateSite(ctx, {
+        siteId: 'site-a',
+        schedulesFollowSiteTime: true,
+        db: db.asFirestore(),
+      });
+
+      expect(result).toEqual({
+        kind: 'updated',
+        updated: { schedulesFollowSiteTime: true },
+      });
+    });
+
+    // NEGATIVE CONTROL for the guard above: same call, same flag, only the
+    // timezone removed. If the guard is ever dropped this is the test that
+    // fails, and it fails on the exact condition the guard exists for.
+    it('refuses to enable site time on a site with no timezone', async () => {
+      const db = new FakeDb();
+      db.seed('sites/site-a', { name: 'a' });
+
+      const result = await updateSite(ctx, {
+        siteId: 'site-a',
+        schedulesFollowSiteTime: true,
+        db: db.asFirestore(),
+      });
+
+      expect(result.kind).toBe('invalid_schedule_tz_flag');
+      expect(db.docs.get('sites/site-a')).not.toHaveProperty('schedulesFollowSiteTime');
+      expect(mockEmitMutation).not.toHaveBeenCalled();
+    });
+
+    it('refuses to enable site time when the stored timezone is blank', async () => {
+      const db = new FakeDb();
+      db.seed('sites/site-a', { name: 'a', timezone: '   ' });
+
+      const result = await updateSite(ctx, {
+        siteId: 'site-a',
+        schedulesFollowSiteTime: true,
+        db: db.asFirestore(),
+      });
+
+      expect(result.kind).toBe('invalid_schedule_tz_flag');
+      expect(db.docs.get('sites/site-a')).not.toHaveProperty('schedulesFollowSiteTime');
+    });
+
+    it('refuses to enable site time when the same write blanks the timezone', async () => {
+      const db = new FakeDb();
+      db.seed('sites/site-a', { name: 'a', timezone: 'America/Los_Angeles' });
+
+      const result = await updateSite(ctx, {
+        siteId: 'site-a',
+        timezone: '',
+        schedulesFollowSiteTime: true,
+        db: db.asFirestore(),
+      });
+
+      // The guard reads the post-write timezone, not the stored one, so a
+      // request that clears the timezone cannot smuggle the flag past it.
+      expect(result.kind).toBe('invalid_schedule_tz_flag');
+      expect(db.docs.get('sites/site-a')).toMatchObject({
+        timezone: 'America/Los_Angeles',
+      });
+    });
+
+    // The escape hatch: a touring site declines, and it owes no timezone to do
+    // so. `false` must reach the document — a truthiness check would drop it and
+    // leave the site indistinguishable from one that was never asked.
+    it('accepts a decline on a site with no timezone at all', async () => {
+      const db = new FakeDb();
+      db.seed('sites/site-a', { name: 'a' });
+
+      const result = await updateSite(ctx, {
+        siteId: 'site-a',
+        schedulesFollowSiteTime: false,
+        db: db.asFirestore(),
+      });
+
+      expect(result).toEqual({
+        kind: 'updated',
+        updated: { schedulesFollowSiteTime: false },
+      });
+      expect(db.docs.get('sites/site-a')).toMatchObject({
+        schedulesFollowSiteTime: false,
+      });
+    });
+
+    it('rejects a non-boolean flag before touching the document', async () => {
+      const db = new FakeDb();
+      db.seed('sites/site-a', { name: 'a', timezone: 'America/Los_Angeles' });
+
+      const result = await updateSite(ctx, {
+        siteId: 'site-a',
+        schedulesFollowSiteTime: 'true' as unknown as boolean,
+        db: db.asFirestore(),
+      });
+
+      expect(result.kind).toBe('invalid_schedule_tz_flag');
+      expect(db.docs.get('sites/site-a')).not.toHaveProperty('schedulesFollowSiteTime');
+    });
+
+    it('leaves the stored decision alone when the flag is omitted', async () => {
+      const db = new FakeDb();
+      db.seed('sites/site-a', { name: 'a', timezone: 'UTC', schedulesFollowSiteTime: true });
+
+      await updateSite(ctx, {
+        siteId: 'site-a',
+        name: 'renamed',
+        db: db.asFirestore(),
+      });
+
+      expect(db.docs.get('sites/site-a')).toMatchObject({
+        name: 'renamed',
+        schedulesFollowSiteTime: true,
+      });
+    });
+  });
+
+  describe('createSite schedulesFollowSiteTime', () => {
+    it('leaves the field off the document when the caller says nothing', async () => {
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+
+      const result = await runCreateSite(db);
+
+      // "Never asked" is a state the document must be able to hold: stamping
+      // `false` at creation would silently answer the question for the operator.
+      expect(db.docs.get('sites/site-a')).not.toHaveProperty('schedulesFollowSiteTime');
+      expect(result).toMatchObject({ schedulesFollowSiteTime: false });
+    });
+
+    it('records an explicit opt-in on the new site', async () => {
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+
+      const result = await createSite(ctx, {
+        siteId: 'site-a',
+        name: 'Main Gallery',
+        ownerUid: 'owner-1',
+        timezone: 'America/Los_Angeles',
+        schedulesFollowSiteTime: true,
+        db: db.asFirestore(),
+        now: () => CREATE_NOW,
+      });
+
+      expect(result).toMatchObject({ kind: 'created', schedulesFollowSiteTime: true });
+      expect(db.docs.get('sites/site-a')).toMatchObject({
+        schedulesFollowSiteTime: true,
+      });
+    });
+
+    it('records an explicit decline on the new site', async () => {
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+
+      const result = await createSite(ctx, {
+        siteId: 'site-a',
+        name: 'Main Gallery',
+        ownerUid: 'owner-1',
+        schedulesFollowSiteTime: false,
+        db: db.asFirestore(),
+        now: () => CREATE_NOW,
+      });
+
+      expect(result).toMatchObject({ schedulesFollowSiteTime: false });
+      expect(db.docs.get('sites/site-a')).toMatchObject({
+        schedulesFollowSiteTime: false,
+      });
     });
   });
 

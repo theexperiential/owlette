@@ -35,6 +35,7 @@ interface UpdateSiteBody {
   name?: unknown;
   timezone?: unknown;
   timeFormat?: unknown;
+  schedulesFollowSiteTime?: unknown;
 }
 
 function auditActor(ctx: SiteHandlerContext): string {
@@ -76,6 +77,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<Ro
         timezone: typeof data.timezone === 'string' ? data.timezone : null,
         owner: typeof data.owner === 'string' ? data.owner : null,
         createdAt: timestampToIso(data.createdAt),
+        // Effective value — an absent field means the site was never asked and
+        // still runs schedules on machine clocks.
+        schedulesFollowSiteTime: data.schedulesFollowSiteTime === true,
       }),
       auth.scopeCheck,
     );
@@ -116,6 +120,9 @@ export const PATCH = authorizedSiteHandler<RouteParams>({
             ...(body.timeFormat !== undefined
               ? { timeFormat: body.timeFormat as '12h' | '24h' }
               : {}),
+            ...(body.schedulesFollowSiteTime !== undefined
+              ? { schedulesFollowSiteTime: body.schedulesFollowSiteTime as boolean }
+              : {}),
           },
         );
 
@@ -135,6 +142,11 @@ export const PATCH = authorizedSiteHandler<RouteParams>({
         if (result.kind === 'invalid_time_format') {
           return problemValidation(result.reason, {
             'body.timeFormat': [result.reason],
+          });
+        }
+        if (result.kind === 'invalid_schedule_tz_flag') {
+          return problemValidation(result.reason, {
+            'body.schedulesFollowSiteTime': [result.reason],
           });
         }
 
