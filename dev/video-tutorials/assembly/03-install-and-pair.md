@@ -4,10 +4,13 @@ Narration: **3:12.2** across 10 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
+Timeline: 1920x1080 @ 60.0fps.
+Resolve build manifest: [`manifests/03-install-and-pair.json`](manifests/03-install-and-pair.json)
+
 Footage:
-- native: capture-native install wizard (b01-b04)
-- desktop: web/e2e/.output/desktop-videos (pairing dialog, b05-b06/b10)
-- web/e2e/.output/videos/03-install-and-pair.mp4 (dashboard beats b07-b09)
+- native: capture-native install wizard (b01-b04) — **not captured yet**
+- `web/e2e/.output/desktop-videos/03-install-and-pair-desktop.mp4` — pairing dialog (b05-b06/b10) [1600x900 @ 60.0fps]
+- `web/e2e/.output/videos/03-install-and-pair.mp4` — dashboard beats b07-b09 — **MISSING**
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

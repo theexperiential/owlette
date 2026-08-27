@@ -4,8 +4,11 @@ Narration: **2:58.8** across 8 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
+Timeline: 1920x1080 @ 60.0fps.
+Resolve build manifest: [`manifests/12-cortex.json`](manifests/12-cortex.json)
+
 Footage:
-- web/e2e/.output/videos/12-cortex.mp4
+- `web/e2e/.output/videos/12-cortex.mp4` [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

@@ -4,9 +4,12 @@ Narration: **3:24.9** across 9 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
+Timeline: 1920x1080 @ 60.0fps.
+Resolve build manifest: [`manifests/17-fleet-maintenance.json`](manifests/17-fleet-maintenance.json)
+
 Footage:
-- web/e2e/.output/videos/17-fleet-maintenance.mp4
-- web/e2e/.output/videos/17-fleet-maintenance-b06-tokens.mp4 (b06 tokens cut)
+- `web/e2e/.output/videos/17-fleet-maintenance.mp4` [1920x1080 @ 60.0fps]
+- `web/e2e/.output/videos/17-fleet-maintenance-b06-tokens.mp4` — b06 tokens cut [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

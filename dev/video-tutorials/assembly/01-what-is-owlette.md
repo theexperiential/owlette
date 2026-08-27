@@ -4,8 +4,11 @@ Narration: **1:50.7** across 5 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
+Timeline: 1920x1080 @ 60.0fps.
+Resolve build manifest: [`manifests/01-what-is-owlette.json`](manifests/01-what-is-owlette.json)
+
 Footage:
-- web/e2e/.output/videos/01-what-is-owlette.mp4
+- `web/e2e/.output/videos/01-what-is-owlette.mp4` [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

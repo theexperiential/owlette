@@ -1,0 +1,149 @@
+{
+  "episode": 6,
+  "slug": "run-on-a-schedule",
+  "stem": "06-run-on-a-schedule",
+  "title": "run apps on a schedule",
+  "capture": "mixed",
+  "scenario": "automate-schedule-editor",
+  "script": "scripts/06-run-on-a-schedule.md",
+  "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
+  "narration_s": 120.268,
+  "timeline": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 60.0
+  },
+  "sources": [
+    {
+      "role": "scene",
+      "note": "",
+      "rel": "web/e2e/.output/videos/06-run-on-a-schedule.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\06-run-on-a-schedule.mp4",
+      "exists": true,
+      "duration_s": 145.183,
+      "width": 1920,
+      "height": 1080,
+      "fps": 60.0
+    }
+  ],
+  "beats": [
+    {
+      "id": "b01",
+      "title": "why schedule",
+      "screen_note": "(web) the lobby-display card.",
+      "direction": {
+        "SCREEN": "(web) the lobby-display card."
+      },
+      "start_s": 0.0,
+      "start_frame": 0,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\06-run-on-a-schedule\\ep06-b01.mp3",
+      "mp3_name": "ep06-b01.mp3",
+      "duration_s": 19.958,
+      "duration_frames": 1197,
+      "status": "ok"
+    },
+    {
+      "id": "b02",
+      "title": "switch to scheduled",
+      "screen_note": "(web) open a process for edit; in the launch mode segmented control, switch from \"always on\" to \"scheduled\" — labels are lowercase on screen. An inline schedule section + a week-summary bar appear in the dialog. (From a process row on the card, the same is reached via the schedule gear.)",
+      "direction": {
+        "SCREEN": "(web) open a process for edit; in the launch mode segmented control, switch from \"always on\" to \"scheduled\" — labels are lowercase on screen. An inline schedule section + a week-summary bar appear in the dialog. (From a process row on the card, the same is reached via the schedule gear.)",
+        "NOTE": "the gear flush at the end of the segmented control (aria-label \"configure schedule\", testid `process-dialog-configure-schedule`) opens the same section in EVERY launch mode — including \"off\" and \"always on\", where it just stores the windows for later (\"saved with the process — switch to scheduled whenever you want these windows to run it\"). Frame the gear while the mode still reads \"always on\" so that's visible, then flip to \"scheduled\"."
+      },
+      "start_s": 19.958,
+      "start_frame": 1197,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\06-run-on-a-schedule\\ep06-b02.mp3",
+      "mp3_name": "ep06-b02.mp3",
+      "duration_s": 12.826,
+      "duration_frames": 770,
+      "status": "ok"
+    },
+    {
+      "id": "b03",
+      "title": "the schedule editor",
+      "screen_note": "(web) the \"configure schedule\" editor — day pills mon–sun, a time range with a start, \"to\", and stop using the time picker.",
+      "direction": {
+        "SCREEN": "(web) the \"configure schedule\" editor — day pills mon–sun, a time range with a start, \"to\", and stop using the time picker.",
+        "NOTE": "locate the card-row gear by icon (`button:has(svg.lucide-settings-2)`) — it has no accessible name."
+      },
+      "start_s": 32.784,
+      "start_frame": 1967,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\06-run-on-a-schedule\\ep06-b03.mp3",
+      "mp3_name": "ep06-b03.mp3",
+      "duration_s": 19.487,
+      "duration_frames": 1169,
+      "status": "ok"
+    },
+    {
+      "id": "b04",
+      "title": "overnight windows",
+      "screen_note": "(web) set a range like 23:00 to 06:00; the \"+1 day\" badge and \"ends the following day\" note appear.",
+      "direction": {
+        "SCREEN": "(web) set a range like 23:00 to 06:00; the \"+1 day\" badge and \"ends the following day\" note appear.",
+        "NOTE": "the seeded admin preference is 12h and the default block ends 17:00, so a bare \"06:00\" parses as 6 pm. Type \"6am\" (or seed timeFormat 24h) or the frame will read 11pm→6pm and contradict the narration."
+      },
+      "start_s": 52.271,
+      "start_frame": 3136,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\06-run-on-a-schedule\\ep06-b04.mp3",
+      "mp3_name": "ep06-b04.mp3",
+      "duration_s": 15.882,
+      "duration_frames": 953,
+      "status": "ok"
+    },
+    {
+      "id": "b05",
+      "title": "presets",
+      "screen_note": "(web) the preset pills — \"business hours\", \"extended hours\", \"weekday 24h\", \"24/7\"; then the \"new preset\" save action.",
+      "direction": {
+        "SCREEN": "(web) the preset pills — \"business hours\", \"extended hours\", \"weekday 24h\", \"24/7\"; then the \"new preset\" save action.",
+        "NOTE": "dismiss the inline \"new preset\" form with its X cancel button, never Escape — Escape closes the whole dialog and \"save schedule\" disappears before b06 can click it."
+      },
+      "start_s": 68.153,
+      "start_frame": 4089,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\06-run-on-a-schedule\\ep06-b05.mp3",
+      "mp3_name": "ep06-b05.mp3",
+      "duration_s": 21.159,
+      "duration_frames": 1270,
+      "status": "ok"
+    },
+    {
+      "id": "b06",
+      "title": "save it",
+      "screen_note": "(web) click \"save schedule\"; hold on the outside-window banner (\"this looks outside the current window — a machine outside it will stop the process shortly after saving.\"), then the dialog closing back to the process row with its new schedule summary.",
+      "direction": {
+        "SCREEN": "(web) click \"save schedule\"; hold on the outside-window banner (\"this looks outside the current window — a machine outside it will stop the process shortly after saving.\"), then the dialog closing back to the process row with its new schedule summary.",
+        "NOTE": "do NOT frame the timezone chip under the \"configure schedule\" title, or the \"times in …\" label in the process dialog. The chip is labelled `source=\"site\"`, but the agent can never read the site document (firestore.rules scopes it to its own machine subtree), so `site_timezone` is always None and every window is evaluated on the machine's own local clock. Site-time evaluation is designed but not wired — both the agent and the API route document the flip as deferred. Framing the chip would assert behavior that does not ship. Conflict raised to the brief owner; no timezone claim is spoken either way."
+      },
+      "start_s": 89.313,
+      "start_frame": 5359,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\06-run-on-a-schedule\\ep06-b06.mp3",
+      "mp3_name": "ep06-b06.mp3",
+      "duration_s": 10.606,
+      "duration_frames": 636,
+      "status": "ok"
+    },
+    {
+      "id": "b07",
+      "title": "the machine can edit them too",
+      "screen_note": "(native) the owlette desktop app on the machine — process detail, the schedule summary line, and the pencil beside the launch-mode control (aria-label \"edit schedule\", testid `edit-schedule`); open it to show the same day pills and time picker. Cut back to (web) the dashboard preset pills to land the contrast.",
+      "direction": {
+        "SCREEN": "(native) the owlette desktop app on the machine — process detail, the schedule summary line, and the pencil beside the launch-mode control (aria-label \"edit schedule\", testid `edit-schedule`); open it to show the same day pills and time picker. Cut back to (web) the dashboard preset pills to land the contrast.",
+        "NOTE": "this is the Tauri desktop app, not the retired python window — and it is NOT read-only. Assemble as a native insert in the editor."
+      },
+      "start_s": 99.918,
+      "start_frame": 5995,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\06-run-on-a-schedule\\ep06-b07.mp3",
+      "mp3_name": "ep06-b07.mp3",
+      "duration_s": 20.349,
+      "duration_frames": 1221,
+      "status": "ok"
+    }
+  ]
+}

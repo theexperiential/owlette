@@ -4,8 +4,11 @@ Narration: **2:00.3** across 7 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
+Timeline: 1920x1080 @ 60.0fps.
+Resolve build manifest: [`manifests/06-run-on-a-schedule.json`](manifests/06-run-on-a-schedule.json)
+
 Footage:
-- web/e2e/.output/videos/06-run-on-a-schedule.mp4
+- `web/e2e/.output/videos/06-run-on-a-schedule.mp4` [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

@@ -4,9 +4,12 @@ Narration: **2:18.8** across 8 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
+Timeline: 1920x1080 @ 60.0fps.
+Resolve build manifest: [`manifests/08-remote-actions.json`](manifests/08-remote-actions.json)
+
 Footage:
-- web/e2e/.output/videos/08-remote-actions.mp4
-- web/e2e/.output/videos/08-remote-actions-b08-member.mp4 (b08 member cut)
+- `web/e2e/.output/videos/08-remote-actions.mp4` [1920x1080 @ 60.0fps]
+- `web/e2e/.output/videos/08-remote-actions-b08-member.mp4` — b08 member cut [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

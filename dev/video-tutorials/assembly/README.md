@@ -2,8 +2,13 @@
 
 One sheet per episode: every beat's rendered MP3 length and its cumulative
 narration timecode, plus where the footage lives. Regenerate after any
-re-voice with `python gen-assembly.py` from this directory (reads the scripts and
-manifests; makes no API calls).
+re-voice with `python gen-assembly.py` from this directory (reads the scripts
+and rendered audio; makes no API calls).
+
+Each sheet has a machine-readable twin in [`manifests/`](manifests/) that
+[`resolve/build_episode.py`](resolve/README.md) turns into a built Resolve
+timeline — footage on V1, per-beat narration on A1, a marker per beat carrying
+its SCREEN direction.
 
 | ep | title | sheet | narration |
 |---|---|---|---|

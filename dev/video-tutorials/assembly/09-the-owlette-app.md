@@ -4,9 +4,13 @@ Narration: **3:31.9** across 8 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
+Timeline: 1920x1080 @ 60.0fps.
+Resolve build manifest: [`manifests/09-the-owlette-app.json`](manifests/09-the-owlette-app.json)
+
 Footage:
-- desktop: web/e2e/.output/desktop-videos (window beats)
-- native: tray segments (capture-tray-menu.ps1 + icon states)
+- `web/e2e/.output/desktop-videos/09-the-owlette-app.mp4` — window beats [1600x900 @ 60.0fps]
+- `web/e2e/.output/desktop-videos/09-the-owlette-app-unpaired.mp4` — unpaired-state alt [1600x900 @ 60.0fps]
+- native: tray segments (capture-tray-menu.ps1 + icon states) — **not captured yet**
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

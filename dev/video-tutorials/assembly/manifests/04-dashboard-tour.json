@@ -1,0 +1,133 @@
+{
+  "episode": 4,
+  "slug": "dashboard-tour",
+  "stem": "04-dashboard-tour",
+  "title": "the dashboard, end to end",
+  "capture": "web",
+  "scenario": "dashboard-mixed-states",
+  "script": "scripts/04-dashboard-tour.md",
+  "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
+  "narration_s": 137.012,
+  "timeline": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 60.0
+  },
+  "sources": [
+    {
+      "role": "scene",
+      "note": "",
+      "rel": "web/e2e/.output/videos/04-dashboard-tour.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\04-dashboard-tour.mp4",
+      "exists": true,
+      "duration_s": 162.733,
+      "width": 1920,
+      "height": 1080,
+      "fps": 60.0
+    }
+  ],
+  "beats": [
+    {
+      "id": "b01",
+      "title": "orientation",
+      "screen_note": "/dashboard with the seeded fleet. Highlight the header breadcrumb \"owlette / flagship ▾\" (the dashboard-mixed-states fixture seeds the site name as \"flagship\"), then the \"online\" stat tile (showing \"9 / 10\") and the \"processes\" tile.",
+      "direction": {
+        "SCREEN": "/dashboard with the seeded fleet. Highlight the header breadcrumb \"owlette / flagship ▾\" (the dashboard-mixed-states fixture seeds the site name as \"flagship\"), then the \"online\" stat tile (showing \"9 / 10\") and the \"processes\" tile.",
+        "NOTE": "the fixture seeds no processes — `writeMachineMetrics` never writes `metrics.processes`, and the tile counts exactly that (page.tsx:804). As shot today the \"processes\" tile reads 0 while this beat narrates \"how many processes owlette is managing for you\". Seed processes on at least three machines before recording."
+      },
+      "start_s": 0.0,
+      "start_frame": 0,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b01.mp3",
+      "mp3_name": "ep04-b01.mp3",
+      "duration_s": 21.081,
+      "duration_frames": 1265,
+      "status": "ok"
+    },
+    {
+      "id": "b02",
+      "title": "the machines section",
+      "screen_note": "slow pan across the card grid — online machines (green pill), one offline machine (red pill), and the left accent bars on the metric tiles at their natural spread (emerald and violet on the quiet machines, sky and amber and red on media-server-stage, nyc-signage-01, unreal-render-1, td-control-room).",
+      "direction": {
+        "SCREEN": "slow pan across the card grid — online machines (green pill), one offline machine (red pill), and the left accent bars on the metric tiles at their natural spread (emerald and violet on the quiet machines, sky and amber and red on media-server-stage, nyc-signage-01, unreal-render-1, td-control-room).",
+        "NOTE": "five bands, not three (web/lib/usageColorUtils.ts:8-20). The narration deliberately talks about headroom vs pinned rather than naming a hue ramp, so no grading is needed — shoot it as it renders."
+      },
+      "start_s": 21.081,
+      "start_frame": 1265,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b02.mp3",
+      "mp3_name": "ep04-b02.mp3",
+      "duration_s": 22.596,
+      "duration_frames": 1356,
+      "status": "ok"
+    },
+    {
+      "id": "b03",
+      "title": "reading a single card",
+      "screen_note": "zoom into the \"media-server-stage\" card, top to bottom in the order it actually renders: status pill and last heartbeat (plus the display button in the header with its drift / circuit-breaker dots), then the metric tiles — cpu, ram, disk, gpu, network — with sparklines behind cpu / ram / disk / gpu and up-down throughput on network, cpu and gpu carrying inline temperature readings. Then the displays section, and BELOW it the process list.",
+      "direction": {
+        "SCREEN": "zoom into the \"media-server-stage\" card, top to bottom in the order it actually renders: status pill and last heartbeat (plus the display button in the header with its drift / circuit-breaker dots), then the metric tiles — cpu, ram, disk, gpu, network — with sparklines behind cpu / ram / disk / gpu and up-down throughput on network, cpu and gpu carrying inline temperature readings. Then the displays section, and BELOW it the process list.",
+        "NOTE": "order matters — the displays collapsible is MachineCardView.tsx:646 and the process list is :750, so displays sits above processes. The second tile's on-screen label is \"ram\", not \"memory\"."
+      },
+      "start_s": 43.677,
+      "start_frame": 2621,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b03.mp3",
+      "mp3_name": "ep04-b03.mp3",
+      "duration_s": 29.231,
+      "duration_frames": 1754,
+      "status": "ok"
+    },
+    {
+      "id": "b04",
+      "title": "card view vs list view",
+      "screen_note": "click the list-view toggle (List icon, tooltip \"list view\"); the fleet becomes dense rows (machine-row). Then click the card-view toggle (LayoutGrid icon, tooltip \"card view\") to switch back.",
+      "direction": {
+        "SCREEN": "click the list-view toggle (List icon, tooltip \"list view\"); the fleet becomes dense rows (machine-row). Then click the card-view toggle (LayoutGrid icon, tooltip \"card view\") to switch back."
+      },
+      "start_s": 72.908,
+      "start_frame": 4374,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b04.mp3",
+      "mp3_name": "ep04-b04.mp3",
+      "duration_s": 15.308,
+      "duration_frames": 918,
+      "status": "ok"
+    },
+    {
+      "id": "b05",
+      "title": "expand, collapse, and the detail panel",
+      "screen_note": "click the expand/collapse-all control (ChevronsUpDown / ChevronsDownUp, tooltip \"expand all\" / \"collapse all\"). Then click a card's \"cpu\" metric tile; the MetricsDetailPanel slides open above the list.",
+      "direction": {
+        "SCREEN": "click the expand/collapse-all control (ChevronsUpDown / ChevronsDownUp, tooltip \"expand all\" / \"collapse all\"). Then click a card's \"cpu\" metric tile; the MetricsDetailPanel slides open above the list.",
+        "NOTE": "to close the panel, click its X button (MetricsDetailPanel.tsx:935-942) — `page.keyboard.press('Escape')` does nothing, the panel has no key handler, and the old harness line that relied on it leaves the panel open through the rest of the take."
+      },
+      "start_s": 88.216,
+      "start_frame": 5293,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b05.mp3",
+      "mp3_name": "ep04-b05.mp3",
+      "duration_s": 19.487,
+      "duration_frames": 1169,
+      "status": "ok"
+    },
+    {
+      "id": "b06",
+      "title": "the rest of the app",
+      "screen_note": "open the page switcher (the second breadcrumb dropdown) so all six destinations are on screen in order — dashboard, hoot, talons, roost, deploy, logs — each with its one-line description. Hover down the list as the names are spoken.",
+      "direction": {
+        "SCREEN": "open the page switcher (the second breadcrumb dropdown) so all six destinations are on screen in order — dashboard, hoot, talons, roost, deploy, logs — each with its one-line description. Hover down the list as the names are spoken.",
+        "B-ROLL": "optional two-second cut — the same dashboard on a phone; the hamburger opens the drawer that carries the site switcher and this same page list below the md breakpoint.",
+        "NOTE": "the nav label is \"hoot\" (PageHeader.tsx:39-43); nothing in the UI reads \"cortex\" any more. \"roost\" points at /roosts and \"deploy\" at /deployments."
+      },
+      "start_s": 107.703,
+      "start_frame": 6462,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b06.mp3",
+      "mp3_name": "ep04-b06.mp3",
+      "duration_s": 29.309,
+      "duration_frames": 1759,
+      "status": "ok"
+    }
+  ]
+}

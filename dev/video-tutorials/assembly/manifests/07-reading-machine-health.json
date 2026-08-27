@@ -1,0 +1,148 @@
+{
+  "episode": 7,
+  "slug": "reading-machine-health",
+  "stem": "07-reading-machine-health",
+  "title": "reading machine health",
+  "capture": "web",
+  "scenario": "dashboard-mixed-states",
+  "script": "scripts/07-reading-machine-health.md",
+  "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
+  "narration_s": 133.564,
+  "timeline": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 60.0
+  },
+  "sources": [
+    {
+      "role": "scene",
+      "note": "",
+      "rel": "web/e2e/.output/videos/07-reading-machine-health.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\07-reading-machine-health.mp4",
+      "exists": true,
+      "duration_s": 156.517,
+      "width": 1920,
+      "height": 1080,
+      "fps": 60.0
+    }
+  ],
+  "beats": [
+    {
+      "id": "b01",
+      "title": "the card at a glance",
+      "screen_note": "the \"media-server-stage\" card with cpu / ram / disk / gpu tiles and sparklines.",
+      "direction": {
+        "SCREEN": "the \"media-server-stage\" card with cpu / ram / disk / gpu tiles and sparklines.",
+        "NOTE": "the memory tile is labelled \"ram\" on screen (and in the list-view column header). The spoken \"memory\" is plain english and stays."
+      },
+      "start_s": 0.0,
+      "start_frame": 0,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b01.mp3",
+      "mp3_name": "ep07-b01.mp3",
+      "duration_s": 18.129,
+      "duration_frames": 1088,
+      "status": "ok"
+    },
+    {
+      "id": "b02",
+      "title": "the color language",
+      "screen_note": "point across cards at different usage levels; overlay the band key: <30 green, 30–50 violet, 50–70 sky blue, 70–85 amber, ≥85 red.",
+      "direction": {
+        "SCREEN": "point across cards at different usage levels; overlay the band key: <30 green, 30–50 violet, 50–70 sky blue, 70–85 amber, ≥85 red."
+      },
+      "start_s": 18.129,
+      "start_frame": 1088,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b02.mp3",
+      "mp3_name": "ep07-b02.mp3",
+      "duration_s": 19.226,
+      "duration_frames": 1154,
+      "status": "ok"
+    },
+    {
+      "id": "b03",
+      "title": "temperatures",
+      "screen_note": "a card showing cpu / gpu temperature; overlay: under 70°C normal, 70 to under 85°C warning, 85°C and above critical. Note the °C / °F toggle in account settings. Then cut to a machine whose cpu temperature slot is empty.",
+      "direction": {
+        "SCREEN": "a card showing cpu / gpu temperature; overlay: under 70°C normal, 70 to under 85°C warning, 85°C and above critical. Note the °C / °F toggle in account settings. Then cut to a machine whose cpu temperature slot is empty.",
+        "NOTE": "since 3.2.0 temperatures come from the PawnIO driver — a machine without it reads a BLANK cpu temperature (gpu temps still arrive via vendor APIs), and reads can be switched off per machine with `\"temperature\": { \"enabled\": false }` in config.json. Seed or pick a machine with no cpuTemp for the second half of the shot."
+      },
+      "start_s": 37.355,
+      "start_frame": 2241,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b03.mp3",
+      "mp3_name": "ep07-b03.mp3",
+      "duration_s": 27.167,
+      "duration_frames": 1630,
+      "status": "ok"
+    },
+    {
+      "id": "b04",
+      "title": "network health",
+      "screen_note": "the card's COLLAPSED metrics summary row — the \"ping 12ms\" chip and, beside it, the \"% loss\" chip. Collapse the stats section (or seed statsExpanded false) to bring the row on screen.",
+      "direction": {
+        "SCREEN": "the card's COLLAPSED metrics summary row — the \"ping 12ms\" chip and, beside it, the \"% loss\" chip. Collapse the stats section (or seed statsExpanded false) to bring the row on screen.",
+        "NOTE": "latency and packet loss render ONLY in the collapsed summary row; the expanded \"network\" tile shows the NIC id and ↑tx / ↓rx throughput, neither of which is narrated here. statsExpanded defaults to true and the harness seeds it true, so this beat needs the toggle shut. Seed a degraded machine — latencyMs above 50 for yellow, above 100 for red, and packetLossPct above 0, since the loss chip is hidden at zero."
+      },
+      "start_s": 64.522,
+      "start_frame": 3871,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b04.mp3",
+      "mp3_name": "ep07-b04.mp3",
+      "duration_s": 15.491,
+      "duration_frames": 929,
+      "status": "ok"
+    },
+    {
+      "id": "b05",
+      "title": "the detail panel",
+      "screen_note": "click the \"cpu\" tile; the MetricsDetailPanel slides open with a full line chart. Note cpu temperature appears alongside.",
+      "direction": {
+        "SCREEN": "click the \"cpu\" tile; the MetricsDetailPanel slides open with a full line chart. Note cpu temperature appears alongside."
+      },
+      "start_s": 80.013,
+      "start_frame": 4801,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b05.mp3",
+      "mp3_name": "ep07-b05.mp3",
+      "duration_s": 16.849,
+      "duration_frames": 1011,
+      "status": "ok"
+    },
+    {
+      "id": "b06",
+      "title": "per-device tabs and time range",
+      "screen_note": "in the panel, show tabs for each disk, gpu, and network adapter; the time-range selector; and the machine switcher in the title bar.",
+      "direction": {
+        "SCREEN": "in the panel, show tabs for each disk, gpu, and network adapter; the time-range selector; and the machine switcher in the title bar.",
+        "NOTE": "two-fixture beat. dashboard-mixed-states seeds 10 machines, which trips the >5 threshold for the title-bar machine switcher — but it writes no per-device history, so the panel shows one disk, one gpu, one nic. Only monitor-single-machine's focus machine has 2 disks + 2 nics; it seeds 4 machines, so no switcher. Record the per-device-tabs half there and the switcher half here, or add disks/gpus/nics history to media-server-stage in seedDashboardMixedStates and shoot it in one take."
+      },
+      "start_s": 96.862,
+      "start_frame": 5812,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b06.mp3",
+      "mp3_name": "ep07-b06.mp3",
+      "duration_s": 18.913,
+      "duration_frames": 1135,
+      "status": "ok"
+    },
+    {
+      "id": "b07",
+      "title": "what offline looks like",
+      "screen_note": "the offline \"touring-rig-04\" card — red \"offline\" pill, stale heartbeat (the row dims in list view).",
+      "direction": {
+        "SCREEN": "the offline \"touring-rig-04\" card — red \"offline\" pill, stale heartbeat (the row dims in list view).",
+        "NOTE": "touring-rig-04 is seeded offline in this scenario (600s stale heartbeat). A machine flips to offline once its heartbeat is older than five minutes."
+      },
+      "start_s": 115.775,
+      "start_frame": 6946,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b07.mp3",
+      "mp3_name": "ep07-b07.mp3",
+      "duration_s": 17.789,
+      "duration_frames": 1067,
+      "status": "ok"
+    }
+  ]
+}
