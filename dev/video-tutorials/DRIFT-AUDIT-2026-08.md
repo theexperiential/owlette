@@ -306,6 +306,14 @@ Gaps, in order:
    test impact mapped in the 2026-08-26 investigation (users-bootstrap.test.ts:131/:161
    need the doc-absent premise made explicit + one new recovery-case test with a
    negative control). Separable from the video work; not applied yet.
+   **FIXED 0f9ea359 (2026-08-26, user-approved):** challenge moved into
+   bootstrapUser via an onWillCreate hook (one read, no TOCTOU); listener guarded
+   by a promise ref (a boolean would strand loading:true and re-kill the recovery
+   path); both halves negative-control-proven; jest 3896 green. Residuals flagged
+   for triage, not fixed: concurrent creates double-write the doc + double
+   audit-event (deliberate prior non-transactional design — our only production
+   trigger is now removed); field validations now run before the challenge
+   (immaterial behind session + IP limits, but a real ordering change).
    **DECIDED (user, 2026-08-25): relabel now, wire later** — the ScheduleEditor chip is
    replaced with "times run on each machine's own clock", the outside-window banner is
    reworded as a prediction (still evaluated in site tz — the best predictor, since
