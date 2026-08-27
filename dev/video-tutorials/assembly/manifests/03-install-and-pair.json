@@ -27,17 +27,21 @@
       "rel": "dev/video-tutorials/footage/desktop/03-install-and-pair-desktop.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\desktop\\03-install-and-pair-desktop.mp4",
       "exists": true,
-      "duration_s": 49.317,
+      "duration_s": 64.75,
       "width": 1600,
       "height": 900,
       "fps": 60.0
     },
     {
       "role": "scene",
-      "note": "dashboard beats b07-b09",
+      "note": "dashboard + /add beats b02, b07-b09",
       "rel": "dev/video-tutorials/footage/web/03-install-and-pair.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\03-install-and-pair.mp4",
-      "exists": false
+      "exists": true,
+      "duration_s": 92.033,
+      "width": 1920,
+      "height": 1080,
+      "fps": 60.0
     }
   ],
   "beats": [

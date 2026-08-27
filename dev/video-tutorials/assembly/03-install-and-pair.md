@@ -10,7 +10,7 @@ Resolve build manifest: [`manifests/03-install-and-pair.json`](manifests/03-inst
 Footage:
 - native: capture-native install wizard (b01-b04) — **not captured yet**
 - `dev/video-tutorials/footage/desktop/03-install-and-pair-desktop.mp4` — pairing dialog (b05-b06/b10) [1600x900 @ 60.0fps]
-- `dev/video-tutorials/footage/web/03-install-and-pair.mp4` — dashboard beats b07-b09 — **MISSING**
+- `dev/video-tutorials/footage/web/03-install-and-pair.mp4` — dashboard + /add beats b02, b07-b09 [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

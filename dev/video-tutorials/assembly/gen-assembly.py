@@ -116,7 +116,7 @@ FOOTAGE: Dict[int, List[Source]] = {
             DESKTOP.format(name="03-install-and-pair-desktop.mp4"),
             "pairing dialog (b05-b06/b10)",
         ),
-        web("dashboard beats b07-b09"),
+        web("dashboard + /add beats b02, b07-b09"),
     ],
     9: [
         Source(

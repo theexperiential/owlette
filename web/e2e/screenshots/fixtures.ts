@@ -23,6 +23,7 @@ import type { TalonDoc } from '@/lib/talons/types';
 
 export type ScreenshotScenario =
   | 'dashboard-mixed-states'
+  | 'pairing-first-machine'
   | 'monitor-single-machine'
   | 'control-process-restarting'
   | 'deploy-roost-rolling'
@@ -53,6 +54,8 @@ export async function seedScreenshotFixtures(
   switch (scenario) {
     case 'dashboard-mixed-states':
       return seedDashboardMixedStates();
+    case 'pairing-first-machine':
+      return seedPairingFirstMachine();
     case 'monitor-single-machine':
       return seedMonitorSingleMachine();
     case 'control-process-restarting':
@@ -205,7 +208,7 @@ async function seedScreenshotSite(
   );
 }
 
-interface MetricsSample {
+export interface MetricsSample {
   cpuPct: number;
   memPct: number;
   memUsedGb: number;
@@ -223,8 +226,17 @@ interface MetricsSample {
   packetLossPct?: number;
 }
 
-/** v2-shaped metrics doc; caller picks the sample so each card renders distinctly. */
-async function writeMachineMetrics(
+/**
+ * v2-shaped metrics doc; caller picks the sample so each card renders distinctly.
+ *
+ * Exported for `videos/03-install-and-pair.video.ts`, which fires the agent's
+ * two startup writes a few seconds apart on camera (presence first, then the
+ * first metrics upload — `agent/src/firebase_client.py:591-607`). That scene
+ * hand-rolls the presence half and calls this for the metrics half, so the
+ * newly-paired card fills in with exactly the shape every other fixture card
+ * carries.
+ */
+export async function writeMachineMetrics(
   siteId: string,
   machineId: string,
   sample: MetricsSample,
@@ -621,6 +633,29 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
       });
     }
   }
+
+  return {
+    siteId,
+    cleanup: () => deleteSiteSubtree(siteId),
+  };
+}
+
+/**
+ * A real site with NO machines — what a first-time operator is looking at while
+ * they pair. Episode 3's web take needs exactly this: the dashboard renders the
+ * getting-started card, and the machine the scene writes mid-take is the only
+ * card on screen when it lands (on `dashboard-mixed-states` the pop would be one
+ * more tile in a ten-card grid, and the "pair your FIRST machine" narration
+ * would be reading over a fleet that already exists).
+ *
+ * The site is named for the script's b07 dropdown pick; the desktop side calls
+ * the same site `main gallery` too (`e2e/desktop-videos/fixtures.ts`).
+ * `resetAndReseedBaseline` above has already emptied site-A, so seeding nothing
+ * else is the whole scenario.
+ */
+async function seedPairingFirstMachine(): Promise<ScreenshotFixture> {
+  const siteId = 'site-A';
+  await seedScreenshotSite(siteId, 'main gallery');
 
   return {
     siteId,

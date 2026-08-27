@@ -14,8 +14,9 @@ emulator boot, `global-setup` (role fixtures), `webServer`, and — crucially �
 deterministic demo data (`../screenshots/fixtures.ts`: a 10-machine AV/signage fleet,
 hoot chats, roost rollouts, schedule presets, talons).
 
-Eleven scenes ship today (`01`, `04`–`08`, `10`–`12`, `14`, `16`); the map at the bottom
-names what is still missing.
+Sixteen scenes ship today — `01`–`08` and `10`–`17`. Episode `09` is the owlette app on
+the machine and belongs to the desktop harness, not this one; the map at the bottom names
+which fixture scenario each scene runs on.
 
 ## Run
 
@@ -156,13 +157,15 @@ its front matter (`dev/video-tutorials/scripts/NN-slug.md`).
 
 | Scenario (fixtures.ts) | Episodes | Scene file(s) |
 |---|---|---|
-| `dashboard-mixed-states` | 1 (b-roll), 3 (web beats), 4 (dashboard), 7 (health), 8 (remote actions), 17 (fleet maintenance) | `01-what-is-owlette`, `04-dashboard-tour`, `07-reading-machine-health`, `08-remote-actions` |
+| `dashboard-mixed-states` | 1 (b-roll), 4 (dashboard), 7 (health), 8 (remote actions), 17 (fleet maintenance) | `01-what-is-owlette`, `04-dashboard-tour`, `07-reading-machine-health`, `08-remote-actions`, `17-fleet-maintenance` |
+| `pairing-first-machine` | 3 (web beats) | `03-install-and-pair` |
 | `control-process-restarting` | 5 (keep alive), 16 (logs) | `05-keep-a-process-alive`, `16-logs-and-troubleshooting` |
 | `automate-schedule-editor` | 6 (schedule), 14 (team & alerts) | `06-run-on-a-schedule`, `14-team-and-alerts` |
 | `deploy-roost-rolling` | 10 (deploy), 11 (roost) | `10-deploy-software`, `11-distribute-with-roost` |
 | `diagnose-cortex-chat` | 12 (hoot) | `12-cortex` |
-| `automate-talons-list` | 13 (talons) | — none yet |
-| `display-layout-editor` | 15 (display layouts) | — none yet |
+| `automate-talons-list` | 13 (talons) | `13-talons` |
+| `display-layout-editor` | 15 (display layouts) | `15-display-layouts` |
+| — (no scenario; drives real signup/2FA) | 2 (day zero) | `02-day-zero` |
 | `display-storyboard-frame-1/-2/-3` | — | marketing landing frames only (`../screenshots/display-storyboard.spec.ts`) |
 | `monitor-single-machine` | — | screenshots only (`../screenshots/monitor.spec.ts`, `machine-detail.spec.ts`); episode 7's scene deliberately uses `dashboard-mixed-states` instead |
 
@@ -171,9 +174,13 @@ Episode 12 keeps the `cortex` spelling in its filename and in the
 UI while wire- and storage-level names stayed put. The scene's copy and routes are
 already hoot.
 
-Still to write: scenes for **13** (talons) and **15** (display layouts), the web beats of
-**3** (install & pair), and **2** (day zero — signup/2FA, so no fixture scenario) and
-**17** (fleet maintenance). Not this harness at all: **3**'s installer wizard
+Episode 3's front matter declares `dashboard-mixed-states`, but its web scene uses
+`pairing-first-machine` on purpose: b08 films a machine card *arriving*, which only reads
+on a site that had none, and the episode's whole subject is the first machine. The script
+front matter is the plan; the scene header records the departure.
+
+Still to write: nothing — every episode with web beats now has a scene. Not this harness
+at all: **3**'s installer wizard
 (`dev/video-tutorials/capture-native/`) and **9** (the owlette app on the machine), which
 is the desktop app over WebView2 CDP — `../desktop-screenshots/` is the harness to extend.
 

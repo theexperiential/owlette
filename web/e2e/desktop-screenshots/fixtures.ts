@@ -24,8 +24,19 @@ const FIXED_EPOCH_SECONDS = 1_776_412_800
 /** The site the demo machine belongs to. Matches the `default_site` spelling. */
 export const DEMO_SITE_ID = 'main_gallery'
 
-/** Pairing phrase the join dialog shows — the one the docs already use. */
-export const DEMO_PAIR_PHRASE = 'silver-compass-drift'
+/**
+ * Pairing phrase the join dialog shows.
+ *
+ * NOT the docs' `silver-compass-drift`: `compass` is absent from `WORD_LIST`
+ * (lib/pairPhrases.ts), so `normalizePairPhrase` returns null and the authorize
+ * route 400s before it reaches Firestore — the example phrase the product's own
+ * placeholders and docs tell operators to copy cannot actually be authorized.
+ * Episode 3 films the phrase on the machine (desktop take) and then authorizes
+ * THAT phrase in the browser (web take), so the demo phrase has to be a real
+ * one or the episode contradicts itself on camera. All three words verified
+ * present in the list.
+ */
+export const DEMO_PAIR_PHRASE = 'silver-canyon-drift'
 
 /**
  * `paired` is a working machine. `paired-empty` is the same machine the minute

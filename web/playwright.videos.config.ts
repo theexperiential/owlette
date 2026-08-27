@@ -111,7 +111,13 @@ export default defineConfig({
     command: `node scripts/e2e-next-server.mjs --port ${PORT} --hostname 127.0.0.1`,
     url: BASE_URL,
     reuseExistingServer: false,
-    timeout: 60_000,
+    // 3 minutes, not the E2E suite's 60s. Recording sessions run on a
+    // workstation that is also driving the capture display (and often the
+    // operator's own dev servers), and a cold Next production start there
+    // intermittently crosses 60s — four takes in one batch died on the boot
+    // budget alone, each costing a full re-run. The timeout only bounds a
+    // hang; a healthy server still starts in ~10s and the suite proceeds.
+    timeout: 180_000,
     stdout: 'pipe',
     stderr: 'pipe',
     env: {
