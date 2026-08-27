@@ -20,10 +20,14 @@ from health_probe import HealthState
 class FakeFirebaseClient:
     """Only the surface `_write_service_status` reads off the cloud client."""
 
-    def __init__(self, connected=True, site_id='default_site', site_name=None):
+    def __init__(self, connected=True, site_id='default_site', site_name=None,
+                 site_timezone=None):
         self.connected = connected
         self.site_id = site_id
         self.site_name = site_name
+        # None = this site's process windows are machine-local (it never opted
+        # into site-time schedules, or it opted back out).
+        self.site_timezone = site_timezone
         self._last_heartbeat_time = 1_786_680_000
 
     def is_connected(self):
@@ -141,6 +145,95 @@ class TestSiteName:
         section = firebase_section(path)
         assert section['site_name'] == ''
         assert section['site_id'] == ''
+
+
+class TestScheduleTimezone:
+    """`firebase.schedule_timezone` — which clock this machine judges its process
+    windows on, published for the desktop app.
+
+    The desktop app writes schedule copy ("times run on the site's clock" vs
+    "times run on this machine's clock") and never talks to the cloud, so this
+    field is the only way it can know. Empty string means machine-local: either
+    the site never opted into site-time schedules or it opted back out. The
+    distinction is not "unknown" — an empty value is a definite answer.
+    """
+
+    def test_publishes_the_timezone_a_site_opted_into(self, tmp_path, monkeypatch):
+        service, path = make_service(
+            tmp_path, monkeypatch,
+            FakeFirebaseClient(site_timezone='America/Los_Angeles'),
+        )
+
+        service._write_service_status()
+
+        assert firebase_section(path)['schedule_timezone'] == 'America/Los_Angeles'
+
+    def test_a_machine_local_site_publishes_empty_not_missing(self, tmp_path, monkeypatch):
+        # Every site today. The key is written unconditionally so the desktop app
+        # never has to tell "opted out" from "an older agent that had no idea".
+        service, path = make_service(
+            tmp_path, monkeypatch, FakeFirebaseClient(site_timezone=None))
+
+        service._write_service_status()
+
+        assert firebase_section(path)['schedule_timezone'] == ''
+
+    def test_an_unpaired_machine_names_no_timezone(self, tmp_path, monkeypatch):
+        service, path = make_service(tmp_path, monkeypatch, None, enabled=False)
+
+        service._write_service_status()
+
+        assert firebase_section(path)['schedule_timezone'] == ''
+
+    def test_the_early_write_carries_the_same_shape(self, tmp_path, monkeypatch):
+        service, path = make_service(tmp_path, monkeypatch, None)
+
+        service._write_service_status_early()
+
+        assert firebase_section(path)['schedule_timezone'] == ''
+
+    def test_opting_in_reaches_the_desktop_on_the_next_write(self, tmp_path, monkeypatch):
+        # The load-bearing one. Writes are throttled by a content signature and
+        # skipped entirely for up to MIN_STATUS_WRITE_INTERVAL, so a field left
+        # out of the signature is invisible for half a minute after the flag
+        # flips — long enough for the operator to conclude it did not work.
+        client = FakeFirebaseClient(site_timezone=None)
+        service, path = make_service(tmp_path, monkeypatch, client)
+        service._write_service_status()
+        assert firebase_section(path)['schedule_timezone'] == ''
+
+        client.site_timezone = 'America/Los_Angeles'
+        service._write_service_status()
+
+        assert firebase_section(path)['schedule_timezone'] == 'America/Los_Angeles'
+
+    def test_opting_back_out_reaches_it_just_as_fast(self, tmp_path, monkeypatch):
+        client = FakeFirebaseClient(site_timezone='America/Los_Angeles')
+        service, path = make_service(tmp_path, monkeypatch, client)
+        service._write_service_status()
+
+        client.site_timezone = None
+        service._write_service_status()
+
+        assert firebase_section(path)['schedule_timezone'] == ''
+
+    def test_an_unchanged_timezone_does_not_defeat_the_throttle(
+        self, tmp_path, monkeypatch
+    ):
+        # Negative control for the two above: adding a field to the signature is
+        # only correct if it still compares equal when nothing changed.
+        client = FakeFirebaseClient(site_timezone='America/Los_Angeles')
+        service, path = make_service(tmp_path, monkeypatch, client)
+        service._write_service_status()
+
+        path.unlink()
+        service._write_service_status()
+
+        # Nothing changed and the refresh floor has not elapsed, so the write is
+        # skipped and the file is not recreated. Had the new field entered the
+        # signature in a form that never compares equal to itself, the service
+        # would rewrite this file every 5 seconds for the life of the machine.
+        assert not path.exists()
 
 
 def stale_network_error():

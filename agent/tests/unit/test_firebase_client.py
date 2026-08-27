@@ -188,15 +188,17 @@ class TestErrorHandling:
         firebase_client._update_presence(True)
 
 
-# TestSiteNameFromApi — GET /api/agent/site, the path that actually resolves
-class TestSiteNameFromApi:
-    """Site display name comes from `GET /api/agent/site` — rules scope the agent
-    to its own machine subtree, so it cannot read `sites/{siteId}`.
+# TestSiteMetadataFromApi — GET /api/agent/site, the path that actually resolves
+class TestSiteMetadataFromApi:
+    """Site display name AND schedule timezone come from `GET /api/agent/site` —
+    rules scope the agent to its own machine subtree, so it cannot read
+    `sites/{siteId}`.
 
-    Two load-bearing invariants: the API answer short-circuits the Firestore read
-    (which only 403s, and whose `timezone` would switch schedule evaluation
-    fleet-wide if it ever landed), and an API failure must not latch — the
-    endpoint may just not be deployed yet, so the next connect retries.
+    Three load-bearing invariants: the API answer short-circuits the Firestore
+    read; the timezone is mirrored exactly as sent, including `null` (the server
+    owns the `schedulesFollowSiteTime` policy, the agent never re-derives it); and
+    an API failure must not latch — the endpoint may just not be deployed yet, so
+    the next connect and the 900s refresh both retry.
     """
 
     @staticmethod
@@ -224,9 +226,11 @@ class TestSiteNameFromApi:
         # An API answer is the whole answer — no site-document read.
         mock_rest_client.get_document.assert_not_called()
 
-    def test_never_takes_a_timezone_from_the_endpoint(self, firebase_client):
-        # Guards the deferral: site-timezone scheduling must not switch on just
-        # because the response body widened.
+    def test_takes_the_timezone_the_endpoint_offers(self, firebase_client):
+        # The inversion of the deferral guard this replaces (which asserted
+        # `site_timezone is None` against this exact response). The route only
+        # sends a timezone for a site whose `schedulesFollowSiteTime` is true, so
+        # caching it here IS the opt-in landing on the machine.
         with patch('firebase_client.shared_utils.get_api_base_url',
                    return_value='https://dev.owlette.app/api'), \
              patch('requests.get',
@@ -234,7 +238,69 @@ class TestSiteNameFromApi:
             firebase_client._fetch_site_metadata()
 
         assert firebase_client.site_name == 'TEC'
+        assert firebase_client.site_timezone == 'America/Los_Angeles'
+
+    def test_a_null_timezone_clears_a_cached_one(self, firebase_client):
+        # Opting back out has to reach the fleet. Guarding the assignment with
+        # `if timezone:` would leave every machine evaluating its windows against
+        # the timezone the site just abandoned, until the next service restart.
+        firebase_client.site_timezone = 'America/Los_Angeles'
+
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get',
+                   return_value=self._response(200, {'name': 'TEC', 'timezone': None})):
+            firebase_client._fetch_site_metadata()
+
         assert firebase_client.site_timezone is None
+
+    def test_a_site_that_never_opted_in_stays_on_machine_local_time(self, firebase_client):
+        # The overwhelmingly common shape: absent flag ⇒ the route omits the key
+        # entirely ⇒ machine-local, exactly as every pre-3.3.0 agent behaved.
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get', return_value=self._response(200, {'name': 'TEC'})):
+            firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_timezone is None
+
+    def test_a_padded_timezone_is_trimmed_and_a_blank_one_is_not_a_timezone(
+        self, firebase_client
+    ):
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get',
+                   return_value=self._response(200, {'name': 'TEC', 'timezone': '  Asia/Tokyo  '})):
+            firebase_client._fetch_site_metadata()
+        assert firebase_client.site_timezone == 'Asia/Tokyo'
+
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get',
+                   return_value=self._response(200, {'name': 'TEC', 'timezone': '   '})):
+            firebase_client._fetch_site_metadata()
+        # Whitespace is not a zone — and it must clear, not linger.
+        assert firebase_client.site_timezone is None
+
+    def test_only_the_transitions_are_logged(self, firebase_client):
+        # The 900s refresh re-answers the same question 96 times a day. Logging
+        # every answer would bury the one line that matters — the change.
+        payload = self._response(200, {'name': 'TEC', 'timezone': 'Asia/Tokyo'})
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get', return_value=payload), \
+             patch.object(firebase_client, 'logger') as logger:
+            firebase_client._fetch_site_metadata()
+            first_pass = logger.info.call_count
+            firebase_client._fetch_site_metadata()
+            firebase_client._fetch_site_metadata()
+
+            assert logger.info.call_count == first_pass
+
+            # …but a real change still speaks up.
+            payload.json.return_value = {'name': 'TEC', 'timezone': None}
+            firebase_client._fetch_site_metadata()
+            assert logger.info.call_count > first_pass
 
     def test_an_unnamed_site_answers_null_and_still_settles_the_question(
         self, firebase_client, mock_rest_client
@@ -321,15 +387,23 @@ class TestSiteMetadata:
     the site id — so an unreadable site document must not raise.
 
     Covers the Firestore fallback: the API lookup declines throughout (see
-    `TestSiteNameFromApi` for the path it declines from).
+    `TestSiteMetadataFromApi` for the path it declines from).
+
+    This path reads the raw site document, so unlike the API path it has to apply
+    the `schedulesFollowSiteTime` opt-in itself. It must never be the loophole
+    that turns site-time scheduling on for a site that declined it.
     """
 
     @pytest.fixture(autouse=True)
     def _api_declines(self, firebase_client):
-        with patch.object(firebase_client, '_fetch_site_name_from_api', return_value=False):
+        with patch.object(firebase_client, '_fetch_site_metadata_from_api', return_value=False):
             yield
 
-    def test_caches_the_name_and_the_timezone_from_one_read(self, firebase_client, mock_rest_client):
+    def test_a_site_that_has_not_opted_in_keeps_machine_local_time(
+        self, firebase_client, mock_rest_client
+    ):
+        # A timezone on the site document is not consent: it has been set on
+        # nearly every site for years, purely for dashboard display.
         mock_rest_client.get_document.reset_mock()
         mock_rest_client.get_document.return_value = {
             'name': 'TEC',
@@ -339,14 +413,55 @@ class TestSiteMetadata:
         firebase_client._fetch_site_metadata()
 
         assert firebase_client.site_name == 'TEC'
-        assert firebase_client.site_timezone == 'America/Los_Angeles'
+        assert firebase_client.site_timezone is None
         # One round trip, on the site document itself.
         mock_rest_client.get_document.assert_called_once_with('sites/test-site')
+
+    def test_the_flagged_twin_caches_the_timezone(self, firebase_client, mock_rest_client):
+        mock_rest_client.get_document.reset_mock()
+        mock_rest_client.get_document.return_value = {
+            'name': 'TEC',
+            'timezone': 'America/Los_Angeles',
+            'schedulesFollowSiteTime': True,
+        }
+
+        firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_name == 'TEC'
+        assert firebase_client.site_timezone == 'America/Los_Angeles'
+
+    def test_a_declining_site_clears_a_cached_timezone(self, firebase_client, mock_rest_client):
+        firebase_client.site_timezone = 'America/Los_Angeles'
+        mock_rest_client.get_document.return_value = {
+            'name': 'TEC',
+            'timezone': 'America/Los_Angeles',
+            'schedulesFollowSiteTime': False,
+        }
+
+        firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_timezone is None
+
+    @pytest.mark.parametrize('flag', ['true', 1, 'yes', {}, []])
+    def test_only_a_real_true_opts_a_site_in(self, firebase_client, mock_rest_client, flag):
+        # `is True`, not truthiness: a string "true" out of a hand-edited document
+        # or a loose REST decode must not move a fleet onto a different clock.
+        mock_rest_client.get_document.return_value = {
+            'name': 'TEC',
+            'timezone': 'America/Los_Angeles',
+            'schedulesFollowSiteTime': flag,
+        }
+
+        firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_timezone is None
 
     def test_an_unnamed_site_leaves_the_name_unset(self, firebase_client, mock_rest_client):
         # Pre-name-column or whitespace-only sites must yield None (not ''), so
         # the consumer falls back to the site id.
-        mock_rest_client.get_document.return_value = {'timezone': 'UTC', 'name': ''}
+        mock_rest_client.get_document.return_value = {
+            'timezone': 'UTC', 'name': '', 'schedulesFollowSiteTime': True,
+        }
 
         firebase_client._fetch_site_metadata()
 
@@ -407,6 +522,46 @@ class TestSiteMetadata:
         firebase_client._fetch_site_metadata()
 
         mock_rest_client.get_document.assert_not_called()
+
+
+# TestSiteMetadataRefresh — the 900s re-read that keeps the cache honest
+class TestSiteMetadataRefresh:
+    """Site metadata used to be read once per connect, so a site opting into
+    site-time schedules (or renaming itself) reached a machine only on its next
+    reconnect — for a healthy agent, potentially days.
+
+    It is paced on the METRICS thread, deliberately: `_fetch_site_metadata` is an
+    HTTP round trip with a 10s timeout, and the 5s main service loop must never
+    block on the network. These are structural assertions because `_metrics_loop`
+    is an unbounded `while self.running` loop that uploads telemetry — the repo
+    guards such loops the same way elsewhere.
+    """
+
+    @staticmethod
+    def _loop_src():
+        import inspect
+        return inspect.getsource(FirebaseClient._metrics_loop)
+
+    def test_the_metrics_loop_refreshes_the_metadata(self):
+        assert 'self._fetch_site_metadata()' in self._loop_src()
+
+    def test_it_is_paced_at_900s_like_the_cleanup_beside_it(self):
+        src = self._loop_src()
+        assert 'last_site_metadata_refresh' in src
+        assert 'now - last_site_metadata_refresh > 900' in src
+
+    def test_a_failed_refresh_cannot_take_the_heartbeat_thread_down(self):
+        # This loop IS the heartbeat: an escaping exception marks the machine
+        # offline fleet-wide. The refresh is best-effort, like the cleanup.
+        src = self._loop_src()
+        after = src.split('self._fetch_site_metadata()', 1)[1]
+        assert 'except Exception' in after.split('\n\n', 1)[0]
+
+    def test_it_only_runs_while_connected(self):
+        src = self._loop_src()
+        # Same `if self.connected:` arm as the metrics upload and the cleanup —
+        # there is nothing to ask while the transport is down.
+        assert src.index('if self.connected:') < src.index('self._fetch_site_metadata()')
 
 
 # TestEnsureDisplayModesCatalogue — A3.2 cache-by-signature guard

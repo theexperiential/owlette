@@ -38,6 +38,11 @@ def _make_service(
     svc.relaunch_attempts = {}
     svc._skip_launch_delay = set()
     svc.manual_overrides = {}
+    # machine-local schedule evaluation — the shape for a site that has not
+    # opted into site-time schedules, which is every site until one does. it is
+    # no longer the ONLY reachable value: since 3.3.0 the main loop refreshes
+    # this from the cloud client each tick, so an opted-in site puts a real IANA
+    # zone here and the window below is judged on the site's clock instead.
     svc._cached_site_timezone = None
     svc.firebase_client = MagicMock()
     svc.firebase_client.is_connected.return_value = fb_connected
