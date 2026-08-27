@@ -287,7 +287,14 @@ Gaps, in order:
    from a machine's clock gets a banner/chip that lies about when the window fires.
    **Needs a product decision**: wire site-time evaluation (return `timezone` from
    /api/agent/site + drop the name-only guard — the agent plumbing is already in place)
-   or relabel the chip/banner as machine-local. The original audit critic's "schedules
+   or relabel the chip/banner as machine-local.
+   **RECOMMENDED (2026-08-26, awaiting user go-ahead): wire site time, opt-in.**
+   Site time is the intuitive model for venue operators, and machine clocks are the
+   thing nobody maintains on unattended boxes. Rollout shape that avoids a silent
+   fleet-wide shift: per-site "schedules follow site time" flag — ON by default for
+   NEW sites, existing sites stay machine-local until an admin confirms the site's
+   timezone via a dashboard banner; touring rigs keep the machine-local escape hatch.
+   Work = one /api/agent/site field, the flag, the banner. The original audit critic's "schedules
    run on the SITE's timezone" claim was wrong about effective behavior; both scripts
    that touched it (ep02 day-zero, ep06 schedules) now narrate only what ships.
    Caught by the touchup:B reviewer; adjudicated in code.
