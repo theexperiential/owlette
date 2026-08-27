@@ -8,9 +8,10 @@ Works on **DaVinci Resolve (free edition)**. Verified against the scripting
 README that ships with **Resolve 19.0.1** ("Last Updated: 16 July 2024"), at
 `%PROGRAMDATA%\Blackmagic Design\DaVinci Resolve\Support\Developer\Scripting\README.txt`.
 
-> **Not yet run inside Resolve.** Everything here was written against that
-> README and exercised against a mock of the API, but no one has clicked the
-> menu item yet. Read [first run](#first-run) before you do.
+> **Verified in-app 2026-08-27.** A full run built all 17 episode timelines and
+> placed 100% of the beats that had footage — zero refused appends, zero clips
+> off their requested `recordFrame`. The conform arithmetic and the marker/clip
+> frame split below are confirmed against the real API, not a mock.
 
 ---
 
@@ -180,6 +181,22 @@ Frame rate and resolution are set as **project** settings *before* the timeline
 is created, because a timeline takes its format at creation and does not
 retro-fit. `SetSetting` returns a bool; the script checks it, re-reads the value,
 and only complains if it actually differs.
+
+### Rebuilding after footage was re-recorded
+
+A media pool item keeps the frame count and duration read from the file it was
+first imported from. Re-recorded takes keep their filenames, so a plain re-run
+reuses stale clip properties and can refuse a conform cut that runs past the OLD
+duration.
+
+Set `OWLETTE_BUILD_FRESH=1` (the installed menu copy already does) and the build
+first deletes, per episode, the bin named after the stem and every timeline named
+`<stem> v<N>` — then rebuilds, re-importing every file. One click, no manual
+cleanup, and no need to delete the project.
+
+It only removes what this script generates. A timeline you RENAMED (`03-install-and-pair v2 FINAL`)
+does not match the pattern and survives — which is also how you protect an edit
+you care about before a fresh run.
 
 ### Timelines are versioned, never overwritten
 

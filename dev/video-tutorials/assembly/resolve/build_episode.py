@@ -24,6 +24,7 @@ UNTESTED IN-APP. See README.md "first run" for the specific calls to watch.
 
 import json
 import os
+import re
 import traceback
 
 # ---------------------------------------------------------------------------
@@ -33,6 +34,18 @@ import traceback
 # Leave "" to be asked which episode to build. Otherwise an episode number
 # ("5", "05") or a full stem ("05-keep-a-process-alive").
 BUILD_EPISODE = ""
+
+# Rebuild from scratch: drop the episode's existing bin and every timeline this
+# script previously generated for it, then build again. Set OWLETTE_BUILD_FRESH=1
+# (or flip this to True) after the footage on disk has been REPLACED - re-recorded
+# takes keep their filenames, and a media pool item still carries the frame count
+# and duration read from the file it was first imported from. Re-importing is the
+# only way to pick the new ones up.
+#
+# It deletes only what this script makes: the bin named after the episode stem and
+# timelines named "<stem> v<N>". A timeline you renamed is not touched - which is
+# also how you protect an edit you care about.
+BUILD_FRESH = False
 
 # Where the manifests live. Leave "" to auto-discover (see find_manifest_dir).
 MANIFEST_DIR = ""
@@ -304,6 +317,65 @@ def apply_format(project, timeline_spec, report):
         timeline_spec.get("width"), timeline_spec.get("height"), fps_text))
 
 
+def want_fresh():
+    """Env wins over the module constant, same precedence as OWLETTE_BUILD_EPISODE."""
+    env = (os.environ.get("OWLETTE_BUILD_FRESH") or "").strip().lower()
+    if env:
+        return env not in ("0", "false", "no", "off")
+    return bool(BUILD_FRESH)
+
+
+def drop_previous_build(project, media_pool, stem, report):
+    """Delete this script's own timelines + bin for one episode, so the rebuild
+    re-imports its media instead of trusting properties cached from files that
+    have since been overwritten. Anything named differently is left alone."""
+    pattern = re.compile(r"^%s v\d+$" % re.escape(stem))
+    doomed = []
+    try:
+        count = int(project.GetTimelineCount() or 0)
+        for i in range(1, count + 1):
+            tl = project.GetTimelineByIndex(i)
+            if tl and pattern.match(tl.GetName() or ""):
+                doomed.append(tl)
+    except Exception as exc:
+        report.warn("could not enumerate timelines for %s: %s" % (stem, exc))
+
+    if doomed:
+        names = ", ".join(t.GetName() for t in doomed)
+        try:
+            # Resolve refuses to delete the timeline that is currently open, so
+            # step off it first. Any other timeline will do; if this episode's
+            # are the only ones, the delete is attempted anyway and reported.
+            current = project.GetCurrentTimeline()
+            if current and pattern.match(current.GetName() or ""):
+                for i in range(1, int(project.GetTimelineCount() or 0) + 1):
+                    other = project.GetTimelineByIndex(i)
+                    if other and not pattern.match(other.GetName() or ""):
+                        project.SetCurrentTimeline(other)
+                        break
+            if media_pool.DeleteTimelines(doomed):
+                report.say("fresh: deleted %d old timeline(s) - %s" % (len(doomed), names))
+            else:
+                report.warn("fresh: Resolve would not delete %s - the rebuild will "
+                            "version up instead" % names)
+        except Exception as exc:
+            report.warn("fresh: deleting %s raised %s - the rebuild will version up"
+                        % (names, exc))
+
+    try:
+        root = media_pool.GetRootFolder()
+        for folder in root.GetSubFolderList() or []:
+            if folder.GetName() == stem:
+                if media_pool.DeleteFolders([folder]):
+                    report.say('fresh: deleted bin "%s" - media will re-import' % stem)
+                else:
+                    report.warn('fresh: could not delete bin "%s"; its clips may still '
+                                'carry properties from replaced files' % stem)
+                break
+    except Exception as exc:
+        report.warn('fresh: dropping bin "%s" raised %s' % (stem, exc))
+
+
 def get_or_make_bin(media_pool, name, report):
     root = media_pool.GetRootFolder()
     for folder in root.GetSubFolderList() or []:
@@ -500,6 +572,8 @@ def build(manifest, report):
     apply_format(project, spec, report)
 
     media_pool = project.GetMediaPool()
+    if want_fresh():
+        drop_previous_build(project, media_pool, manifest["stem"], report)
     bin_folder = get_or_make_bin(media_pool, manifest["stem"], report)
 
     # --- gather the files -------------------------------------------------

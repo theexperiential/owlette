@@ -1,0 +1,198 @@
+manifests: C:\Users\admin\Documents\Git\Owlette\dev\video-tutorials\assembly\manifests
+
+=== building episode 01 - what is owlette? ===
+created project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "01-what-is-owlette"
+imported 6 of 6 file(s)
+timeline "01-what-is-owlette v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 4998 frames
+A1: 5 narration clip(s) placed
+markers: 5 of 5 beat(s)
+
+=== building episode 02 - day zero: sign up, 2fa, and your first site ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "02-day-zero"
+imported 10 of 10 file(s)
+timeline "02-day-zero v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 15765 frames
+A1: 9 narration clip(s) placed
+markers: 9 of 9 beat(s)
+
+=== building episode 03 - install owlette & pair your first machine ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "03-install-and-pair"
+  !! footage not on disk: native: capture-native install wizard (b01-b04)
+  !! footage not on disk: dev/video-tutorials/footage/web/03-install-and-pair.mp4
+imported 11 of 11 file(s)
+timeline "03-install-and-pair v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 2958 frames
+A1: 10 narration clip(s) placed
+markers: 10 of 10 beat(s)
+
+=== building episode 04 - the dashboard, end to end ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "04-dashboard-tour"
+imported 7 of 7 file(s)
+timeline "04-dashboard-tour v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 9764 frames
+A1: 6 narration clip(s) placed
+markers: 6 of 6 beat(s)
+
+=== building episode 05 - keep a process alive ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "05-keep-a-process-alive"
+imported 8 of 8 file(s)
+timeline "05-keep-a-process-alive v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 9177 frames
+A1: 7 narration clip(s) placed
+markers: 7 of 7 beat(s)
+
+=== building episode 06 - run apps on a schedule ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "06-run-on-a-schedule"
+imported 8 of 8 file(s)
+timeline "06-run-on-a-schedule v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 8710 frames
+A1: 7 narration clip(s) placed
+markers: 7 of 7 beat(s)
+
+=== building episode 07 - reading machine health ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "07-reading-machine-health"
+imported 8 of 8 file(s)
+timeline "07-reading-machine-health v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 9391 frames
+A1: 7 narration clip(s) placed
+markers: 7 of 7 beat(s)
+
+=== building episode 08 - remote actions: restart, screenshot, live view ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "08-remote-actions"
+imported 10 of 10 file(s)
+timeline "08-remote-actions v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 10477 frames
+1 insert/alt clip(s) imported to the bin, not placed
+A1: 8 narration clip(s) placed
+markers: 8 of 8 beat(s)
+
+=== building episode 09 - the owlette app on the machine ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "09-the-owlette-app"
+  !! footage not on disk: native: tray segments (capture-tray-menu.ps1 + icon states)
+imported 10 of 10 file(s)
+timeline "09-the-owlette-app v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 9329 frames
+1 insert/alt clip(s) imported to the bin, not placed
+A1: 8 narration clip(s) placed
+markers: 8 of 8 beat(s)
+
+=== building episode 10 - deploy software to many machines ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "10-deploy-software"
+imported 8 of 8 file(s)
+timeline "10-deploy-software v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 10754 frames
+A1: 7 narration clip(s) placed
+markers: 7 of 7 beat(s)
+
+=== building episode 11 - distribute project folders with roost ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "11-distribute-with-roost"
+imported 7 of 7 file(s)
+timeline "11-distribute-with-roost v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 9889 frames
+A1: 6 narration clip(s) placed
+markers: 6 of 6 beat(s)
+
+=== building episode 12 - hoot: manage machines by chat ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "12-cortex"
+imported 9 of 9 file(s)
+timeline "12-cortex v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 12332 frames
+A1: 8 narration clip(s) placed
+markers: 8 of 8 beat(s)
+
+=== building episode 13 - talons: rules that watch and act ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "13-talons"
+imported 9 of 9 file(s)
+timeline "13-talons v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 14527 frames
+A1: 8 narration clip(s) placed
+markers: 8 of 8 beat(s)
+
+=== building episode 14 - team & alerts ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "14-team-and-alerts"
+imported 8 of 8 file(s)
+timeline "14-team-and-alerts v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 12394 frames
+A1: 7 narration clip(s) placed
+markers: 7 of 7 beat(s)
+
+=== building episode 15 - display layouts: capture a wall, put it back ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "15-display-layouts"
+imported 10 of 10 file(s)
+timeline "15-display-layouts v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 15055 frames
+A1: 9 narration clip(s) placed
+markers: 9 of 9 beat(s)
+
+=== building episode 16 - logs & troubleshooting ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "16-logs-and-troubleshooting"
+imported 9 of 9 file(s)
+timeline "16-logs-and-troubleshooting v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 10260 frames
+1 insert/alt clip(s) imported to the bin, not placed
+A1: 7 narration clip(s) placed
+markers: 7 of 7 beat(s)
+
+=== building episode 17 - keeping the fleet current ===
+opened project "owlette tutorials"
+format: 1920x1080 @ 60fps
+created bin "17-fleet-maintenance"
+imported 11 of 11 file(s)
+timeline "17-fleet-maintenance v1"
+timeline starts at frame 216000
+V1: 1 scene clip(s), 13509 frames
+1 insert/alt clip(s) imported to the bin, not placed
+A1: 9 narration clip(s) placed
+markers: 9 of 9 beat(s)
+
+built 17 of 17 episode timeline(s)
+summary written to C:\Users\admin\Documents\Git\Owlette\dev\video-tutorials\assembly\resolve\build-log.txt
