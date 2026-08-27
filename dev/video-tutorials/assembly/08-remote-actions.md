@@ -8,8 +8,8 @@ Timeline: 1920x1080 @ 60.0fps.
 Resolve build manifest: [`manifests/08-remote-actions.json`](manifests/08-remote-actions.json)
 
 Footage:
-- `web/e2e/.output/videos/08-remote-actions.mp4` [1920x1080 @ 60.0fps]
-- `web/e2e/.output/videos/08-remote-actions-b08-member.mp4` — b08 member cut [1920x1080 @ 60.0fps]
+- `dev/video-tutorials/footage/web/08-remote-actions.mp4` [1920x1080 @ 60.0fps]
+- `dev/video-tutorials/footage/web/08-remote-actions-b08-member.mp4` — b08 member cut [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

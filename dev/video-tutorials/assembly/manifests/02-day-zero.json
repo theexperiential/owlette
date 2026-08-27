@@ -17,8 +17,8 @@
     {
       "role": "scene",
       "note": "",
-      "rel": "web/e2e/.output/videos/02-day-zero.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\02-day-zero.mp4",
+      "rel": "dev/video-tutorials/footage/web/02-day-zero.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\02-day-zero.mp4",
       "exists": true,
       "duration_s": 262.75,
       "width": 1920,

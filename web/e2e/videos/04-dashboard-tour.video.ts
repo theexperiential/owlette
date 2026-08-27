@@ -13,7 +13,7 @@
  * selectors as in the screenshot specs.
  *
  * Run:  cd web && npm run videos -- --grep "episode 4"
- * Out:  web/e2e/.output/videos/04-dashboard-tour.mp4
+ * Out:  dev/video-tutorials/footage/web/04-dashboard-tour.mp4
  */
 
 import { test, expect } from '@playwright/test';

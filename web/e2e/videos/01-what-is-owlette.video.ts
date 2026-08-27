@@ -16,7 +16,7 @@
  * selectors as the screenshot specs.
  *
  * Run:  cd web && npm run videos -- --grep "episode 1"
- * Out:  web/e2e/.output/videos/01-what-is-owlette.mp4
+ * Out:  dev/video-tutorials/footage/web/01-what-is-owlette.mp4
  */
 
 import { test, expect } from '@playwright/test';

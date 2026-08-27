@@ -23,7 +23,7 @@
  * that unblocks the email frame.
  *
  * Run:  cd web && npm run videos -- --grep "episode 14"
- * Out:  web/e2e/.output/videos/14-team-and-alerts.mp4
+ * Out:  dev/video-tutorials/footage/web/14-team-and-alerts.mp4
  */
 
 import { test, expect } from '@playwright/test';

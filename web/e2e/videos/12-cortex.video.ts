@@ -30,7 +30,7 @@
  * the next `npm run screenshots`.
  *
  * Run:  cd web && npm run videos -- --grep "episode 12"
- * Out:  web/e2e/.output/videos/12-cortex.mp4
+ * Out:  dev/video-tutorials/footage/web/12-cortex.mp4
  */
 
 import { test, expect } from '@playwright/test';

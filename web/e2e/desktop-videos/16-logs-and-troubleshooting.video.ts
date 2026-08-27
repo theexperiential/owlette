@@ -24,7 +24,7 @@
  * posted to owlette and the toast still lands.
  *
  * Run:  cd web && npm run videos:desktop -- --grep "episode 16"
- * Out:  web/e2e/.output/desktop-videos/16-report-issue-desktop.mp4
+ * Out:  dev/video-tutorials/footage/desktop/16-report-issue-desktop.mp4
  */
 
 import { expect, test } from '@playwright/test';

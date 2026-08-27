@@ -17,8 +17,8 @@
     {
       "role": "scene",
       "note": "",
-      "rel": "web/e2e/.output/videos/13-talons.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\13-talons.mp4",
+      "rel": "dev/video-tutorials/footage/web/13-talons.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\13-talons.mp4",
       "exists": true,
       "duration_s": 242.117,
       "width": 1920,

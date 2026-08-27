@@ -8,7 +8,7 @@ Timeline: 1920x1080 @ 60.0fps.
 Resolve build manifest: [`manifests/04-dashboard-tour.json`](manifests/04-dashboard-tour.json)
 
 Footage:
-- `web/e2e/.output/videos/04-dashboard-tour.mp4` [1920x1080 @ 60.0fps]
+- `dev/video-tutorials/footage/web/04-dashboard-tour.mp4` [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

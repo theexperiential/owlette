@@ -34,7 +34,7 @@
  * whole beat rather than ticking, which is the friendlier frame anyway.
  *
  * Run:  cd web && npm run videos -- --grep "episode 15"
- * Out:  web/e2e/.output/videos/15-display-layouts.mp4
+ * Out:  dev/video-tutorials/footage/web/15-display-layouts.mp4
  */
 
 import { test, expect } from '@playwright/test';

@@ -40,8 +40,8 @@
  *     on the capture machine, which is a deliberate operator act, not a fixture.
  *
  * Run:  cd web && npm run videos:desktop -- --grep "episode 9"
- * Out:  web/e2e/.output/desktop-videos/09-the-owlette-app.mp4
- *       web/e2e/.output/desktop-videos/09-the-owlette-app-unpaired.mp4
+ * Out:  dev/video-tutorials/footage/desktop/09-the-owlette-app.mp4
+ *       dev/video-tutorials/footage/desktop/09-the-owlette-app-unpaired.mp4
  */
 
 import { expect, test, type Locator, type Page } from '@playwright/test';

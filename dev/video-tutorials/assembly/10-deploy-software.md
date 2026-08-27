@@ -8,7 +8,7 @@ Timeline: 1920x1080 @ 60.0fps.
 Resolve build manifest: [`manifests/10-deploy-software.json`](manifests/10-deploy-software.json)
 
 Footage:
-- `web/e2e/.output/videos/10-deploy-software.mp4` [1920x1080 @ 60.0fps]
+- `dev/video-tutorials/footage/web/10-deploy-software.mp4` [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

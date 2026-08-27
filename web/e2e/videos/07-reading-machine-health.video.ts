@@ -19,7 +19,7 @@
  * selector the screenshot specs use.
  *
  * Run:  cd web && npm run videos -- --grep "episode 7"
- * Out:  web/e2e/.output/videos/07-reading-machine-health.mp4
+ * Out:  dev/video-tutorials/footage/web/07-reading-machine-health.mp4
  */
 
 import { FieldValue } from 'firebase-admin/firestore';

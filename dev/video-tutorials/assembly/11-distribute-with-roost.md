@@ -8,7 +8,7 @@ Timeline: 1920x1080 @ 60.0fps.
 Resolve build manifest: [`manifests/11-distribute-with-roost.json`](manifests/11-distribute-with-roost.json)
 
 Footage:
-- `web/e2e/.output/videos/11-distribute-with-roost.mp4` [1920x1080 @ 60.0fps]
+- `dev/video-tutorials/footage/web/11-distribute-with-roost.mp4` [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

@@ -39,7 +39,7 @@
  * shot off the app and land on a page the web pipeline films deterministically.
  *
  * Run:  cd web && npm run videos:desktop -- --grep "episode 3"
- * Out:  web/e2e/.output/desktop-videos/03-install-and-pair-desktop.mp4
+ * Out:  dev/video-tutorials/footage/desktop/03-install-and-pair-desktop.mp4
  */
 
 import { expect, test } from '@playwright/test';

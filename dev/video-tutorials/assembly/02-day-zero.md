@@ -8,7 +8,7 @@ Timeline: 1920x1080 @ 60.0fps.
 Resolve build manifest: [`manifests/02-day-zero.json`](manifests/02-day-zero.json)
 
 Footage:
-- `web/e2e/.output/videos/02-day-zero.mp4` [1920x1080 @ 60.0fps]
+- `dev/video-tutorials/footage/web/02-day-zero.mp4` [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

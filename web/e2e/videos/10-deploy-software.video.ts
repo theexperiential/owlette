@@ -34,7 +34,7 @@
  * "none"), and managed processes on the machines b04 needs.
  *
  * Run:  cd web && npm run videos -- --grep "episode 10"
- * Out:  web/e2e/.output/videos/10-deploy-software.mp4
+ * Out:  dev/video-tutorials/footage/web/10-deploy-software.mp4
  */
 
 import { Timestamp } from 'firebase-admin/firestore';

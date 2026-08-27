@@ -8,7 +8,7 @@ Timeline: 1920x1080 @ 60.0fps.
 Resolve build manifest: [`manifests/07-reading-machine-health.json`](manifests/07-reading-machine-health.json)
 
 Footage:
-- `web/e2e/.output/videos/07-reading-machine-health.mp4` [1920x1080 @ 60.0fps]
+- `dev/video-tutorials/footage/web/07-reading-machine-health.mp4` [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

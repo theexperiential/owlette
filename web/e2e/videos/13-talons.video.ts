@@ -34,7 +34,7 @@
  * before.
  *
  * Run:  cd web && npm run videos -- --grep "episode 13"
- * Out:  web/e2e/.output/videos/13-talons.mp4
+ * Out:  dev/video-tutorials/footage/web/13-talons.mp4
  */
 
 import { Timestamp } from 'firebase-admin/firestore';

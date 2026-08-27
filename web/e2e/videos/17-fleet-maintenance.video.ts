@@ -31,8 +31,8 @@
  * commands; every dialog here is opened, framed, and cancelled.
  *
  * Run:  cd web && npm run videos -- --grep "episode 17"
- * Out:  web/e2e/.output/videos/17-fleet-maintenance.mp4
- *       web/e2e/.output/videos/17-fleet-maintenance-b06-tokens.mp4
+ * Out:  dev/video-tutorials/footage/web/17-fleet-maintenance.mp4
+ *       dev/video-tutorials/footage/web/17-fleet-maintenance-b06-tokens.mp4
  */
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';

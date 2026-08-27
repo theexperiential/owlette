@@ -8,7 +8,7 @@ Timeline: 1920x1080 @ 60.0fps.
 Resolve build manifest: [`manifests/15-display-layouts.json`](manifests/15-display-layouts.json)
 
 Footage:
-- `web/e2e/.output/videos/15-display-layouts.mp4` [1920x1080 @ 60.0fps]
+- `dev/video-tutorials/footage/web/15-display-layouts.mp4` [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

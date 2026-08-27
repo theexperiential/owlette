@@ -17,8 +17,8 @@
     {
       "role": "scene",
       "note": "",
-      "rel": "web/e2e/.output/videos/17-fleet-maintenance.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\17-fleet-maintenance.mp4",
+      "rel": "dev/video-tutorials/footage/web/17-fleet-maintenance.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\17-fleet-maintenance.mp4",
       "exists": true,
       "duration_s": 225.15,
       "width": 1920,
@@ -28,8 +28,8 @@
     {
       "role": "pool",
       "note": "b06 tokens cut",
-      "rel": "web/e2e/.output/videos/17-fleet-maintenance-b06-tokens.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\17-fleet-maintenance-b06-tokens.mp4",
+      "rel": "dev/video-tutorials/footage/web/17-fleet-maintenance-b06-tokens.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\17-fleet-maintenance-b06-tokens.mp4",
       "exists": true,
       "duration_s": 28.683,
       "width": 1920,

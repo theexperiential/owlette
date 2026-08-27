@@ -24,8 +24,8 @@
     {
       "role": "scene",
       "note": "pairing dialog (b05-b06/b10)",
-      "rel": "web/e2e/.output/desktop-videos/03-install-and-pair-desktop.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\desktop-videos\\03-install-and-pair-desktop.mp4",
+      "rel": "dev/video-tutorials/footage/desktop/03-install-and-pair-desktop.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\desktop\\03-install-and-pair-desktop.mp4",
       "exists": true,
       "duration_s": 49.317,
       "width": 1600,
@@ -35,8 +35,8 @@
     {
       "role": "scene",
       "note": "dashboard beats b07-b09",
-      "rel": "web/e2e/.output/videos/03-install-and-pair.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\03-install-and-pair.mp4",
+      "rel": "dev/video-tutorials/footage/web/03-install-and-pair.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\03-install-and-pair.mp4",
       "exists": false
     }
   ],

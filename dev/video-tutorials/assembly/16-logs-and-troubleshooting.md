@@ -8,8 +8,8 @@ Timeline: 1920x1080 @ 60.0fps.
 Resolve build manifest: [`manifests/16-logs-and-troubleshooting.json`](manifests/16-logs-and-troubleshooting.json)
 
 Footage:
-- `web/e2e/.output/videos/16-logs-and-troubleshooting.mp4` [1920x1080 @ 60.0fps]
-- `web/e2e/.output/desktop-videos/16-report-issue-desktop.mp4` — report-issue segment (b07 half) [1600x900 @ 60.0fps]
+- `dev/video-tutorials/footage/web/16-logs-and-troubleshooting.mp4` [1920x1080 @ 60.0fps]
+- `dev/video-tutorials/footage/desktop/16-report-issue-desktop.mp4` — report-issue segment (b07 half) [1600x900 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

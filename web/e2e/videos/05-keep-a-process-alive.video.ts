@@ -13,7 +13,7 @@
  * amber banner, and b05's agent-written status row (below).
  *
  * Run:  cd web && npm run videos -- --grep "episode 5"
- * Out:  web/e2e/.output/videos/05-keep-a-process-alive.mp4
+ * Out:  dev/video-tutorials/footage/web/05-keep-a-process-alive.mp4
  */
 
 import { test, expect } from '@playwright/test';

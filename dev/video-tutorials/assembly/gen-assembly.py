@@ -22,7 +22,7 @@ Usage
     python gen-assembly.py --media-root c:\\Users\\me\\Documents\\Git\\Owlette
 
 `--media-root` (or `$OWLETTE_MEDIA_ROOT`) is where the *build outputs* live —
-`voiceover/out/` MP3s and `web/e2e/.output/` footage. Both are gitignored, so a
+`voiceover/out/` MP3s and `footage/` takes. Both are gitignored, so a
 git worktree has neither; point this at the main checkout when running from one.
 Scripts and the emitted sheets always resolve against this file's own tree.
 """
@@ -73,9 +73,9 @@ SCREEN_PRIORITY = ("**SCREEN:**", "**B-ROLL:**", "**ON-SCREEN:**")
 #                and inserts the editor drops by hand.
 # A `path` of None is footage that has to be shot before this episode can cut.
 # ---------------------------------------------------------------------------
-SCENE = "web/e2e/.output/videos/{stem}.mp4"
-CUT = "web/e2e/.output/videos/{stem}-{cut}.mp4"
-DESKTOP = "web/e2e/.output/desktop-videos/{name}"
+SCENE = "dev/video-tutorials/footage/web/{stem}.mp4"
+CUT = "dev/video-tutorials/footage/web/{stem}-{cut}.mp4"
+DESKTOP = "dev/video-tutorials/footage/desktop/{name}"
 
 
 class Source(NamedTuple):
@@ -391,7 +391,7 @@ def main() -> None:
     parser.add_argument(
         "--media-root",
         default=os.environ.get("OWLETTE_MEDIA_ROOT", str(REPO)),
-        help="repo root holding voiceover/out MP3s + web/e2e/.output footage "
+        help="repo root holding voiceover/out MP3s + dev/video-tutorials/footage takes "
         "(default: this file's own checkout, or $OWLETTE_MEDIA_ROOT)",
     )
     args = parser.parse_args()

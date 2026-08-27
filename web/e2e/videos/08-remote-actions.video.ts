@@ -29,8 +29,8 @@
  * which is what gates screenshot / live view / restart / shutdown.
  *
  * Run:  cd web && npm run videos -- --grep "episode 8"
- * Out:  web/e2e/.output/videos/08-remote-actions.mp4
- *       web/e2e/.output/videos/08-remote-actions-b08-member.mp4
+ * Out:  dev/video-tutorials/footage/web/08-remote-actions.mp4
+ *       dev/video-tutorials/footage/web/08-remote-actions-b08-member.mp4
  */
 
 import { test, expect, type Locator, type Page } from '@playwright/test';

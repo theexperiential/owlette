@@ -28,7 +28,7 @@
  * designed, not wired. No timezone claim is spoken either way.
  *
  * Run:  cd web && npm run videos -- --grep "episode 6"
- * Out:  web/e2e/.output/videos/06-run-on-a-schedule.mp4
+ * Out:  dev/video-tutorials/footage/web/06-run-on-a-schedule.mp4
  */
 
 import { test, expect } from '@playwright/test';

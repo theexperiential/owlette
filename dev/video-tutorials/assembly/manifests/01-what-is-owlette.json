@@ -17,8 +17,8 @@
     {
       "role": "scene",
       "note": "",
-      "rel": "web/e2e/.output/videos/01-what-is-owlette.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\01-what-is-owlette.mp4",
+      "rel": "dev/video-tutorials/footage/web/01-what-is-owlette.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\01-what-is-owlette.mp4",
       "exists": true,
       "duration_s": 83.317,
       "width": 1920,

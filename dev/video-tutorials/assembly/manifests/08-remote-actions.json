@@ -17,8 +17,8 @@
     {
       "role": "scene",
       "note": "",
-      "rel": "web/e2e/.output/videos/08-remote-actions.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\08-remote-actions.mp4",
+      "rel": "dev/video-tutorials/footage/web/08-remote-actions.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\08-remote-actions.mp4",
       "exists": true,
       "duration_s": 174.617,
       "width": 1920,
@@ -28,8 +28,8 @@
     {
       "role": "pool",
       "note": "b08 member cut",
-      "rel": "web/e2e/.output/videos/08-remote-actions-b08-member.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\08-remote-actions-b08-member.mp4",
+      "rel": "dev/video-tutorials/footage/web/08-remote-actions-b08-member.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\08-remote-actions-b08-member.mp4",
       "exists": true,
       "duration_s": 20.967,
       "width": 1920,

@@ -1,6 +1,6 @@
 /**
  * Video-capture helpers for the tutorial pipeline. Output: `<sceneName>.mp4` in
- * `e2e/.output/videos/`.
+ * `dev/video-tutorials/footage/web/`.
  *
  * Playwright drives a HEADED chromeless window (`playwright.videos.config.ts`);
  * an external ffmpeg (`FfmpegRecorder`) captures the desktop via ddagrab +
@@ -25,7 +25,10 @@ import { FIXED_NOW_MS } from '../screenshots/fixtures';
 import { FfmpegRecorder, planCapturePaths } from './ffmpeg-recorder';
 
 /** Clean, named .mp4 output lands here. */
-export const VIDEO_OUT_DIR = path.resolve(__dirname, '..', '.output', 'videos');
+// Media lands in the production workspace, beside the scripts and audio it
+// pairs with — not in e2e/.output, which holds only test diagnostics.
+export const VIDEO_OUT_DIR = path.resolve(
+  __dirname, '..', '..', '..', 'dev', 'video-tutorials', 'footage', 'web');
 
 const VIEWPORT_WIDTH = 1920;
 const VIEWPORT_HEIGHT = 1080;
@@ -43,7 +46,7 @@ export interface RecordSceneOptions {
 
 /**
  * Run `scene` in a fresh context with ffmpeg desktop capture, saving to
- * `e2e/.output/videos/{sceneName}.mp4`. A throwing scene still stops the recorder
+ * `dev/video-tutorials/footage/web/{sceneName}.mp4`. A throwing scene still stops the recorder
  * in `finally` — no orphaned ffmpeg, and the temp->final rename in
  * `FfmpegRecorder.stop` means a half-written file never poses as a valid clip.
  */

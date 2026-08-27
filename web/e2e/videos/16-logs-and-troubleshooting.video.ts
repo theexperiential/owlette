@@ -19,7 +19,7 @@
  * offers (ACTION_TYPE_GROUPS, page.tsx:133-211).
  *
  * Run:  cd web && npm run videos -- --grep "episode 16"
- * Out:  web/e2e/.output/videos/16-logs-and-troubleshooting.mp4
+ * Out:  dev/video-tutorials/footage/web/16-logs-and-troubleshooting.mp4
  */
 
 import { test, expect } from '@playwright/test';

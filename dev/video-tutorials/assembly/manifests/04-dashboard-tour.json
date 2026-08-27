@@ -17,8 +17,8 @@
     {
       "role": "scene",
       "note": "",
-      "rel": "web/e2e/.output/videos/04-dashboard-tour.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\04-dashboard-tour.mp4",
+      "rel": "dev/video-tutorials/footage/web/04-dashboard-tour.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\04-dashboard-tour.mp4",
       "exists": true,
       "duration_s": 162.733,
       "width": 1920,

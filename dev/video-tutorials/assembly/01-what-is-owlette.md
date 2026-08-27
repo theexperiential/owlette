@@ -8,7 +8,7 @@ Timeline: 1920x1080 @ 60.0fps.
 Resolve build manifest: [`manifests/01-what-is-owlette.json`](manifests/01-what-is-owlette.json)
 
 Footage:
-- `web/e2e/.output/videos/01-what-is-owlette.mp4` [1920x1080 @ 60.0fps]
+- `dev/video-tutorials/footage/web/01-what-is-owlette.mp4` [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

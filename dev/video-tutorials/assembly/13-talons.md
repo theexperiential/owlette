@@ -8,7 +8,7 @@ Timeline: 1920x1080 @ 60.0fps.
 Resolve build manifest: [`manifests/13-talons.json`](manifests/13-talons.json)
 
 Footage:
-- `web/e2e/.output/videos/13-talons.mp4` [1920x1080 @ 60.0fps]
+- `dev/video-tutorials/footage/web/13-talons.mp4` [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

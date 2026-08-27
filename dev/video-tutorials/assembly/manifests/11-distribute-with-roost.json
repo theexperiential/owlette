@@ -17,8 +17,8 @@
     {
       "role": "scene",
       "note": "",
-      "rel": "web/e2e/.output/videos/11-distribute-with-roost.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\videos\\11-distribute-with-roost.mp4",
+      "rel": "dev/video-tutorials/footage/web/11-distribute-with-roost.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\11-distribute-with-roost.mp4",
       "exists": true,
       "duration_s": 164.817,
       "width": 1920,

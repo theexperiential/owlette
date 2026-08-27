@@ -70,7 +70,9 @@ import {
 import { installFakeCursor } from './video-helpers';
 
 /** Clean, named .mp4 output lands here. */
-export const VIDEO_OUT_DIR = path.resolve(__dirname, '..', '.output', 'desktop-videos');
+// Same home as the web takes: the production workspace owns the media.
+export const VIDEO_OUT_DIR = path.resolve(
+  __dirname, '..', '..', '..', 'dev', 'video-tutorials', 'footage', 'desktop');
 
 /** Held on the start/end frame so every clip has stable bookends. */
 const PRE_ROLL_MS = 150;

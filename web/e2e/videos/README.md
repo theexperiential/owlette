@@ -34,7 +34,7 @@ resynced, the map at the bottom of this file is the authority on which episode a
 serves. (If you renumber another episode, the title is part of the rename — one more step
 than `series-outline.md`'s migration-mechanics list currently names.)
 
-Never runs in CI — it needs a real desktop. Output: `web/e2e/.output/videos/<scene>.mp4`.
+Never runs in CI — it needs a real desktop. Output: `dev/video-tutorials/footage/web/<scene>.mp4`.
 A capture in flight writes `<scene>.mp4.tmp.mp4` and is renamed only after ffmpeg exits
 cleanly, so a half-written file never poses as a valid clip.
 

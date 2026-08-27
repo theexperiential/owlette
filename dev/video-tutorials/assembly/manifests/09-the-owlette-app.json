@@ -17,8 +17,8 @@
     {
       "role": "scene",
       "note": "window beats",
-      "rel": "web/e2e/.output/desktop-videos/09-the-owlette-app.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\desktop-videos\\09-the-owlette-app.mp4",
+      "rel": "dev/video-tutorials/footage/desktop/09-the-owlette-app.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\desktop\\09-the-owlette-app.mp4",
       "exists": true,
       "duration_s": 155.483,
       "width": 1600,
@@ -28,8 +28,8 @@
     {
       "role": "pool",
       "note": "unpaired-state alt",
-      "rel": "web/e2e/.output/desktop-videos/09-the-owlette-app-unpaired.mp4",
-      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\web\\e2e\\.output\\desktop-videos\\09-the-owlette-app-unpaired.mp4",
+      "rel": "dev/video-tutorials/footage/desktop/09-the-owlette-app-unpaired.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\desktop\\09-the-owlette-app-unpaired.mp4",
       "exists": true,
       "duration_s": 7.5,
       "width": 1600,

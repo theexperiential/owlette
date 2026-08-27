@@ -11,7 +11,7 @@ npm run videos:desktop                          # every take (~4 min)
 npm run videos:desktop -- --grep "episode 9"    # one episode
 ```
 
-Output: `web/e2e/.output/desktop-videos/<scene>.mp4`, 60 fps H.264 yuv420p, bt709.
+Output: `dev/video-tutorials/footage/desktop/<scene>.mp4`, 60 fps H.264 yuv420p, bt709.
 
 ## What this films, and what it does not
 

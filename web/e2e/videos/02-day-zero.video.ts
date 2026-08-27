@@ -49,7 +49,7 @@
  *    if that take is cleaner to cut.
  *
  * Run:  cd web && npm run videos -- --grep "episode 2"
- * Out:  web/e2e/.output/videos/02-day-zero.mp4
+ * Out:  dev/video-tutorials/footage/web/02-day-zero.mp4
  */
 
 import crypto from 'crypto';
