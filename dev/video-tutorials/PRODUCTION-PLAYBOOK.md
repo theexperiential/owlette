@@ -180,6 +180,58 @@ Short, one-time native flows (a tray right-click, a single dialog) can be cheape
 to perform by hand over a recorder than to script. Automate what you will
 **re-capture on product change**; perform what you'll capture once.
 
+### 4d. Verify the OUTPUT, not the process (the expensive lesson)
+
+Owlette's first full batch — 17 episodes, days of work — shipped **100%
+defective**: a grey window-chrome border in every web frame, and narration laid
+against picture that had no timing relationship to it. Every process signal was
+green the whole time: tests passed, files existed, durations were non-zero,
+ffprobe validated the container. Nobody had *looked at a frame*.
+
+Generated media is not verified by the pipeline reporting success. Build the
+verification into the pipeline so it gates each unit, and look at output with
+your own eyes before committing to a batch:
+
+- **Sample first, batch second.** Produce ONE unit, inspect it at pixel level,
+  and — when the batch is a redo of work someone rejected — get their sign-off
+  on that sample before spending hours on the rest.
+- **Gate every take on its own pixels.** Owlette's `assertEdgesClean` samples
+  outer edge strips against inner reference strips at three timestamps
+  (contamination is constant, so any dirty sample condemns the take) plus a
+  **peak**-luminance check so an all-black capture fails loudly rather than
+  passing vacuously. Use peak, not average: dark-themed UI averages near-black
+  on real frames, and an average threshold either false-fails legitimate footage
+  or false-passes an empty capture.
+- **Never derive window geometry from JS metrics.** `outerWidth - innerWidth`
+  math for "chrome height" was wrong twice in a row here (an 8px desktop L, then
+  a 6px titlebar sliver). Record browser surfaces in **true fullscreen** (CDP
+  `Browser.setWindowBounds` → `windowState: 'fullscreen'`), so no chrome exists
+  and the region is simply the display; then assert the resulting geometry.
+- **Timestamp against the recording's clock, not the orchestrator's.** ffmpeg
+  signals readiness through a stderr progress line that lags the first captured
+  frame by ~1-2 s. Deriving t=0 from `Date.now()` at that moment skews every
+  timecode you record; derive it from the encoder's reported position instead.
+- **Emit a per-unit sidecar of ground truth** (here: `<scene>.beats.json` — where
+  each narration beat starts inside the footage and how long it runs) and make
+  the assembly step conform to that file rather than guessing. And make the
+  sidecar's lifetime match its take: delete it when a take starts, so an aborted
+  run leaves footage-without-sidecar (loudly wrong) instead of new pixels
+  silently paired with the previous take's timecodes.
+- **Enforce the audio/picture relationship at RECORD time.** Every beat must earn
+  at least its narration length (plus a handle) of on-screen time before the
+  scene may move on — otherwise the editor is asked to fit 30 s of speech under
+  15 s of picture. Hold at the beat's *close*, never mid-beat: an early hold
+  freezes the frame before the motion the narration is describing.
+- **Keep a corpus-wide gate** (`assembly/vet-recordings.py`) that re-runs the
+  same audits over every file at once and prints a table — edges, per-beat
+  coverage, container length, and which beats still have no picture. Run it
+  before assembly, every time. Make it *stricter* than the in-run assert: a
+  marginal take that warrants an eyeball should stop a batch even if it was
+  allowed to finish recording.
+
+The generalizable rule: **a tool reporting success is not evidence about
+generated media. Frames you looked at are.**
+
 ---
 
 ## 5. Accuracy: scripts are code — review them like code
@@ -243,9 +295,18 @@ user impact.
 
 ---
 
-## 7. Owlette-specific current state (2026-08-25)
+## 7. Owlette-specific current state (2026-08-27)
 
 > This section is the live status snapshot; §§1–6 are the portable playbook.
+
+**Latest (2026-08-27, commit `dfe0fcdb`):** the entire corpus was re-recorded
+after the batch described in §4d. The pipeline now carries fullscreen capture,
+record-time beat enforcement, `<scene>.beats.json` sidecars, a per-take pixel
+gate, a sidecar-driven Resolve conform, and `assembly/vet-recordings.py` as the
+corpus gate. Permanent (non-defect) picture gaps: ep01 b01/b02 (B-roll by
+design), ep03 installer-wizard beats (awaiting the VM) and b07–b09 (no web scene
+written), ep09 tray beats (native stills). Assembly runs from Resolve's
+Workspace → Scripts → "owlette build episodes".
 
 - **Scripts:** 13 episodes written, dual-reviewed twice (2026-05), committed.
   The 2026-08-25 drift audit against 3.2.0 (`DRIFT-AUDIT-2026-08.md`) found:
@@ -280,6 +341,8 @@ user impact.
 | Web capture | Playwright + seeded emulator fleet + pacing helpers | Deterministic, re-runnable, demo-quality data |
 | Native capture | pywinauto + OBS/ffmpeg (+ see §7 for Tauri) | Only maintained Windows automation option; short flows can be manual |
 | Recording | ffmpeg ddagrab/NVENC (web), OBS (native) | Quality + validated output |
-| Assembly | DaVinci Resolve (free) | Per-beat drag-and-drop sync; zooms/callouts |
+| Output gates | per-take edge/content pixel audit + corpus vet script | Process-green ≠ correct pixels (§4d) |
+| Sync ground truth | per-take `<scene>.beats.json` sidecars | Assembly conforms to measured timecodes, never guesses |
+| Assembly | DaVinci Resolve (free), scripted conform | Sidecar-driven cut; per-beat sync is mechanical |
 | Accuracy | Code-grounded fact sheets + multi-agent adversarial review | Scripts are claims about a codebase; treat them as such |
 | Maintenance | Per-episode drift audits, per-beat repair | Cost proportional to drift, not series size |
