@@ -14,11 +14,20 @@ model: eleven_v3
 > After this you can explain what owlette does, who it's for, and whether it fits your setup.
 
 ## [b01] cold open
-**B-ROLL:** a dark gallery at 3am; a digital display frozen on a windows error dialog; an empty room, nobody to fix it.
+**B-ROLL:** three shots, ~4.5s each, of the viewer's own world after hours — a museum
+kiosk, a lobby video wall, an AV control room — each dark, empty, and showing one
+screen that should be running the show and isn't. Generated/licensed, not captured:
+see `b-roll/01-b01-cold-open.md` for the shot briefs and the grade that makes the three
+cut together. Deliberately NOT one specific venue: "installation" spans exhibits,
+signage, kiosks and control rooms, and the beat has to land whichever one the viewer runs.
+**NOTE:** the screen content is composited in Resolve, not generated — a generative model
+renders UI text as garbled glyphs, and a fake-looking error dialog undercuts the one beat
+that has to feel real. Generate the ROOMS; drop the frozen frame and the dialog on the
+screen in post.
 **VOICEOVER:**
-[concerned] it's three in the morning. the installation is closed, nobody's on site,
-and the machine running your show just crashed. the display's been frozen for hours —
-and you won't find out until someone walks in at opening.
+[concerned] three in the morning. your installation isn't running. nobody's on site,
+the machine driving your show crashed hours ago, and the display's been frozen ever
+since — you won't find out until someone walks in at opening.
 
 ## [b02] what owlette is
 **B-ROLL:** owlette wordmark; then cut to the dashboard fleet view loading.
