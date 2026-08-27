@@ -76,8 +76,25 @@ async function captureStorageStateForRole(role: TestRole): Promise<void> {
     await page.goto('/login', { waitUntil: 'domcontentloaded' });
 
     // Selectors deliberately loose so minor copy changes don't break setup.
-    await page.getByLabel(/email/i).fill(user.email);
-    await page.getByLabel(/password/i).first().fill(user.password);
+    const emailField = page.getByLabel(/email/i);
+    await emailField.fill(user.email);
+
+    // The password field mounts only when the email input's React onFocus fires
+    // (the login card's progressive reveal). On a cold dev server, fill() can
+    // focus the server-rendered input BEFORE hydration attaches that handler —
+    // the reveal never fires and the password field never appears. Cycle
+    // blur→focus until it does: once hydration lands, one cycle opens the form.
+    const passwordField = page.getByLabel(/password/i).first();
+    for (let attempt = 0; attempt < 15 && !(await passwordField.isVisible()); attempt++) {
+      await emailField.blur();
+      await page.waitForTimeout(1_000);
+      await emailField.focus();
+    }
+    // The reveal proves hydration is live — which also means a pre-hydration
+    // fill was WIPED when React re-rendered the controlled input from its own
+    // (empty) state. Re-fill now that onChange handlers exist.
+    await emailField.fill(user.email);
+    await passwordField.fill(user.password);
     await page.getByRole('button', { name: /sign in with email/i }).click();
 
     // Any post-login surface: /dashboard, /setup-2fa, /verify-2fa, or the

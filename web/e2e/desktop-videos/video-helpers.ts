@@ -88,10 +88,12 @@ export async function installFakeCursor(page: Page): Promise<void> {
 }
 
 /** Dwell long enough to lay this beat's narration MP3 underneath in the editor. */
-export async function narrate(page: Page, beat: string, seconds: number): Promise<void> {
-  console.log(`  [vo] ${beat} (~${seconds}s)`);
-  await page.waitForTimeout(Math.round(seconds * 1000));
-}
+// Beat-timing enforcement, sidecars, and the edge audit are shared with the
+// web harness — same manifests, same guarantees (footage ≥ narration per beat,
+// `<scene>.beats.json` ground truth for the Resolve conform, pixel edge check).
+// The machinery only uses page.waitForTimeout + the node clock, so it works
+// identically on an attached CDP page.
+export { narrate, beginTake, finishTake, assertEdgesClean } from '../videos/video-helpers';
 
 /** Glide, not teleport — the movement has to read on screen. */
 export async function moveCursorTo(page: Page, locator: Locator): Promise<void> {

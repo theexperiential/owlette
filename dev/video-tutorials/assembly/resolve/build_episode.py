@@ -58,14 +58,33 @@ AUDIO_ONLY = 2
 # Reporting
 # ---------------------------------------------------------------------------
 class Report(object):
-    """Collects everything the run did, so the editor gets one readable block."""
+    """Collects everything the run did, so the editor gets one readable block.
+
+    With $OWLETTE_BUILD_LOG set, every line is ALSO appended to that file as it
+    happens — the in-app console is invisible to anything outside Resolve, and
+    an unattended run (the launcher sets the env) needs a trail that survives
+    even a mid-build crash.
+    """
 
     def __init__(self):
         self.lines = []
         self.problems = []
+        self.log_path = (os.environ.get("OWLETTE_BUILD_LOG") or "").strip() or None
+        if self.log_path:
+            try:
+                with open(self.log_path, "w", encoding="utf-8") as fh:
+                    fh.write("")  # fresh log per run
+            except OSError:
+                self.log_path = None
 
     def say(self, text):
         self.lines.append(text)
+        if self.log_path:
+            try:
+                with open(self.log_path, "a", encoding="utf-8") as fh:
+                    fh.write(text + "\n")
+            except OSError:
+                pass
         # Beat titles and SCREEN notes carry em-dashes and curly quotes; a
         # cp1252 console would raise on them mid-build.
         try:
@@ -352,13 +371,63 @@ def next_timeline_name(project, stem):
     return "%s v%d" % (stem, version)
 
 
-def append_clip(media_pool, item, record_frame, media_type, track_index, report, label):
+def clip_fps(item, default_fps):
+    """A media pool item's real frame rate, for source-frame math."""
+    try:
+        val = float(item.GetClipProperty("FPS") or 0)
+        return val if val > 0 else default_fps
+    except (TypeError, ValueError, Exception):
+        return default_fps
+
+def sidecar_for(path):
+    """`<footage>.beats.json` written by the record harness, if present."""
+    side = os.path.splitext(path)[0] + ".beats.json"
+    return side if os.path.isfile(side) else None
+
+def build_conform_index(manifest, report):
+    """beat id -> {path, in_s}: where each beat's picture lives in its footage.
+
+    Scene footage claims its beats first; inserts/alt takes fill only the
+    remaining beats (ep03's pairing clip covers its beat while the wizard
+    beats stay empty). The harness enforces videoSec >= mp3Sec per beat at
+    record time, so trimming a segment to its narration length is always safe.
+    An empty index means the footage predates beat enforcement.
+    """
+    index = {}
+    ordered = ([s for s in manifest["sources"] if s.get("role") == "scene" and s.get("exists")]
+               + [s for s in manifest["sources"] if s.get("role") != "scene" and s.get("exists")])
+    for src in ordered:
+        side = sidecar_for(src["path"])
+        if side is None:
+            continue
+        try:
+            with open(side) as fh:
+                data = json.load(fh)
+        except (OSError, ValueError) as exc:
+            report.warn("unreadable sidecar %s: %s" % (os.path.basename(side), exc))
+            continue
+        for mark in data.get("beats", []):
+            bid = mark.get("beat")
+            if not bid or bid in index:
+                continue
+            index[bid] = {"path": src["path"], "in_s": float(mark.get("startSec", 0)),
+                          "mp3_s": float(mark.get("mp3Sec", 0)),
+                          "video_s": float(mark.get("videoSec", 0))}
+    return index
+
+def append_clip(media_pool, item, record_frame, media_type, track_index, report, label,
+                src_in=None, src_out=None):
     """AppendToTimeline for one clip, with a minimal-dict retry.
 
     The README documents clipInfo as "mediaPoolItem", "startFrame", "endFrame",
     plus optional "mediaType", "trackIndex" and "recordFrame". Builds differ in
     how strict they are about the source range, so try the explicit form first
     and fall back to letting Resolve use the whole clip.
+
+    src_in/src_out (source frames, inclusive) request an exact segment - a
+    conform cut. There is deliberately NO whole-clip fallback for those: a
+    full-length append at that record frame would bury the neighbouring beats'
+    segments, which is worse than the gap a skip leaves.
     """
     frames = 0
     try:
@@ -369,12 +438,19 @@ def append_clip(media_pool, item, record_frame, media_type, track_index, report,
     attempts = []
     base = {"mediaPoolItem": item, "mediaType": media_type,
             "trackIndex": track_index, "recordFrame": int(record_frame)}
-    if frames > 0:
+    if src_in is not None:
+        exact = dict(base)
+        exact["startFrame"] = int(src_in)
+        exact["endFrame"] = int(src_out)
+        attempts.append(exact)
+    elif frames > 0:
         explicit = dict(base)
         explicit["startFrame"] = 0
         explicit["endFrame"] = frames - 1
         attempts.append(explicit)
-    attempts.append(base)
+        attempts.append(base)
+    else:
+        attempts.append(base)
 
     for clip_info in attempts:
         try:
@@ -479,23 +555,100 @@ def build(manifest, report):
         start = 0
     report.say("timeline starts at frame %d" % start)
 
-    # --- V1: scene footage, butt-jointed --------------------------------
-    cursor = 0
-    for src in scenes:
-        item = items.get(src["path"])
-        if item is None:
-            continue
-        placed = append_clip(media_pool, item, start + cursor, VIDEO_ONLY, 1,
-                             report, os.path.basename(src["path"]))
-        if placed is None:
-            continue
-        try:
-            cursor = int(placed.GetEnd()) - start
-        except Exception:
-            cursor += int(round(float(src.get("duration_s") or 0) * fps))
-    report.say("V1: %d scene clip(s), %d frames" % (len(scenes), cursor))
+    # --- V1: scene footage ------------------------------------------------
+    # Conform mode: every beat's picture is cut from its footage at the
+    # sidecar's timecode, trimmed to the narration length, and placed at the
+    # narration's own frame - picture and audio line up beat by beat. The
+    # butt-joint fallback exists only for pre-sidecar footage and does NOT
+    # produce a synced edit.
+    conform = build_conform_index(manifest, report)
+    if conform:
+        placed_video = 0
+        gap_beats = []
+        end_frame = 0
+        for i, beat in enumerate(beats):
+            cut = conform.get(beat["id"])
+            dur_s = float(beat.get("duration_s") or 0)
+            item = items.get(cut["path"]) if cut else None
+            if item is None or dur_s <= 0:
+                gap_beats.append(beat["id"])
+                continue
+            if cut["mp3_s"] and abs(cut["mp3_s"] - dur_s) > 0.05:
+                report.warn("%s: sidecar narration %.2fs != manifest %.2fs - the "
+                            "footage predates a re-voice; re-record it before "
+                            "trusting this cut" % (beat["id"], cut["mp3_s"], dur_s))
+            # Segment length comes from the manifest's own frame grid. The
+            # start_frames are round(cumulative seconds); deriving length as a
+            # SECOND independent rounding of duration_s made the two grids
+            # disagree by one frame (round(sum) != sum(round)) - one-frame
+            # collisions with the next beat's recordFrame, one-frame holes
+            # between others. The last beat has no successor, so its own
+            # rounded duration is the grid.
+            if i + 1 < len(beats):
+                length = int(beats[i + 1]["start_frame"]) - int(beat["start_frame"])
+            else:
+                length = int(round(dur_s * fps))
+            src_fps = clip_fps(item, fps)
+            src_in = int(round(cut["in_s"] * src_fps))
+            src_len = max(1, int(round(length * src_fps / fps)))
+            # Never cut past the picture that actually exists for this beat:
+            # the sidecar's videoSec is this beat's measured segment length,
+            # and src_in is that segment's first frame.
+            if cut["video_s"]:
+                avail = max(1, int(round(cut["video_s"] * src_fps)))
+                if src_len > avail:
+                    report.warn("%s: needs %d source frames but its segment only "
+                                "has %d - trimming (re-record if this repeats)"
+                                % (beat["id"], src_len, avail))
+                    src_len = avail
+            src_out = src_in + src_len - 1
+            placed = append_clip(media_pool, item, start + int(beat["start_frame"]),
+                                 VIDEO_ONLY, 1, report,
+                                 "%s <- %s" % (beat["id"], os.path.basename(cut["path"])),
+                                 src_in=src_in, src_out=src_out)
+            if placed is not None:
+                placed_video += 1
+                end_frame = int(beat["start_frame"]) + src_len
+        report.say("V1 conform: %d/%d beat segment(s) placed, ends at frame %d"
+                   % (placed_video, len(beats), end_frame))
+        if gap_beats:
+            report.warn("no picture for %s - left as V1 gap(s)" % ", ".join(gap_beats))
+    else:
+        report.warn("NO beat sidecars next to this episode's footage - butt-joint "
+                    "fallback; audio will NOT line up. Re-record with the current "
+                    "harness (it writes <scene>.beats.json) and rebuild.")
+        cursor = 0
+        for src in scenes:
+            item = items.get(src["path"])
+            if item is None:
+                continue
+            placed = append_clip(media_pool, item, start + cursor, VIDEO_ONLY, 1,
+                                 report, os.path.basename(src["path"]))
+            if placed is None:
+                continue
+            try:
+                cursor = int(placed.GetEnd()) - start
+            except Exception:
+                cursor += int(round(float(src.get("duration_s") or 0) * fps))
+        report.say("V1: %d scene clip(s), %d frames" % (len(scenes), cursor))
     if extras:
-        report.say("%d insert/alt clip(s) imported to the bin, not placed" % len(extras))
+        if conform:
+            used = set(c["path"] for c in conform.values())
+            report.say("%d insert/alt clip(s) imported; %d feed the conform"
+                       % (len(extras), sum(1 for s in extras if s["path"] in used)))
+            for s in extras:
+                if s["path"] in used:
+                    continue
+                if sidecar_for(s["path"]) is None:
+                    report.warn("insert %s has no sidecar - not placed"
+                                % os.path.basename(s["path"]))
+                else:
+                    report.warn("insert %s: every beat in its sidecar is already "
+                                "claimed by a scene take - not placed"
+                                % os.path.basename(s["path"]))
+        else:
+            report.say("%d insert/alt clip(s) imported to the bin, not placed"
+                       % len(extras))
 
     # --- A1: one MP3 per beat at its cumulative start ---------------------
     placed_audio = 0
@@ -592,17 +745,38 @@ def main():
         show(report)
         return
 
-    manifest = pick_manifest(manifests, report)
-    if manifest is None:
-        show(report)
-        return
+    # "ALL" (env or the constant) builds every episode in one run — the mode an
+    # unattended launcher uses, so it must never open a dialog mid-run.
+    wanted = (os.environ.get("OWLETTE_BUILD_EPISODE") or BUILD_EPISODE or "").strip()
+    if wanted.upper() == "ALL":
+        chosen = list(manifests)
+    else:
+        manifest = pick_manifest(manifests, report)
+        if manifest is None:
+            show(report)
+            return
+        chosen = [manifest]
 
-    report.say("building episode %02d - %s" % (manifest["episode"], manifest["title"]))
-    try:
-        build(manifest, report)
-    except Exception:
-        report.warn("build stopped on an unexpected error:\n%s" % traceback.format_exc())
-    show(report)
+    built = 0
+    for manifest in chosen:
+        report.say("")
+        report.say("=== building episode %02d - %s ===" % (manifest["episode"], manifest["title"]))
+        try:
+            build(manifest, report)
+            built += 1
+        except Exception:
+            # One broken episode must not sink the other sixteen.
+            report.warn("episode %02d stopped on an unexpected error:\n%s"
+                        % (manifest["episode"], traceback.format_exc()))
+    report.say("")
+    report.say("built %d of %d episode timeline(s)" % (built, len(chosen)))
+
+    # Unattended runs read the log file; a modal dialog would just hold the app
+    # hostage with nobody at the desk.
+    if report.log_path:
+        report.say("summary written to %s" % report.log_path)
+    else:
+        show(report)
 
 
 if __name__ == "__main__":

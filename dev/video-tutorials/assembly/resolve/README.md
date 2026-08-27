@@ -22,7 +22,7 @@ For the episode you pick, in a project called **owlette tutorials**:
 |---|---|
 | **bin** | one per episode (`05-keep-a-process-alive`), holding its footage and beat MP3s |
 | **timeline** | `05-keep-a-process-alive v1` — 1920x1080 @ 60fps |
-| **V1** | the scene footage, butt-jointed in order |
+| **V1** | **conformed to the narration**: each beat's picture, cut from its footage at the sidecar timecode, trimmed to the beat's MP3 length, placed at the beat's own frame |
 | **A1** | every beat's narration MP3, at that beat's cumulative start |
 | **markers** | one per beat: `b03 choosing a site`, note carrying the **SCREEN:** direction (plus B-ROLL / ON-SCREEN / NOTE), `customData` = the beat id |
 
@@ -30,9 +30,36 @@ Marker colours: **blue** a beat with an explicit `**SCREEN:**` line, **cyan** a
 beat directed only by `**B-ROLL:**` / `**ON-SCREEN:**`, **yellow** a beat with no
 voiceover, **red** a beat whose MP3 is missing.
 
-Alternate cuts and inserts (`08-remote-actions-b08-member.mp4`, the ep-16
-report-issue desktop segment, ep-09's unpaired-state take) are imported into the
-bin but **not** placed — they belong inside a beat, which is a judgement call.
+### V1 conform — how picture meets audio
+
+The record harness writes a `<footage>.beats.json` sidecar next to every take:
+for each beat, where it starts inside the file and how long its narration runs.
+The harness also *enforces* at record time that every beat's picture covers its
+narration (+0.75s of handle), so the trim below is always safe.
+
+`build_conform_index` maps beat id → (source file, in-point) across ALL of the
+episode's footage: scene takes claim their beats first, inserts and alternate
+cuts fill only the remaining ones (ep-03's pairing clip covers its beat while
+the unrecorded installer-wizard beats stay empty). Then, per manifest beat:
+
+- source in = sidecar `startSec`, source out = in + the beat's MP3 length,
+  record frame = the beat's cumulative narration start. Picture and narration
+  land together to the frame.
+- a beat with no picture anywhere is left as a **gap on V1** and listed in the
+  report — that's a B-ROLL slot for the editor (ep-01 b01/b02) or footage that
+  doesn't exist yet (ep-03's wizard, pending the VM).
+- there is deliberately **no whole-clip fallback** for a failed conform cut: a
+  full-length append would bury the neighbouring beats' segments; a gap plus a
+  warning is strictly better.
+
+Footage with **no sidecar** (anything recorded before beat enforcement) makes
+the builder fall back to the old butt-joint placement with a loud warning —
+that output is NOT synced and the footage should be re-recorded.
+
+Before building, gate the footage with
+`python dev/video-tutorials/assembly/vet-recordings.py` — it runs the same edge
+audit as the harness plus sidecar coverage, and lists every beat that has no
+picture, per episode.
 
 ---
 

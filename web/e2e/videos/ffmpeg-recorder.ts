@@ -88,6 +88,7 @@ export class FfmpegRecorder {
   private stderrBuf = '';
   private stopped = false;
   private chosenPath: string | null = null;
+  private videoEpoch: number | null = null;
 
   constructor(private readonly opts: FfmpegRecorderOptions) {
     this.tmpPath = this.opts.outPath + '.tmp.mp4';
@@ -96,6 +97,17 @@ export class FfmpegRecorder {
   /** Label of the path that actually recorded, once start() has resolved. */
   get capturePath(): string | null {
     return this.chosenPath;
+  }
+
+  /**
+   * Wall-clock ms at which the video's t=0 frame was captured, once start()
+   * has resolved. Callers timing events against the recording MUST use this,
+   * not their own Date.now() at start()-return: the first stderr progress
+   * line lags the first captured frame by up to ~a second, and every sidecar
+   * timecode would inherit that skew.
+   */
+  get videoEpochMs(): number | null {
+    return this.videoEpoch;
   }
 
   /**
@@ -148,6 +160,7 @@ export class FfmpegRecorder {
 
     this.stderrBuf = '';
     this.exited = false;
+    this.videoEpoch = null;
 
     const proc = spawn('ffmpeg', [...capturePath.args, this.tmpPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -205,7 +218,19 @@ export class FfmpegRecorder {
       });
 
       const poll = setInterval(() => {
-        if (/frame=\s*[1-9]\d*/.test(this.stderrBuf)) finish();
+        if (/frame=\s*[1-9]\d*/.test(this.stderrBuf)) {
+          // The progress line carries the encoder's position in the output, so
+          // the video's t=0 was captured that long before "now". Anchor the
+          // epoch there; the residual error is encoder latency (a few frames),
+          // not the ~1s stderr lag.
+          const times = [...this.stderrBuf.matchAll(/time=(\d+):(\d+):([\d.]+)/g)];
+          const last = times[times.length - 1];
+          const posMs = last
+            ? ((Number(last[1]) * 3600) + (Number(last[2]) * 60) + Number.parseFloat(last[3])) * 1000
+            : 0;
+          this.videoEpoch = Date.now() - posMs;
+          finish();
+        }
         else if (Date.now() - startedAt > startTimeoutMs) {
           finish(new FfmpegStartError(
             `ffmpeg first-frame timeout after ${startTimeoutMs}ms (no frame=N in stderr)\n` +

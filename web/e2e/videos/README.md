@@ -57,17 +57,18 @@ the ones the ffmpeg path added**:
   in-browser recording, and the config runs `headless: false`. A headless box, a locked
   workstation or an RDP session that has been disconnected produces no usable video
   (DXGI desktop duplication is one of the first things to fail there).
-- **A primary display of at least 1920×1080 at 100% Windows scaling.** The browser is
-  launched at `--window-position=0,0 --window-size=1920,1200` so the page's *content* is
-  exactly 1920×1080; `recordScene` then measures the chrome-UI height and asks CDP to
-  slide the window up by it, putting the content at desktop y=0. Watch the
-  `[recordScene] capture region:` log line: `movedOffDisplay=true` is the good path.
-  `false` means Windows clamped the move, and the capture is cropped to
-  `1080 − chromeUI` from y=chromeUI — usable but short, and the display height in that
-  calculation is hardcoded to 1080, so a taller primary loses more than it needs to.
-  `openForCapture` asserts both the viewport and `devicePixelRatio === 1` and fails with
-  the fix in the message, so a scaled display is caught immediately rather than shipped
-  blurry.
+- **A primary display of exactly 1920×1080 at 100% Windows scaling.** `recordScene`
+  puts the window into **true fullscreen** (CDP `Browser.setWindowBounds` →
+  `windowState: 'fullscreen'`), so the renderer fills the display exactly and the
+  capture region is simply `(0,0) 1920×1080` — no window-chrome arithmetic at all.
+  (Two earlier positioning schemes derived the chrome from `outer − inner` window
+  metrics; both were measurably wrong — an 8px desktop L-shape in one batch, a 6px
+  titlebar sliver in the next. Visible chrome is not knowable from JS, so it was
+  removed instead.) The geometry is verified after the transition (`screenX/Y === 0`,
+  `outer === inner === 1920×1080`, fail-loud) and again on pixels after every take
+  (`assertEdgesClean`). `openForCapture` additionally asserts the viewport and
+  `devicePixelRatio === 1`, so a scaled display is caught immediately rather than
+  shipped blurry.
 - Multi-monitor: gdigrab offsets are virtual-desktop coordinates while ddagrab's are
   relative to `output_idx=0`, so the two agree only while the primary monitor sits at
   virtual (0,0).
@@ -102,6 +103,25 @@ test('episode N — title', async ({ browser }) => {
   never a guess — from the repo root:
   `ffprobe -v error -show_entries format=duration -of csv=p=0 dev/video-tutorials/voiceover/out/NN-slug/epNN-bNN.mp3`,
   rounded up ~0.5s. Re-voice a beat and its `narrate()` budget moves with it.
+- **Beat timing is enforced, not trusted.** `narrate` reads each beat's real MP3
+  duration from `dev/video-tutorials/assembly/manifests/` and, when a beat *closes*
+  (the next beat's first `narrate`, or end of scene), holds the picture until the beat
+  has earned `mp3 + 0.75s` of screen time. The hold lands on the beat's resting frame —
+  never mid-beat, where it would freeze the motion the narration describes. Scripted
+  dwells are pacing minimums; the enforcement is the sync guarantee.
+- **Every take writes a `<scene>.beats.json` sidecar** (beat id, measured start, MP3
+  length, measured video length) next to the `.mp4`. The Resolve builder
+  (`assembly/resolve/build_episode.py`) cuts V1 from these sidecars — each beat's
+  picture is trimmed to its narration length and placed at the narration's own
+  timecode. No sidecar → the builder falls back to butt-jointing and warns loudly.
+  The first beat's segment starts when `openForCapture`'s first page is *ready*, so an
+  episode never opens on the pre-roll/navigation loading flash.
+- **Every take is pixel-audited before it may pass** (`assertEdgesClean`): outer
+  left/bottom strips vs inner reference strips at three timestamps (chrome/desktop
+  contamination fails the take), plus a center-brightness check so an all-black
+  capture can never pass vacuously. `dev/video-tutorials/assembly/vet-recordings.py`
+  runs the same audit — plus sidecar coverage and per-episode gap listing — across all
+  footage at once.
 - `installFakeCursor` (called by `recordScene`) draws a visible pointer + click ripple;
   the real OS cursor is excluded from capture (`draw_mouse=0`) so exactly one pointer is
   ever in frame.

@@ -67,7 +67,7 @@ import {
   planCapturePaths,
   type CaptureRegion,
 } from '../videos/ffmpeg-recorder';
-import { installFakeCursor } from './video-helpers';
+import { installFakeCursor, beginTake, finishTake, assertEdgesClean } from './video-helpers';
 
 /** Clean, named .mp4 output lands here. */
 // Same home as the web takes: the production workspace owns the media.
@@ -424,11 +424,13 @@ export async function recordDesktopScene(
   });
 
   await recorder.start();
+  beginTake(take.page, sceneName, outPath, recorder.videoEpochMs ?? undefined);
   await take.page.waitForTimeout(PRE_ROLL_MS);
 
   let sceneError: unknown = null;
   try {
     await scene(take.page);
+    await finishTake(take.page);
     await take.page.waitForTimeout(POST_ROLL_MS);
   } catch (e) {
     sceneError = e;
@@ -441,5 +443,8 @@ export async function recordDesktopScene(
   }
 
   if (sceneError) throw sceneError;
+  // Same post-take pixel audit as the web harness — a take with desktop pixels
+  // at its edges fails here instead of shipping.
+  assertEdgesClean(outPath);
   return outPath;
 }
