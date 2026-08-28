@@ -24,6 +24,17 @@
       "width": 1920,
       "height": 1080,
       "fps": 60.0
+    },
+    {
+      "role": "pool",
+      "note": "b02 wordmark + fleet",
+      "rel": "dev/video-tutorials/footage/web/01-what-is-owlette-b02.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\01-what-is-owlette-b02.mp4",
+      "exists": true,
+      "duration_s": 28.15,
+      "width": 1920,
+      "height": 1080,
+      "fps": 60.0
     }
   ],
   "beats": [

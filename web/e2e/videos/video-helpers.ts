@@ -259,7 +259,49 @@ export async function openForCapture(page: Page, urlPath: string): Promise<void>
   await page.goto(urlPath, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1200);
   await disableAnimations(page);
+  await settleAndStamp(page);
+}
 
+/**
+ * Open a TITLE CARD — a standalone HTML file outside the app, loaded over
+ * file:// — as the first shot of a take, with its reveal animation intact.
+ *
+ * Three things make this a separate function rather than a flag on
+ * openForCapture:
+ *
+ * 1. The animation kill above is an INIT SCRIPT. Once installed it applies to
+ *    every later document in the page, file:// included, and a card's reveal
+ *    comes back `animation-duration: 0s` and already finished on frame one —
+ *    silently, with every gate still green. Hence the hard guard: a title card
+ *    must be the take's first navigation.
+ * 2. The reveal must start AFTER the beat's in-point is stamped. Stamping takes
+ *    ~1.5s (settle + assertions + the rAF probe), so an animation that ran on
+ *    load would sit entirely before the conform's in-point and be cut off the
+ *    front of the beat. The card keys its keyframes off `.owl-go`, which is
+ *    added here, last.
+ * 3. `waitUntil: 'load'` rather than domcontentloaded, so the webfont is in
+ *    before the reveal — a FOUT mid-reveal bakes into the footage.
+ */
+export async function openTitleCard(page: Page, fileUrl: string): Promise<void> {
+  if (ANIM_KILL_PAGES.has(page)) {
+    throw new Error(
+      'openTitleCard must be the FIRST navigation of a take: openForCapture has ' +
+      'already installed the persistent animation kill, which would flatten the ' +
+      "card's reveal to its end state without any error.",
+    );
+  }
+  await page.goto(fileUrl, { waitUntil: 'load' });
+  // Fonts before frames: document.fonts.ready also covers the @font-face above.
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  await settleAndStamp(page);
+  await page.evaluate(() => document.documentElement.classList.add('owl-go'));
+}
+
+/**
+ * Assert the capture geometry, prove rAF still ticks, and stamp the take's
+ * first-content moment — the shared tail of every "the shot is ready now" path.
+ */
+async function settleAndStamp(page: Page): Promise<void> {
   const geom = await page.evaluate(() => ({
     w: window.innerWidth,
     h: window.innerHeight,

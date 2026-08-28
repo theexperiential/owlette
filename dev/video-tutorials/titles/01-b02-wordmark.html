@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>owlette — ep01 b02 title card</title>
+<!--
+  Title card for episode 1, beat b02 ("what owlette is").
+
+  A brand card, deliberately NOT a screenshot: the landing page's hero carries a
+  "pricing" nav item and a "free during beta" line, and this series must mention
+  neither (and must not date the moment beta ends). Everything else here is the
+  product's own design system, taken from source rather than eyeballed:
+
+    eye        web/public/owlette-eye.svg, verbatim, gradient ids renamed
+    breathing  the ring from components/landing/OwletteEye.tsx (r 88->92, 5s)
+    glow       the hero's blurred radial (HeroSection.tsx)
+    ignite     the @keyframes eye-ignite from app/globals.css
+    colors     the .dark block of app/globals.css, as oklch
+    dots       the app-wide body dot field (globals.css)
+    type       Geist, the app's face, subset copy sitting beside this file
+    lockup     eye over lowercase "owlette", the AuthShell arrangement, set at
+               the hero headline's weight/tracking because this is title-size
+
+  Captured by web/e2e/videos/01-what-is-owlette-b02.video.ts via openTitleCard(),
+  which loads this over file://, stamps the beat's in-point, and only THEN adds
+  `.owl-go` to <html> to start the reveal — if the animation ran before the
+  stamp, the conform would cut it off the front of the beat.
+
+  Constraints this file must keep (the capture gates enforce them):
+    - nothing within 40px of the LEFT or BOTTOM edge: assertEdgesClean compares
+      those outer strips against inner references and a deviation fails the take
+    - no scrollbars, for the same reason
+    - CSS animation only. recordScene freezes Date, so a JS-timed reveal would
+      never advance. No ES modules or fetch either: both are blocked over file://
+    - the harness's fake cursor mounts at (0,0) on every document; hidden below
+-->
+<style>
+  @font-face {
+    font-family: "Geist";
+    src: url("./geist-latin.woff2") format("woff2");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: block; /* block, not swap: a FOUT would bake into the footage */
+  }
+
+  :root {
+    --background:       oklch(0.145 0.03 250);
+    --foreground:       oklch(0.985 0.01 250);
+    --muted-foreground: oklch(0.708 0.05 250);
+    --accent-warm:      oklch(0.72 0.16 55);
+    --accent-coral:     oklch(0.70 0.14 30);
+    --dot:              oklch(0.45 0.08 195 / 0.4);
+  }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background-color: var(--background);
+  }
+
+  body {
+    /* the app-wide dot field, verbatim */
+    background-image: radial-gradient(circle, var(--dot) 1px, transparent 1px);
+    background-size: 20px 20px;
+    font-family: "Geist", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid;
+    place-items: center;
+  }
+
+  /* The harness draws its own pointer into every document. Not on a title card. */
+  #__owl_cursor__ { display: none !important; }
+
+  .stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    /* A very slow push so nine seconds of screen time is never a frozen frame.
+       Starts immediately with the reveal and outlasts the beat, so the editor
+       can cut anywhere in it. */
+    transform: scale(1);
+  }
+  .owl-go .stage { animation: drift 24s linear both; }
+  @keyframes drift { from { transform: scale(1); } to { transform: scale(1.05); } }
+
+  .eye-wrap {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 260px;
+    height: 260px;
+  }
+
+  /* the hero's blurred warm glow */
+  .glow {
+    position: absolute;
+    width: 560px;
+    height: 560px;
+    border-radius: 50%;
+    filter: blur(64px);
+    background: radial-gradient(circle,
+      oklch(0.70 0.14 30 / 0.15) 0%,
+      oklch(0.72 0.16 55 / 0.08) 40%,
+      transparent 70%);
+    opacity: 0;
+  }
+  .owl-go .glow { animation: glow-in 2s ease-out 0.2s both; }
+  @keyframes glow-in { from { opacity: 0; } to { opacity: 1; } }
+
+  .eye { width: 260px; height: 260px; display: block; opacity: 0; }
+  /* the product's own eye-ignite */
+  .owl-go .eye { animation: eye-ignite 1.5s ease-out both; }
+  @keyframes eye-ignite {
+    0%   { opacity: 0; filter: brightness(0.1); }
+    30%  { opacity: 1; filter: brightness(0.4); }
+    100% { opacity: 1; filter: brightness(1); }
+  }
+
+  .wordmark {
+    margin: 36px 0 0;
+    font-size: 72px;          /* .hero-headline's ceiling — the largest branded type */
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    color: var(--foreground);
+    opacity: 0;
+  }
+  .tagline {
+    margin: 18px 0 0;
+    font-size: 24px;          /* .hero-subheadline's ceiling */
+    font-weight: 300;
+    letter-spacing: 0.025em;
+    color: var(--muted-foreground);
+    opacity: 0;
+  }
+  /* the hero's enter: rise 1rem and fade, staggered behind the ignite */
+  .owl-go .wordmark { animation: rise 0.6s ease-out 1.05s both; }
+  .owl-go .tagline  { animation: rise 0.6s ease-out 1.35s both; }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(1rem); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="eye-wrap">
+      <div class="glow"></div>
+      <!-- web/public/owlette-eye.svg. Gradient ids are single letters in the
+           source (e/r/s) and would collide with anything else on the page, so
+           they carry a prefix here. Geometry and every stop are unchanged. -->
+      <svg class="eye" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-label="owlette">
+        <defs>
+          <radialGradient id="owl-iris" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#FFE8DC"/>
+            <stop offset="45%" stop-color="#F0B89A"/>
+            <stop offset="65%" stop-color="#D08060"/>
+            <stop offset="78%" stop-color="#8B4525"/>
+            <stop offset="83%" stop-color="#3A1810"/>
+            <stop offset="87%" stop-color="#1A0A06"/>
+            <stop offset="100%" stop-color="#0E0604"/>
+          </radialGradient>
+          <linearGradient id="owl-wash" x1="0%" y1="50%" x2="100%" y2="50%">
+            <stop offset="0%" stop-color="#C03020" stop-opacity="0.55"/>
+            <stop offset="35%" stop-color="#C03020" stop-opacity="0"/>
+          </linearGradient>
+          <radialGradient id="owl-sheen" cx="42%" cy="40%" r="25%">
+            <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.7"/>
+            <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <circle cx="100" cy="100" r="88" fill="url(#owl-iris)"/>
+        <circle cx="100" cy="100" r="68" fill="url(#owl-wash)"/>
+        <circle cx="100" cy="100" r="88" fill="none" stroke="#0A0604" stroke-width="2"/>
+        <circle cx="88" cy="86" r="18" fill="url(#owl-sheen)"/>
+        <!-- the mark's breathing ring, from OwletteEye's animated variant. SMIL,
+             not CSS, exactly as the component ships it. -->
+        <circle cx="100" cy="100" r="88" fill="none" stroke="#F0B89A" stroke-width="1" opacity="0.2">
+          <animate attributeName="r" values="88;92;88" dur="5s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0.2;0;0.2" dur="5s" repeatCount="indefinite"/>
+        </circle>
+      </svg>
+    </div>
+    <p class="wordmark">owlette</p>
+    <p class="tagline">keeps your installations running 24/7</p>
+  </div>
+</body>
+</html>

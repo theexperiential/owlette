@@ -89,7 +89,11 @@ def web(note: str = "") -> Source:
 
 
 FOOTAGE: Dict[int, List[Source]] = {
-    1: [web()],
+    # b02 is its own take: the landing wordmark then the cut to the fleet, which
+    # the main scene (authenticated, never leaves /dashboard) cannot contain.
+    # "pool" keeps it off the butt-joint fallback's V1; the conform still uses it,
+    # filling only the beats the scene take does not claim.
+    1: [web(), Source("pool", CUT.format(stem="{stem}", cut="b02"), "b02 wordmark + fleet")],
     2: [web()],
     4: [web()],
     5: [web()],
