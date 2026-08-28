@@ -10,7 +10,7 @@ Resolve build manifest: [`manifests/01-what-is-owlette.json`](manifests/01-what-
 Footage:
 - `dev/video-tutorials/footage/web/01-what-is-owlette.mp4` [1920x1080 @ 60.0fps]
 - `dev/video-tutorials/footage/web/01-what-is-owlette-b02.mp4` — b02 wordmark + fleet [1920x1080 @ 60.0fps]
-- `dev/video-tutorials/b-roll/01-b01-cold-open.mp4` — b01 cold-open montage (generated b-roll: exhibit / lobby / control room) [1280x720 @ 24.0fps]
+- `dev/video-tutorials/b-roll/01-b01-cold-open.mp4` — b01 cold-open montage (generated b-roll: exhibit / lobby / control room) [1920x1080 @ 24.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

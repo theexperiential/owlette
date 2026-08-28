@@ -1,21 +1,21 @@
 {
   "scene": "01-b01-cold-open",
-  "source": "generated b-roll (kling) \u2014 NOT a harness capture; sidecar hand-authored",
+  "source": "generated b-roll (kling, 1080p, no watermark) \u2014 NOT a harness capture; sidecar hand-authored",
   "totalSec": 15.04,
   "shots": [
     {
       "name": "exhibit",
       "startSec": 0.0,
-      "endSec": 5.04
+      "endSec": 5.29
     },
     {
       "name": "lobby",
-      "startSec": 5.04,
-      "endSec": 9.67
+      "startSec": 5.29,
+      "endSec": 10.83
     },
     {
       "name": "control room",
-      "startSec": 9.67,
+      "startSec": 10.83,
       "endSec": 15.04
     }
   ],
