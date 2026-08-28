@@ -35,6 +35,17 @@
       "width": 1920,
       "height": 1080,
       "fps": 60.0
+    },
+    {
+      "role": "pool",
+      "note": "b01 cold-open montage (generated b-roll: exhibit / lobby / control room)",
+      "rel": "dev/video-tutorials/b-roll/01-b01-cold-open.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\b-roll\\01-b01-cold-open.mp4",
+      "exists": true,
+      "duration_s": 15.042,
+      "width": 1280,
+      "height": 720,
+      "fps": 24.0
     }
   ],
   "beats": [

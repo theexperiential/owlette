@@ -127,7 +127,16 @@ def main(episodes):
                 rows.append((ep, p.name, "-", "MISSING", "-", "footage not on disk"))
                 continue
             dur = ffprobe_duration(p)
-            edge_state, edge_detail = check_edges(p, dur)
+            # The edge gate looks for CAPTURE-REGION contamination — window
+            # chrome or desktop leaking into a screen recording. Generated or
+            # licensed b-roll has no capture region, so the strips it compares
+            # are just picture, and a verdict either way would be noise. Its
+            # sidecar coverage still matters, so that check stays.
+            is_broll = "b-roll" in p.as_posix()
+            if is_broll:
+                edge_state, edge_detail = "B-ROLL", "not a capture — edge gate n/a"
+            else:
+                edge_state, edge_detail = check_edges(p, dur)
             beat_state, sidecar, beat_detail = check_beats(p)
             length_ok = True
             if sidecar and sidecar.get("beats"):
@@ -136,7 +145,7 @@ def main(episodes):
                 last = sidecar["beats"][-1]
                 need = last["startSec"] + max(last.get("mp3Sec", 0), 0)
                 length_ok = dur is not None and dur + 0.05 >= need
-            ok = (edge_state == "CLEAN" and beat_state == "COVERED" and length_ok)
+            ok = (edge_state in ("CLEAN", "B-ROLL") and beat_state == "COVERED" and length_ok)
             if not ok:
                 failures += 1
             rows.append((ep, p.name, edge_state + " " + edge_detail,

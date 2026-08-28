@@ -76,6 +76,9 @@ SCREEN_PRIORITY = ("**SCREEN:**", "**B-ROLL:**", "**ON-SCREEN:**")
 SCENE = "dev/video-tutorials/footage/web/{stem}.mp4"
 CUT = "dev/video-tutorials/footage/web/{stem}-{cut}.mp4"
 DESKTOP = "dev/video-tutorials/footage/desktop/{name}"
+# Generated or licensed b-roll — not a harness capture, so its `.beats.json`
+# is hand-authored and the pixel gates in vet-recordings.py do not apply.
+BROLL = "dev/video-tutorials/b-roll/{name}"
 
 
 class Source(NamedTuple):
@@ -93,7 +96,12 @@ FOOTAGE: Dict[int, List[Source]] = {
     # the main scene (authenticated, never leaves /dashboard) cannot contain.
     # "pool" keeps it off the butt-joint fallback's V1; the conform still uses it,
     # filling only the beats the scene take does not claim.
-    1: [web(), Source("pool", CUT.format(stem="{stem}", cut="b02"), "b02 wordmark + fleet")],
+    1: [
+        web(),
+        Source("pool", CUT.format(stem="{stem}", cut="b02"), "b02 wordmark + fleet"),
+        Source("pool", BROLL.format(name="01-b01-cold-open.mp4"),
+               "b01 cold-open montage (generated b-roll: exhibit / lobby / control room)"),
+    ],
     2: [web()],
     4: [web()],
     5: [web()],
