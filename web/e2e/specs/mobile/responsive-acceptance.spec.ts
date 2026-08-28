@@ -13,9 +13,11 @@
  * not flag a fixme that would have passed).
  */
 
+import crypto from 'crypto';
 import { test, expect, type Page } from '@playwright/test';
 import { FieldValue } from 'firebase-admin/firestore';
-import { getAdminDb } from '../../helpers/emulator';
+import { authenticator } from 'otplib';
+import { getAdminAuth, getAdminDb } from '../../helpers/emulator';
 import { assertNoHorizontalOverflow } from '../../helpers/mobile';
 import { roleState } from '../../helpers/roles';
 import {
@@ -23,6 +25,8 @@ import {
   TEST_USERS,
   seedMachine,
   seedRoostWithVersionHistory,
+  seedUser,
+  type TestUser,
 } from '../../helpers/seed';
 import {
   dedicatedUser,
@@ -39,6 +43,21 @@ const ROOST_NAME = 'mobile-overflow-roost';
 const WEBHOOK_ID = 'e2e-mobile-overflow-webhook';
 const WEBHOOK_URL = 'https://example.com/mobile-overflow/hook';
 const API_KEY_NAME = 'e2e-mobile-overflow-key';
+
+/**
+ * Deliberately long local part: the recovery pages echo the account email back,
+ * and an unbreakable address is exactly what sets a grid column's floor and
+ * pushes the card past its max-width. A short seeded address would let a
+ * missing break-words pass.
+ */
+const LONG_EMAIL_USER: TestUser = {
+  uid: 'mobile-overflow-reset-user',
+  email: 'mobile-overflow-a-very-long-local-part-for-wrapping@e2e-overflow-example.test',
+  password: 'e2e-mobile-overflow-initial',
+  role: 'member',
+  sites: [TEST_SITES[0].id],
+  displayName: 'E2E Mobile Overflow Reset',
+};
 
 /**
  * Webhook subscription in the exact shape `POST /api/webhooks` stores, so the
@@ -105,6 +124,37 @@ test.describe('mobile responsive acceptance — public routes', () => {
     await expect(page.getByRole('heading', { name: /welcome to owlette!/i })).toBeVisible();
     await assertNoHorizontalOverflow(page);
   });
+
+  // Both states: the confirmation echoes the submitted address, and Turnstile's
+  // `flexible` size has a 300px floor against a ~294px column at this viewport.
+  test('/forgot-password does not scroll horizontally', async ({ page }) => {
+    await seedUser(LONG_EMAIL_USER);
+
+    await page.goto('/forgot-password');
+    await expect(page.getByRole('button', { name: /send reset link/i })).toBeVisible();
+    await assertNoHorizontalOverflow(page);
+
+    await page.getByLabel(/email/i).fill(LONG_EMAIL_USER.email);
+    await page.getByRole('button', { name: /send reset link/i }).click();
+    await expect(page.getByText(/a password reset link is on its way/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await assertNoHorizontalOverflow(page);
+  });
+
+  // The `ready` state is the one that renders the account email, so mint a real
+  // oobCode rather than settling for the `invalid` branch.
+  test('/reset-password does not scroll horizontally', async ({ page }) => {
+    await seedUser(LONG_EMAIL_USER);
+
+    const link = await getAdminAuth().generatePasswordResetLink(LONG_EMAIL_USER.email);
+    const oobCode = new URL(link).searchParams.get('oobCode');
+    expect(oobCode).toBeTruthy();
+
+    await page.goto(`/reset-password?oobCode=${encodeURIComponent(oobCode!)}`);
+    await expect(page.getByText(LONG_EMAIL_USER.email)).toBeVisible({ timeout: 15_000 });
+    await assertNoHorizontalOverflow(page);
+  });
 });
 
 test.describe('mobile responsive acceptance — fresh-user routes', () => {
@@ -133,7 +183,46 @@ test.describe('mobile responsive acceptance — fresh-user routes', () => {
     // Both TOTP screens: the method chooser, then the QR step behind it.
     await assertNoHorizontalOverflow(page);
     await page.getByRole('button', { name: /authenticator app/i }).click();
-    await expect(page.getByAltText(/2FA QR Code/i)).toBeVisible();
+    await expect(page.getByAltText(/2FA QR code/i)).toBeVisible();
+    await assertNoHorizontalOverflow(page);
+  });
+
+  /**
+   * /verify-2fa is only reachable mid-login by an enrolled user, so seed the
+   * TOTP factor the way mfa/setup-verify.spec.ts does and sign in for real.
+   * Both code modes are measured: the backup-code field is the wider of the two
+   * (16 characters at mono + tracking).
+   */
+  test('/verify-2fa does not scroll horizontally', async ({ page }) => {
+    const user = await seedDedicatedUser(
+      dedicatedUser('member', `mobile-verify-2fa-${Date.now()}`),
+    );
+    await getAdminDb()
+      .collection('users')
+      .doc(user.uid)
+      .set(
+        {
+          mfaEnrolled: true,
+          requiresMfaSetup: false,
+          mfaSecret: authenticator.generateSecret(),
+          backupCodes: [
+            crypto.createHash('sha256').update('ABCDEF12').digest('hex'),
+          ],
+        },
+        { merge: true },
+      );
+
+    await page.goto('/login');
+    await page.getByLabel(/email/i).fill(user.email);
+    await page.getByLabel(/password/i).first().fill(user.password);
+    await page.getByRole('button', { name: /sign in with email/i }).click();
+
+    await expect(page).toHaveURL(/\/verify-2fa/, { timeout: 20_000 });
+    await expect(page.getByPlaceholder('000000')).toBeVisible();
+    await assertNoHorizontalOverflow(page);
+
+    await page.getByRole('button', { name: /use backup code instead/i }).click();
+    await expect(page.getByPlaceholder('backup code')).toBeVisible();
     await assertNoHorizontalOverflow(page);
   });
 });

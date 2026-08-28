@@ -8,13 +8,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import Link from 'next/link';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { AuthShell, AuthDivider, authFooterLinkClass } from '@/components/auth/AuthShell';
 import { toast } from '@/lib/toast';
 import { validatePassword, validateEmail } from '@/lib/validators';
 import { sanitizeError } from '@/lib/errorHandler';
 import { isPopupUnavailableError } from '@/lib/inAppBrowser';
 import { resolvePostSignInPath } from '@/lib/postSignIn';
-import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
 import { FormError } from '@/components/ui/form-error';
 import { InAppBrowserNotice } from '@/components/InAppBrowserNotice';
@@ -159,246 +158,213 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center p-4 pb-32">
-      <div className="absolute inset-0 dot-grid opacity-30" />
-      <div className="absolute inset-0 blueprint-grid opacity-15" />
-      {/* max-w-4xl, not 3xl: splitting a 3xl card in two left the form column
-          narrower than the old single-column card and wrapped the terms line
-          mid-phrase. */}
-      <Card className="relative z-10 w-full max-w-md overflow-hidden border-border bg-card p-0 md:max-w-4xl">
-        <div className="grid md:grid-cols-2">
-          {/* Same fill as the form column on purpose — near-identical flat
-              fills sharing an edge read as a mistake, so the difference is
-              texture (dot-grid + vignette), not tone. */}
-          <CardHeader className="relative flex flex-col items-center justify-center space-y-4 p-8 text-center md:h-full md:border-r md:border-border">
-            <div className="dot-grid absolute inset-0 -z-10 opacity-25" aria-hidden="true" />
-            <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(120%_120%_at_50%_50%,transparent_35%,var(--card-recessed)_100%)]" aria-hidden="true" />
-            <OwletteEyeIcon size={80} />
-            <div className="space-y-1">
-              <CardTitle className="text-2xl font-bold text-foreground">create an account</CardTitle>
-              <CardDescription className="text-muted-foreground">
-                join owlette to manage your fleet
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-6 bg-card p-8">
-          {/* Google first: fastest path, no password, and it skips Turnstile
-              (the server only gates password signups). Swapped for a notice
-              when the browser can't run it; the notice keeps a "try anyway". */}
-          {googleUnavailable ? (
-            <InAppBrowserNotice
-              isInApp={inApp.isInApp}
-              appName={inApp.appName}
-              escapeAttempted={inApp.escapeAttempted}
-              onTryAnyway={handleGoogleSignup}
-              tryAnywayDisabled={loading}
+    <AuthShell
+      brandTitle="create an account"
+      brandDescription="join owlette to manage your fleet"
+      footer={
+        <>
+          already have an account?{' '}
+          <a href="/login" className={authFooterLinkClass}>
+            sign in
+          </a>
+        </>
+      }
+    >
+      {/* Google first: fastest path, no password, and it skips Turnstile
+          (the server only gates password signups). Swapped for a notice
+          when the browser can't run it; the notice keeps a "try anyway". */}
+      {googleUnavailable ? (
+        <InAppBrowserNotice
+          isInApp={inApp.isInApp}
+          appName={inApp.appName}
+          escapeAttempted={inApp.escapeAttempted}
+          onTryAnyway={handleGoogleSignup}
+          tryAnywayDisabled={loading}
+        />
+      ) : (
+        <div className="space-y-2">
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={handleGoogleSignup}
+          disabled={loading}
+        >
+          <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
+            <path
+              d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+              fill="#4285F4"
             />
-          ) : (
-          <div className="space-y-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={handleGoogleSignup}
+            <path
+              d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+              fill="#34A853"
+            />
+            <path
+              d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+              fill="#FBBC05"
+            />
+            <path
+              d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+              fill="#EA4335"
+            />
+          </svg>
+          continue with Google
+        </Button>
+
+        {/* The only terms notice a Google user ever sees — they never open the
+            email form's checkbox. text-balance is required: the links are
+            whitespace-nowrap, which otherwise orphans "privacy policy". */}
+        <p className="text-balance text-center text-xs text-muted-foreground leading-snug">
+          by continuing you agree to the{' '}
+          <Link href="/terms" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
+            terms of service
+          </Link>
+          {' '}and{' '}
+          <Link href="/privacy" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
+            privacy policy
+          </Link>
+        </p>
+        </div>
+      )}
+
+      {/* "or" needs two live options; with Google out there is only one. */}
+      {!googleUnavailable && <AuthDivider />}
+
+      <form onSubmit={handleRegister} className="space-y-5" noValidate>
+        <div className="space-y-2">
+          <Label htmlFor="email" className="text-foreground">email</Label>
+          <Input
+            id="email"
+            {...fieldProps('email')}
+            type="email"
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            // Focus, not click, so keyboard tabbing expands it too.
+            onFocus={() => setEmailFormOpen(true)}
+            required
             disabled={loading}
-          >
-            <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
-              <path
-                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                fill="#4285F4"
-              />
-              <path
-                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                fill="#34A853"
-              />
-              <path
-                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                fill="#FBBC05"
-              />
-              <path
-                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                fill="#EA4335"
-              />
-            </svg>
-            continue with Google
-          </Button>
+            className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+          />
+        </div>
 
-          {/* The only terms notice a Google user ever sees — they never open the
-              email form's checkbox. text-balance is required: the links are
-              whitespace-nowrap, which otherwise orphans "privacy policy". */}
-          <p className="text-balance text-center text-xs text-muted-foreground leading-snug">
-            by continuing you agree to the{' '}
-            <Link href="/terms" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
-              terms of service
-            </Link>
-            {' '}and{' '}
-            <Link href="/privacy" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
-              privacy policy
-            </Link>
-          </p>
-          </div>
-          )}
-
-          {/* "or" needs two live options; with Google out there is only one. */}
-          {!googleUnavailable && (
-            /* -mx-8 cancels CardContent's p-8 so the rule bleeds edge to edge;
-                the card is overflow-hidden, so no horizontal scrollbar. */
-            <div className="relative -mx-8">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-border" />
+        {emailExpanded && (
+          <div className="form-reveal">
+            <div className="space-y-5">
+            <div className="grid grid-cols-1 @sm/auth-form:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="firstName" className="text-foreground">first name</Label>
+                <Input
+                  id="firstName"
+                  type="text"
+                  placeholder="John"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  disabled={loading}
+                  className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+                />
               </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">
-                  or
-                </span>
+              <div className="space-y-2">
+                <Label htmlFor="lastName" className="text-foreground">last name</Label>
+                <Input
+                  id="lastName"
+                  type="text"
+                  placeholder="Doe"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  disabled={loading}
+                  className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+                />
               </div>
             </div>
-          )}
-
-          <form onSubmit={handleRegister} className="space-y-5" noValidate>
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-foreground">email</Label>
+              <Label htmlFor="password" className="text-foreground">password</Label>
               <Input
-                id="email"
-                {...fieldProps('email')}
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                // Focus, not click, so keyboard tabbing expands it too.
-                onFocus={() => setEmailFormOpen(true)}
+                id="password"
+                {...fieldProps('password')}
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                disabled={loading}
+                className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+              />
+              <p className="text-xs text-muted-foreground">
+                must be 8+ characters with at least 2 of: lowercase, uppercase, numbers, special characters
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword" className="text-foreground">confirm password</Label>
+              <Input
+                id="confirmPassword"
+                {...fieldProps('confirmPassword')}
+                type="password"
+                placeholder="••••••••"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
                 required
                 disabled={loading}
                 className="bg-input border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
+            <div className="flex items-start space-x-2">
+              <Checkbox
+                id="terms"
+                checked={agreedToTerms}
+                onCheckedChange={(checked) => setAgreedToTerms(checked === true)}
+                disabled={loading}
+                className="mt-0.5 border-border data-[state=checked]:bg-accent-cyan data-[state=checked]:border-accent-cyan"
+              />
+              {/* Label defaults to flex, which makes each inline child a
+                  flex item and breaks "terms of service" mid-phrase in a
+                  narrow column — force normal inline flow. */}
+              <Label htmlFor="terms" className="block text-balance text-sm text-muted-foreground leading-snug cursor-pointer">
+                i agree to the{' '}
+                <Link href="/terms" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
+                  terms of service
+                </Link>
+                {' '}and{' '}
+                <Link href="/privacy" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
+                  privacy policy
+                </Link>
+              </Label>
+            </div>
 
-            {emailExpanded && (
-              <div className="form-reveal">
-                <div className="space-y-5">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="firstName" className="text-foreground">first name</Label>
-                    <Input
-                      id="firstName"
-                      type="text"
-                      placeholder="John"
-                      value={firstName}
-                      onChange={(e) => setFirstName(e.target.value)}
-                      disabled={loading}
-                      className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="lastName" className="text-foreground">last name</Label>
-                    <Input
-                      id="lastName"
-                      type="text"
-                      placeholder="Doe"
-                      value={lastName}
-                      onChange={(e) => setLastName(e.target.value)}
-                      disabled={loading}
-                      className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="password" className="text-foreground">password</Label>
-                  <Input
-                    id="password"
-                    {...fieldProps('password')}
-                    type="password"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    disabled={loading}
-                    className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    must be 8+ characters with at least 2 of: lowercase, uppercase, numbers, special characters
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="confirmPassword" className="text-foreground">confirm password</Label>
-                  <Input
-                    id="confirmPassword"
-                    {...fieldProps('confirmPassword')}
-                    type="password"
-                    placeholder="••••••••"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    required
-                    disabled={loading}
-                    className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-                  />
-                </div>
-                <div className="flex items-start space-x-2">
-                  <Checkbox
-                    id="terms"
-                    checked={agreedToTerms}
-                    onCheckedChange={(checked) => setAgreedToTerms(checked === true)}
-                    disabled={loading}
-                    className="mt-0.5 border-border data-[state=checked]:bg-accent-cyan data-[state=checked]:border-accent-cyan"
-                  />
-                  {/* Label defaults to flex, which makes each inline child a
-                      flex item and breaks "terms of service" mid-phrase in a
-                      narrow column — force normal inline flow. */}
-                  <Label htmlFor="terms" className="block text-balance text-sm text-muted-foreground leading-snug cursor-pointer">
-                    i agree to the{' '}
-                    <Link href="/terms" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
-                      terms of service
-                    </Link>
-                    {' '}and{' '}
-                    <Link href="/privacy" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
-                      privacy policy
-                    </Link>
-                  </Label>
-                </div>
-
-                {/* No justify-center wrapper: size:'flexible' already spans the
-                    container; centering would leave it narrower than the inputs. */}
-                <TurnstileWidget
-                  action="register"
-                  onToken={setTurnstileToken}
-                  ref={turnstileRef}
-                />
-                {existingAccount && (
-                  <InlineNotice data-testid="register-existing-account">
-                    <p className="text-sm leading-snug text-muted-foreground">
-                      an account with this email already exists.{' '}
-                      <Link href="/login" className="font-medium hl-link text-accent-cyan">
-                        sign in instead
-                      </Link>
-                      , or{' '}
-                      <Link href="/forgot-password" className="font-medium hl-link text-accent-cyan">
-                        reset your password
-                      </Link>
-                      .
-                    </p>
-                  </InlineNotice>
-                )}
-                <FormError message={formError?.message} id="register-form-error" />
-                <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || (TURNSTILE_ENABLED && !turnstileToken)}>
-                  {loading ? 'creating account...' : 'create account'}
-                </Button>
-                </div>
-              </div>
+            {/* No justify-center wrapper: size:'flexible' already spans the
+                container; centering would leave it narrower than the inputs.
+                That size has a 300px floor, though, which the column's p-8
+                leaves it 6px short of at 390px — so bleed to the column edges
+                on phones rather than letting overflow-hidden crop it. */}
+            <TurnstileWidget
+              action="register"
+              onToken={setTurnstileToken}
+              ref={turnstileRef}
+              className="max-[420px]:-mx-8"
+            />
+            {existingAccount && (
+              <InlineNotice data-testid="register-existing-account">
+                <p className="text-sm leading-snug text-muted-foreground">
+                  an account with this email already exists.{' '}
+                  <Link href="/login" className="font-medium hl-link text-accent-cyan">
+                    sign in instead
+                  </Link>
+                  , or{' '}
+                  <Link href="/forgot-password" className="font-medium hl-link text-accent-cyan">
+                    reset your password
+                  </Link>
+                  .
+                </p>
+              </InlineNotice>
             )}
-          </form>
-
-          {/* Full-bleed band: -mx-8/-mb-8 cancel CardContent's p-8 so symmetric
-              py-6 centers the text; the card's own bottom padding left it 24px
-              above / 32px below and read as low. Border only, no fill. */}
-          <div className="-mx-8 -mb-8 border-t border-border px-8 py-6 text-center text-sm text-muted-foreground">
-            already have an account?{' '}
-            <a href="/login" className="font-medium hl-link text-accent-cyan">
-              sign in
-            </a>
+            <FormError message={formError?.message} id="register-form-error" />
+            <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || (TURNSTILE_ENABLED && !turnstileToken)}>
+              {loading ? 'creating account...' : 'create account'}
+            </Button>
+            </div>
           </div>
-          </CardContent>
-        </div>
-      </Card>
-    </div>
+        )}
+      </form>
+    </AuthShell>
   );
 }
