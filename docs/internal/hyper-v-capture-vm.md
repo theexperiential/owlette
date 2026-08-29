@@ -18,6 +18,9 @@ idempotent: re-running after a failure resumes rather than colliding.
 | `04-boot-installer.ps1` | boot the ISO, catching the "press any key" prompt over WMI |
 | `05-prep-guest.ps1` | connect over PowerShell Direct, verify the guest is a valid base, run Profile A+C prep |
 | `06-checkpoint-golden.ps1` | take the `golden-empty` checkpoint |
+| `07-oobe-local-account.ps1` | get past the forced-Microsoft-account OOBE screen |
+| `08-fix-guest-account.ps1` | create the `e2e` account, remove a wrongly-named one |
+| `09-finalize-image.ps1` | shutdown, pin the display mode, reboot, verify, sweep |
 
 ---
 
@@ -296,6 +299,103 @@ channel back. Two rules, both learned the hard way:
 - **`Stop-Transcript` in a `finally`**, so a terminating error releases the file.
 
 Always read the newest log, and check its `Start time` against the clock.
+
+---
+
+### Windows 11 forces a Microsoft account during OOBE
+
+24H2 removed the visible "offline account" path; there is no button to click.
+Two escapes remain and `07-oobe-local-account.ps1` drives both:
+
+- `start ms-cxh:localonly` (default) opens a local-account dialog immediately,
+  no reboot, network intact. Patched in recent 25H2 **Insider** builds
+  (26220.6772+) but present on retail 26200.
+- `-Method BypassNro` sets the OOBE BypassNRO flag and reboots. Works on every
+  current build, but **only while the machine is offline**, so it disconnects
+  the vNIC. Reconnect it afterwards or the guest has no network and nothing
+  says why (`05-prep-guest.ps1 -ConnectNic`).
+
+### Key injection reports success while doing nothing
+
+Three separate causes, all of which return "success", cost four attempts here:
+
+1. **The console is in mark/selection mode.** Its title starts `Select ` and it
+   silently swallows every keystroke while the API still returns 0. Send Esc
+   before typing anything.
+2. **`GetRelated()` returns an object with no method metadata.** A direct
+   `$kb.TypeKey()` on it yields a raw object rather than a status code, and code
+   that tests "is it 0?" reads absence-of-error as success. Rehydrate with
+   `[wmi]$rel.__PATH` and call `InvokeMethod`, which returns a real `uint32`.
+3. **Naming a helper `RV`** shadows PowerShell's built-in alias for
+   `Remove-Variable`, so the helper never runs at all.
+
+Probe with something whose success is externally visible - Enter producing a new
+prompt line, Shift+F10 opening a second window - rather than trusting a return
+code.
+
+### PowerShell Direct rejects a host-qualified username
+
+`Get-Credential` with no `-UserName` offers the HOST's qualified account
+(`TEC-A4D\admin`). PowerShell Direct wants a guest-local name and rejects the
+other with a flat "The credential is invalid", which says nothing about why.
+Prefill the bare name.
+
+Store the guest credential DPAPI-encrypted so the scripts run unattended without
+a password on disk in the clear:
+
+```powershell
+$cred | Export-Clixml "$env:LOCALAPPDATA\owlette-vm\guest-e2e.cred"
+```
+
+`05`, `08` and `09` read it automatically and prompt only when it is absent.
+
+### The guest's name and account are baked in forever
+
+Windows generates a random hostname during OOBE (`DESKTOP-EQGJN15`), and
+**Owlette's `machine_id` IS the hostname** (`agent/src/shared_utils.py:151` ->
+`socket.gethostname()`). Whatever the golden image carries becomes that
+machine's identity on the dashboard. Rename it deliberately
+(`05-prep-guest.ps1 -RenameGuest owlette-e2e-01`; takes effect on reboot).
+
+Same for the account: prefer creating the right one over `Rename-LocalUser`,
+which renames the account but leaves its profile at `C:\Users\<old>`.
+
+### Deleting an account's profile directory
+
+Three things in order, and the order is the whole difference:
+
+1. **End the old account's session first.** "Switch user" leaves it signed in
+   with its registry hive mounted, and the profile then cannot be removed:
+   "The process cannot access the file because it is being used by another
+   process." `08` runs `quser` and logs the session off.
+2. **Reboot.** The hive unloads on shutdown; until then nothing else works.
+3. **Delete the `Win32_UserProfile` OBJECT, not the folder.** Windows removes
+   the directory itself, including files a recursive delete cannot touch. Do
+   NOT reach for `takeown` + `icacls` + `Remove-Item` - it fails even as an
+   administrator, because the ACLs name a SID that no longer resolves.
+
+```powershell
+Get-CimInstance Win32_UserProfile |
+  Where-Object { $_.LocalPath -eq 'C:\Users\admin' } | Remove-CimInstance
+```
+
+### Resolution must be set from the HOST
+
+The synthetic display controller only offers modes the host permits, so setting
+the resolution inside Windows silently reverts (1024x768 here, repeatedly).
+`Set-VMVideo` pins it - and **requires the VM to be Off**:
+
+```powershell
+Set-VMVideo -VMName owlette-e2e -ResolutionType Single `
+  -HorizontalResolution 1920 -VerticalResolution 1080
+```
+
+### A fresh guest is ExecutionPolicy Restricted
+
+`bootstrap-gui-automation.ps1` will not load at all. Launch a child process with
+`-ExecutionPolicy Bypass` rather than changing the machine policy - whether the
+image ships with a relaxed policy is a Profile C decision, not a side effect of
+running the bootstrap.
 
 ---
 
