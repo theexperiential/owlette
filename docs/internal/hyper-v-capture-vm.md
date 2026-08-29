@@ -16,6 +16,8 @@ idempotent: re-running after a failure resumes rather than colliding.
 | `02-create-vm.ps1` | create/configure the VM — Gen 2, Secure Boot, vTPM, ISO, NIC |
 | `03-provision-vm.ps1` | grant Hyper-V rights, then call `02` |
 | `04-boot-installer.ps1` | boot the ISO, catching the "press any key" prompt over WMI |
+| `05-prep-guest.ps1` | connect over PowerShell Direct, verify the guest is a valid base, run Profile A+C prep |
+| `06-checkpoint-golden.ps1` | take the `golden-empty` checkpoint |
 
 ---
 
@@ -97,9 +99,23 @@ capture harness asserts it).
 
 ### 5. Profile A + C prep, inside the guest
 
+Driven from the host over **PowerShell Direct** (`Invoke-Command -VMName`), which
+runs over the VM bus - no guest networking, no IP, no WinRM setup. It needs
+Hyper-V admin rights on the host and a local account in the guest.
+
 ```powershell
-scripts\bootstrap-gui-automation.ps1 -Rig E2eRunner -Apply
+Start-Process powershell -Verb RunAs -ArgumentList '-NoExit','-File','<repo>\scripts\vm\05-prep-guest.ps1'
 ```
+
+It prompts for the guest password with `Get-Credential` in that window; the
+password is never printed, logged, or stored.
+
+Before running the bootstrap it **verifies the guest is a valid base**, and that
+check is the point of the step: it fails if WebView2, PawnIO or Owlette are
+already present, or if the display is not 1920x1080. Episode 3's b04 films the
+installer's progress captions, and those only render while it installs WebView2
+and PawnIO - discovering afterwards that the golden image already had them means
+rebuilding it. Use `-VerifyOnly` to check without running the bootstrap.
 
 Then work the manual checklist it prints, and the rest of
 [Profile C](gui-automation-machine-setup.md#profile-c--e2e-runner-vm-extras-unattended-release-gate).
@@ -109,8 +125,13 @@ Then work the manual checklist it prints, and the rest of
 Shut the guest down **cleanly**, then:
 
 ```powershell
-Checkpoint-VM -Name owlette-e2e -SnapshotName golden-empty
+Start-Process powershell -Verb RunAs -ArgumentList '-NoExit','-File','<repo>\scripts\vm\06-checkpoint-golden.ps1'
 ```
+
+It refuses to run against a guest that is still on - a checkpoint of a
+hard-killed guest carries a dirty filesystem into every future run - and refuses
+to overwrite an existing `golden-empty`, because silently replacing the golden
+image is how a polluted base gets baked in.
 
 This snapshot is the reset mechanism for every installer take and every e2e run.
 Silent uninstall deliberately preserves user data, so uninstalling never returns
