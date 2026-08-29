@@ -86,6 +86,11 @@ python -c "import ctypes; k = ctypes.windll.kernel32; con = k.WTSGetActiveConsol
 
 ## Profile C — e2e runner VM extras (unattended release gate)
 
+> **Creating the VM itself** — Hyper-V feature, Gen-2 + Secure Boot + vTPM, booting
+> the ISO, and the golden snapshot — is
+> [hyper-v-capture-vm.md](hyper-v-capture-vm.md), with scripts in `scripts/vm/`.
+> This section is what to configure once the guest is up.
+
 Everything in Profile A, plus:
 
 - [ ] **Autologon** for the test user — use Sysinternals `Autologon.exe` (stores the password via LSA, not plaintext registry). The autologon password lives in the host/runner secret store, never in image docs.
