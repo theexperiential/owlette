@@ -92,7 +92,8 @@ catch {
 # guard checks for the methods too, and says plainly what to do about it.
 $needed = @('SetCursorPos', 'GetCursorPos', 'mouse_event', 'SetForegroundWindow',
             'ShowWindow', 'GetWindowRect', 'MoveWindow', 'SetWindowPos',
-            'EnumChildWindows', 'GetClientRect', 'ClientToScreen')
+            'EnumChildWindows', 'GetClientRect', 'ClientToScreen',
+            'SetProcessDPIAware')
 $existing = ([System.Management.Automation.PSTypeName]'InpV2').Type
 if ($existing) {
   $missing = @($needed | Where-Object { -not $existing.GetMethod($_) })
@@ -120,6 +121,7 @@ public class InpV2 {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RC r);
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref PT p);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, System.Text.StringBuilder s, int max);
   public delegate bool EnumChildProc(IntPtr h, IntPtr p);
   [StructLayout(LayoutKind.Sequential)] public struct PT { public int X, Y; }
@@ -289,6 +291,14 @@ function Get-RegionYAVG([int]$x, [int]$y, [int]$w, [int]$h) {
   if ($txt -match 'YAVG=([\d.]+)') { return [double]$Matches[1] }
   return -1
 }
+
+# Declare DPI awareness BEFORE any coordinate is used. A DPI-unaware process is
+# given VIRTUALIZED coordinates: SetCursorPos and GetCursorPos agree with each
+# other while the pointer physically lands somewhere else entirely. That is what
+# put a tray right-click ~25px off target and opened the desktop context menu
+# instead of owlette's. The double-click here happens near the origin, where the
+# error was small enough to still land on the icon - which is luck, not design.
+[void][InpV2]::SetProcessDPIAware()
 
 $marks = [ordered]@{}
 $sw = $null
