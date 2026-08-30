@@ -262,6 +262,28 @@ export function setSidebarCollapsed(collapsed: boolean): Promise<boolean> {
   return invoke<boolean>('set_sidebar_collapsed', { collapsed })
 }
 
+/** Detail-pane sections and whether each opens expanded. */
+export interface DetailSections {
+  whatToRun: boolean
+  whenToRun: boolean
+  howToRun: boolean
+}
+
+export type DetailSectionKey = keyof DetailSections
+
+/**
+ * Which detail-pane sections open expanded. Reading preferences, stored beside
+ * the window and sidebar layout in the per-user file — not fleet `config.json`.
+ */
+export function detailSections(): Promise<DetailSections> {
+  return invoke<DetailSections>('detail_sections')
+}
+
+/** Remember one section's open state; resolves to the value kept. */
+export function setDetailSection(section: DetailSectionKey, open: boolean): Promise<boolean> {
+  return invoke<boolean>('set_detail_section', { section, open })
+}
+
 /**
  * The executable's Windows icon as a `data:` URL, or null.
  *

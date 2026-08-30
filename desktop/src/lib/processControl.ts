@@ -21,7 +21,7 @@
 import { terminatePid, type TerminateMethod } from '@/lib/ipc'
 import { expectedImagesFor, type ProcessEntry } from '@/lib/owletteConfig'
 import {
-  livePidForProcess,
+  candidatePidsForProcess,
   markKilled,
   markRestarting,
   restoreState,
@@ -87,7 +87,13 @@ async function terminateAs(pid: number, images: string[]) {
   throw lastError
 }
 
-/** Stop the live instance of `entry`, marking the exit as the operator's. See the module note. */
+/**
+ * Stop the live instance of `entry`, marking the exit as the operator's. See the module note.
+ *
+ * Candidates are tried in turn: a pid the host reports as already gone is skipped, not a
+ * failure — the table keeps dead generations around, and the identity check is what tells
+ * them apart. Only when none of them is alive is there nothing to stop.
+ */
 export async function stopProcess(
   entry: ProcessEntry,
   mode: StopMode,
@@ -100,44 +106,70 @@ export async function stopProcess(
   }
 
   const states = await deps.readStates()
-  const pid = livePidForProcess(states, entry.id)
-  if (pid === null) throw new NoLiveInstanceError(name)
-
-  if (mode === 'restart') {
-    const previous = states[String(pid)]
-    await deps.mutateStates((current) => markRestarting(current, pid, entry.id))
-
-    try {
-      const result = await terminate(pid, images, name, mode)
-
-      // Again, now the process is really gone: closing takes seconds (WM_CLOSE, grace, terminate)
-      // and every service tick in that window writes `RUNNING` over the marker. Observed on a live
-      // agent — marker written, overwritten, exit reported as a crash with screenshot.
-      await deps.mutateStates((current) => markRestarting(current, pid, entry.id))
-      return result
-    } catch (cause) {
-      // No kill happened, so the marker claims an exit that isn't ours. Best-effort rollback: if
-      // this write also fails, the original failure is still what the operator sees.
-      await deps
-        .mutateStates((current) => restoreState(current, pid, previous))
-        .catch(() => undefined)
-      throw cause
-    }
+  for (const pid of candidatePidsForProcess(states, entry.id)) {
+    const result =
+      mode === 'restart'
+        ? await restartPid(pid, states, entry, images, deps)
+        : await killPid(pid, entry, images, deps)
+    if (result) return result
   }
+  throw new NoLiveInstanceError(name)
+}
 
-  const result = await terminate(pid, images, name, mode)
-  await deps.mutateStates((current) => markKilled(current, pid, entry.id))
+async function killPid(
+  pid: number,
+  entry: ProcessEntry,
+  images: string[],
+  deps: StopDeps,
+): Promise<StopResult | null> {
+  const result = await terminate(pid, images, 'kill')
+  if (result) await deps.mutateStates((current) => markKilled(current, pid, entry.id))
   return result
 }
 
-/** Terminate; a pid that was already gone does not count as a stop. */
+async function restartPid(
+  pid: number,
+  states: AppStates,
+  entry: ProcessEntry,
+  images: string[],
+  deps: StopDeps,
+): Promise<StopResult | null> {
+  const previous = states[String(pid)]
+  await deps.mutateStates((current) => markRestarting(current, pid, entry.id))
+
+  let result: StopResult | null
+  try {
+    result = await terminate(pid, images, 'restart')
+  } catch (cause) {
+    // No kill happened, so the marker claims an exit that isn't ours. Best-effort rollback: if
+    // this write also fails, the original failure is still what the operator sees.
+    await deps
+      .mutateStates((current) => restoreState(current, pid, previous))
+      .catch(() => undefined)
+    throw cause
+  }
+
+  if (!result) {
+    // Already gone: a process that died a moment before the click really did crash, and the
+    // service must still be free to say so.
+    await deps.mutateStates((current) => restoreState(current, pid, previous))
+    return null
+  }
+
+  // Again, now the process is really gone: closing takes seconds (WM_CLOSE, grace, terminate)
+  // and every service tick in that window writes `RUNNING` over the marker. Observed on a live
+  // agent — marker written, overwritten, exit reported as a crash with screenshot.
+  await deps.mutateStates((current) => markRestarting(current, pid, entry.id))
+  return result
+}
+
+/** Terminate; null when the pid was already gone, which does not count as a stop. */
 async function terminate(
   pid: number,
   images: string[],
-  name: string,
   mode: StopMode,
-): Promise<StopResult> {
+): Promise<StopResult | null> {
   const outcome = await terminateAs(pid, images)
-  if (outcome.method === 'not_found') throw new NoLiveInstanceError(name)
+  if (outcome.method === 'not_found') return null
   return { pid, method: outcome.method, marker: MARKERS[mode] }
 }

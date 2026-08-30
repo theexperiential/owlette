@@ -119,17 +119,27 @@ export function launchedAtForProcess(states: AppStates, processId: string): numb
 }
 
 /**
- * The pid to act on for a kill or restart: newest RUNNING generation, else the
- * newest of any status. That one may be dead — the caller's identity check in
- * `terminate_pid` is what catches it.
+ * Every pid a kill or restart should try, most likely first: live-status
+ * generations by recency, then the rest by recency. Several candidates are the
+ * norm, not an edge case — adopted rows carry no timestamp, and a dead
+ * generation can sit at `RUNNING` until the service's next stale-pid sweep,
+ * so the caller's identity check in `terminate_pid` decides which one is real
+ * and walks on past the ones that are not.
  */
-export function livePidForProcess(states: AppStates, processId: string): number | null {
+export function candidatePidsForProcess(states: AppStates, processId: string): number[] {
   const entries = entriesFor(states, processId)
-  if (!entries.length) return null
+  const live = entries
+    .filter(([, state]) => isLive(asStatus(state.status) ?? 'INACTIVE'))
+    .sort(byRecency)
+  const rest = entries
+    .filter(([, state]) => !isLive(asStatus(state.status) ?? 'INACTIVE'))
+    .sort(byRecency)
+  return [...live, ...rest].map(([pid]) => pid)
+}
 
-  const running = entries.filter(([, state]) => state.status === 'RUNNING').sort(byRecency)
-  const chosen = running[0] ?? entries.sort(byRecency)[0]
-  return chosen ? chosen[0] : null
+/** The single most likely pid, or null — see {@link candidatePidsForProcess}. */
+export function livePidForProcess(states: AppStates, processId: string): number | null {
+  return candidatePidsForProcess(states, processId)[0] ?? null
 }
 
 /**

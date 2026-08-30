@@ -208,6 +208,26 @@ describe('nothing to stop', () => {
     expect(io.mutateStates).not.toHaveBeenCalled()
   })
 
+  it('walks past a generation that has already gone to one that is alive', async () => {
+    // Two RUNNING rows, no timestamps: the first pick is a dead generation the
+    // service has not swept yet. Seen on a live agent — restart on a process
+    // labelled running came back "no running instance".
+    const io = deps({
+      '30968': { id: 'a', status: 'RUNNING' },
+      '14128': { id: 'a', status: 'RUNNING' },
+    })
+    terminatePid.mockImplementation(async (pid: number) =>
+      pid === 30968
+        ? { method: 'not_found', waitedMs: 0, windowsClosed: 0, imagePath: null }
+        : { method: 'wm_close', waitedMs: 120, windowsClosed: 1, imagePath: 'C:\\apps\\player.exe' },
+    )
+
+    await expect(stopProcess(entry, 'restart', io)).resolves.toMatchObject({ pid: 14128 })
+
+    expect(io.states['30968'].status).toBe('RUNNING')
+    expect(io.states['14128'].status).toBe('RESTARTING')
+  })
+
   it('refuses to guess when the entry has no executable', async () => {
     await expect(stopProcess({ id: 'a', name: 'x' }, 'kill', deps(running()))).rejects.toThrow(
       /no exe path/,

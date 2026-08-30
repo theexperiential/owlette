@@ -3104,6 +3104,55 @@ class OwletteService(win32serviceutil.ServiceFramework):
         except Exception as e:
             logging.error(f"Error cleaning up stale tracking data: {e}")
 
+    def _relaunch_if_restarting(self, process):
+        """Honour a desktop-app restart of a process whose launch mode is off.
+
+        handle_process() is never called for an off process, so the RESTARTING
+        marker it looks for (PROCESS_RESTARTING_STATUS) would otherwise turn a
+        restart into a plain stop. Restart means restart whatever the mode:
+        once every marked pid is gone, launch once, log it, and go back to
+        leaving the process alone.
+        """
+        process_id = process.get('id')
+        if not process_id:
+            return
+        marked = [
+            pid_str for pid_str, state in self.results.items()
+            if isinstance(state, dict)
+            and state.get('id') == process_id
+            and state.get('status') == PROCESS_RESTARTING_STATUS
+            and pid_str.isdigit()
+        ]
+        if not marked:
+            return
+        # The marker is written before the kill; the process takes a few
+        # seconds to close (WM_CLOSE, grace, terminate). Wait for it.
+        if any(Util.is_pid_running(int(pid_str)) for pid_str in marked):
+            return
+
+        for pid_str in marked:
+            self.results.pop(pid_str, None)
+        shared_utils.write_json_to_file(self.results, shared_utils.RESULT_FILE_PATH)
+
+        process_name = Util.get_process_name(process)
+        old_pids = ', '.join(marked)
+        logging.info(f"'{process_name}' (PID {old_pids}) was restarted from the local app - relaunching once (launch mode is off)")
+        if self.firebase_client and self.firebase_client.is_connected():
+            self.firebase_client.log_event(
+                action='process_restarted',
+                level='info',
+                process_name=process_name,
+                details=f'Manual restart from the local app - terminated PID {old_pids}, relaunching once (launch mode is off)'
+            )
+
+        self.last_started.pop(process_id, None)
+        self._skip_launch_delay.add(process_id)
+        new_pid = self.handle_process_launch(process)
+        if new_pid:
+            # Tracked so a later dashboard kill/restart finds it without a scan;
+            # off-mode processes are still never monitored.
+            self.last_started[process_id] = {'time': datetime.datetime.now(), 'pid': new_pid}
+
     def _get_process_launch_mode(self, process):
         return process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
 
@@ -7310,7 +7359,10 @@ with open(out_path, 'wb') as f:
                                                 del self.last_started[process_id]
                                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                                         pass
-                    # mode == 'off': skip entirely
+                    else:
+                        # Off: not watched, but an operator restart still means
+                        # restart. Nothing else here touches an off process.
+                        self._relaunch_if_restarting(process)
 
                 # Every REBOOT_CHECK_INTERVAL_SECONDS, derived from SLEEP_INTERVAL.
                 self._reboot_schedule_counter += 1

@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ProcessEntry } from '@/lib/owletteConfig'
-import { STATUS_DOT, statusForProcess, statusLabel, type AppStates } from '@/lib/processStatus'
+import { STATUS_DOT, isLive, statusForProcess, statusLabel, type AppStates } from '@/lib/processStatus'
 import { setRowDragging } from '@/lib/rowDrag'
 import { MENU_SURFACE } from '@/lib/surfaces'
 import { cn } from '@/lib/utils'
@@ -117,6 +117,7 @@ export function ProcessList({
   const [draggingId, setDraggingId] = useState<string | null>(null)
 
   const index = anchor ? processes.findIndex((process) => process.id === anchor.id) : -1
+  const anchorLive = anchor ? isLive(statusForProcess(states, anchor.id)) : false
 
   function act(action: ProcessAction) {
     if (!anchor) return
@@ -483,11 +484,17 @@ export function ProcessList({
             />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="bottom" sideOffset={2} className={MENU_SURFACE}>
-            <DropdownMenuItem onSelect={() => act('restart')}>
+            {/* Same rule as the detail pane: run controls follow liveness, not
+                the launch mode. */}
+            <DropdownMenuItem disabled={!anchorLive} onSelect={() => act('restart')}>
               <RotateCcw />
               restart process
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => act('kill')}>
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={!anchorLive}
+              onSelect={() => act('kill')}
+            >
               <Square />
               kill process
             </DropdownMenuItem>

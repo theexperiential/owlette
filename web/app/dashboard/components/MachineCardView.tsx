@@ -13,7 +13,7 @@ import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Copy, Square, Plus, Clock, AlertTriangle, X, RotateCcw, RotateCw, Settings2, BellOff, Monitor } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Copy, Square, Plus, Clock, AlertTriangle, X, RotateCcw, Settings2, BellOff, Monitor } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
@@ -924,7 +924,7 @@ function MachineCard({
                                     className="bg-card border border-border/50 text-foreground disabled:cursor-not-allowed disabled:opacity-50 p-2"
                                     disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
                                   >
-                                    <RotateCw className="h-3 w-3" />
+                                    <RotateCcw className="h-3 w-3" />
                                   </Button>
                                 </TooltipTrigger>
                                 <TooltipContent>
@@ -939,7 +939,7 @@ function MachineCard({
                                     onClick={() => onKillProcess(process.id, process.name)}
                                     aria-label={`kill ${process.name}`}
                                     className="bg-card border border-border/50 text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 p-2"
-                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED' && process.launch_mode !== 'off'}
+                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
                                   >
                                     <Square className="h-3 w-3" />
                                   </Button>

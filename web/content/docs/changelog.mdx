@@ -5,6 +5,19 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ---
 
+## [3.2.2] - 2026-08-30
+
+### changed
+
+- **kill and restart now follow whether a process is running, never its launch mode.** in both the dashboard and the desktop app, a running process can be restarted or killed whatever its launch mode — switching a running process to off no longer takes the controls away — and a process that is not running has both buttons greyed out. previously the dashboard offered kill on any off-mode process even when nothing was running, and the desktop app refused to kill a running process that had just been switched to off.
+- **restarting a process whose launch mode is off now actually restarts it.** the service relaunches it once and then goes back to leaving it alone; previously a restart from the desktop app only stopped it.
+- **the desktop app's process form is grouped into three collapsible sections** — what to run, when to run, how to run — and the open state of each is remembered per user across launches. delay and wait moved beside the launch mode under *when to run*; attempts, priority, and visibility make up *how to run*, absorbing the old advanced section. the compact fields flow into two or three columns when the window is wide enough.
+
+### fixed
+
+- **the desktop app no longer reports "no running instance" when restarting a process that is clearly running.** when the service's process table held a stale generation alongside the live one, the app could pick the dead entry and give up; it now tries every candidate until it finds the one that is alive.
+- **the desktop kill button is red, matching the dashboard,** and the dashboard's restart icon now matches the desktop app's counter-clockwise arrow.
+
 ## [3.2.1] - 2026-08-29
 
 ### fixed

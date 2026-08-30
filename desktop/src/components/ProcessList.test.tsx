@@ -291,6 +291,20 @@ describe('the collapsed rail', () => {
     expect(screen.getByRole('menuitem', { name: 'delete' })).toBeTruthy()
   })
 
+  it('offers restart and kill only while something is running', () => {
+    setup(null, processes, { collapsed: true })
+
+    // 'a' has a RUNNING generation; 'c' has never launched.
+    fireEvent.contextMenu(rows()[0])
+    expect(screen.getByRole('menuitem', { name: 'restart process' }).ariaDisabled).not.toBe('true')
+    expect(screen.getByRole('menuitem', { name: 'kill process' }).ariaDisabled).not.toBe('true')
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+
+    fireEvent.contextMenu(rows()[2])
+    expect(screen.getByRole('menuitem', { name: 'restart process' }).ariaDisabled).toBe('true')
+    expect(screen.getByRole('menuitem', { name: 'kill process' }).ariaDisabled).toBe('true')
+  })
+
   it('drops the copy that has nowhere to go at 48 px', () => {
     setup(null, processes, { collapsed: true })
 

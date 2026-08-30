@@ -99,6 +99,8 @@ pub fn run() {
       commands::set_sidebar_width,
       commands::sidebar_collapsed,
       commands::set_sidebar_collapsed,
+      commands::detail_sections,
+      commands::set_detail_section,
     ])
     .setup(|app| {
       // Both profiles. A release build is `windows_subsystem = "windows"` with no console,
