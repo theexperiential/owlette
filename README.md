@@ -6,7 +6,7 @@
 
 ### ai-powered fleet management for Windows applications
 
-[![Version](https://img.shields.io/badge/version-3.2.0-blue)](https://github.com/theexperiential/Owlette/releases)
+[![Version](https://img.shields.io/badge/version-3.2.1-blue)](https://github.com/theexperiential/owlette/releases)
 [![License](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)](https://owlette.app)
 
@@ -86,8 +86,8 @@ For a new maintainer cloning this repo, start with the [maintainer quickstart](d
 
 **agent (Windows service):**
 ```bash
-git clone https://github.com/theexperiential/Owlette.git
-cd Owlette/agent
+git clone https://github.com/theexperiential/owlette.git
+cd owlette/agent
 pip install -r requirements.txt
 cd src && python configure_site.py       # pair this machine with a site
 python owlette_service.py install && python owlette_service.py start
@@ -95,14 +95,14 @@ python owlette_service.py install && python owlette_service.py start
 
 **desktop app (tray + configuration window):**
 ```bash
-cd Owlette/desktop
+cd owlette/desktop
 npm install
 npm run tauri dev                        # or: npx tauri build --no-bundle
 ```
 
 **web dashboard:**
 ```bash
-cd Owlette/web
+cd owlette/web
 npm install
 cp .env.example .env.local               # configure Firebase credentials
 npm run dev                               # http://localhost:3000
@@ -162,7 +162,7 @@ contributions are welcome! please open an issue or submit a pull request.
 - use `node scripts/sync-versions.js X.Y.Z` for version bumps
 - all PRs merge to `dev` first, then `dev` → `main` for production
 
-**[open an issue →](https://github.com/theexperiential/Owlette/issues)**
+**[open an issue →](https://github.com/theexperiential/owlette/issues)**
 
 ## license
 

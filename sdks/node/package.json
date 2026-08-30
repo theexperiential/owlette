@@ -4,6 +4,15 @@
   "packageManager": "npm@10.9.0",
   "description": "node sdk for the owlette public api (owlette.app)",
   "license": "FSL-1.1-Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theexperiential/owlette.git",
+    "directory": "sdks/node"
+  },
+  "homepage": "https://owlette.app",
+  "bugs": {
+    "url": "https://github.com/theexperiential/owlette/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "type": "commonjs",

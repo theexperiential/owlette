@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { usePathname } from "next/navigation";
+import { GITHUB_REPO_URL } from "@/lib/repoLinks";
 
 const RANDOM_EMOJIS = [
 "❤️", "💙", "💚", "💛", "💜", "🧡", // hearts
@@ -92,7 +93,7 @@ export function Footer() {
           </Link>
           <span>&middot;</span>
           <Link
-            href="https://github.com/theexperiential/Owlette"
+            href={GITHUB_REPO_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="hl-link hl-link-muted"

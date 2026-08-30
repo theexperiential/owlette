@@ -4,6 +4,15 @@
   "packageManager": "npm@10.9.0",
   "description": "owlette — command line for the owlette api (owlette.app)",
   "license": "FSL-1.1-Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theexperiential/owlette.git",
+    "directory": "cli"
+  },
+  "homepage": "https://owlette.app",
+  "bugs": {
+    "url": "https://github.com/theexperiential/owlette/issues"
+  },
   "bin": {
     "owlette": "bin/owlette"
   },

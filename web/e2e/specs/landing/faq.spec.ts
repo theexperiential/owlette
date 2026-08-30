@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { LICENSE_URL } from '@/lib/repoLinks';
 
 // Public landing page — no auth required.
 test.use({ storageState: { cookies: [], origins: [] } });
@@ -35,9 +36,6 @@ test.describe('landing faq + footer', () => {
 
     const licenseLink = page.locator('footer').getByRole('link', { name: 'FSL-1.1-Apache-2.0' });
     await expect(licenseLink).toBeVisible();
-    await expect(licenseLink).toHaveAttribute(
-      'href',
-      'https://github.com/theexperiential/owlette/blob/main/LICENSE',
-    );
+    await expect(licenseLink).toHaveAttribute('href', LICENSE_URL);
   });
 });

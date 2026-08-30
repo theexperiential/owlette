@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, KeyRound, RefreshCw, Webhook } from 'lucide-react';
+import { CLI_DIR_URL } from '@/lib/repoLinks';
 
 type TabId = 'curl' | 'cli' | 'typescript';
 
@@ -134,7 +135,7 @@ export function DeveloperSection() {
             <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
           </Link>
           <Link
-            href="https://github.com/theexperiential/owlette/tree/main/cli"
+            href={CLI_DIR_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 text-base text-muted-foreground hover:text-foreground transition-colors group"

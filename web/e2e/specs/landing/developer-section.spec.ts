@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { CLI_DIR_URL } from '@/lib/repoLinks';
 
 // Public landing-page section — no auth state required. Run unauthenticated so
 // the test mirrors what an anonymous visitor sees and isn't sensitive to the
@@ -62,10 +63,7 @@ test.describe('developer section (landing)', () => {
     ).toHaveAttribute('href', '/docs/api');
 
     const cliLink = section.getByRole('link', { name: /install the cli/i });
-    await expect(cliLink).toHaveAttribute(
-      'href',
-      'https://github.com/theexperiential/owlette/tree/main/cli'
-    );
+    await expect(cliLink).toHaveAttribute('href', CLI_DIR_URL);
     await expect(cliLink).toHaveAttribute('target', '_blank');
     await expect(cliLink).toHaveAttribute('rel', /noopener/);
   });

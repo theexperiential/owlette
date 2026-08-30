@@ -9,6 +9,14 @@
   "packageManager": "npm@10.9.0",
   "description": "monorepo workspace for the owlette cli and public api sdks.",
   "license": "FSL-1.1-Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theexperiential/owlette.git"
+  },
+  "homepage": "https://owlette.app",
+  "bugs": {
+    "url": "https://github.com/theexperiential/owlette/issues"
+  },
   "workspaces": [
     "cli",
     "sdks/node"

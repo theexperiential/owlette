@@ -24,8 +24,8 @@ When available, run `/scripts/bootstrap-windows.ps1` to validate your local tool
 Use the setup landing page for the full path: [docs/setup/index.md](setup/index.md). The web dev server needs Firebase credentials from [docs/setup/firebase.md](setup/firebase.md), and `--legacy-peer-deps` is required.
 
 ```bash
-git clone https://github.com/theexperiential/Owlette.git
-cd Owlette/web
+git clone https://github.com/theexperiential/owlette.git
+cd owlette/web
 cp env.example env.local  # fill Firebase creds from docs/setup/firebase.md
 npm ci --legacy-peer-deps
 npm run dev
