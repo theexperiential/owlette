@@ -5,6 +5,12 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ---
 
+## [3.2.1] - 2026-08-29
+
+### fixed
+
+- **the service now starts on machines that have never had the Visual C++ runtime installed.** `owlette-host.exe` was linked against `VCRUNTIME140.dll`, which ships with the Visual C++ redistributable rather than with Windows. on a freshly imaged machine the install completed normally and then the service refused to start with *"the code execution cannot proceed because VCRUNTIME140.dll was not found"*, leaving the dashboard reporting the machine as service not running. the host is now statically linked and depends on nothing beyond Windows itself. machines that already carried the redistributable — which is most machines with development tooling or common desktop software on them — were never affected; this only ever hit clean images, which is precisely what kiosks, signage players and media servers are.
+
 ## [3.2.0] - 2026-08-24
 
 ### changed
