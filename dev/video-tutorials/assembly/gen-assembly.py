@@ -149,7 +149,11 @@ FOOTAGE: Dict[int, List[Source]] = {
             DESKTOP.format(name="09-the-owlette-app-unpaired.mp4"),
             "unpaired-state alt",
         ),
-        Source("scene", None, "native: tray segments (capture-tray-menu.ps1 + icon states)"),
+        # One native take off the capture VM (scripts/vm/20-shoot-ep09-tray.ps1):
+        # b01 hovers the tray icon for the tooltip, b02 right-clicks for the
+        # menu. Both live in one file at their own in-points.
+        Source("scene", NATIVE.format(name="09-b01-b02-tray.mp4"),
+               "native: b01 tray tooltip, b02 tray menu"),
     ],
     16: [
         web(),

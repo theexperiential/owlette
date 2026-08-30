@@ -220,15 +220,17 @@ try {
   Mark09 'b01 in (desktop settled)'
   Move-Pointer09 $IconX $IconY 30 33
   Mark09 'pointer on the tray icon'
-  Start-Sleep -Seconds 5                       # tooltip appears and is read
 
-  # Re-fire the tooltip twice: it times out, and will not return while the
-  # pointer stays put.
-  for ($i = 1; $i -le 2; $i++) {
-    Move-Pointer09 $OffX $OffY 8 25
-    Start-Sleep -Milliseconds 700
-    Move-Pointer09 $IconX $IconY 8 25
-    Start-Sleep -Seconds 5
+  # A glide onto the icon did NOT raise the tooltip, while a teleport onto it
+  # (the measuring pass) did every time. The shell appears to want a discrete
+  # arrival, not the tail of a long interpolation. So after gliding in, step off
+  # and land on the icon in one jump - which is also what re-fires the tooltip
+  # after it times out a few seconds later.
+  for ($i = 1; $i -le 4; $i++) {
+    [void][Tray09]::SetCursorPos($OffX, $OffY)   # off the icon, on the desktop
+    Start-Sleep -Milliseconds 500
+    [void][Tray09]::SetCursorPos($IconX, $IconY) # discrete arrival
+    Start-Sleep -Seconds 4                       # tooltip shows and is read
   }
   Mark09 'b01 out'
 

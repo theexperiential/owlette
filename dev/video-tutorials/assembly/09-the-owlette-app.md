@@ -10,7 +10,7 @@ Resolve build manifest: [`manifests/09-the-owlette-app.json`](manifests/09-the-o
 Footage:
 - `dev/video-tutorials/footage/desktop/09-the-owlette-app.mp4` — window beats [1600x900 @ 60.0fps]
 - `dev/video-tutorials/footage/desktop/09-the-owlette-app-unpaired.mp4` — unpaired-state alt [1600x900 @ 60.0fps]
-- native: tray segments (capture-tray-menu.ps1 + icon states) — **not captured yet**
+- `dev/video-tutorials/footage/native/09-b01-b02-tray.mp4` — native: b01 tray tooltip, b02 tray menu [1920x1080 @ 60.0fps]
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|

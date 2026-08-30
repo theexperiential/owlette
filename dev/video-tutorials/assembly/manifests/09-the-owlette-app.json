@@ -38,10 +38,14 @@
     },
     {
       "role": "scene",
-      "note": "native: tray segments (capture-tray-menu.ps1 + icon states)",
-      "path": null,
-      "exists": false,
-      "rel": null
+      "note": "native: b01 tray tooltip, b02 tray menu",
+      "rel": "dev/video-tutorials/footage/native/09-b01-b02-tray.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\native\\09-b01-b02-tray.mp4",
+      "exists": true,
+      "duration_s": 74.983,
+      "width": 1920,
+      "height": 1080,
+      "fps": 60.0
     }
   ],
   "beats": [
