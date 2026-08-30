@@ -8,7 +8,8 @@ Timeline: 1920x1080 @ 60.0fps.
 Resolve build manifest: [`manifests/03-install-and-pair.json`](manifests/03-install-and-pair.json)
 
 Footage:
-- native: capture-native install wizard (b01-b04) — **not captured yet**
+- `dev/video-tutorials/footage/native/03-b01-desktop.mp4` — native: b01 clean desktop with the installer on it [1920x1080 @ 60.0fps]
+- `dev/video-tutorials/footage/native/03-b03-b04-install.mp4` — native: b03 double-click + UAC, b04 progress screen [1920x1080 @ 60.0fps]
 - `dev/video-tutorials/footage/desktop/03-install-and-pair-desktop.mp4` — pairing dialog (b05-b06/b10) [1600x900 @ 60.0fps]
 - `dev/video-tutorials/footage/web/03-install-and-pair.mp4` — dashboard + /add beats b02, b07-b09 [1920x1080 @ 60.0fps]
 

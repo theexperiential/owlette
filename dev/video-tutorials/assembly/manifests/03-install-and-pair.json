@@ -16,10 +16,25 @@
   "sources": [
     {
       "role": "scene",
-      "note": "native: capture-native install wizard (b01-b04)",
-      "path": null,
-      "exists": false,
-      "rel": null
+      "note": "native: b01 clean desktop with the installer on it",
+      "rel": "dev/video-tutorials/footage/native/03-b01-desktop.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\native\\03-b01-desktop.mp4",
+      "exists": true,
+      "duration_s": 20.0,
+      "width": 1920,
+      "height": 1080,
+      "fps": 60.0
+    },
+    {
+      "role": "scene",
+      "note": "native: b03 double-click + UAC, b04 progress screen",
+      "rel": "dev/video-tutorials/footage/native/03-b03-b04-install.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\native\\03-b03-b04-install.mp4",
+      "exists": true,
+      "duration_s": 139.983,
+      "width": 1920,
+      "height": 1080,
+      "fps": 60.0
     },
     {
       "role": "scene",

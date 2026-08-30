@@ -76,6 +76,7 @@ SCREEN_PRIORITY = ("**SCREEN:**", "**B-ROLL:**", "**ON-SCREEN:**")
 SCENE = "dev/video-tutorials/footage/web/{stem}.mp4"
 CUT = "dev/video-tutorials/footage/web/{stem}-{cut}.mp4"
 DESKTOP = "dev/video-tutorials/footage/desktop/{name}"
+NATIVE = "dev/video-tutorials/footage/native/{name}"
 # Generated or licensed b-roll — not a harness capture, so its `.beats.json`
 # is hand-authored and the pixel gates in vet-recordings.py do not apply.
 BROLL = "dev/video-tutorials/b-roll/{name}"
@@ -122,7 +123,14 @@ FOOTAGE: Dict[int, List[Source]] = {
         Source("pool", CUT.format(stem="{stem}", cut="b06-tokens"), "b06 tokens cut"),
     ],
     3: [
-        Source("scene", None, "native: capture-native install wizard (b01-b04)"),
+        # Two native takes off the Hyper-V capture VM (scripts/vm). b01 is its
+        # own clean-desktop shot; b03 and b04 share one continuous take of the
+        # install, and the ~27s of wizard transit between them is simply never
+        # indexed - the conform resolves each beat to its own in-point.
+        Source("scene", NATIVE.format(name="03-b01-desktop.mp4"),
+               "native: b01 clean desktop with the installer on it"),
+        Source("scene", NATIVE.format(name="03-b03-b04-install.mp4"),
+               "native: b03 double-click + UAC, b04 progress screen"),
         Source(
             "scene",
             DESKTOP.format(name="03-install-and-pair-desktop.mp4"),
