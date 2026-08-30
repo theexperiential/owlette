@@ -320,15 +320,16 @@ export function ProcessList({
                           // shows no text.
                           aria-label={collapsed ? name : undefined}
                           className={cn(
-                            'group flex w-full touch-none items-center rounded-md text-left text-sm transition-colors select-none',
+                            // btn-sweep is the hover feedback — the same
+                            // animated scrim every button carries; a hover:bg
+                            // would cross-fade underneath it and muddy the sweep.
+                            'btn-sweep group flex w-full touch-none items-center rounded-md text-left text-sm transition-colors select-none',
                             collapsed ? 'justify-center px-0 py-1' : 'gap-2 px-1.5 py-2',
                             // Grab cursor on the grip only — the row is a
                             // click-to-select surface, though a drag may start
                             // anywhere on it.
                             draggingId ? 'cursor-grabbing' : 'cursor-pointer',
-                            selected
-                              ? 'bg-accent text-accent-foreground'
-                              : 'text-foreground/90 hover:bg-accent/50',
+                            selected ? 'bg-accent text-accent-foreground' : 'text-foreground/90',
                             dragged && 'opacity-90 shadow-lg ring-1 ring-border',
                           )}
                           onClick={() => onSelect(process.id)}
