@@ -205,9 +205,13 @@ export function serviceStatus(): Promise<ServiceStatus> {
   return invoke<ServiceStatus>('service_status')
 }
 
-/** Start OwletteService. May raise a UAC prompt; poll {@link serviceStatus}. */
-export function serviceStart(): Promise<ServiceCommandOutcome> {
-  return invoke<ServiceCommandOutcome>('service_start')
+/**
+ * Start OwletteService. With `allowElevation` the access-denied fallback is one
+ * UAC prompt; without it the call errors instead — automatic callers must never
+ * put a consent dialog on screen. Poll {@link serviceStatus} for the result.
+ */
+export function serviceStart(allowElevation: boolean): Promise<ServiceCommandOutcome> {
+  return invoke<ServiceCommandOutcome>('service_start', { allowElevation })
 }
 
 /** Stop OwletteService. May raise a UAC prompt; poll {@link serviceStatus}. */

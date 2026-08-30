@@ -5,6 +5,12 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ---
 
+## [3.2.3] - 2026-08-30
+
+### fixed
+
+- **self-updates no longer raise a UAC prompt on every machine.** while an update was installing, the desktop app saw the service stop, tried to start it back up, and — lacking the right — fell back to an elevated command, putting a "Windows Command Processor" consent prompt over whatever was on screen, fleet-wide. the app now stands down entirely while an update is in progress (the installer stops the service on purpose, restarts it itself, and has a watchdog for the failure case), and automatic starts never elevate at all — the UAC path is reserved for a deliberate click on the start button or the tray menu.
+
 ## [3.2.2] - 2026-08-30
 
 ### changed

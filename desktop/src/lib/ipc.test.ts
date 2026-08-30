@@ -100,7 +100,7 @@ describe('service commands', () => {
     invoke.mockResolvedValue({ method: 'noop', stateBefore: 'running' })
 
     await serviceStatus()
-    await serviceStart()
+    await serviceStart(false)
     await serviceStop()
 
     expect(invoke.mock.calls.map(([command]) => command)).toEqual([
@@ -108,7 +108,10 @@ describe('service commands', () => {
       'service_start',
       'service_stop',
     ])
-    expect(invoke.mock.calls.every(([, args]) => args === undefined)).toBe(true)
+    // Start carries the elevation gate; the others take no arguments.
+    expect(invoke.mock.calls[0][1]).toBeUndefined()
+    expect(invoke.mock.calls[1][1]).toEqual({ allowElevation: false })
+    expect(invoke.mock.calls[2][1]).toBeUndefined()
   })
 
   it('treats a stale status file as the service being down', () => {

@@ -87,10 +87,11 @@ pub fn service_status() -> Result<ServiceStatus, String> {
   service_ctl::status(&paths::data_root().join(SERVICE_STATUS_REL))
 }
 
-/// Start `OwletteService`, elevating only when this process lacks the right.
+/// Start `OwletteService`. `allow_elevation` gates the UAC fallback when this
+/// process lacks the right — false for automatic callers, true for a click.
 #[tauri::command(async)]
-pub fn service_start() -> Result<ServiceCommandOutcome, String> {
-  service_ctl::start()
+pub fn service_start(allow_elevation: bool) -> Result<ServiceCommandOutcome, String> {
+  service_ctl::start(allow_elevation)
 }
 
 /// Stop `OwletteService`, elevating only when this process lacks the right.
