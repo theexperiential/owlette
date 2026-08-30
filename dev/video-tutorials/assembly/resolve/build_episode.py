@@ -292,6 +292,13 @@ def apply_format(project, timeline_spec, report):
     fps_text = str(int(fps)) if float(fps).is_integer() else str(fps)
     wanted = [
         ("timelineFrameRate", fps_text),
+        # timelinePlaybackFrameRate is a SEPARATE setting and it does not follow
+        # timelineFrameRate. Left alone it can sit at 24 while the timeline is
+        # 60, and Resolve then plays a correct 60fps timeline back at 24 - which
+        # looks exactly like dropped frames, except nothing is dropping. Clips
+        # play fine in the source viewer (that uses the media's own rate), so it
+        # reads as a performance problem and is not one.
+        ("timelinePlaybackFrameRate", fps_text),
         ("timelineResolutionWidth", str(timeline_spec.get("width", 1920))),
         ("timelineResolutionHeight", str(timeline_spec.get("height", 1080))),
     ]
@@ -313,8 +320,25 @@ def apply_format(project, timeline_spec, report):
                 'SetSetting("%s", "%s") returned False (currently "%s") - check '
                 "the timeline format by hand" % (key, value, current)
             )
-    report.say("format: %sx%s @ %sfps" % (
-        timeline_spec.get("width"), timeline_spec.get("height"), fps_text))
+    # READ BACK, do not echo. This line used to print the values the manifest
+    # ASKED for, so a project stuck at another rate still logged the number it
+    # wanted and the log looked clean while playback was wrong.
+    actual = {}
+    for key, _ in wanted:
+        try:
+            actual[key] = str(project.GetSetting(key))
+        except Exception:
+            actual[key] = "?"
+    report.say("format: %sx%s @ %sfps timeline, %sfps playback (read back)" % (
+        actual.get("timelineResolutionWidth", "?"),
+        actual.get("timelineResolutionHeight", "?"),
+        actual.get("timelineFrameRate", "?"),
+        actual.get("timelinePlaybackFrameRate", "?")))
+    for key, value in wanted:
+        if actual.get(key) not in (value, "?"):
+            report.warn('%s is "%s", not the requested "%s" - Resolve locks the '
+                        "project format once timelines exist; build into an empty "
+                        "project if this matters" % (key, actual.get(key), value))
 
 
 def want_fresh():
