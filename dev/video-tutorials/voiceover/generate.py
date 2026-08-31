@@ -47,6 +47,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -61,10 +62,30 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_SCRIPTS_DIR = (SCRIPT_DIR / ".." / "scripts").resolve()
 DEFAULT_OUT_DIR = SCRIPT_DIR / "out"
 DEFAULT_MODEL = "eleven_multilingual_v2"
-DEFAULT_OUTPUT_FORMAT = "mp3_44100_128"
-# Locked production settings (A/B sweep 2026-05, see README). CLI > manifest > these.
-DEFAULT_STABILITY = 0.30
-DEFAULT_STYLE = 0.0
+# pcm_44100: uncompressed 44.1kHz mono, wrapped into a WAV on the way out.
+# Credits are charged per CHARACTER, not per format, so this costs nothing extra
+# over mp3_44100_128. It buys three things: no MP3 encoder delay clipping the
+# first phoneme, no lossy re-encode when the lead-in is prepended, and PCM on
+# the Resolve timeline, which is what Resolve actually wants.
+# mp3_44100_192 is the best this account's tier allows: pcm_44100 is Pro-only
+# (403 output_format_not_allowed). Credits are per CHARACTER, not per format, so
+# 192kbps costs exactly the same as the 128 this used to use.
+DEFAULT_OUTPUT_FORMAT = "mp3_44100_192"
+# Locked production settings. CLI > manifest > these.
+#
+# style was 0.0 (the flat end of the range) from the 2026-05 A/B sweep, which
+# read as robotic on playback. Re-auditioned 2026-08-30 across style 0.00 / .15
+# / .25 / .35 / .40 / .65 on ep12-b01: 0.40 with stability 0.35 was picked, the
+# intermediate steps all sounded worse than either end.
+DEFAULT_STABILITY = 0.35
+DEFAULT_STYLE = 0.40
+
+# Silence prepended to every rendered beat, in milliseconds.
+#
+# ElevenLabs returns speech starting at 0.000 with no lead-in at all, so the
+# first phoneme sits on sample zero and gets clipped on a timeline - MP3
+# encoder delay eats into it too. Editors want air before the first word.
+HEAD_SILENCE_MS = 250
 SIMILARITY_BOOST = 0.75
 USE_SPEAKER_BOOST = True
 API_BASE = "https://api.elevenlabs.io/v1/text-to-speech"
@@ -292,6 +313,50 @@ def load_prior_manifest(out_dir: Path) -> Tuple[Dict[str, Dict[str, object]], Di
     return beats, settings if isinstance(settings, dict) else {}
 
 
+def write_wav(raw: bytes, dest: Path, rate: str) -> bool:
+    """Wrap raw mono PCM16 from the API in a WAV container."""
+    try:
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-f", "s16le", "-ar", str(rate), "-ac", "1",
+             "-i", "pipe:0", "-c:a", "pcm_s16le", "-y", str(dest)],
+            input=raw, check=True, capture_output=True,
+        )
+        return True
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"    !! could not wrap PCM as WAV: {exc}")
+        return False
+
+
+def pad_head(path: Path, ms: int = HEAD_SILENCE_MS) -> bool:
+    """Prepend `ms` of silence to a rendered beat, in place.
+
+    Returns False (and leaves the file untouched) if ffmpeg is unavailable or
+    fails - a missing lead-in is a blemish, not a reason to lose a paid render.
+
+    This re-encodes once at the same bitrate. A concat of a pre-made silent MP3
+    would avoid that, but MP3 frame padding makes exact durations unreliable,
+    and the manifest reads the duration back to build the timeline grid - so a
+    predictable file is worth more here than one saved re-encode of speech.
+    """
+    if ms <= 0:
+        return False
+    tmp = path.with_suffix(".padded" + path.suffix)
+    try:
+        wav = path.suffix.lower() == ".wav"
+        codec = ["-c:a", "pcm_s16le"] if wav else ["-c:a", "libmp3lame", "-b:a", "192k"]
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(path),
+             "-af", f"adelay={ms}:all=1"] + codec + ["-y", str(tmp)],
+            check=True, capture_output=True,
+        )
+        tmp.replace(path)
+        return True
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"    !! could not pad {path.name}: {exc}")
+        tmp.unlink(missing_ok=True)
+        return False
+
+
 def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
     """Print the plan and, unless --dry-run, synthesize per-beat MP3s.
 
@@ -407,8 +472,20 @@ def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
             stability=stability,
             style=style,
         )
-        (out_dir / fname).write_bytes(audio)
-        print(f"    ok {fname}  ({len(audio):,} bytes)")
+        dest = out_dir / fname
+        if args.output_format.startswith("pcm_"):
+            # The API returns RAW PCM with no header; give it a WAV container.
+            dest = dest.with_suffix(".wav")
+            rate = args.output_format.split("_")[1]
+            if not write_wav(audio, dest, rate):
+                dest = out_dir / fname
+                dest.write_bytes(audio)
+        else:
+            dest.write_bytes(audio)
+        fname = dest.name
+        padded = pad_head(dest)
+        print(f"    ok {fname}  ({len(audio):,} bytes"
+              + (f", +{HEAD_SILENCE_MS}ms lead-in)" if padded else ", NOT padded)"))
         manifest.append(
             {"id": b.id, "title": b.title, "chars": len(text), "file": fname, "text": text}
         )

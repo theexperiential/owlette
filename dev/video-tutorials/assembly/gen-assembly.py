@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import os
 import re
 import subprocess
@@ -291,6 +292,7 @@ def build_episode_record(
 
     beats: List[Dict[str, object]] = []
     cursor = 0.0
+    frame_cursor = 0
     for b in ep.beats:
         directions = parse_directions(blocks.get(b.id, ""))
         screen = next(
@@ -302,8 +304,8 @@ def build_episode_record(
             "title": b.title,
             "screen_note": screen,
             "direction": directions,
-            "start_s": round(cursor, 3),
-            "start_frame": int(round(cursor * TIMELINE_FPS)),
+            "start_s": round(frame_cursor / TIMELINE_FPS, 3),
+            "start_frame": frame_cursor,
         }
         text = b.resolved(strip_tags=strip)
         if not text:
@@ -330,7 +332,17 @@ def build_episode_record(
                 "status": "ok",
             }
         )
-        cursor += d
+        # Advance the cursor in WHOLE FRAMES, rounding UP.
+        #
+        # Accumulating seconds and rounding each start independently let a
+        # beat's slot come out one frame shorter than its own narration
+        # (round(sum) != sum(round)), so the next A1 clip landed a frame early
+        # and clipped up to 16ms off the previous tail. 18 beats across the
+        # series were short that way. Ceiling in frames means a slot is never
+        # shorter than the audio it has to hold; the cost is at most one frame
+        # of silence per beat.
+        frame_cursor += int(math.ceil(d * TIMELINE_FPS - 1e-9))
+        cursor = frame_cursor / TIMELINE_FPS
         beats.append(rec)
 
     sources = resolve_sources(ep.number, ep.out_name, media_root)

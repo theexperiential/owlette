@@ -7,7 +7,7 @@
   "scenario": "display-layout-editor",
   "script": "scripts/15-display-layouts.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 209.528,
+  "narration_s": 201.15,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -39,8 +39,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\15-display-layouts\\ep15-b01.mp3",
       "mp3_name": "ep15-b01.mp3",
-      "duration_s": 19.644,
-      "duration_frames": 1179,
+      "duration_s": 19.801,
+      "duration_frames": 1188,
       "status": "ok"
     },
     {
@@ -51,13 +51,13 @@
         "SCREEN": "dashboard, the `mainstage-led` card; click the small monitor button in the card header (tooltip \"view displays\"); the display panel opens on the `live` tab — canvas with four rects (Mainstage 1–4) beside the monitor table (# / name / resolution @ refresh / scale / position / port).",
         "NOTE": "the same panel opens from the machine \"⋮\" menu → \"view displays\" — worth a second of B-roll."
       },
-      "start_s": 19.644,
-      "start_frame": 1179,
+      "start_s": 19.817,
+      "start_frame": 1189,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\15-display-layouts\\ep15-b02.mp3",
       "mp3_name": "ep15-b02.mp3",
-      "duration_s": 22.204,
-      "duration_frames": 1332,
+      "duration_s": 20.611,
+      "duration_frames": 1237,
       "status": "ok"
     },
     {
@@ -67,13 +67,13 @@
       "direction": {
         "SCREEN": "on the live tab click \"store\" → confirm dialog \"store current arrangement?\" → the `stored` tab now holds the layout; then click \"edit\", drag a monitor on the canvas, double-click one to open the per-monitor editor (resolution, refresh, rotation, scale, position, primary), then \"store\" / \"discard\"."
       },
-      "start_s": 41.848,
-      "start_frame": 2511,
+      "start_s": 40.433,
+      "start_frame": 2426,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\15-display-layouts\\ep15-b03.mp3",
       "mp3_name": "ep15-b03.mp3",
-      "duration_s": 24.346,
-      "duration_frames": 1461,
+      "duration_s": 23.092,
+      "duration_frames": 1386,
       "status": "ok"
     },
     {
@@ -83,13 +83,13 @@
       "direction": {
         "SCREEN": "patch the machine's live display doc so one monitor moves (the seeded fixture has live matching stored, so nothing drifts as-shipped); the card's monitor button picks up an amber dot, the `stored` tab shows its amber badge, and the drifted cells tint amber in the table."
       },
-      "start_s": 66.194,
-      "start_frame": 3972,
+      "start_s": 63.533,
+      "start_frame": 3812,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\15-display-layouts\\ep15-b04.mp3",
       "mp3_name": "ep15-b04.mp3",
-      "duration_s": 25.391,
-      "duration_frames": 1523,
+      "duration_s": 21.499,
+      "duration_frames": 1290,
       "status": "ok"
     },
     {
@@ -100,13 +100,13 @@
         "SCREEN": "re-seed with **both** `displays.remoteApplyEnabled` false **and** `displays.autoRestore.enabled` false so the \"test\" and \"enable restore\" buttons render; click \"test\" → inline result banner (\"Self-test ok — 4 monitors, query Nms, validate Nms\"); then \"enable restore\" → confirm dialog.",
         "NOTE": "the fixture ships both flags true. auto-restore matters as much as remote apply here: the action bar's last slot is a three-way choice — auto chip if auto-restore is on, else \"enable restore\" if remote apply is off, else \"restore\" — so leaving auto-restore enabled hides \"enable restore\" behind the green chip. the header auto-restore switch can't be used to turn it off on camera either; it's disabled while remote apply is off."
       },
-      "start_s": 91.585,
-      "start_frame": 5495,
+      "start_s": 85.033,
+      "start_frame": 5102,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\15-display-layouts\\ep15-b05.mp3",
       "mp3_name": "ep15-b05.mp3",
-      "duration_s": 22.753,
-      "duration_frames": 1365,
+      "duration_s": 23.98,
+      "duration_frames": 1439,
       "status": "ok"
     },
     {
@@ -117,13 +117,13 @@
         "SCREEN": "`stored` tab → \"restore\" → confirm dialog (\"monitors will rearrange in a few seconds…\") → toast \"restore dispatched\" → amber banner \"keep this layout? auto-revert in 30s\" with the \"keep\" button.",
         "NOTE": "auto-restore must stay off through this whole beat — the \"restore\" button is the *third* branch of that same slot and only renders when auto-restore is off and remote apply is on (which is the state the previous beat's \"enable restore\" click leaves behind). the auto chip goes on screen in the next beat, where it belongs."
       },
-      "start_s": 114.338,
-      "start_frame": 6860,
+      "start_s": 109.017,
+      "start_frame": 6541,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\15-display-layouts\\ep15-b06.mp3",
       "mp3_name": "ep15-b06.mp3",
-      "duration_s": 20.036,
-      "duration_frames": 1202,
+      "duration_s": 19.958,
+      "duration_frames": 1197,
       "status": "ok"
     },
     {
@@ -133,13 +133,13 @@
       "direction": {
         "SCREEN": "flip the \"auto-restore\" switch in the panel header — live now that a layout is stored and restore is enabled — and the slot that held \"restore\" becomes the green \"auto\" chip; cut to the red banner \"auto-restore paused — 3 attempts failed. last error: …\" with its \"reset\" button."
       },
-      "start_s": 134.374,
-      "start_frame": 8062,
+      "start_s": 128.983,
+      "start_frame": 7739,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\15-display-layouts\\ep15-b07.mp3",
       "mp3_name": "ep15-b07.mp3",
-      "duration_s": 20.506,
-      "duration_frames": 1230,
+      "duration_s": 22.518,
+      "duration_frames": 1351,
       "status": "ok"
     },
     {
@@ -149,13 +149,13 @@
       "direction": {
         "SCREEN": "the `events` tab: rows of monitor added / monitor removed / drift / apply failed / auto-reverted with level badges and relative times; then account settings → alerts → the \"display events\" toggle."
       },
-      "start_s": 154.88,
-      "start_frame": 9293,
+      "start_s": 151.517,
+      "start_frame": 9091,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\15-display-layouts\\ep15-b08.mp3",
       "mp3_name": "ep15-b08.mp3",
-      "duration_s": 26.201,
-      "duration_frames": 1572,
+      "duration_s": 24.921,
+      "duration_frames": 1495,
       "status": "ok"
     },
     {
@@ -165,13 +165,13 @@
       "direction": {
         "SCREEN": "the talons editor — trigger \"event\" with display drift + monitor removed ticked, \"then wait\" 5 minutes, condition \"visual check\" with an expectation sentence, outputs below. Close on the logs page filtered to the `displays` action group (`web/app/logs/page.tsx:183-199`) as the handoff lands."
       },
-      "start_s": 181.081,
-      "start_frame": 10865,
+      "start_s": 176.45,
+      "start_frame": 10587,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\15-display-layouts\\ep15-b09.mp3",
       "mp3_name": "ep15-b09.mp3",
-      "duration_s": 28.447,
-      "duration_frames": 1707,
+      "duration_s": 24.686,
+      "duration_frames": 1481,
       "status": "ok"
     }
   ]

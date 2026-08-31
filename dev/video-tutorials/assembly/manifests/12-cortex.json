@@ -7,7 +7,7 @@
   "scenario": "diagnose-cortex-chat",
   "script": "scripts/12-cortex.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 178.808,
+  "narration_s": 185.683,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -39,8 +39,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\12-cortex\\ep12-b01.mp3",
       "mp3_name": "ep12-b01.mp3",
-      "duration_s": 19.409,
-      "duration_frames": 1165,
+      "duration_s": 23.641,
+      "duration_frames": 1418,
       "status": "ok"
     },
     {
@@ -50,13 +50,13 @@
       "direction": {
         "SCREEN": "user menu → account settings → the **hoot** section. show the provider select (Anthropic (Claude) / OpenAI), the model select, and the api key field with the line \"your key is encrypted with AES-256 and never leaves the server.\""
       },
-      "start_s": 19.409,
-      "start_frame": 1165,
+      "start_s": 23.65,
+      "start_frame": 1419,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\12-cortex\\ep12-b02.mp3",
       "mp3_name": "ep12-b02.mp3",
-      "duration_s": 32.522,
-      "duration_frames": 1951,
+      "duration_s": 27.82,
+      "duration_frames": 1669,
       "status": "ok"
     },
     {
@@ -66,13 +66,13 @@
       "direction": {
         "SCREEN": "the target selector at the top of the chat (aria-label \"hoot target\") — open it to show **All Machines** with the online count, then the individual machines. Pick a machine; the chat resets to a new conversation."
       },
-      "start_s": 51.931,
-      "start_frame": 3116,
+      "start_s": 51.483,
+      "start_frame": 3089,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\12-cortex\\ep12-b03.mp3",
       "mp3_name": "ep12-b03.mp3",
-      "duration_s": 18.678,
-      "duration_frames": 1121,
+      "duration_s": 19.722,
+      "duration_frames": 1183,
       "status": "ok"
     },
     {
@@ -83,13 +83,13 @@
         "SCREEN": "scroll the seeded conversation — the user's \"what crashed at 3am?\", hoot's exit-code / auto-restart / CUDA-cause answer, and the inline `checkLogs` tool card. Expand the card.",
         "NOTE": "capture method — the chat needs a live LLM, so the harness can't type a prompt and await a real response. Film the pre-seeded conversation by scrolling; don't type. Applies to b04 and b05."
       },
-      "start_s": 70.609,
-      "start_frame": 4237,
+      "start_s": 71.217,
+      "start_frame": 4273,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\12-cortex\\ep12-b04.mp3",
       "mp3_name": "ep12-b04.mp3",
-      "duration_s": 21.473,
-      "duration_frames": 1288,
+      "duration_s": 22.518,
+      "duration_frames": 1351,
       "status": "ok"
     },
     {
@@ -100,13 +100,13 @@
         "SCREEN": "the approve/deny card — \"hoot wants to run the privileged `run_powershell` tool on media-server-stage. approve to continue, or expand to inspect the input.\" with **approve** and **deny** buttons and the amber \"awaiting approval\" label.",
         "NOTE": "the fixture must gain a seeded assistant tool part with `state: 'approval-requested'` and an `approval: { id }` so this banner renders (`ChatWindow.tsx` → `ToolCallCard.tsx`). It does not exist yet — b05 cannot be filmed until it's seeded."
       },
-      "start_s": 92.082,
-      "start_frame": 5525,
+      "start_s": 93.75,
+      "start_frame": 5625,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\12-cortex\\ep12-b05.mp3",
       "mp3_name": "ep12-b05.mp3",
-      "duration_s": 20.689,
-      "duration_frames": 1241,
+      "duration_s": 24.842,
+      "duration_frames": 1491,
       "status": "ok"
     },
     {
@@ -116,13 +116,13 @@
       "direction": {
         "SCREEN": "the right side of the hoot header — the shield toggle reading **approval required**, and beside it the per-machine toggle reading **hoot active**. Hover each for its tooltip; open the confirm dialog on the machine toggle to show the \"the agent will stay online for monitoring\" wording, then cancel."
       },
-      "start_s": 112.771,
-      "start_frame": 6766,
+      "start_s": 118.6,
+      "start_frame": 7116,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\12-cortex\\ep12-b06.mp3",
       "mp3_name": "ep12-b06.mp3",
-      "duration_s": 25.391,
-      "duration_frames": 1523,
+      "duration_s": 26.462,
+      "duration_frames": 1588,
       "status": "ok"
     },
     {
@@ -132,13 +132,13 @@
       "direction": {
         "SCREEN": "a running tool card with its **cancel** control, and the send button swapped for the square **stop response** button. Then reload the page mid-turn and show the chat reattaching and streaming from where it left off."
       },
-      "start_s": 138.162,
-      "start_frame": 8290,
+      "start_s": 145.067,
+      "start_frame": 8704,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\12-cortex\\ep12-b07.mp3",
       "mp3_name": "ep12-b07.mp3",
-      "duration_s": 17.006,
-      "duration_frames": 1020,
+      "duration_s": 16.222,
+      "duration_frames": 973,
       "status": "ok"
     },
     {
@@ -149,13 +149,13 @@
         "SCREEN": "the hoot sidebar with an autonomous conversation carrying its **auto** badge; then account settings → alerts, on the **hoot escalation alerts** switch.",
         "NOTE": "there is no dashboard control that turns autonomous mode on — `autonomousEnabled` is set out of band on `sites/{siteId}/settings/cortex` (`web/content/docs/dashboard/hoot.mdx:210-214`). So this beat films the *result* (an `auto` conversation in the sidebar) and the escalation-alerts switch, never a \"switch it on\" click."
       },
-      "start_s": 155.167,
-      "start_frame": 9310,
+      "start_s": 161.3,
+      "start_frame": 9678,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\12-cortex\\ep12-b08.mp3",
       "mp3_name": "ep12-b08.mp3",
-      "duration_s": 23.641,
-      "duration_frames": 1418,
+      "duration_s": 24.372,
+      "duration_frames": 1462,
       "status": "ok"
     }
   ]

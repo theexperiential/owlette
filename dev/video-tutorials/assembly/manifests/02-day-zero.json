@@ -7,7 +7,7 @@
   "scenario": null,
   "script": "scripts/02-day-zero.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 205.192,
+  "narration_s": 198.917,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -51,8 +51,8 @@
       "direction": {
         "SCREEN": "`/register` — the \"create an account\" card. Show \"continue with Google\" at the top, then click into the email field so the rest unfolds (first/last name, password with its \"8+ characters with at least 2 of...\" hint, confirm, terms checkbox, the bot-check widget), then \"create account\". Land on `/setup-2fa`."
       },
-      "start_s": 20.689,
-      "start_frame": 1241,
+      "start_s": 20.7,
+      "start_frame": 1242,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b02.mp3",
       "mp3_name": "ep02-b02.mp3",
@@ -67,13 +67,13 @@
       "direction": {
         "SCREEN": "`/setup-2fa`, the \"choose your second factor\" step — the passkey card (fingerprint icon, \"recommended\" pill) above the authenticator-app card (phone icon). Hover each so the descriptions are readable."
       },
-      "start_s": 42.58,
-      "start_frame": 2555,
+      "start_s": 42.6,
+      "start_frame": 2556,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b03.mp3",
       "mp3_name": "ep02-b03.mp3",
-      "duration_s": 24.529,
-      "duration_frames": 1472,
+      "duration_s": 23.562,
+      "duration_frames": 1414,
       "status": "ok"
     },
     {
@@ -84,13 +84,13 @@
         "SCREEN": "click the passkey card → \"create passkey\" → the windows hello prompt → \"passkey added\". Then sign out, land on `/login`, click \"continue with passkey\", one prompt, straight into the dashboard — no code screen in between.",
         "NOTE": "the sign-out / sign-back-in half is a SEPARATE take, filmed after b05's codes are claimed — leaving the \"passkey added\" screen is one-way, and b05 shoots from it."
       },
-      "start_s": 67.109,
-      "start_frame": 4027,
+      "start_s": 66.167,
+      "start_frame": 3970,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b04.mp3",
       "mp3_name": "ep02-b04.mp3",
-      "duration_s": 27.089,
-      "duration_frames": 1625,
+      "duration_s": 23.902,
+      "duration_frames": 1434,
       "status": "ok"
     },
     {
@@ -101,13 +101,13 @@
         "SCREEN": "on the \"passkey added\" screen, click \"get backup codes\" — the button flips to \"waiting for your device...\" and the device prompts a second time. Then the backup step: the ten codes in a mono grid, the red \"these codes will only be shown once!\" line, \"copy all codes\", then \"continue to dashboard\".",
         "NOTE": "the passkey path needs that extra step-up before any codes render (`web/app/setup-2fa/page.tsx:589-598`). The sibling button on that screen is \"skip for now\" (`:602-610`) — do not click it on camera; it exits to the dashboard with no codes issued."
       },
-      "start_s": 94.198,
-      "start_frame": 5652,
+      "start_s": 90.083,
+      "start_frame": 5405,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b05.mp3",
       "mp3_name": "ep02-b05.mp3",
-      "duration_s": 18.207,
-      "duration_frames": 1092,
+      "duration_s": 19.096,
+      "duration_frames": 1146,
       "status": "ok"
     },
     {
@@ -117,13 +117,13 @@
       "direction": {
         "SCREEN": "a sign-in on the authenticator path — `/verify-2fa`, the six-digit field, and the \"trust this device for 30 days\" checkbox being ticked before \"verify\"."
       },
-      "start_s": 112.405,
-      "start_frame": 6744,
+      "start_s": 109.183,
+      "start_frame": 6551,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b06.mp3",
       "mp3_name": "ep02-b06.mp3",
-      "duration_s": 18.364,
-      "duration_frames": 1102,
+      "duration_s": 19.879,
+      "duration_frames": 1193,
       "status": "ok"
     },
     {
@@ -134,13 +134,13 @@
         "SCREEN": "the dashboard for a brand-new account — the \"getting started\" card with \"step 1: create your first site\". Click it → the create dialog: site name (\"NYC Office\"), the auto-generated site ID with its green available check, \"create site\". The card re-renders into the download/install steps.",
         "NOTE": "needs the zero-site account from b01's note — this empty state only renders when the user has no sites at all."
       },
-      "start_s": 130.769,
-      "start_frame": 7846,
+      "start_s": 129.067,
+      "start_frame": 7744,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b07.mp3",
       "mp3_name": "ep02-b07.mp3",
-      "duration_s": 20.924,
-      "duration_frames": 1255,
+      "duration_s": 22.361,
+      "duration_frames": 1342,
       "status": "ok"
     },
     {
@@ -150,13 +150,13 @@
       "direction": {
         "SCREEN": "the header site switcher → \"manage sites\" → the pencil \"edit site\" on the new row → the timezone picker. Show the timezone column before and after."
       },
-      "start_s": 151.693,
-      "start_frame": 9102,
+      "start_s": 151.433,
+      "start_frame": 9086,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b08.mp3",
       "mp3_name": "ep02-b08.mp3",
-      "duration_s": 26.749,
-      "duration_frames": 1605,
+      "duration_s": 22.622,
+      "duration_frames": 1357,
       "status": "ok"
     },
     {
@@ -166,13 +166,13 @@
       "direction": {
         "SCREEN": "`/admin/users`, the row menu open with \"reset 2FA...\" highlighted, then the confirm dialog. Cut back to the getting-started card, now showing \"step 1: download owlette agent\"."
       },
-      "start_s": 178.442,
-      "start_frame": 10707,
+      "start_s": 174.067,
+      "start_frame": 10444,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b09.mp3",
       "mp3_name": "ep02-b09.mp3",
-      "duration_s": 26.749,
-      "duration_frames": 1605,
+      "duration_s": 24.842,
+      "duration_frames": 1491,
       "status": "ok"
     }
   ]

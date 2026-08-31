@@ -7,7 +7,7 @@
   "scenario": "dashboard-mixed-states",
   "script": "scripts/17-fleet-maintenance.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 204.852,
+  "narration_s": 204.767,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -50,8 +50,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b01.mp3",
       "mp3_name": "ep17-b01.mp3",
-      "duration_s": 14.028,
-      "duration_frames": 842,
+      "duration_s": 15.491,
+      "duration_frames": 929,
       "status": "ok"
     },
     {
@@ -62,13 +62,13 @@
         "SCREEN": "deploy page (nav label \"deploy\"), one site selected. top-right cluster: the orange outlined `update owlette to v3.2.0` button with its count badge, beside `new deployment`. hold on the badge.",
         "NOTE": "the button is scoped to the selected site (`useMachines(currentSiteId)`) and renders only when at least one of that site's machines is outdated — the seed must include a machine behind `installer_metadata/latest`."
       },
-      "start_s": 14.028,
-      "start_frame": 842,
+      "start_s": 15.5,
+      "start_frame": 930,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b02.mp3",
       "mp3_name": "ep17-b02.mp3",
-      "duration_s": 18.286,
-      "duration_frames": 1097,
+      "duration_s": 21.577,
+      "duration_frames": 1295,
       "status": "ok"
     },
     {
@@ -78,13 +78,13 @@
       "direction": {
         "SCREEN": "site selector → `manage sites` → expand a site row (chevron) → the per-machine list: status dot, last seen, agent version column (`v3.2.0`, `v2.12.21`, `—`)."
       },
-      "start_s": 32.313,
-      "start_frame": 1939,
+      "start_s": 37.083,
+      "start_frame": 2225,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b03.mp3",
       "mp3_name": "ep17-b03.mp3",
-      "duration_s": 22.361,
-      "duration_frames": 1342,
+      "duration_s": 21.499,
+      "duration_frames": 1290,
       "status": "ok"
     },
     {
@@ -94,13 +94,13 @@
       "direction": {
         "SCREEN": "click `update owlette` → dialog `update owlette agents` → the cyan \"what happens during an update\" banner → `deselect all` → tick one machine (row shows `current: v2.12.21 → latest: v3.2.0`) → `update 1 machine`."
       },
-      "start_s": 54.674,
-      "start_frame": 3280,
+      "start_s": 58.583,
+      "start_frame": 3515,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b04.mp3",
       "mp3_name": "ep17-b04.mp3",
-      "duration_s": 25.809,
-      "duration_frames": 1549,
+      "duration_s": 27.089,
+      "duration_frames": 1625,
       "status": "ok"
     },
     {
@@ -110,13 +110,13 @@
       "direction": {
         "SCREEN": "reopen the dialog → `select all` → an offline row with its checkbox disabled and \"offline — must be online to receive an update\" → confirm → rows showing the `updating...` badge. cut to a row with the red `may have failed` badge and its `clear` button."
       },
-      "start_s": 80.483,
-      "start_frame": 4829,
+      "start_s": 85.683,
+      "start_frame": 5141,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b05.mp3",
       "mp3_name": "ep17-b05.mp3",
-      "duration_s": 22.361,
-      "duration_frames": 1342,
+      "duration_s": 24.764,
+      "duration_frames": 1486,
       "status": "ok"
     },
     {
@@ -127,13 +127,13 @@
         "SCREEN": "admin → `agent tokens`. site selector, then the table: machine ID, version, status, created, last used. show the search box, the version filter, the `duplicates` toggle, and the `N live` count.",
         "NOTE": "superadmin-only surface — capture with a superadmin session."
       },
-      "start_s": 102.844,
-      "start_frame": 6171,
+      "start_s": 110.45,
+      "start_frame": 6627,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b06.mp3",
       "mp3_name": "ep17-b06.mp3",
-      "duration_s": 23.249,
-      "duration_frames": 1395,
+      "duration_s": 20.454,
+      "duration_frames": 1227,
       "status": "ok"
     },
     {
@@ -144,13 +144,13 @@
         "SCREEN": "dashboard → machine row menu → `revoke token` → the dialog, holding on both buttons: `revoke current token` (amber) and `revoke all for hostname` (red).",
         "NOTE": "since e0c8341a this menu item and its route are both site-admin — film with an admin session on an assigned site, not a superadmin one."
       },
-      "start_s": 126.093,
-      "start_frame": 7566,
+      "start_s": 130.917,
+      "start_frame": 7855,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b07.mp3",
       "mp3_name": "ep17-b07.mp3",
-      "duration_s": 24.999,
-      "duration_frames": 1500,
+      "duration_s": 24.764,
+      "duration_frames": 1486,
       "status": "ok"
     },
     {
@@ -160,13 +160,13 @@
       "direction": {
         "SCREEN": "deploy page → a deployment row → `uninstall software` dialog (machines, then software). cut to dashboard → machine menu → `remove machine` → the dialog's bullet list of what gets deleted."
       },
-      "start_s": 151.092,
-      "start_frame": 9066,
+      "start_s": 155.683,
+      "start_frame": 9341,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b08.mp3",
       "mp3_name": "ep17-b08.mp3",
-      "duration_s": 28.526,
-      "duration_frames": 1712,
+      "duration_s": 24.921,
+      "duration_frames": 1495,
       "status": "ok"
     },
     {
@@ -176,13 +176,13 @@
       "direction": {
         "SCREEN": "montage — deploy page with no update button in the header (switch the site selector across two sites to show both clean), tokens page with a clean list, dashboard all green. end on the dashboard."
       },
-      "start_s": 179.618,
-      "start_frame": 10777,
+      "start_s": 180.617,
+      "start_frame": 10837,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b09.mp3",
       "mp3_name": "ep17-b09.mp3",
-      "duration_s": 25.234,
-      "duration_frames": 1514,
+      "duration_s": 24.137,
+      "duration_frames": 1448,
       "status": "ok"
     }
   ]
