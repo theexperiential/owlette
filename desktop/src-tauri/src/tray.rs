@@ -1042,7 +1042,8 @@ fn restart_service(app: &AppHandle) {
 
   if !running {
     log::info!("service is stopped — starting it instead of writing the restart flag");
-    match service_ctl::start() {
+    // A tray-menu click is deliberate, so the UAC fallback is allowed.
+    match service_ctl::start(true) {
       Ok(outcome) => {
         log::info!("service start issued ({})", outcome.method);
         notify(

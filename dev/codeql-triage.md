@@ -23,9 +23,33 @@ Machine names, process names, chat ids and nonces arrive from request bodies and
 agent registration and land inside `console.*` template literals. A newline lets
 the value's author append a fresh, well-formed-looking log line.
 
-Fixed by `web/lib/logSanitize.ts`, applied at the logger sink and at all 15 hoot
-call sites. These alerts should close on the next scan; anything left over is
-worth re-reading rather than dismissing.
+Fixed by `web/lib/logSanitize.ts`, applied at the logger sink and at all 24 call
+sites across six files.
+
+**These alerts will NOT close, and that prediction was wrong when first written
+here.** CodeQL has since analysed both `dev` (73e2d0dc) and `main` (797621f9)
+with the fix in place and the per-file counts are unchanged — 12 / 4 / 4 / 2 /
+2 / 1. CodeQL does not model `sanitizeForLog` as a sanitiser: its taint
+tracking does not carry a barrier across a helper-function boundary, so it
+still sees request data reaching `console.*`.
+
+The vulnerability is genuinely remediated — `__tests__/lib/logSanitize.test.ts`
+proves newlines, CR, CRLF and C0/C1 cannot survive the helper. What remains is
+a tool limitation, so these 36 move from "fixed" to "dismiss with rationale".
+
+> Dismissal note: input is flattened by `sanitizeForLog` before reaching the
+> sink (CR/LF escaped, C0/C1 stripped, length capped). CodeQL does not model
+> the helper as a barrier. Behaviour is covered by
+> `web/__tests__/lib/logSanitize.test.ts`.
+
+Closing them properly instead of dismissing would need a custom CodeQL model
+(a data-extension pack declaring `sanitizeForLog` a sanitiser for
+`js/log-injection` and `js/tainted-format-string`). Worth doing if this recurs;
+not worth it for one helper.
+
+A second correction: the first pass fixed only three files, scoped from the
+`tainted-format-string` list. `js/log-injection` spans six — `hoot-escalation`,
+`screenshots/finalize` and `alerts/trigger` were missed and are now covered.
 
 ---
 
@@ -123,13 +147,35 @@ credential is written to output by either.
 > Dismissal note: credential is placed in an Authorization header, not logged.
 > Verified by reading both scripts' console output paths.
 
+### `js/file-access-to-http` (7) — dismiss
+
+`cli/src/commands/installer.ts:210` reads the operator-named installer with
+`readFileSync(file)` and uploads it; that is precisely what
+`owlette installer upload <file>` exists to do. `cli/src/commands/trigger.ts`
+reads `--payload-file <path>` and POSTs it — again the documented purpose of
+the flag. The remaining five are in `scripts/provision-r2.mjs` and
+`e2e-machine/`, provisioning tooling that reads local config and calls the
+operator's own Cloudflare/owlette account.
+
+In every case the operator names the file on their own command line and the
+destination is their own configured API. The "taint" is the user's intent.
+
+> Dismissal note: file path is an explicit operator argument and the HTTP
+> destination is the operator's own configured API. This is the command's
+> documented function, not an exfiltration path.
+
 ## Still to assess
 
-- `js/file-access-to-http` (7, medium) — `scripts/provision-r2.mjs`,
-  `e2e-machine/*`, `cli/src/commands/{trigger,installer}.ts`. The two CLI ones
-  are the only shipped code; worth a look before dismissing.
-- `zizmor/ref-version-mismatch` (14, warning) — Actions pinning hygiene, from
+- `zizmor/ref-version-mismatch` (16, warning) — Actions pinning hygiene, from
   the zizmor workflow rather than CodeQL proper.
+
+## Note on the moving baseline
+
+The open count went 113 -> 118 while this work was in progress, and none of that
+was regression from these fixes: the 3.2.0 release (PR #98) landed in between
+and brought `js/insufficient-password-hash` +1, `js/file-system-race` +1,
+`js/identity-replacement` +1 and `zizmor` +2. Re-read `created_at` before
+attributing any count change to a specific commit.
 
 ## After the backlog is clear
 

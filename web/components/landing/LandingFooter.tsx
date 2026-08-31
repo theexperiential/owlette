@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { OwletteEyeIcon } from './OwletteEye';
 import { TridantSystem } from '../TridantSystem';
+import { LICENSE_URL } from '@/lib/repoLinks';
 
 const RANDOM_EMOJIS = [
 "❤️", "💙", "💚", "💛", "💜", "🧡",
@@ -60,7 +61,7 @@ export function LandingFooter() {
                 in california
               </span>
               <Dot />
-              <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
+              <a href={LICENSE_URL} target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
                 FSL-1.1-Apache-2.0
               </a>
             </div>

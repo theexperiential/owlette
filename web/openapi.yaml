@@ -3324,6 +3324,13 @@ paths:
                 siteId: { type: string }
                 name: { type: string, maxLength: 200 }
                 timezone: { type: string, nullable: true }
+                schedulesFollowSiteTime:
+                  type: boolean
+                  description: |
+                    Evaluate process schedules in the site's timezone instead of
+                    each machine's own clock. Omit the field to leave the site
+                    undecided — omission is not the same as `false`, which
+                    records an explicit decision to keep machine clocks.
       responses:
         '201':
           description: Site created.
@@ -3331,13 +3338,18 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [siteId, name, timezone, owner, createdAt]
+                required: [siteId, name, timezone, owner, createdAt, schedulesFollowSiteTime]
                 properties:
                   siteId: { type: string }
                   name: { type: string }
                   timezone: { type: string }
                   owner: { type: string }
                   createdAt: { type: integer, format: int64 }
+                  schedulesFollowSiteTime:
+                    type: boolean
+                    description: |
+                      Effective value. `false` when the request omitted the
+                      field, in which case no decision was stored.
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
@@ -3391,6 +3403,14 @@ paths:
                 name: { type: string, maxLength: 200 }
                 timezone: { type: string }
                 timeFormat: { type: string, enum: [12h, 24h] }
+                schedulesFollowSiteTime:
+                  type: boolean
+                  description: |
+                    Evaluate process schedules in the site's timezone instead of
+                    each machine's own clock. `true` is rejected with 400 unless
+                    the site ends the request with a non-empty `timezone` — send
+                    both fields in one request to set the timezone and enable
+                    site time together. `false` is always accepted.
       responses:
         '200':
           description: Site updated, or no mutable fields were supplied.
@@ -3404,7 +3424,13 @@ paths:
                   changed: { type: boolean }
                   updated:
                     type: object
-                    additionalProperties: { type: string }
+                    description: |
+                      The fields written, echoed back. Values are strings except
+                      `schedulesFollowSiteTime`, which is a boolean.
+                    additionalProperties:
+                      oneOf:
+                        - { type: string }
+                        - { type: boolean }
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
@@ -9547,6 +9573,12 @@ components:
           type: string
           format: date-time
           nullable: true
+        schedulesFollowSiteTime:
+          type: boolean
+          description: |
+            True when process schedules are evaluated in the site's `timezone`
+            rather than each machine's own clock. Effective value: a site that
+            has never been asked reports `false`, the same as one that declined.
     SiteDetail:
       description: Site detail currently shares the live `SiteSummary` shape.
       allOf:

@@ -18,10 +18,10 @@ number: 2
 slug: install-and-pair
 title: install owlette & pair your first machine
 est_duration: "6:00"
-capture: native            # web | native | mixed
-scenario: null             # seedScreenshotFixtures scenario id, or null for native
-voice: null                # optional ElevenLabs voice_id override (else use .env)
-model: null                # optional model_id override (else use .env)
+capture: native
+scenario: null
+model: eleven_v3
+voice: null
 ---
 
 # episode 2 — install owlette & pair your first machine
@@ -43,13 +43,19 @@ owlette installs as a service so it can keep your apps alive across reboots.
 
 ---
 
-## The two front-matter rules that matter
+## The front-matter rules that matter
 
+- **No inline `#` comments on front-matter lines** — the parser takes everything
+  after the `:` as the value, so a trailing comment corrupts it (worst on `model:`
+  / `voice:`, which generate.py consumes).
 - `capture` tells you which harness produces the footage: `web` (Playwright),
   `native` (pywinauto/OBS), or `mixed` (some beats each — note the surface per beat
   in the `**SCREEN:**` line).
 - `scenario` is the `seedScreenshotFixtures(...)` scenario id the web harness seeds
   before capturing (e.g. `dashboard-mixed-states`). `null` for native episodes.
+- `model: eleven_v3` is pinned in every series script — the production model
+  (see `voiceover/README.md` "Production settings"). `voice` stays `null`; the
+  production voice id lives only in `voiceover/.env` (public repo — never commit it).
 
 ---
 

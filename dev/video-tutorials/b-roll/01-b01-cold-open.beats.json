@@ -1,0 +1,31 @@
+{
+  "scene": "01-b01-cold-open",
+  "source": "generated b-roll (kling, 1080p, no watermark) \u2014 NOT a harness capture; sidecar hand-authored",
+  "totalSec": 15.04,
+  "shots": [
+    {
+      "name": "exhibit",
+      "startSec": 0.0,
+      "endSec": 5.29
+    },
+    {
+      "name": "lobby",
+      "startSec": 5.29,
+      "endSec": 10.83
+    },
+    {
+      "name": "control room",
+      "startSec": 10.83,
+      "endSec": 15.04
+    }
+  ],
+  "beats": [
+    {
+      "beat": "b01",
+      "startSec": 0.0,
+      "mp3Sec": 14.106,
+      "enforcedWaitSec": 0,
+      "videoSec": 15.04
+    }
+  ]
+}

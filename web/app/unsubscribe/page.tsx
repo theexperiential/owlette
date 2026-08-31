@@ -3,53 +3,44 @@
 import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
 import Link from 'next/link';
+import { AuthShell, authFooterLinkClass } from '@/components/auth/AuthShell';
 
 function UnsubscribeContent() {
   const searchParams = useSearchParams();
   const success = searchParams.get('success') === 'true';
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center p-4">
-      {/* Grid background */}
-      <div className="absolute inset-0 dot-grid opacity-30" />
-      <div className="absolute inset-0 blueprint-grid opacity-15" />
-      <div className="relative z-10 w-full max-w-md rounded-lg border border-border bg-card p-8 text-center">
-        {success ? (
-          <>
-            <h1 className="mb-4 text-2xl font-bold text-foreground">unsubscribed</h1>
-            <p className="mb-6 text-muted-foreground">
-              all alert emails, including offline notifications, have been turned off.
-              you can re-enable specific alert categories anytime in account settings.
-            </p>
-          </>
-        ) : (
-          <>
-            <h1 className="mb-4 text-2xl font-bold text-foreground">unsubscribe</h1>
-            <p className="mb-6 text-muted-foreground">
-              something went wrong. please try again or update your preferences in account settings.
-            </p>
-          </>
-        )}
-        <Link
-          href="/dashboard"
-          className="text-accent-cyan hover:text-accent-cyan-hover text-sm"
-        >
+    /* brandTitleAs="h1" because public/static.spec.ts queries both states by
+       heading role, and the "unsubscribe" name is anchored — so this must be a
+       real heading and must be the only one with that accessible name. */
+    <AuthShell
+      brandTitle={success ? 'unsubscribed' : 'unsubscribe'}
+      brandTitleAs="h1"
+      /* Deliberately not "something went wrong" — static.spec.ts matches that
+         phrase with no .first(), so it may appear exactly once, in the body. */
+      brandDescription={
+        success ? 'alert emails are off' : "we couldn't update your preferences"
+      }
+      footer={
+        <Link href="/dashboard" className={authFooterLinkClass}>
           go to dashboard
         </Link>
-      </div>
-    </div>
+      }
+    >
+      <p className="text-center text-muted-foreground">
+        {success
+          ? 'all alert emails, including offline notifications, have been turned off. you can re-enable specific alert categories anytime in account settings.'
+          : 'something went wrong. please try again or update your preferences in account settings.'}
+      </p>
+    </AuthShell>
   );
 }
 
 export default function UnsubscribePage() {
   return (
-    <Suspense fallback={
-      <div className="relative flex min-h-screen items-center justify-center">
-        <div className="absolute inset-0 dot-grid opacity-30" />
-        <div className="absolute inset-0 blueprint-grid opacity-15" />
-        <p className="relative z-10 text-muted-foreground">loading...</p>
-      </div>
-    }>
+    /* useSearchParams forces this boundary; the fallback is the same shell so
+       the card does not change shape when it resolves. */
+    <Suspense fallback={<AuthShell brandTitle="unsubscribe" loading />}>
       <UnsubscribeContent />
     </Suspense>
   );

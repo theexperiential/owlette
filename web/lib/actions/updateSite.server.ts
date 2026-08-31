@@ -1,9 +1,16 @@
 /**
  * Server-side replacement for the client `updateDoc` in
  * `useFirestore.ts:updateSite`. Whitelisted fields only (`name`, `timezone`,
- * `timeFormat`); an empty payload yields `kind: 'no_changes'` so the route can
- * 200 without writing. Validation matches the legacy hook: non-empty name and
- * the `timeFormat` union, timezone passed through as given.
+ * `timeFormat`, `schedulesFollowSiteTime`); an empty payload yields
+ * `kind: 'no_changes'` so the route can 200 without writing. Validation matches
+ * the legacy hook: non-empty name and the `timeFormat` union, timezone passed
+ * through as given.
+ *
+ * `schedulesFollowSiteTime: true` is refused unless the site ends the write with
+ * a non-empty timezone — turning it on without one would hand every agent at the
+ * site a null timezone and silently leave schedules on machine-local clocks
+ * while the dashboard claimed otherwise. `false` is always accepted: it is the
+ * escape hatch, and a site that declines does not need a timezone at all.
  *
  * Capability: site-scoped `SITE_MEMBER_MANAGE`.
  */
@@ -20,6 +27,12 @@ export interface UpdateSiteInput {
   name?: string;
   timezone?: string;
   timeFormat?: '12h' | '24h';
+  /**
+   * Opt process schedules into site time (`true`) or back onto each machine's
+   * own clock (`false`). Omitting it leaves the stored state alone — including
+   * the "never asked" state, which is the absence of the field.
+   */
+  schedulesFollowSiteTime?: boolean;
   /** Inject a Firestore instance; tests pass a mock, production omits. */
   db?: Firestore;
 }
@@ -35,8 +48,9 @@ export type UpdateSiteResult =
   | { kind: 'invalid_name'; reason: string }
   | { kind: 'invalid_timezone'; reason: string }
   | { kind: 'invalid_time_format'; reason: string }
+  | { kind: 'invalid_schedule_tz_flag'; reason: string }
   | { kind: 'no_changes' }
-  | { kind: 'updated'; updated: Record<string, string> };
+  | { kind: 'updated'; updated: Record<string, string | boolean> };
 
 export async function updateSite(
   ctx: UpdateSiteContext,
@@ -44,7 +58,7 @@ export async function updateSite(
 ): Promise<UpdateSiteResult> {
   if (!input.siteId) throw new Error('siteId is required');
 
-  const updates: Record<string, string> = {};
+  const updates: Record<string, string | boolean> = {};
 
   if (input.name !== undefined) {
     if (typeof input.name !== 'string') {
@@ -80,6 +94,16 @@ export async function updateSite(
     updates.timeFormat = input.timeFormat;
   }
 
+  if (input.schedulesFollowSiteTime !== undefined) {
+    if (typeof input.schedulesFollowSiteTime !== 'boolean') {
+      return {
+        kind: 'invalid_schedule_tz_flag',
+        reason: 'schedulesFollowSiteTime must be a boolean',
+      };
+    }
+    updates.schedulesFollowSiteTime = input.schedulesFollowSiteTime;
+  }
+
   if (Object.keys(updates).length === 0) {
     return { kind: 'no_changes' };
   }
@@ -89,6 +113,26 @@ export async function updateSite(
   const existing = await siteRef.get();
   if (!existing.exists) {
     return { kind: 'not_found' };
+  }
+
+  // Evaluate the timezone the document would have AFTER this write, so a single
+  // PATCH may set the timezone and flip the flag on together. Only `true` is
+  // gated — turning site time off never needs a timezone.
+  if (updates.schedulesFollowSiteTime === true) {
+    const storedTimezone = existing.data()?.timezone;
+    const resultingTimezone =
+      typeof updates.timezone === 'string'
+        ? updates.timezone
+        : typeof storedTimezone === 'string'
+          ? storedTimezone
+          : '';
+    if (resultingTimezone.trim().length === 0) {
+      return {
+        kind: 'invalid_schedule_tz_flag',
+        reason:
+          'schedulesFollowSiteTime cannot be enabled until the site has a timezone',
+      };
+    }
   }
 
   await siteRef.update(updates);

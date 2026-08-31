@@ -1,11 +1,17 @@
 /** @jest-environment node */
 
 /**
- * GET /api/agent/site — the only path from a paired agent to its site's label
+ * GET /api/agent/site — the only path from a paired agent to its site metadata
  * (rules scope the agent to its machine subtree). Two asserted properties: the
  * site comes from the token's `site_id` claim, never the request; and the
- * response projects the name ONLY — leaking the site's `timezone` would flip
- * schedule evaluation fleet-wide.
+ * response projects `name` plus a timezone that is spoken ONLY for a site whose
+ * `schedulesFollowSiteTime` is explicitly `true` — handing a timezone to an
+ * agent flips schedule evaluation from machine-local to site time for every
+ * process on every machine at that site.
+ *
+ * The flag-off cases below are the negative controls for that gate. They stand
+ * in for the whole installed base: until a site opts in, this endpoint must
+ * behave exactly as it did before site time existed.
  */
 
 import { createMockRequest } from '../helpers/utils';
@@ -52,35 +58,102 @@ describe('GET /api/agent/site', () => {
     });
     mockSiteGet.mockResolvedValueOnce({
       exists: true,
-      data: () => ({ name: 'TEC', timezone: 'America/Los_Angeles' }),
+      data: () => ({
+        name: 'TEC',
+        timezone: 'America/Los_Angeles',
+        schedulesFollowSiteTime: true,
+      }),
     });
 
     const res = await GET(request({ Authorization: 'Bearer agent-token' }));
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ name: 'TEC' });
+    expect(body).toEqual({ name: 'TEC', timezone: 'America/Los_Angeles' });
     // The site is the token's, not the caller's to choose.
     expect(mockCollection).toHaveBeenCalledWith('sites');
     expect(mockDoc).toHaveBeenCalledWith('site-a');
   });
 
-  it('never returns the timezone — activating site-timezone scheduling is a deferred decision', async () => {
-    mockVerifyIdToken.mockResolvedValueOnce({ role: 'agent', site_id: 'site-a' });
-    mockSiteGet.mockResolvedValueOnce({
-      exists: true,
-      data: () => ({
-        name: 'TEC',
-        timezone: 'America/Los_Angeles',
-        owner: 'user-1',
-        billingState: 'active',
-      }),
+  describe('the timezone gate', () => {
+    /** Seed one site document and read the projected body back. */
+    async function bodyForSite(site: Record<string, unknown>) {
+      mockVerifyIdToken.mockResolvedValueOnce({ role: 'agent', site_id: 'site-a' });
+      mockSiteGet.mockResolvedValueOnce({ exists: true, data: () => site });
+      const res = await GET(request({ Authorization: 'Bearer agent-token' }));
+      expect(res.status).toBe(200);
+      return res.json();
+    }
+
+    // NEGATIVE CONTROL — every site that predates the opt-in. No flag on the
+    // document means schedules stay on machine clocks, so the agent must not
+    // learn the timezone even though the site has one.
+    it('withholds the timezone from a site that was never asked (flag absent)', async () => {
+      expect(
+        await bodyForSite({
+          name: 'TEC',
+          timezone: 'America/Los_Angeles',
+          owner: 'user-1',
+          billingState: 'active',
+        }),
+      ).toEqual({ name: 'TEC', timezone: null });
     });
 
-    const res = await GET(request({ Authorization: 'Bearer agent-token' }));
-    const body = await res.json();
+    // NEGATIVE CONTROL — the touring escape hatch. An explicit decline is as
+    // binding as never having been asked.
+    it('withholds the timezone from a site that declined site time (flag false)', async () => {
+      expect(
+        await bodyForSite({
+          name: 'TEC',
+          timezone: 'America/Los_Angeles',
+          schedulesFollowSiteTime: false,
+        }),
+      ).toEqual({ name: 'TEC', timezone: null });
+    });
 
-    expect(Object.keys(body)).toEqual(['name']);
+    it('returns the timezone once the site opted in (flag true)', async () => {
+      expect(
+        await bodyForSite({
+          name: 'TEC',
+          timezone: 'America/Los_Angeles',
+          schedulesFollowSiteTime: true,
+        }),
+      ).toEqual({ name: 'TEC', timezone: 'America/Los_Angeles' });
+    });
+
+    it('returns timezone: null when the site opted in but has no timezone', async () => {
+      expect(
+        await bodyForSite({ name: 'TEC', schedulesFollowSiteTime: true }),
+      ).toEqual({ name: 'TEC', timezone: null });
+    });
+
+    it('treats a blank timezone as no timezone rather than shipping an empty string', async () => {
+      expect(
+        await bodyForSite({ name: 'TEC', timezone: '   ', schedulesFollowSiteTime: true }),
+      ).toEqual({ name: 'TEC', timezone: null });
+    });
+
+    it('trims surrounding whitespace off the opted-in timezone', async () => {
+      expect(
+        await bodyForSite({
+          name: 'TEC',
+          timezone: '  America/Los_Angeles  ',
+          schedulesFollowSiteTime: true,
+        }),
+      ).toEqual({ name: 'TEC', timezone: 'America/Los_Angeles' });
+    });
+
+    // Only the boolean `true` opens the gate: a truthy string from a hand-edited
+    // document must not be mistaken for consent.
+    it('ignores a truthy non-boolean flag value', async () => {
+      expect(
+        await bodyForSite({
+          name: 'TEC',
+          timezone: 'America/Los_Angeles',
+          schedulesFollowSiteTime: 'true',
+        }),
+      ).toEqual({ name: 'TEC', timezone: null });
+    });
   });
 
   it('ignores a siteId supplied in the query string', async () => {
@@ -105,7 +178,7 @@ describe('GET /api/agent/site', () => {
     const res = await GET(request({ Authorization: 'Bearer agent-token' }));
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ name: null });
+    expect(await res.json()).toEqual({ name: null, timezone: null });
   });
 
   it('trims surrounding whitespace off the stored name', async () => {
@@ -114,7 +187,7 @@ describe('GET /api/agent/site', () => {
 
     const res = await GET(request({ Authorization: 'Bearer agent-token' }));
 
-    expect(await res.json()).toEqual({ name: 'TEC' });
+    expect(await res.json()).toEqual({ name: 'TEC', timezone: null });
   });
 
   it('returns 401 when the Authorization header is missing', async () => {

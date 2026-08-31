@@ -1,0 +1,164 @@
+{
+  "episode": 13,
+  "slug": "talons",
+  "stem": "13-talons",
+  "title": "talons: rules that watch and act",
+  "capture": "web",
+  "scenario": "automate-talons-list",
+  "script": "scripts/13-talons.md",
+  "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
+  "narration_s": 203.154,
+  "timeline": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 60.0
+  },
+  "sources": [
+    {
+      "role": "scene",
+      "note": "",
+      "rel": "dev/video-tutorials/footage/web/13-talons.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\13-talons.mp4",
+      "exists": true,
+      "duration_s": 267.933,
+      "width": 1920,
+      "height": 1080,
+      "fps": 60.0
+    }
+  ],
+  "beats": [
+    {
+      "id": "b01",
+      "title": "a wall goes black at 3am",
+      "screen_note": "`/talons` on site-A, the seeded list of seven talons. Slow scroll top to bottom: \"doors open — lobby wall is live\", \"gpu pinned on the render node\", \"nightly restart — media servers\", \"projector dropped offline\", \"touchdesigner crash recovery\", \"update guard — sundays\", \"weekly health report\".",
+      "direction": {
+        "SCREEN": "`/talons` on site-A, the seeded list of seven talons. Slow scroll top to bottom: \"doors open — lobby wall is live\", \"gpu pinned on the render node\", \"nightly restart — media servers\", \"projector dropped offline\", \"touchdesigner crash recovery\", \"update guard — sundays\", \"weekly health report\".",
+        "NOTE": "capture precondition — any beat that fires a hoot action against a real machine needs the agent's one-time hoot CLI fetch already warm (`%ProgramData%\\Owlette\\cache\\claude-cli\\claude.exe`, ~240 MB, downloaded on first use). Run one hoot action on the capture machine the day before, or the take stalls on the download."
+      },
+      "start_s": 0.0,
+      "start_frame": 0,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\13-talons\\ep13-b01.mp3",
+      "mp3_name": "ep13-b01.mp3",
+      "duration_s": 18.991,
+      "duration_frames": 1139,
+      "status": "ok"
+    },
+    {
+      "id": "b02",
+      "title": "trigger, condition, outputs",
+      "screen_note": "click \"create talon\" → the \"new talon\" dialog. Hold on the three cards left to right with the connector wires between them: TRIGGER | CONDITION | OUTPUTS. Open the trigger dropdown so all three options show — \"on a schedule\", \"when a metric crosses\", \"when an event happens\" — then close it.",
+      "direction": {
+        "SCREEN": "click \"create talon\" → the \"new talon\" dialog. Hold on the three cards left to right with the connector wires between them: TRIGGER | CONDITION | OUTPUTS. Open the trigger dropdown so all three options show — \"on a schedule\", \"when a metric crosses\", \"when an event happens\" — then close it."
+      },
+      "start_s": 18.991,
+      "start_frame": 1139,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\13-talons\\ep13-b02.mp3",
+      "mp3_name": "ep13-b02.mp3",
+      "duration_s": 33.306,
+      "duration_frames": 1998,
+      "status": "ok"
+    },
+    {
+      "id": "b03",
+      "title": "build one live",
+      "screen_note": "trigger → \"when an event happens\", tick `process_crash` in the event list. Condition stays on \"always run outputs\", machines stays \"all machines\". Outputs row 1: type \"command\" → \"restart process\" → pick TouchDesigner. \"add output\" → row 2 type \"email\". Type the name \"touchdesigner crash recovery\" → \"create talon\" → the row appears in the list.",
+      "direction": {
+        "SCREEN": "trigger → \"when an event happens\", tick `process_crash` in the event list. Condition stays on \"always run outputs\", machines stays \"all machines\". Outputs row 1: type \"command\" → \"restart process\" → pick TouchDesigner. \"add output\" → row 2 type \"email\". Type the name \"touchdesigner crash recovery\" → \"create talon\" → the row appears in the list.",
+        "NOTE": "the `command` output type only appears in the picker for a site admin — capture signed in as the admin fixture user."
+      },
+      "start_s": 52.297,
+      "start_frame": 3138,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\13-talons\\ep13-b03.mp3",
+      "mp3_name": "ep13-b03.mp3",
+      "duration_s": 23.066,
+      "duration_frames": 1384,
+      "status": "ok"
+    },
+    {
+      "id": "b04",
+      "title": "start from a preset",
+      "screen_note": "reopen \"create talon\"; open the \"start from a template…\" picker in the dialog header. Show the group labels — \"ready to use\" / \"needs a detail\" — then choose \"morning wall check\" and let every field populate.",
+      "direction": {
+        "SCREEN": "reopen \"create talon\"; open the \"start from a template…\" picker in the dialog header. Show the group labels — \"ready to use\" / \"needs a detail\" — then choose \"morning wall check\" and let every field populate.",
+        "NOTE": "the grouping is per-viewer: with an ai key saved in settings → hoot all six built-ins sit under \"ready to use\"; with no key the five ai-backed ones drop to \"needs a detail\" with the hint \"needs an ai api key — add one in settings → hoot\". Capture whichever state you want on screen by seeding (or clearing) the fixture user's llm key first."
+      },
+      "start_s": 75.363,
+      "start_frame": 4522,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\13-talons\\ep13-b04.mp3",
+      "mp3_name": "ep13-b04.mp3",
+      "duration_s": 24.764,
+      "duration_frames": 1486,
+      "status": "ok"
+    },
+    {
+      "id": "b05",
+      "title": "the visual check",
+      "screen_note": "in the condition card, switch to \"visual check\". Show the \"what should be on screen\" box with the wall expectation text, the monitor field (\"0 = all monitors, 1 = primary\"), and the hint beneath: \"hoot grabs a fresh screenshot and checks it against this… the outputs fire when the check FAILS.\" Cut to a run row on the list showing `verdict: fail — <reason>`.",
+      "direction": {
+        "SCREEN": "in the condition card, switch to \"visual check\". Show the \"what should be on screen\" box with the wall expectation text, the monitor field (\"0 = all monitors, 1 = primary\"), and the hint beneath: \"hoot grabs a fresh screenshot and checks it against this… the outputs fire when the check FAILS.\" Cut to a run row on the list showing `verdict: fail — <reason>`."
+      },
+      "start_s": 100.127,
+      "start_frame": 6008,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\13-talons\\ep13-b05.mp3",
+      "mp3_name": "ep13-b05.mp3",
+      "duration_s": 27.559,
+      "duration_frames": 1654,
+      "status": "ok"
+    },
+    {
+      "id": "b06",
+      "title": "let hoot act",
+      "screen_note": "change an output's type to \"hoot\"; show the directive box, then the \"let hoot act\" switch and the copy under it. Toggle it on, hold two beats, toggle it back off.",
+      "direction": {
+        "SCREEN": "change an output's type to \"hoot\"; show the directive box, then the \"let hoot act\" switch and the copy under it. Toggle it on, hold two beats, toggle it back off."
+      },
+      "start_s": 127.687,
+      "start_frame": 7661,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\13-talons\\ep13-b06.mp3",
+      "mp3_name": "ep13-b06.mp3",
+      "duration_s": 26.514,
+      "duration_frames": 1591,
+      "status": "ok"
+    },
+    {
+      "id": "b07",
+      "title": "run history, cooldown, auto-disable",
+      "screen_note": "expand a talon row's chevron → the \"recent runs\" block. Show the run rows: status glyph, trigger summary + machine, the `2/2 sent` count, duration, \"12m ago\", and a \"view hoot chat\" link on the row that started one. Hover the \"run now\" (↺) and pause buttons in the row's action cluster.",
+      "direction": {
+        "SCREEN": "expand a talon row's chevron → the \"recent runs\" block. Show the run rows: status glyph, trigger summary + machine, the `2/2 sent` count, duration, \"12m ago\", and a \"view hoot chat\" link on the row that started one. Hover the \"run now\" (↺) and pause buttons in the row's action cluster.",
+        "NOTE": "`automate-talons-list` seeds talon docs only, NOT `sites/{siteId}/talon_runs` — expanding a row in that scenario shows the \"no runs yet\" empty state. Either extend the fixture with run docs before recording, or capture this beat against a live dev site with real history."
+      },
+      "start_s": 154.201,
+      "start_frame": 9252,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\13-talons\\ep13-b07.mp3",
+      "mp3_name": "ep13-b07.mp3",
+      "duration_s": 22.596,
+      "duration_frames": 1356,
+      "status": "ok"
+    },
+    {
+      "id": "b08",
+      "title": "the one to turn on first",
+      "screen_note": "open \"create talon\" → template picker → \"update guard\"; the fields fill in with the sunday 07:00 schedule and a single hoot output, and the \"let hoot act\" switch is OFF. Toggle it on, then cut back to the \"update guard — sundays\" row in the list and pull out to the whole list of seven.",
+      "direction": {
+        "SCREEN": "open \"create talon\" → template picker → \"update guard\"; the fields fill in with the sunday 07:00 schedule and a single hoot output, and the \"let hoot act\" switch is OFF. Toggle it on, then cut back to the \"update guard — sundays\" row in the list and pull out to the whole list of seven.",
+        "NOTE": "show the switch state from the PRESET (off), not from the seeded `talon-update-guard` fixture row — that fixture instance is written with `allowActions: true` and would contradict the line about it arriving without permission to act."
+      },
+      "start_s": 176.797,
+      "start_frame": 10608,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\13-talons\\ep13-b08.mp3",
+      "mp3_name": "ep13-b08.mp3",
+      "duration_s": 26.358,
+      "duration_frames": 1581,
+      "status": "ok"
+    }
+  ]
+}

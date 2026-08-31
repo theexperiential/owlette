@@ -146,8 +146,13 @@ pub fn status(status_file: &Path) -> Result<ServiceStatus, String> {
   })
 }
 
-/// Start the service, elevating only if this process lacks the right.
-pub fn start() -> Result<ServiceCommandOutcome, String> {
+/// Start the service. When this process lacks the right, `allow_elevation`
+/// decides between one UAC prompt and a plain error: only a deliberate click
+/// may put a consent dialog on screen. An automatic caller (the launch-time
+/// auto-start) passes `false` — during a self-update, every machine's tray app
+/// sees the service stop and would otherwise raise an unattended
+/// "Windows Command Processor" prompt over whatever is running.
+pub fn start(allow_elevation: bool) -> Result<ServiceCommandOutcome, String> {
   let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
     .map_err(|error| format!("could not connect to the service manager: {error}"))?;
 
@@ -192,14 +197,29 @@ pub fn start() -> Result<ServiceCommandOutcome, String> {
         })
       }
       Err(error) if error_code(&error) == Some(ERROR_ACCESS_DENIED) => {
-        elevated(w!("/c net start OwletteService"), state_name(state))
+        start_denied(allow_elevation, state)
       }
       Err(error) => Err(format!("could not start {SERVICE_NAME}: {error}")),
     },
     Err(error) if error_code(&error) == Some(ERROR_ACCESS_DENIED) => {
-      elevated(w!("/c net start OwletteService"), state_name(state))
+      start_denied(allow_elevation, state)
     }
     Err(error) => Err(open_error(&error)),
+  }
+}
+
+/// The unelevated start was refused: elevate when the caller may, error when
+/// it may not.
+fn start_denied(
+  allow_elevation: bool,
+  state: ServiceState,
+) -> Result<ServiceCommandOutcome, String> {
+  if allow_elevation {
+    elevated(w!("/c net start OwletteService"), state_name(state))
+  } else {
+    Err(format!(
+      "starting {SERVICE_NAME} needs administrator rights — use the start button to authorize it"
+    ))
   }
 }
 

@@ -3,9 +3,8 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
+import { AuthShell, authFooterLinkClass } from '@/components/auth/AuthShell';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -15,7 +14,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Loader2, KeyRound, CheckCircle2, AlertTriangle } from 'lucide-react';
+import Link from 'next/link';
+import { Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
   DEFAULT_TTL_DAYS,
@@ -80,134 +80,128 @@ function CliAuthorizeInner() {
   }
 
   if (authLoading || !user) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <AuthShell brandTitle="authorise cli" brandTitleAs="h1" loading />;
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <PageHeader currentPage="api keys" />
-      <main className="max-w-xl mx-auto px-6 py-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-foreground flex items-center gap-2">
-            <KeyRound className="h-5 w-5" /> authorise cli
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            issue a scoped api key to the cli that requested this pairing phrase.
+    /* Same shell as /add, its sibling device-code flow. The PageHeader this page
+       used to render was its only way out, so the footer band carries a link to
+       the api keys page in its place. */
+    <AuthShell
+      brandTitle="authorise cli"
+      brandTitleAs="h1"
+      brandDescription="issue a scoped api key to the cli that requested this pairing phrase"
+      footer={
+        <>
+          logged in as <span className="break-all">{user.email}</span>
+          <span className="block pt-1">
+            <Link href="/settings/api-keys" className={authFooterLinkClass}>
+              manage api keys
+            </Link>
+          </span>
+        </>
+      }
+    >
+      {done ? (
+        <div className="space-y-3 rounded-lg border border-green-500/50 bg-green-500/5 p-6 text-center">
+          <CheckCircle2 className="mx-auto h-8 w-8 text-green-400" />
+          <p className="text-sm text-foreground">cli authorised</p>
+          <p className="text-xs text-muted-foreground">
+            return to your terminal — the cli is polling and will pick up the key
+            within a few seconds.
           </p>
         </div>
+      ) : (
+        <div className="space-y-4">
+          {/* items-start so the icon stays on the first line once the
+              URL-supplied phrase wraps; min-w-0 + break-all so it wraps at all
+              instead of setting the column's floor. */}
+          <div className="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-300">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+            <span className="min-w-0">
+              pairing phrase:{' '}
+              <code className="font-mono break-all">{code || '(missing)'}</code> — verify this
+              matches what your cli printed.
+            </span>
+          </div>
 
-        {done ? (
-          <Card className="border-green-500/50 bg-green-500/5 p-6 text-center space-y-3">
-            <CheckCircle2 className="h-8 w-8 text-green-400 mx-auto" />
-            <p className="text-sm text-foreground">cli authorised</p>
+          <div className="space-y-2">
+            <Label htmlFor="cliKeyName" className="text-foreground">
+              key name
+            </Label>
+            <Input
+              id="cliKeyName"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. laptop-dev, ci-runner"
+              className="bg-background border-border text-foreground"
+              disabled={submitting}
+            />
+          </div>
+
+          {/* environment selector removed — every key is minted live; the
+              server ignores an incoming `environment`. */}
+          <div className="space-y-2">
+            <Label htmlFor="cliTtlDays" className="text-foreground">
+              ttl (days)
+            </Label>
+            <Input
+              id="cliTtlDays"
+              type="number"
+              min={1}
+              max={MAX_TTL_DAYS}
+              value={ttlDays}
+              onChange={(e) => setTtlDays(Number(e.target.value) || DEFAULT_TTL_DAYS)}
+              className="bg-background border-border text-foreground"
+              disabled={submitting}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="cliScopePreset" className="text-foreground">scope preset</Label>
+            <Select
+              value={preset}
+              onValueChange={(v) => setPreset(v as ApiKeyScopePreset)}
+              disabled={submitting}
+            >
+              <SelectTrigger id="cliScopePreset" className="w-full bg-background border-border text-foreground">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PRESETS.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <p className="text-xs text-muted-foreground">
-              return to your terminal — the cli is polling and will pick up the key
-              within a few seconds.
+              use the settings → api keys page for fine-grained scope customisation.
             </p>
-          </Card>
-        ) : (
-          <Card className="border-border bg-card/50 p-6 space-y-4">
-            <div className="flex items-center gap-2 rounded border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-300">
-              <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-              <span>
-                pairing phrase:{' '}
-                <code className="font-mono">{code || '(missing)'}</code> — verify this
-                matches what your cli printed.
-              </span>
-            </div>
+          </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="cliKeyName" className="text-foreground">
-                key name
-              </Label>
-              <Input
-                id="cliKeyName"
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. laptop-dev, ci-runner"
-                className="bg-background border-border text-foreground"
-                disabled={submitting}
-              />
-            </div>
-
-            {/* environment selector removed — every key is minted live; the
-                server ignores an incoming `environment`. */}
-            <div className="grid grid-cols-1 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="cliTtlDays" className="text-foreground">
-                  ttl (days)
-                </Label>
-                <Input
-                  id="cliTtlDays"
-                  type="number"
-                  min={1}
-                  max={MAX_TTL_DAYS}
-                  value={ttlDays}
-                  onChange={(e) => setTtlDays(Number(e.target.value) || DEFAULT_TTL_DAYS)}
-                  className="bg-background border-border text-foreground"
-                  disabled={submitting}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-foreground">scope preset</Label>
-              <Select
-                value={preset}
-                onValueChange={(v) => setPreset(v as ApiKeyScopePreset)}
-                disabled={submitting}
-              >
-                <SelectTrigger className="bg-background border-border text-foreground">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PRESETS.map((p) => (
-                    <SelectItem key={p} value={p}>
-                      {p}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                use the settings → api keys page for fine-grained scope customisation.
-              </p>
-            </div>
-
-            <div className="flex justify-end">
-              <Button
-                type="button"
-                onClick={handleAuthorize}
-                disabled={submitting || !code || !name.trim()}
-                className="text-gray-900 cursor-pointer"
-              >
-                {submitting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  'authorise'
-                )}
-              </Button>
-            </div>
-          </Card>
-        )}
-      </main>
-    </div>
+          <Button
+            type="button"
+            onClick={handleAuthorize}
+            disabled={submitting || !code || !name.trim()}
+            className="w-full text-background cursor-pointer"
+          >
+            {submitting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              'authorise'
+            )}
+          </Button>
+        </div>
+      )}
+    </AuthShell>
   );
 }
 
 export default function CliAuthorizePage() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-background flex items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      }
-    >
+    <Suspense fallback={<AuthShell brandTitle="authorise cli" loading />}>
       <CliAuthorizeInner />
     </Suspense>
   );

@@ -8,11 +8,10 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { AuthShell } from '@/components/auth/AuthShell';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, CheckCircle2, Monitor } from 'lucide-react';
 import { toast } from '@/lib/toast';
-import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 
 interface Site {
   id: string;
@@ -182,136 +181,116 @@ export default function AddMachinePage() {
     }
   };
 
+  // Before the !user guard on purpose: the footer band below reads user.email.
   if (authLoading || loading) {
-    return (
-      <div className="relative flex items-center justify-center min-h-screen">
-        <div className="absolute inset-0 dot-grid opacity-30" />
-        <div className="absolute inset-0 blueprint-grid opacity-15" />
-        <Loader2 className="relative z-10 h-8 w-8 animate-spin text-accent-cyan" />
-      </div>
-    );
+    return <AuthShell brandTitle="add machine" loading />;
   }
 
   if (!user) return null;
 
   if (isAuthorized) {
     return (
-      <div className="relative flex min-h-screen items-center justify-center p-4">
-        {/* Grid background */}
-        <div className="absolute inset-0 dot-grid opacity-30" />
-        <div className="absolute inset-0 blueprint-grid opacity-15" />
-        <Card className="relative z-10 w-full max-w-md border-border bg-card text-center">
-          <CardContent className="pt-10 pb-10 space-y-6">
-            <div className="mx-auto w-20 h-20 rounded-full bg-emerald-500/20 flex items-center justify-center">
-              <CheckCircle2 className="h-10 w-10 text-emerald-500" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-2xl font-bold text-foreground">machine authorized</h2>
-              <p className="text-muted-foreground">
-                {machineId
-                  ? `"${machineId}" will appear on your dashboard shortly.`
-                  : 'The machine will appear on your dashboard shortly.'}
-              </p>
-            </div>
-            <Button
-              onClick={() => router.push('/dashboard')}
-              className="text-gray-900 cursor-pointer"
-            >
-              go to dashboard
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      /* Same shell as the form state — this used to be a third, narrower card
+         geometry. brandTitleAs="h2" because two specs query it by heading role. */
+      <AuthShell
+        brandTitle="machine authorized"
+        brandTitleAs="h2"
+        brandDescription="pairing complete"
+      >
+        <div className="space-y-6 text-center">
+          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/20">
+            <CheckCircle2 className="h-10 w-10 text-emerald-500" />
+          </div>
+          <p className="text-muted-foreground">
+            {machineId ? (
+              <>
+                <span className="break-all text-foreground">{machineId}</span> will
+                appear on your dashboard shortly.
+              </>
+            ) : (
+              'the machine will appear on your dashboard shortly.'
+            )}
+          </p>
+          <Button
+            onClick={() => router.push('/dashboard')}
+            className="w-full text-background cursor-pointer"
+          >
+            go to dashboard
+          </Button>
+        </div>
+      </AuthShell>
     );
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center p-4">
-      {/* Grid background */}
-      <div className="absolute inset-0 dot-grid opacity-30" />
-      <div className="absolute inset-0 blueprint-grid opacity-15" />
-      <Card className="relative z-10 w-full max-w-lg border-border bg-card">
-        <CardHeader className="space-y-4 flex flex-col items-center">
-          <OwletteEyeIcon size={80} />
-          <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-foreground">add machine</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              enter the pairing phrase shown on your machine
-            </CardDescription>
-            {host && (
-              <p className="font-mono text-xs text-muted-foreground">authorizing on {host}</p>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Pairing Phrase Input */}
-          <div className="space-y-2">
-            <Label htmlFor="pair-phrase" className="text-foreground">pairing phrase</Label>
-            <Input
-              id="pair-phrase"
-              placeholder="e.g., silver-compass-drift"
-              value={pairPhrase}
-              onChange={(e) => setPairPhrase(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && selectedSiteId) handleAuthorize();
-              }}
-              className="bg-muted/50 border-border text-foreground placeholder:text-muted-foreground font-mono text-lg"
-              autoFocus
-              autoComplete="off"
-            />
-          </div>
+    <AuthShell
+      brandTitle="add machine"
+      brandDescription="enter the pairing phrase shown on your machine"
+      brandMeta={host ? `authorizing on ${host}` : undefined}
+      footer={<>logged in as <span className="break-all">{user.email}</span></>}
+    >
+      {/* Pairing Phrase Input */}
+      <div className="space-y-2">
+        <Label htmlFor="pair-phrase" className="text-foreground">pairing phrase</Label>
+        <Input
+          id="pair-phrase"
+          placeholder="e.g., silver-compass-drift"
+          value={pairPhrase}
+          onChange={(e) => setPairPhrase(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && selectedSiteId) handleAuthorize();
+          }}
+          className="bg-muted/50 border-border text-foreground placeholder:text-muted-foreground font-mono"
+          autoFocus
+          autoComplete="off"
+        />
+      </div>
 
-          {/* Site Selection */}
-          <div className="space-y-2">
-            <Label htmlFor="site-select" className="text-foreground">site</Label>
-            {sites.length > 0 ? (
-              <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
-                <SelectTrigger id="site-select" className="bg-muted/50 border-border text-foreground">
-                  <SelectValue placeholder="choose a site..." />
-                </SelectTrigger>
-                <SelectContent className="bg-muted border-border">
-                  {sites.map((site) => (
-                    <SelectItem key={site.id} value={site.id} className="text-foreground hover:bg-muted">
-                      {site.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                no sites available. create a site on the dashboard first.
-              </p>
-            )}
-          </div>
+      {/* Site Selection */}
+      <div className="space-y-2">
+        <Label htmlFor="site-select" className="text-foreground">site</Label>
+        {sites.length > 0 ? (
+          <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
+            <SelectTrigger id="site-select" className="w-full bg-muted/50 border-border text-foreground">
+              <SelectValue placeholder="choose a site..." />
+            </SelectTrigger>
+            <SelectContent className="bg-muted border-border">
+              {sites.map((site) => (
+                <SelectItem key={site.id} value={site.id} className="text-foreground hover:bg-muted">
+                  {site.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            no sites available. create a site on the dashboard first.
+          </p>
+        )}
+      </div>
 
-          {/* Authorize Button */}
-          {pairPhrase.trim() && selectedSiteId && (
-            <Button
-              onClick={handleAuthorize}
-              disabled={isAuthorizing}
-              className="w-full text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              size="lg"
-            >
-              {isAuthorizing ? (
-                <>
-                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                  authorizing...
-                </>
-              ) : (
-                <>
-                  <Monitor className="h-5 w-5 mr-2" />
-                  authorize machine
-                </>
-              )}
-            </Button>
+      {/* Authorize Button */}
+      {pairPhrase.trim() && selectedSiteId && (
+        <Button
+          onClick={handleAuthorize}
+          disabled={isAuthorizing}
+          className="w-full text-background cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          size="lg"
+        >
+          {isAuthorizing ? (
+            <>
+              <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+              authorizing...
+            </>
+          ) : (
+            <>
+              <Monitor className="h-5 w-5 mr-2" />
+              authorize machine
+            </>
           )}
+        </Button>
+      )}
 
-          {/* Logged in as */}
-          <div className="text-xs text-muted-foreground text-center pt-2 border-t border-border">
-            logged in as {user.email}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+    </AuthShell>
   );
 }

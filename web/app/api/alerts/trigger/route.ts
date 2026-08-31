@@ -8,6 +8,7 @@ import { fireWebhooks } from '@/lib/webhookSender.server';
 import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
 import { hootInternalSecret } from '@/lib/hootInternalSecret';
+import { sanitizeForLog } from '@/lib/logSanitize';
 
 /**
  * POST /api/alerts/trigger — internal endpoint the Cloud Function calls on a
@@ -95,17 +96,17 @@ export async function POST(request: NextRequest) {
               });
 
               if (result.error) {
-                console.error(`[alerts/trigger] Resend error for ${recipient.email}:`, result.error);
+                console.error(`[alerts/trigger] Resend error for ${sanitizeForLog(recipient.email)}:`, result.error);
               } else {
                 emailSent = true;
               }
             } catch (emailError) {
-              console.error(`[alerts/trigger] Failed to send to ${recipient.email}:`, emailError);
+              console.error(`[alerts/trigger] Failed to send to ${sanitizeForLog(recipient.email)}:`, emailError);
             }
           }
 
           if (emailSent) {
-            console.log(`[alerts/trigger] Email sent to ${recipients.length} recipient(s) for ${ruleName}`);
+            console.log(`[alerts/trigger] Email sent to ${recipients.length} recipient(s) for ${sanitizeForLog(ruleName)}`);
           }
         }
       } else {
@@ -136,7 +137,7 @@ export async function POST(request: NextRequest) {
     tapTalonMatcher(db, siteId, { kind: 'threshold', metric, operator, value, machineId });
 
     console.log(
-      `[alerts/trigger] Processed threshold alert: ${ruleName} on ${machineId} ` +
+      `[alerts/trigger] Processed threshold alert: ${sanitizeForLog(ruleName)} on ${sanitizeForLog(machineId)} ` +
       `(email=${emailSent}, webhooks=${webhooksFired})`
     );
 

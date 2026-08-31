@@ -1104,7 +1104,7 @@ export default function ProjectDistributionDialog({
 {`"agent_config": {
 "allowed_extract_roots": [
 "~/Documents",
-"${resolveExtractPath(extractPath).replace(/\\\\/g, '\\\\')}"
+"${resolveExtractPath(extractPath).replace(/\\/g, '\\\\')}"
   ]
 }`}
                     </pre>

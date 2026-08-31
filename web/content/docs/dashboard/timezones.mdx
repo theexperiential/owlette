@@ -51,7 +51,7 @@ Schedule editors are **unaffected** by the user's display mode, but they do not 
 
 | feature | timezone used | notes |
 |---------|---------------|-------|
-| **process launch windows** | Site timezone | The dashboard schedule editor receives the current site's timezone and labels/previews process windows with that site timezone. The agent evaluates scheduled process windows with the cached site timezone, so "09:00 Mon-Fri" means 09:00 in the site's configured timezone. |
+| **process launch windows** | Machine local timezone | The agent evaluates scheduled process windows against each machine's own Windows clock, so "09:00 Mon-Fri" means 09:00 on that machine. The dashboard editor's outside-window hint uses the site's timezone as its best prediction of the machines' clocks, but the machine's clock is what decides. (Evaluating windows in the site's configured timezone fleet-wide is planned but not yet wired.) |
 | **scheduled reboots** | Machine local timezone | The reboot dialog shows a machine timezone chip and the agent resolves each reboot entry against the machine's own Windows local timezone. A "03:00" reboot means 03:00 on that machine, even if the site or dashboard user is in another timezone. |
 
 Both behaviors are wall-clock schedules, not absolute UTC instants. Changing your dashboard display mode affects timestamp rendering only; it does not reinterpret saved schedule entries.

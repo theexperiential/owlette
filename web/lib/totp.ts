@@ -34,21 +34,6 @@ export function verifyTOTP(token: string, secret: string): boolean {
   }
 }
 
-/** Account-recovery backup codes. */
-export function generateBackupCodes(count: number = 10): string[] {
-  const codes: string[] = [];
-
-  for (let i = 0; i < count; i++) {
-    const code = crypto
-      .randomBytes(4)
-      .toString('hex')
-      .toUpperCase();
-    codes.push(code);
-  }
-
-  return codes;
-}
-
 export function hashBackupCode(code: string): string {
   return crypto
     .createHash('sha256')

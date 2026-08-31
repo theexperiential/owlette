@@ -6,6 +6,8 @@
  * Idempotent: a second call returns `already_exists`. No capability check —
  * capabilities only govern other people's resources, and this is the moment the
  * caller's own record appears; the handler asserts bearer uid == target uid.
+ * Callers that need to gate creation (the bot challenge) pass `onWillCreate`
+ * rather than gating the call, so a retry against an existing doc still passes.
  *
  * Defaults match the legacy AuthContext writes, plus `mfaFactors` (which it
  * never wrote) so a new account starts with the factor inventory present
@@ -18,12 +20,22 @@ import { emitMutation } from '@/lib/auditLogClient';
 import { isValidTimezone } from '@/lib/timeUtils';
 import { sanitizeDisplayName } from '@/lib/sanitize';
 
+/** Verdict from `onWillCreate`; `reason` is handed back to the caller verbatim. */
+export type BootstrapCreateGate = { ok: true } | { ok: false; reason: string };
+
 export interface BootstrapUserInput {
   uid: string;
   email: string;
   displayName?: string;
   /** IANA tz id from the client; defaults to UTC if invalid/missing. */
   timezone?: string;
+  /**
+   * Gate run between the existence read and the write, and ONLY when the doc is
+   * absent — so a caller's bot challenge guards account CREATION without also
+   * rejecting an existing user's tokenless retry. Sharing the one read leaves no
+   * window in which the gate's verdict and the write can disagree.
+   */
+  onWillCreate?: () => Promise<BootstrapCreateGate>;
   /** Inject a Firestore instance — tests pass a mock; production omits. */
   db?: Firestore;
   /** Inject a clock — tests pass a fixed value; production omits. */
@@ -39,6 +51,7 @@ export interface BootstrapUserContext {
 
 export type BootstrapUserResult =
   | { kind: 'already_exists'; createdAt: number | null }
+  | { kind: 'create_denied'; reason: string }
   | {
       kind: 'created';
       uid: string;
@@ -94,6 +107,11 @@ export async function bootstrapUser(
       }
     }
     return { kind: 'already_exists', createdAt };
+  }
+
+  if (input.onWillCreate) {
+    const verdict = await input.onWillCreate();
+    if (!verdict.ok) return { kind: 'create_denied', reason: verdict.reason };
   }
 
   await userRef.set({

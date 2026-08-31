@@ -7,7 +7,12 @@ import {
   serviceStatus,
   type ServiceStatus,
 } from '@/lib/ipc'
-import type { ServiceStatusFile } from '@/lib/serviceHealth'
+import {
+  isUpdateInProgress,
+  UPDATE_MARKER_PATH,
+  type ServiceStatusFile,
+  type UpdateMarker,
+} from '@/lib/serviceHealth'
 
 /**
  * SCM re-query interval — the app's only timer. A dead service stops writing
@@ -95,11 +100,11 @@ export function useServiceHealth(): ServiceHealthStore {
     readStatusFile()
   }, [queryScm, readStatusFile])
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (allowElevation = true) => {
     setStarting(true)
     setError(null)
     try {
-      await serviceStart()
+      await serviceStart(allowElevation)
       // An elevated start only confirms the shell accepted the request — observe
       // the result rather than assuming it.
       START_CONFIRM_DELAYS_MS.forEach((delay) => {
@@ -135,12 +140,30 @@ export function useServiceHealth(): ServiceHealthStore {
   }, [queryScm])
 
   // Auto-start once, on the first status that needs it, unless a claim is
-  // holding the service down.
+  // holding the service down. Two rules keep this path silent: it never
+  // elevates (an unattended UAC prompt is never acceptable — the footer's
+  // start button is the consent path), and it stands down entirely while a
+  // self-update owns the service, whose installer stops it on purpose and
+  // restarts it itself. Without the second rule every machine's tray app
+  // raised a UAC prompt over whatever was running, on every fleet update.
   useEffect(() => {
     if (autoStarted.current || holds.current > 0 || !status) return
     if (!status.installed || status.running || status.state === 'start_pending') return
-    autoStarted.current = true
-    void start()
+    let cancelled = false
+    void readOwletteJson<UpdateMarker>(UPDATE_MARKER_PATH)
+      // Missing marker file = no update = clear to start.
+      .catch(() => null)
+      .then((marker) => {
+        if (cancelled || autoStarted.current || holds.current > 0) return
+        // autoStarted stays unconsumed: when the marker goes stale with the
+        // service still down, the next status poll gets another chance.
+        if (isUpdateInProgress(marker, Date.now())) return
+        autoStarted.current = true
+        void start(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [status, start])
 
   return { status, statusFile, starting, error, refresh, start, hold }

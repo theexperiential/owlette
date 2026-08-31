@@ -102,6 +102,13 @@ ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\agent\icons\normal.png
 SetupIconFile=icons\normal.ico
 SetupLogging=yes
+; Windows file-properties metadata. Without VersionInfoVersion the compiler
+; stamps the exe's File version as 0.0.0.0 - it is not inherited from
+; AppVersion, which only feeds Product version.
+VersionInfoVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoCopyright=Copyright (C) Tridant Inc.
 DisableProgramGroupPage=yes
 ; Silent mode enhancements - prevent ALL prompts when run as SYSTEM
 AlwaysShowDirOnReadyPage=no

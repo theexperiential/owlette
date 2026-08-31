@@ -250,11 +250,17 @@ export function MachineContextMenu({
                     </DropdownMenuItem>
                     <Tooltip>
                       <TooltipTrigger asChild>
+                        {/* Icon-only. Its "schedule restarts" label lives in the
+                            tooltip portal, so `getByRole('button', { name:
+                            'schedule restarts' })` cannot resolve it — that name
+                            belongs to the standalone offline-machine item below
+                            (`machine-context-menu-schedule-restarts`). */}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             setShowRestartScheduleDialog(true);
                           }}
+                          data-testid="machine-context-menu-schedule-restarts-gear"
                           className="ml-2 p-0.5 rounded hover:bg-amber-950/50 transition-colors cursor-pointer"
                         >
                           <Settings2 className="h-3.5 w-3.5 text-muted-foreground hover:text-amber-300 transition-colors" />

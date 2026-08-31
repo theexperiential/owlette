@@ -113,7 +113,7 @@ test('verify-2fa with trust-device mints a 30-day cookie and skips the challenge
   // The toast gates on the server's deviceTrusted=true, so its presence proves
   // the trust record + cookie were actually minted.
   await expect(
-    page.getByText('This device has been trusted for 30 days.', { exact: true }),
+    page.getByText('this device has been trusted for 30 days.', { exact: true }),
   ).toBeVisible();
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
 

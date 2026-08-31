@@ -64,11 +64,16 @@ export function BackupCodesPanel({
       </div>
 
       <div className="bg-card border border-border rounded-lg p-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-sm">
+        {/* Container-keyed, not viewport-keyed: this renders inside AuthShell's
+            form column, whose width comes from the card's md: split. A
+            `sm:grid-cols-2` here would put two 20-char mono codes in a 352px
+            box at exactly the width where the card splits — and the card is
+            overflow-hidden, so they would be clipped, not scrolled. */}
+        <div className="grid grid-cols-1 @lg/auth-form:grid-cols-2 gap-2 font-mono text-sm">
           {codes.map((code, index) => (
-            <div key={`${index}-${code}`} className="flex items-center gap-2">
+            <div key={`${index}-${code}`} className="flex min-w-0 items-center gap-2">
               <span className="text-muted-foreground">{index + 1}.</span>
-              <span className="font-bold text-foreground">{code}</span>
+              <span className="font-bold break-all text-foreground">{code}</span>
             </div>
           ))}
         </div>

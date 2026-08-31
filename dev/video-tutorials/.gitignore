@@ -1,0 +1,4 @@
+
+# Resolve build reports — regenerated on every run
+assembly/resolve/build-log*.txt
+assembly/vet-report-*.txt

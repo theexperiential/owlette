@@ -52,8 +52,8 @@ or system `python` (set `OWLETTE_AGENT_PY` to override).
 ### 2. Clone + install Node deps
 
 ```powershell
-git clone https://github.com/theexperiential/Owlette.git
-cd Owlette\web
+git clone https://github.com/theexperiential/owlette.git
+cd owlette\web
 npm ci --legacy-peer-deps    # provides firebase-admin (+ Playwright for later waves)
 ```
 

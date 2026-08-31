@@ -12,9 +12,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useInAppBrowser } from '@/hooks/useInAppBrowser';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { AuthShell, authFooterLinkClass } from '@/components/auth/AuthShell';
 import { BackupCodesPanel } from '@/components/BackupCodesPanel';
-import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { toast } from '@/lib/toast';
 /* eslint-disable @next/next/no-img-element */
 
@@ -362,14 +361,19 @@ export default function Setup2FAPage() {
     toast.success('copied to clipboard');
   };
 
-  /** One definition so the OWLETTE-WEB-46 destination and label can't drift per step. */
+  /**
+   * One definition so the OWLETTE-WEB-46 destination and label can't drift per
+   * step. Lives in the shell's footer band now — rendered once for the whole
+   * wizard instead of at the foot of four of the five steps. Still a real
+   * <button>: setup-2fa-cancel.test.tsx queries it by button role.
+   */
   const cancelButton = (
     <Button
       type="button"
-      variant="ghost"
+      variant="link"
       onClick={handleCancel}
       disabled={isCancelling || isSubmitting || passkeyBusy}
-      className="w-full text-sm text-muted-foreground hover:text-foreground"
+      className={`h-auto p-0 text-sm ${authFooterLinkClass}`}
     >
       {cancelLabel}
     </Button>
@@ -377,278 +381,271 @@ export default function Setup2FAPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p>Loading...</p>
-      </div>
+      <AuthShell width="wide" brandTitle="set up two-factor authentication" loading />
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 relative">
-      {/* Grid background */}
-      <div className="absolute inset-0 dot-grid opacity-30" />
-      <div className="absolute inset-0 blueprint-grid opacity-15" />
-      <Card className="relative z-10 w-full max-w-2xl border-border bg-card">
-        <CardHeader className="space-y-4 flex flex-col items-center">
-          <OwletteEyeIcon size={80} />
-          <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-foreground">set up two-factor authentication</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              secure your account with two-factor authentication (2FA)
-            </CardDescription>
+    /* `wide` pins the brand panel at 20rem and gives the rest to the form: this
+       column carries a QR code, its explainer, and a ten-row backup-code sheet. */
+    <AuthShell
+      width="wide"
+      brandTitle="set up two-factor authentication"
+      brandDescription="secure your account with two-factor authentication (2FA)"
+      footer={cancelButton}
+    >
+      {step === 'choose' && (
+        <div className="space-y-6">
+          <div className="text-sm text-muted-foreground space-y-2">
+            <p className="font-semibold text-foreground">choose your second factor</p>
+            <p>pick one to finish setting up. you can add the other later from account settings.</p>
           </div>
-        </CardHeader>
-        <CardContent>
-          {step === 'choose' && (
-            <div className="space-y-6">
-              <div className="text-sm text-muted-foreground space-y-2">
-                <p className="font-semibold text-foreground">choose your second factor</p>
-                <p>pick one to finish setting up. you can add the other later from account settings.</p>
-              </div>
 
-              {/* Passkey first, and labelled recommended: one ceremony, no
-                  second device, and it replaces the password at sign-in too. */}
-              <div className="space-y-3">
-                {showPasskey && (
-                  <button
-                    type="button"
-                    onClick={() => setStep('passkey-register')}
-                    className="w-full cursor-pointer rounded-lg border border-border bg-card/50 p-4 text-left transition-colors hover:border-accent-cyan hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <div className="flex items-start gap-3">
-                      <Fingerprint className="mt-0.5 h-5 w-5 shrink-0 text-accent-cyan" />
-                      <div className="space-y-1">
-                        <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
-                          passkey
-                          <span className="rounded-full border border-accent-cyan/40 px-2 py-0.5 text-xs font-medium text-accent-cyan">
-                            recommended
-                          </span>
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          use windows hello, touch ID, face ID, a security key, or a password manager.
-                          nothing else to install.
-                        </p>
-                      </div>
-                    </div>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => setStep('totp-setup')}
-                  className="w-full cursor-pointer rounded-lg border border-border bg-card/50 p-4 text-left transition-colors hover:border-accent-cyan hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <div className="flex items-start gap-3">
-                    <Smartphone className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-                    <div className="space-y-1">
-                      <p className="text-sm font-semibold text-foreground">authenticator app</p>
-                      <p className="text-sm text-muted-foreground">
-                        use a 6-digit code app on your phone or desktop — 1Password, Bitwarden, Authy,
-                        Google Authenticator.
-                      </p>
-                    </div>
+          {/* Passkey first, and labelled recommended: one ceremony, no
+              second device, and it replaces the password at sign-in too. */}
+          <div className="space-y-3">
+            {showPasskey && (
+              <button
+                type="button"
+                onClick={() => setStep('passkey-register')}
+                className="w-full cursor-pointer rounded-lg border border-border bg-card/50 p-4 text-left transition-colors hover:border-accent-cyan hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <div className="flex items-start gap-3">
+                  <Fingerprint className="mt-0.5 h-5 w-5 shrink-0 text-accent-cyan" />
+                  <div className="space-y-1">
+                    <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
+                      passkey
+                      <span className="rounded-full border border-accent-cyan/40 px-2 py-0.5 text-xs font-medium text-accent-cyan">
+                        recommended
+                      </span>
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      use windows hello, touch ID, face ID, a security key, or a password manager.
+                      nothing else to install.
+                    </p>
                   </div>
-                </button>
+                </div>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setStep('totp-setup')}
+              className="w-full cursor-pointer rounded-lg border border-border bg-card/50 p-4 text-left transition-colors hover:border-accent-cyan hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <div className="flex items-start gap-3">
+                <Smartphone className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-foreground">authenticator app</p>
+                  <p className="text-sm text-muted-foreground">
+                    use a 6-digit code app on your phone or desktop — 1Password, Bitwarden, Authy,
+                    Google Authenticator.
+                  </p>
+                </div>
               </div>
+            </button>
+          </div>
 
-              {/* Only once the client has actually checked. Declaring "not
-                  supported" during the pre-hydration render would be a guess,
-                  and this is the sentence that stops a user hunting for an
-                  option that was never going to appear. */}
-              {passkeySupport !== 'unknown' && !showPasskey && (
-                <p className="text-xs text-muted-foreground">
-                  {inApp.isInApp
-                    ? `passkeys cannot be created inside ${inApp.appName ?? 'this app'}'s in-app browser — open owlette in your browser if you want one.`
-                    : 'this browser cannot create passkeys, so an authenticator app is the way in here.'}
-                </p>
-              )}
+          {/* Only once the client has actually checked. Declaring "not
+              supported" during the pre-hydration render would be a guess,
+              and this is the sentence that stops a user hunting for an
+              option that was never going to appear. */}
+          {passkeySupport !== 'unknown' && !showPasskey && (
+            <p className="text-xs text-muted-foreground">
+              {inApp.isInApp
+                ? `passkeys cannot be created inside ${inApp.appName ?? 'this app'}'s in-app browser — open owlette in your browser if you want one.`
+                : 'this browser cannot create passkeys, so an authenticator app is the way in here.'}
+            </p>
+          )}
+        </div>
+      )}
 
-              {cancelButton}
+      {step === 'totp-setup' && (
+        <div className="space-y-6">
+          <div className="text-sm text-muted-foreground space-y-2">
+            <p className="font-semibold text-foreground">scan the QR code</p>
+            <p>open your authenticator app (1Password, Bitwarden, Authy, Google Authenticator) and scan this QR code:</p>
+          </div>
+
+          {qrCodeUrl && (
+            <div className="flex justify-center">
+              {/* h-auto max-w-full: the intrinsic 250px overflows a 320px
+                  viewport's column, and the card is overflow-hidden, so it
+                  would be clipped rather than scrolled. */}
+              <img
+                src={qrCodeUrl}
+                alt="2FA QR code"
+                width={250}
+                height={250}
+                className="h-auto max-w-full rounded-lg border"
+              />
             </div>
           )}
 
-          {step === 'totp-setup' && (
-            <div className="space-y-6">
-              <div className="text-sm text-muted-foreground space-y-2">
-                <p className="font-semibold text-foreground">scan the QR code</p>
-                <p>open your authenticator app (1Password, Bitwarden, Authy, Google Authenticator) and scan this QR code:</p>
-              </div>
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-muted-foreground">manual entry code:</p>
+            {/* Stacked until the column is wide enough: side by side, the
+                copy button left the field showing about a third of a 32-char
+                secret on a phone — and manual transcription is this control's
+                entire purpose. Stays a single readonly input; setup-verify
+                reads the secret with locator('input[readonly]'). */}
+            <div className="flex flex-col gap-2 @sm/auth-form:flex-row">
+              <Input
+                value={secret}
+                readOnly
+                className="font-mono text-sm"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => copyToClipboard(secret)}
+                className="@sm/auth-form:w-auto"
+              >
+                copy
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              if you cannot scan the QR code, enter this code manually in your authenticator app —
+              desktop apps take it too, so you do not need a phone.
+            </p>
+          </div>
 
-              {qrCodeUrl && (
-                <div className="flex justify-center">
-                  <img
-                    src={qrCodeUrl}
-                    alt="2FA QR Code"
-                    width={250}
-                    height={250}
-                    className="border rounded-lg"
-                  />
-                </div>
-              )}
+          <div className="space-y-2">
+            <Button
+              onClick={() => setStep('totp-verify')}
+              className="w-full text-background cursor-pointer"
+            >
+              continue to verification
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setStep('choose')}
+              className="w-full"
+            >
+              back
+            </Button>
+          </div>
+        </div>
+      )}
 
-              <div className="space-y-2">
-                <p className="text-sm font-semibold text-muted-foreground">manual entry code:</p>
-                <div className="flex gap-2">
-                  <Input
-                    value={secret}
-                    readOnly
-                    className="font-mono text-sm"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => copyToClipboard(secret)}
-                  >
-                    copy
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  if you cannot scan the QR code, enter this code manually in your authenticator app —
-                  desktop apps take it too, so you do not need a phone.
-                </p>
-              </div>
+      {step === 'totp-verify' && (
+        <form onSubmit={handleVerify} className="space-y-6">
+          <div className="text-sm text-muted-foreground space-y-2">
+            <p className="font-semibold text-foreground">verify your authenticator</p>
+            <p>enter the 6-digit code from your authenticator app to verify:</p>
+          </div>
 
-              <div className="space-y-2">
+          <div className="space-y-2">
+            <Input
+              type="text"
+              placeholder="000000"
+              value={verificationCode}
+              onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              maxLength={6}
+              className="text-center text-2xl font-mono tracking-widest h-16 px-4"
+              autoComplete="one-time-code"
+              inputMode="numeric"
+              name="otp"
+              autoFocus
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Button
+              type="submit"
+              disabled={isSubmitting || verificationCode.length !== 6}
+              className="w-full text-background cursor-pointer"
+            >
+              {isSubmitting ? 'verifying...' : 'verify & enable 2FA'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setStep('totp-setup')}
+              disabled={isSubmitting}
+              className="w-full"
+            >
+              back
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {step === 'passkey-register' && (
+        <div className="space-y-6">
+          <div className="text-sm text-muted-foreground space-y-2">
+            <p className="font-semibold text-foreground">
+              {passkeyCreated ? 'passkey added' : 'create your passkey'}
+            </p>
+            <p>
+              {passkeyCreated
+                ? 'one more check with the same passkey and we can hand you your backup codes — the codes that get you back in if you ever lose this device.'
+                : 'your device will ask for its usual unlock: fingerprint, face, PIN, or your security key. that unlock is what proves it is you, so there is no code to type.'}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            {passkeyCreated ? (
+              <>
                 <Button
-                  onClick={() => setStep('totp-verify')}
-                  className="w-full text-gray-900 cursor-pointer"
+                  type="button"
+                  onClick={handleClaimBackupCodes}
+                  disabled={passkeyBusy}
+                  className="w-full text-background cursor-pointer"
                 >
-                  continue to verification
+                  {passkeyBusy ? 'waiting for your device...' : 'get backup codes'}
+                </Button>
+                {/* The factor is already enrolled, so nothing on this screen
+                    may hold the dashboard hostage — a cancelled prompt must
+                    not strand a fully set-up account here. */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleFinish}
+                  disabled={passkeyBusy}
+                  className="w-full"
+                >
+                  skip for now
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  onClick={handleCreatePasskey}
+                  disabled={passkeyBusy}
+                  className="w-full text-background cursor-pointer"
+                >
+                  {passkeyBusy ? 'waiting for your device...' : 'create passkey'}
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setStep('choose')}
+                  disabled={passkeyBusy}
                   className="w-full"
                 >
                   back
                 </Button>
-                {cancelButton}
-              </div>
-            </div>
-          )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
-          {step === 'totp-verify' && (
-            <form onSubmit={handleVerify} className="space-y-6">
-              <div className="text-sm text-muted-foreground space-y-2">
-                <p className="font-semibold text-foreground">verify your authenticator</p>
-                <p>enter the 6-digit code from your authenticator app to verify:</p>
-              </div>
+      {step === 'backup' && (
+        <div className="space-y-6">
+          <BackupCodesPanel codes={backupCodes} />
 
-              <div className="space-y-2">
-                <Input
-                  type="text"
-                  placeholder="000000"
-                  value={verificationCode}
-                  onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  maxLength={6}
-                  className="text-center text-2xl font-mono tracking-widest h-16 px-4"
-                  autoComplete="one-time-code"
-                  inputMode="numeric"
-                  name="otp"
-                  autoFocus
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Button
-                  type="submit"
-                  disabled={isSubmitting || verificationCode.length !== 6}
-                  className="w-full text-gray-900 cursor-pointer"
-                >
-                  {isSubmitting ? 'verifying...' : 'verify & enable 2FA'}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setStep('totp-setup')}
-                  disabled={isSubmitting}
-                  className="w-full"
-                >
-                  back
-                </Button>
-                {cancelButton}
-              </div>
-            </form>
-          )}
-
-          {step === 'passkey-register' && (
-            <div className="space-y-6">
-              <div className="text-sm text-muted-foreground space-y-2">
-                <p className="font-semibold text-foreground">
-                  {passkeyCreated ? 'passkey added' : 'create your passkey'}
-                </p>
-                <p>
-                  {passkeyCreated
-                    ? 'one more check with the same passkey and we can hand you your backup codes — the codes that get you back in if you ever lose this device.'
-                    : 'your device will ask for its usual unlock: fingerprint, face, PIN, or your security key. that unlock is what proves it is you, so there is no code to type.'}
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                {passkeyCreated ? (
-                  <>
-                    <Button
-                      type="button"
-                      onClick={handleClaimBackupCodes}
-                      disabled={passkeyBusy}
-                      className="w-full text-gray-900 cursor-pointer"
-                    >
-                      {passkeyBusy ? 'waiting for your device...' : 'get backup codes'}
-                    </Button>
-                    {/* The factor is already enrolled, so nothing on this screen
-                        may hold the dashboard hostage — a cancelled prompt must
-                        not strand a fully set-up account here. */}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={handleFinish}
-                      disabled={passkeyBusy}
-                      className="w-full"
-                    >
-                      skip for now
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button
-                      type="button"
-                      onClick={handleCreatePasskey}
-                      disabled={passkeyBusy}
-                      className="w-full text-gray-900 cursor-pointer"
-                    >
-                      {passkeyBusy ? 'waiting for your device...' : 'create passkey'}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setStep('choose')}
-                      disabled={passkeyBusy}
-                      className="w-full"
-                    >
-                      back
-                    </Button>
-                  </>
-                )}
-                {cancelButton}
-              </div>
-            </div>
-          )}
-
-          {step === 'backup' && (
-            <div className="space-y-6">
-              <BackupCodesPanel codes={backupCodes} />
-
-              <Button
-                onClick={handleFinish}
-                className="w-full text-gray-900 cursor-pointer"
-              >
-                continue to dashboard
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+          <Button
+            onClick={handleFinish}
+            className="w-full text-background cursor-pointer"
+          >
+            continue to dashboard
+          </Button>
+        </div>
+      )}
+    </AuthShell>
   );
 }

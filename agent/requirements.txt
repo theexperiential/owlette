@@ -13,6 +13,14 @@ packaging==24.2  # >=24.0 required by the wheel that get-pip bootstraps
 setuptools==83.0.0  # >=78.1.1 fixes PackageIndex.download path traversal (CVE-2025-47273)
 requests==2.34.2  # >=2.32.0/.4/2.33.0 CVE fixes; 2.34.0 also fixes greedy no_proxy matching
 tzlocal==5.2  # Convert Windows registry tz names to IANA (e.g. "Pacific Standard Time" -> "America/Los_Angeles") for dashboard timezone display
+# DIRECT dependency (R5). Windows ships no IANA database, so zoneinfo.ZoneInfo
+# can only resolve "America/Los_Angeles" out of this package. It arrived
+# transitively through tzlocal's Windows marker — a coincidence, not a contract:
+# the day that changes, shared_utils.is_within_schedule stops raising and starts
+# SILENTLY evaluating every site-time schedule against the machine's local clock
+# (the `except ... falling back to local time` branch), which is a wrong-hours
+# bug with no error to chase. Pinned directly so it can never be dropped.
+tzdata==2026.3
 
 # Screenshot capture
 mss==9.0.2  # Fast cross-platform screenshot library

@@ -17,6 +17,9 @@ class Site:
     timezone: str | None
     owner: str | None
     created_at: str | None
+    #: True when process schedules run on the site's ``timezone`` instead of
+    #: each machine's own clock. Sites never asked report ``False``.
+    schedules_follow_site_time: bool = False
 
 
 def _parse(raw: dict[str, Any]) -> Site:
@@ -27,6 +30,7 @@ def _parse(raw: dict[str, Any]) -> Site:
         timezone=raw.get("timezone"),
         owner=raw.get("owner"),
         created_at=raw.get("createdAt"),
+        schedules_follow_site_time=raw.get("schedulesFollowSiteTime") is True,
     )
 
 

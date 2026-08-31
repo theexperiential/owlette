@@ -7,11 +7,11 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { AuthShell, AuthDivider, authFooterLinkClass } from '@/components/auth/AuthShell';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { Fingerprint } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser';
 import { useInAppBrowser } from '@/hooks/useInAppBrowser';
 import { toast } from '@/lib/toast';
@@ -85,7 +85,7 @@ function Verify2FAContent() {
         })
         .catch((error) => {
           console.error('Error loading MFA configuration:', error);
-          toast.error('Failed to load 2FA configuration');
+          toast.error('failed to load 2FA configuration');
         });
     }
   }, [user, loading, router, returnUrl]);
@@ -94,17 +94,17 @@ function Verify2FAContent() {
     e.preventDefault();
 
     if (!verificationCode) {
-      toast.error('Please enter a verification code');
+      toast.error('please enter a verification code');
       return;
     }
 
     if (!useBackupCode && verificationCode.length !== 6) {
-      toast.error('Please enter a 6-digit code');
+      toast.error('please enter a 6-digit code');
       return;
     }
 
     if (!user) {
-      toast.error('User not authenticated');
+      toast.error('user not authenticated');
       return;
     }
 
@@ -126,10 +126,10 @@ function Verify2FAContent() {
       const data = await response.json();
 
       if (!response.ok || data.error) {
-        toast.error(data.error || 'Invalid code', {
+        toast.error(data.error || 'invalid code', {
           description: useBackupCode
-            ? 'The backup code you entered is incorrect.'
-            : 'Please check your authenticator app and try again.',
+            ? 'the backup code you entered is incorrect.'
+            : 'please check your authenticator app and try again.',
         });
         setIsSubmitting(false);
         setVerificationCode('');
@@ -137,8 +137,8 @@ function Verify2FAContent() {
       }
 
       if (data.backupCodeUsed) {
-        toast.success('Backup code used', {
-          description: 'This backup code has been removed.',
+        toast.success('backup code used', {
+          description: 'this backup code has been removed.',
         });
       }
 
@@ -146,19 +146,19 @@ function Verify2FAContent() {
       // when "trust this device" was checked, minted the HTTPOnly device-trust cookie. No
       // client-side flag; only claim trust when the server reports deviceTrusted.
       if (data.deviceTrusted) {
-        toast.success('Verification Successful', {
-          description: 'This device has been trusted for 30 days.',
+        toast.success('verification successful', {
+          description: 'this device has been trusted for 30 days.',
         });
       } else {
-        toast.success('Verification Successful', {
-          description: 'Redirecting...',
+        toast.success('verification successful', {
+          description: 'redirecting...',
         });
       }
 
       router.push(returnUrl);
     } catch (error) {
       console.error('Error verifying 2FA:', error);
-      toast.error('Verification failed');
+      toast.error('verification failed');
       setIsSubmitting(false);
     }
   };
@@ -244,148 +244,131 @@ function Verify2FAContent() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p>loading...</p>
-      </div>
-    );
+    return <AuthShell brandTitle="two-factor authentication" loading />;
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 relative">
-      {/* Grid background */}
-      <div className="absolute inset-0 dot-grid opacity-30" />
-      <div className="absolute inset-0 blueprint-grid opacity-15" />
-      <Card className="relative z-10 w-full max-w-md border-border bg-card">
-        <CardHeader className="space-y-4 flex flex-col items-center">
-          <OwletteEyeIcon size={80} />
-          <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-foreground">two-factor authentication</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {useBackupCode
-                ? 'enter one of your backup codes'
-                : 'enter the code from your authenticator app'}
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {/* Passkey sits ABOVE the code form, mirroring /login's ordering, so
-              the "trust this device" checkbox reads as belonging to the code
-              path it actually applies to. Hidden entirely in an embedded
-              webview or a browser without WebAuthn — the form below is always
-              rendered, so hiding this never strands the user. */}
-          {showPasskey && (
-            <div className="mb-6 space-y-6">
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                onClick={handlePasskeyStepUp}
-                disabled={isSubmitting || isPasskeyPending}
-              >
-                <Fingerprint className="mr-2 h-4 w-4" />
-                {isPasskeyPending ? 'waiting for passkey...' : 'use a passkey'}
-              </Button>
+    <AuthShell
+      brandTitle="two-factor authentication"
+      brandDescription={
+        useBackupCode
+          ? 'enter one of your backup codes'
+          : 'enter the code from your authenticator app'
+      }
+      footer={
+        <Button
+          type="button"
+          variant="link"
+          onClick={handleCancel}
+          className={`h-auto p-0 text-sm ${authFooterLinkClass}`}
+        >
+          cancel and sign out
+        </Button>
+      }
+    >
+      {/* Passkey sits ABOVE the code form, mirroring /login's ordering, so
+          the "trust this device" checkbox reads as belonging to the code
+          path it actually applies to. Hidden entirely in an embedded
+          webview or a browser without WebAuthn — the form below is always
+          rendered, so hiding this never strands the user. */}
+      {showPasskey && (
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            onClick={handlePasskeyStepUp}
+            disabled={isSubmitting || isPasskeyPending}
+          >
+            <Fingerprint className="mr-2 h-4 w-4" />
+            {isPasskeyPending ? 'waiting for passkey...' : 'use a passkey'}
+          </Button>
+          <AuthDivider />
+        </>
+      )}
 
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t border-border" />
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-card px-2 text-muted-foreground">or</span>
-                </div>
-              </div>
-            </div>
-          )}
+      <form onSubmit={handleVerify} className="space-y-6">
+        <div className="space-y-2">
+          <Input
+            type="text"
+            name="otp"
+            autoComplete="one-time-code"
+            inputMode={useBackupCode ? 'text' : 'numeric'}
+            placeholder={useBackupCode ? 'backup code' : '000000'}
+            value={verificationCode}
+            onChange={(e) => {
+              const value = useBackupCode
+                ? e.target.value.toUpperCase()
+                : e.target.value.replace(/\D/g, '').slice(0, 6);
+              setVerificationCode(value);
+            }}
+            maxLength={useBackupCode ? 16 : 6}
+            /* h-16 px-4 because text-2xl (32px line box) clips inside the
+               Input primitive's h-9 at every viewport — /setup-2fa's
+               identical field already does this. A 16-char backup code at
+               text-2xl + tracking-widest needs ~269px, more than the column
+               has on a phone, so that mode steps down a size until the
+               column is wide enough. */
+            className={cn(
+              'h-16 px-4 text-center font-mono tracking-widest',
+              useBackupCode ? 'text-lg @sm/auth-form:text-2xl' : 'text-2xl',
+            )}
+            autoFocus
+          />
+        </div>
 
-          <form onSubmit={handleVerify} className="space-y-6">
-            <div className="space-y-2">
-              <Input
-                type="text"
-                name="otp"
-                autoComplete="one-time-code"
-                inputMode={useBackupCode ? 'text' : 'numeric'}
-                placeholder={useBackupCode ? 'Backup Code' : '000000'}
-                value={verificationCode}
-                onChange={(e) => {
-                  const value = useBackupCode
-                    ? e.target.value.toUpperCase()
-                    : e.target.value.replace(/\D/g, '').slice(0, 6);
-                  setVerificationCode(value);
-                }}
-                maxLength={useBackupCode ? 16 : 6}
-                className="text-center text-2xl font-mono tracking-widest"
-                autoFocus
-              />
-            </div>
+        {/* Trust Device Checkbox */}
+        <div className="flex items-center space-x-2">
+          <Checkbox
+            id="trustDevice"
+            checked={trustThisDevice}
+            onCheckedChange={(checked) => setTrustThisDevice(checked === true)}
+            className="border-border"
+          />
+          <Label
+            htmlFor="trustDevice"
+            className="text-sm text-foreground cursor-pointer"
+          >
+            trust this device for 30 days
+          </Label>
+        </div>
 
-            {/* Trust Device Checkbox */}
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="trustDevice"
-                checked={trustThisDevice}
-                onCheckedChange={(checked) => setTrustThisDevice(checked === true)}
-                className="border-border"
-              />
-              <Label
-                htmlFor="trustDevice"
-                className="text-sm text-foreground cursor-pointer"
-              >
-                trust this device for 30 days
-              </Label>
-            </div>
+        <Button
+          type="submit"
+          disabled={
+            isSubmitting ||
+            isPasskeyPending ||
+            (!useBackupCode && verificationCode.length !== 6) ||
+            (useBackupCode && !verificationCode)
+          }
+          className="w-full"
+        >
+          {isSubmitting ? 'verifying...' : 'verify'}
+        </Button>
 
-            <Button
-              type="submit"
-              disabled={
-                isSubmitting ||
-                isPasskeyPending ||
-                (!useBackupCode && verificationCode.length !== 6) ||
-                (useBackupCode && !verificationCode)
-              }
-              className="w-full"
-            >
-              {isSubmitting ? 'verifying...' : 'verify'}
-            </Button>
-
-            <div className="space-y-2">
-              <Button
-                type="button"
-                variant="link"
-                onClick={() => {
-                  setUseBackupCode(!useBackupCode);
-                  setVerificationCode('');
-                }}
-                className="w-full text-sm"
-              >
-                {useBackupCode
-                  ? 'use authenticator app instead'
-                  : 'use backup code instead'}
-              </Button>
-
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={handleCancel}
-                className="w-full text-sm"
-              >
-                cancel and sign out
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+        {/* Stays in the form, directly under submit: it changes the field
+            above it. Only the sign-out escape moves to the footer band. */}
+        <Button
+          type="button"
+          variant="link"
+          onClick={() => {
+            setUseBackupCode(!useBackupCode);
+            setVerificationCode('');
+          }}
+          className="w-full text-sm"
+        >
+          {useBackupCode
+            ? 'use authenticator app instead'
+            : 'use backup code instead'}
+        </Button>
+      </form>
+    </AuthShell>
   );
 }
 
 export default function Verify2FAPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center">
-        <p>loading...</p>
-      </div>
-    }>
+    <Suspense fallback={<AuthShell brandTitle="two-factor authentication" loading />}>
       <Verify2FAContent />
     </Suspense>
   );

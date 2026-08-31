@@ -30,6 +30,7 @@ const KEY_WINDOW: &str = "window";
 const KEY_SIDEBAR: &str = "sidebar";
 const KEY_WIDTH: &str = "width";
 const KEY_COLLAPSED: &str = "collapsed";
+const KEY_DETAIL: &str = "detail";
 
 /// The window minimums declared in `tauri.conf.json`. Applied here because the
 /// window manager would correct anything smaller on first paint; a test asserts
@@ -218,6 +219,51 @@ pub fn save_sidebar_collapsed(path: &Path, collapsed: bool) -> io::Result<()> {
   write_section_key(path, KEY_SIDEBAR, KEY_COLLAPSED, collapsed.into())
 }
 
+/// Open state of the detail pane's three disclosures. Reading preferences, so
+/// they live beside the window and sidebar layout, not in fleet `config.json`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetailSections {
+  pub what_to_run: bool,
+  pub when_to_run: bool,
+  pub how_to_run: bool,
+}
+
+impl Default for DetailSections {
+  /// First-run shape: the everyday sections open, the tune-once "how to run" folded.
+  fn default() -> Self {
+    Self {
+      what_to_run: true,
+      when_to_run: true,
+      how_to_run: false,
+    }
+  }
+}
+
+/// The section keys the frontend may store; also the JSON keys in the file.
+pub const DETAIL_SECTION_KEYS: [&str; 3] = ["whatToRun", "whenToRun", "howToRun"];
+
+/// The remembered disclosure states; absent or unreadable keys keep their defaults.
+pub fn load_detail_sections(path: &Path) -> DetailSections {
+  let defaults = DetailSections::default();
+  let document = read_document(path);
+  let Some(detail) = document.get(KEY_DETAIL) else {
+    return defaults;
+  };
+  let open =
+    |key: &str, default: bool| detail.get(key).and_then(Value::as_bool).unwrap_or(default);
+  DetailSections {
+    what_to_run: open("whatToRun", defaults.what_to_run),
+    when_to_run: open("whenToRun", defaults.when_to_run),
+    how_to_run: open("howToRun", defaults.how_to_run),
+  }
+}
+
+/// Store one disclosure's state, leaving its siblings and other sections alone.
+pub fn save_detail_section(path: &Path, section: &str, open: bool) -> io::Result<()> {
+  write_section_key(path, KEY_DETAIL, section, open.into())
+}
+
 /// Managed state: where the file lives, plus the geometry the window events keep
 /// current so a save never has to ask a window that may already be gone.
 ///
@@ -325,6 +371,26 @@ impl LayoutState {
     save_sidebar_collapsed(path, collapsed)
       .map(|()| collapsed)
       .map_err(|error| format!("could not save the sidebar state: {error}"))
+  }
+
+  /// Which detail-pane sections should open expanded.
+  pub fn detail_sections(&self) -> DetailSections {
+    self.path().map(load_detail_sections).unwrap_or_default()
+  }
+
+  /// Store one section's open state, returning what was kept. The key is
+  /// whitelisted here so the file cannot accumulate sections no build reads.
+  pub fn set_detail_section(&self, section: &str, open: bool) -> Result<bool, String> {
+    if !DETAIL_SECTION_KEYS.contains(&section) {
+      return Err(format!("unknown detail section: {section}"));
+    }
+    let Some(path) = self.path() else {
+      return Ok(open);
+    };
+    let _guard = self.file.lock();
+    save_detail_section(path, section, open)
+      .map(|()| open)
+      .map_err(|error| format!("could not save the section state: {error}"))
   }
 }
 
@@ -509,6 +575,31 @@ mod tests {
       Some(WindowLayout::new(1000.0, 700.0, false))
     );
     assert_eq!(load_sidebar_width(&path), Some(320.0));
+  }
+
+  #[test]
+  fn the_detail_sections_round_trip_and_default_sensibly() {
+    let scratch = Scratch::new("detail");
+    let path = scratch.file();
+
+    let defaults = load_detail_sections(&path);
+    assert_eq!(defaults, DetailSections::default());
+    assert!(defaults.what_to_run && defaults.when_to_run && !defaults.how_to_run);
+
+    save_detail_section(&path, "howToRun", true).expect("save howToRun");
+    save_detail_section(&path, "whatToRun", false).expect("save whatToRun");
+    let stored = load_detail_sections(&path);
+    assert!(!stored.what_to_run);
+    assert!(stored.when_to_run);
+    assert!(stored.how_to_run);
+  }
+
+  #[test]
+  fn an_unknown_detail_section_is_refused() {
+    let state = LayoutState::new(None, WindowLayout::new(800.0, 600.0, false));
+    assert!(state.set_detail_section("advanced", true).is_err());
+    // Pathless state still answers so the toggle works this session.
+    assert_eq!(state.set_detail_section("howToRun", true), Ok(true));
   }
 
   #[test]

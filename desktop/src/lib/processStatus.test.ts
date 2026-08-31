@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   isLive,
   launchedAtForProcess,
+  candidatePidsForProcess,
   livePidForProcess,
   markKilled,
   markRestarting,
@@ -135,6 +136,19 @@ describe('picking a pid to act on', () => {
 
   it('has nothing to offer when the entry owns no pids', () => {
     expect(livePidForProcess({}, 'a')).toBeNull()
+  })
+
+  it('lists every generation, live ones first, so a stale RUNNING row is not the end', () => {
+    // Adopted rows carry no timestamp, and a dead generation can sit at RUNNING
+    // until the service sweeps it — the higher pid is not necessarily the live one.
+    const states: AppStates = {
+      '30968': { id: 'a', status: 'RUNNING' },
+      '14128': { id: 'a', status: 'RUNNING' },
+      '25308': { id: 'a', status: 'KILLED' },
+      '999': { id: 'b', status: 'RUNNING' },
+    }
+
+    expect(candidatePidsForProcess(states, 'a')).toEqual([30968, 14128, 25308])
   })
 })
 

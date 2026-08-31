@@ -5,8 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
+import { AuthShell, authFooterLinkClass } from '@/components/auth/AuthShell';
 import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
 import { FormError } from '@/components/ui/form-error';
 import { useFieldError } from '@/hooks/useFieldError';
@@ -46,84 +45,76 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center p-4 pb-32">
-      {/* Grid background */}
-      <div className="absolute inset-0 dot-grid opacity-30" />
-      <div className="absolute inset-0 blueprint-grid opacity-15" />
-      <Card className="relative z-10 w-full max-w-md border-border bg-card">
-        <CardHeader className="space-y-4 flex flex-col items-center">
-          <OwletteEyeIcon size={80} />
-          <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-foreground">reset password</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {sent ? 'check your email' : "enter your email and we'll send you a reset link"}
-            </CardDescription>
+    <AuthShell
+      brandTitle="reset password"
+      brandDescription={
+        sent ? 'check your email' : "enter your email and we'll send you a reset link"
+      }
+      footer={
+        <>
+          remember your password?{' '}
+          <a href="/login" className={authFooterLinkClass}>
+            sign in
+          </a>
+        </>
+      }
+    >
+      {sent ? (
+        <>
+          {/* The email must stay inline so "a password reset link is on its way"
+              remains contiguous in one element — password-reset.spec.ts matches
+              that phrase directly. break-all because it is arbitrary user data
+              with no break opportunity at @ or . */}
+          <p className="text-center text-sm text-muted-foreground">
+            if an account exists for{' '}
+            <span className="break-all text-foreground">{email}</span>, a
+            password reset link is on its way. it can take a minute to arrive — be sure to
+            check your spam folder.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setSent(false)}
+            className="w-full cursor-pointer"
+          >
+            use a different email
+          </Button>
+        </>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+          <div className="space-y-2">
+            <Label htmlFor="email" className="text-foreground">email</Label>
+            <Input
+              id="email"
+              {...fieldProps('email')}
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              disabled={loading}
+              className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+            />
           </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {sent ? (
-            <>
-              <p className="text-center text-sm text-muted-foreground">
-                if an account exists for <span className="text-foreground">{email}</span>, a
-                password reset link is on its way. it can take a minute to arrive — be sure to
-                check your spam folder.
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setSent(false)}
-                className="w-full bg-input border-border text-foreground cursor-pointer"
-              >
-                use a different email
-              </Button>
-              <div className="text-center text-sm text-muted-foreground">
-                <a href="/login" className="hl-link text-accent-cyan">
-                  back to sign in
-                </a>
-              </div>
-            </>
-          ) : (
-            <>
-              <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-                <div className="space-y-2">
-                  <Label htmlFor="email" className="text-foreground">email</Label>
-                  <Input
-                    id="email"
-                    {...fieldProps('email')}
-                    type="email"
-                    placeholder="you@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    disabled={loading}
-                    className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-                  />
-                </div>
-                <TurnstileWidget
-                  action="forgot-password"
-                  onToken={setTurnstileToken}
-                  ref={turnstileRef}
-                />
-                <FormError message={formError?.message} id="forgot-form-error" />
-                <Button
-                  type="submit"
-                  className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={loading || !email || (TURNSTILE_ENABLED && !turnstileToken)}
-                >
-                  {loading ? 'sending...' : 'send reset link'}
-                </Button>
-              </form>
-
-              <div className="text-center text-sm text-muted-foreground">
-                remember your password?{' '}
-                <a href="/login" className="hl-link text-accent-cyan">
-                  sign in
-                </a>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+          {/* Turnstile's `flexible` size has a 300px floor, which the column's
+              p-8 leaves it 6px short of at 390px. Bleed to the column edges on
+              phones rather than letting the card's overflow-hidden crop it. */}
+          <TurnstileWidget
+            action="forgot-password"
+            onToken={setTurnstileToken}
+            ref={turnstileRef}
+            className="max-[420px]:-mx-8"
+          />
+          <FormError message={formError?.message} id="forgot-form-error" />
+          <Button
+            type="submit"
+            className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={loading || !email || (TURNSTILE_ENABLED && !turnstileToken)}
+          >
+            {loading ? 'sending...' : 'send reset link'}
+          </Button>
+        </form>
+      )}
+    </AuthShell>
   );
 }

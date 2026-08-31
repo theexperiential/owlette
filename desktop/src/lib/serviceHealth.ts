@@ -221,3 +221,35 @@ export function footerSentence(state: FooterState, site: string, hostname: strin
       return { before: '', after: '' }
   }
 }
+
+/** `logs/update_in_progress.json`, written by `update_owlette` before the
+ *  installer task is spawned and removed by `_check_update_status` afterwards. */
+export interface UpdateMarker {
+  /** Local time, `YYYY-MM-DD HH:MM:SS` — the format the service writes. */
+  started_at?: string
+  [key: string]: unknown
+}
+
+/** Path of the marker, relative to the owlette data root. */
+export const UPDATE_MARKER_PATH = 'logs/update_in_progress.json'
+
+/**
+ * Past this age the marker is debris from a failed update, not a live one —
+ * the same ten minutes `update_owlette` uses before overriding a stale marker.
+ */
+const UPDATE_MARKER_FRESH_MS = 10 * 60 * 1000
+
+/**
+ * Whether a self-update owns the service right now. While it does, nothing in
+ * this app may start the service: the installer stops it on purpose, restarts
+ * it itself, and has a watchdog for the failure case — a start from here races
+ * the file replacement at best and raises a UAC prompt at worst.
+ */
+export function isUpdateInProgress(marker: UpdateMarker | null, nowMs: number): boolean {
+  const startedAt = marker?.started_at
+  if (typeof startedAt !== 'string') return false
+  const started = Date.parse(startedAt.replace(' ', 'T'))
+  if (Number.isNaN(started)) return false
+  const age = nowMs - started
+  return age >= 0 && age < UPDATE_MARKER_FRESH_MS
+}

@@ -15,6 +15,13 @@ export const Capability = {
   WEBHOOK_MANAGE: 'WEBHOOK_MANAGE',
   SITE_LOGS_MANAGE: 'SITE_LOGS_MANAGE',
   TALON_MANAGE: 'TALON_MANAGE',
+  // Per-site agent refresh-token revocation. Site-scoped rather than global:
+  // MACHINE_REMOVE (already a site-admin capability) deletes the same
+  // agent_refresh_tokens rows via the same siteId+machineId query — see
+  // lib/actions/removeMachine.server.ts — so an admin who can remove a machine
+  // can already destroy its credential. This exposes the narrower action
+  // without handing out GLOBAL_SETTINGS_WRITE.
+  AGENT_TOKEN_REVOKE: 'AGENT_TOKEN_REVOKE',
   USER_ROLE_MANAGE: 'USER_ROLE_MANAGE',
   USER_DELETE: 'USER_DELETE',
   SYSTEM_PRESET_MANAGE: 'SYSTEM_PRESET_MANAGE',
@@ -74,6 +81,7 @@ const SITE_ADMIN_CAPABILITIES: readonly Capability[] = [
   Capability.SITE_LOGS_MANAGE,
   Capability.SITE_MEMBER_MANAGE,
   Capability.TALON_MANAGE,
+  Capability.AGENT_TOKEN_REVOKE,
 ];
 
 const SUPERADMIN_CAPABILITIES: readonly Capability[] = Object.values(Capability);
@@ -91,6 +99,7 @@ const SITE_SCOPED_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   Capability.WEBHOOK_MANAGE,
   Capability.SITE_LOGS_MANAGE,
   Capability.TALON_MANAGE,
+  Capability.AGENT_TOKEN_REVOKE,
 ]);
 
 export const RoleCapabilityMatrix: Readonly<Record<Role, readonly Capability[]>> = {

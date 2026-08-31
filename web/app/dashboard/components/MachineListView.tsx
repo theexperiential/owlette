@@ -15,7 +15,7 @@ import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, Pencil, Copy, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff, RotateCw } from 'lucide-react';
+import { ChevronDown, Pencil, Copy, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff, RotateCcw } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -786,7 +786,7 @@ export function MachineRow({
                                     className="bg-card border border-border text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                                     disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
                                   >
-                                    <RotateCw className="h-3 w-3 mr-1" />
+                                    <RotateCcw className="h-3 w-3 mr-1" />
                                     restart
                                   </Button>
                                   <Button
@@ -794,7 +794,7 @@ export function MachineRow({
                                     size="sm"
                                     onClick={() => onKillProcess(process.id, process.name)}
                                     className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50"
-                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED' && process.launch_mode !== 'off'}
+                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
                                   >
                                     <Square className="h-3 w-3 mr-1" />
                                     kill
@@ -886,7 +886,7 @@ export function MachineRow({
                                         className="bg-card border border-border text-foreground disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
                                         disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
                                       >
-                                        <RotateCw className="h-3 w-3" />
+                                        <RotateCcw className="h-3 w-3" />
                                       </Button>
                                     </TooltipTrigger>
                                     <TooltipContent>
@@ -901,7 +901,7 @@ export function MachineRow({
                                         onClick={() => onKillProcess(process.id, process.name)}
                                         aria-label={`kill ${process.name}`}
                                         className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
-                                        disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED' && process.launch_mode !== 'off'}
+                                        disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
                                       >
                                         <Square className="h-3 w-3" />
                                       </Button>

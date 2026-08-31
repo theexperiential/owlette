@@ -52,8 +52,9 @@ Read access to assigned sites is baseline role behavior, not a `Capability` enum
 | `USER_SELF_PREFS` | yes | yes | yes | self |
 | `USER_SELF_DELETE` | yes | yes | yes | self |
 | `MACHINE_EXEC_COMMAND` | no | yes | yes | assigned sites / all sites |
+| `MACHINE_VIEW` | yes | yes | yes | assigned sites / all sites |
 | `MACHINE_CONFIG_WRITE` | no | yes | yes | assigned sites / all sites |
-| `MACHINE_REMOVE` | no | no | yes | all sites |
+| `MACHINE_REMOVE` | no | yes | yes | assigned sites / all sites |
 | `DEPLOYMENT_MANAGE` | no | yes | yes | assigned sites / all sites |
 | `DISTRIBUTION_MANAGE` (roost) | no | yes | yes | assigned sites / all sites |
 | `UNINSTALL_TRIGGER` | no | yes | yes | assigned sites / all sites |
@@ -61,6 +62,8 @@ Read access to assigned sites is baseline role behavior, not a `Capability` enum
 | `SITE_MEMBER_MANAGE` | no | yes | yes | assigned sites / all sites |
 | `WEBHOOK_MANAGE` | no | yes | yes | assigned sites / all sites |
 | `SITE_LOGS_MANAGE` | no | yes | yes | assigned sites / all sites |
+| `TALON_MANAGE` | no | yes | yes | assigned sites / all sites |
+| `AGENT_TOKEN_REVOKE` | no | yes | yes | assigned sites / all sites |
 | `USER_ROLE_MANAGE` | no | no | yes | global |
 | `USER_DELETE` | no | no | yes | global |
 | `SYSTEM_PRESET_MANAGE` (deployment template presets) | no | no | yes | global |

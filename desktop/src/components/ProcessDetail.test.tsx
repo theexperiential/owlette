@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProcessDetail } from '@/components/ProcessDetail'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import type { DetailSections } from '@/lib/ipc'
 import type { ProcessEntry } from '@/lib/owletteConfig'
 import type { ProcessStatus } from '@/lib/processStatus'
 
@@ -28,7 +29,7 @@ const base: ProcessEntry = {
 interface Options {
   status?: ProcessStatus
   startedAt?: number | null
-  advancedOpen?: boolean
+  sections?: Partial<DetailSections>
 }
 
 function setup(process: ProcessEntry = base, options: Options = {}) {
@@ -37,7 +38,7 @@ function setup(process: ProcessEntry = base, options: Options = {}) {
   const onSchedules = vi.fn()
   const onRestart = vi.fn()
   const onKill = vi.fn()
-  const onAdvancedOpenChange = vi.fn()
+  const onSectionToggle = vi.fn()
 
   function ui(entry: ProcessEntry) {
     return (
@@ -46,8 +47,8 @@ function setup(process: ProcessEntry = base, options: Options = {}) {
           process={entry}
           status={options.status ?? 'INACTIVE'}
           startedAt={options.startedAt ?? null}
-          advancedOpen={options.advancedOpen ?? false}
-          onAdvancedOpenChange={onAdvancedOpenChange}
+          sections={{ whatToRun: true, whenToRun: true, howToRun: true, ...options.sections }}
+          onSectionToggle={onSectionToggle}
           onSave={onSave}
           onLaunchMode={onLaunchMode}
           onSchedules={onSchedules}
@@ -68,7 +69,7 @@ function setup(process: ProcessEntry = base, options: Options = {}) {
     onSchedules,
     onRestart,
     onKill,
-    onAdvancedOpenChange,
+    onSectionToggle,
     rerender: (next: ProcessEntry) => view.rerender(ui(next)),
   }
 }
@@ -371,16 +372,16 @@ describe('schedules', () => {
     expect(screen.queryByTestId('schedule-editor')).toBeNull()
   })
 
-  it('groups the form into what to run, when to run, and recovery', () => {
+  it('groups the form into what to run, when to run, and how to run', () => {
     setup()
 
     // The order an entry is filled in, and the order it is read back in.
-    const labels = [...document.querySelectorAll('.col-span-2')]
-      .map((element) => element.textContent?.trim() ?? '')
-      .filter((text) => text && !text.startsWith('advanced'))
+    const labels = [...document.querySelectorAll('[data-testid$="-toggle"]')].map(
+      (element) => element.textContent?.trim() ?? '',
+    )
     expect(labels[0]).toBe('what to run')
     expect(labels[1]).toBe('when to run')
-    expect(labels[2]).toMatch(/^recovery/)
+    expect(labels[2]).toMatch(/^how to run/)
 
     // …and every row still shares one label gutter, so the sections do not
     // break the alignment they were added to.
@@ -391,11 +392,12 @@ describe('schedules', () => {
 })
 
 describe('a launch mode of off', () => {
-  it('dims the recovery fields without taking them away', () => {
+  it('dims the how-to-run fields without taking them away', () => {
     const { onSave } = setup({ ...base, launch_mode: 'off' })
 
-    const recovery = screen.getByTestId('recovery-fields')
-    expect(recovery.dataset.dimmed).toBe('true')
+    const fields = screen.getByTestId('how-to-run-fields')
+    expect(fields.dataset.dimmed).toBe('true')
+    expect(screen.getByTestId('when-to-run-timing').dataset.dimmed).toBe('true')
     expect(screen.getByText(/applies once a launch mode is set/)).toBeTruthy()
 
     // Dimmed is a statement about when they apply, not a lock: filling these in
@@ -411,7 +413,8 @@ describe('a launch mode of off', () => {
   it('leaves them at full weight for an entry owlette manages', () => {
     setup({ ...base, launch_mode: 'always' })
 
-    expect(screen.getByTestId('recovery-fields').dataset.dimmed).toBeUndefined()
+    expect(screen.getByTestId('how-to-run-fields').dataset.dimmed).toBeUndefined()
+    expect(screen.getByTestId('when-to-run-timing').dataset.dimmed).toBeUndefined()
     expect(screen.queryByText(/applies once a launch mode is set/)).toBeNull()
   })
 })
@@ -452,19 +455,29 @@ describe('the status row', () => {
     expect(onKill).toHaveBeenCalledOnce()
   })
 
-  it('disables kill when there is nothing running to kill', () => {
-    const { onKill } = setup(base, { status: 'STOPPED' })
+  it('disables both actions when there is nothing running to act on', () => {
+    const { onKill, onRestart } = setup(base, { status: 'STOPPED' })
 
     const kill = screen.getByRole('button', { name: 'kill process' }) as HTMLButtonElement
     expect(kill.disabled).toBe(true)
     fireEvent.click(kill)
     expect(onKill).not.toHaveBeenCalled()
 
-    // Restart stays offered: it is launch-mode aware, so on a managed entry it
-    // is how the operator asks for the process back.
-    expect(
-      (screen.getByRole('button', { name: 'restart process' }) as HTMLButtonElement).disabled,
-    ).toBe(false)
+    // Restart too: bringing a dead process back is the launch mode's job.
+    const restart = screen.getByRole('button', { name: 'restart process' }) as HTMLButtonElement
+    expect(restart.disabled).toBe(true)
+    fireEvent.click(restart)
+    expect(onRestart).not.toHaveBeenCalled()
+  })
+
+  it('offers both actions on a running process whose launch mode is off', () => {
+    // Liveness, not launch mode, decides: switching a running process to off
+    // must not take the controls away.
+    setup({ ...base, launch_mode: 'off' }, { status: 'RUNNING' })
+
+    for (const name of ['restart process', 'kill process']) {
+      expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(false)
+    }
   })
 
   it('offers kill for every status that has a live generation behind it', () => {
@@ -515,30 +528,42 @@ describe('the status row', () => {
   })
 })
 
-describe('the advanced disclosure', () => {
-  it('folds priority and visibility away by default', () => {
-    setup()
+describe('the section disclosures', () => {
+  it('folds each section away independently', () => {
+    setup(base, { sections: { whatToRun: false, whenToRun: false, howToRun: false } })
 
-    expect(screen.getByTestId('advanced-toggle')).toBeTruthy()
+    expect(screen.getByTestId('what-to-run-toggle')).toBeTruthy()
+    expect(screen.queryByLabelText('exe')).toBeNull()
+    expect(screen.queryByTestId('launch-mode')).toBeNull()
+    expect(screen.queryByLabelText('delay (sec)')).toBeNull()
+    expect(screen.queryByTestId('how-to-run-fields')).toBeNull()
+  })
+
+  it('keeps launch timing under when to run, not how to run', () => {
+    // delay/wait are "whens": they live beside the launch mode, while the
+    // tune-once fields stay behind the how-to-run disclosure.
+    setup(base, { sections: { whatToRun: true, whenToRun: true, howToRun: false } })
+
+    expect(screen.getByLabelText('delay (sec)')).toBeTruthy()
+    expect(screen.getByLabelText('wait (sec)')).toBeTruthy()
+    expect(screen.queryByLabelText('attempts')).toBeNull()
     expect(screen.queryByTestId('priority')).toBeNull()
     expect(screen.queryByTestId('visibility')).toBeNull()
   })
 
-  it('shows them when it is open', () => {
-    setup(base, { advancedOpen: true })
-
-    expect(screen.getByTestId('priority')).toBeTruthy()
-    expect(screen.getByTestId('visibility')).toBeTruthy()
-  })
-
-  it('hands the open state to the caller, which outlives this pane', () => {
+  it('hands every toggle to the caller, which outlives this pane', () => {
     // The pane is remounted for every process, so an operator comparing two
-    // entries would have the disclosure shut itself on the second.
-    const { onAdvancedOpenChange } = setup()
+    // entries would have the disclosures shut themselves on the second.
+    const { onSectionToggle } = setup(base, { sections: { howToRun: false } })
 
-    fireEvent.click(screen.getByTestId('advanced-toggle'))
+    fireEvent.click(screen.getByTestId('how-to-run-toggle'))
+    expect(onSectionToggle).toHaveBeenLastCalledWith('howToRun', true)
 
-    expect(onAdvancedOpenChange).toHaveBeenCalledExactlyOnceWith(true)
+    fireEvent.click(screen.getByTestId('what-to-run-toggle'))
+    expect(onSectionToggle).toHaveBeenLastCalledWith('whatToRun', false)
+
+    fireEvent.click(screen.getByTestId('when-to-run-toggle'))
+    expect(onSectionToggle).toHaveBeenLastCalledWith('whenToRun', false)
   })
 })
 

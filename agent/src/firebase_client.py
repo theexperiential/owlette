@@ -212,9 +212,12 @@ class FirebaseClient:
         # unwinds, so it re-asserts 'cancelled' instead of clobbering it.
         self._cancelled_commands: set = set()
 
-        # One read of sites/{siteId} per connect. site_timezone drives schedule
-        # evaluation; site_name is the operator label published via
-        # tmp/service_status.json. None when unreadable — consumers fall back to id.
+        # Site metadata: fetched per connect and refreshed every 900s from the
+        # metrics thread. site_timezone drives PROCESS schedule evaluation and is
+        # non-None only while the site opts in (schedulesFollowSiteTime) — the
+        # server decides, the agent mirrors. site_name is the operator label
+        # published via tmp/service_status.json. None when unreadable/opted out —
+        # consumers fall back to the site id and to each machine's local clock.
         self.site_timezone: Optional[str] = None
         self.site_name: Optional[str] = None
         # A denial never changes for this client's life: log once, stop asking.
@@ -222,7 +225,7 @@ class FirebaseClient:
         self._site_metadata_denied: bool = False
         # Silences the log only, never the retry: the route may just not be
         # deployed at this agent's api_base yet.
-        self._site_name_api_warned: bool = False
+        self._site_metadata_api_warned: bool = False
 
         # Track last synced software inventory hash to prevent unnecessary writes
         self._last_software_inventory_hash: Optional[str] = None
@@ -409,27 +412,32 @@ class FirebaseClient:
     # Site Metadata
 
     def _fetch_site_metadata(self):
-        """Cache the site's display name, and its timezone where readable.
+        """Cache the site's display name and its schedule timezone.
 
-        1. ``GET /api/agent/site`` — name only; the path that works today.
-        2. Direct read of ``sites/{siteId}`` — only source of ``timezone``, but
-           firestore.rules scopes agents to their machine subtree, so it 403s.
+        1. ``GET /api/agent/site`` — name + timezone; the path that works today.
+        2. Direct read of ``sites/{siteId}`` — firestore.rules scopes agents to
+           their machine subtree, so it 403s; kept wired for a future rule grant.
 
-        Runs on connect/reconnect, no polling. Both values are optional and a
-        failed lookup keeps the previous cache; callers fall back to the site id.
+        Runs on connect/reconnect and every 900s from the metrics thread (never
+        the 5s main loop — this is a network round trip). Both values are optional
+        and a failed lookup keeps the previous cache; callers fall back to the
+        site id and to each machine's local clock.
         """
-        if self._fetch_site_name_from_api():
+        if self._fetch_site_metadata_from_api():
             return
         self._fetch_site_metadata_from_firestore()
 
-    def _fetch_site_name_from_api(self) -> bool:
-        """Resolve the site's display name through the web API.
+    def _fetch_site_metadata_from_api(self) -> bool:
+        """Resolve the site's display name and schedule timezone through the web API.
 
-        True = the API answered (name cached, or the site has none); False = fall
-        back to the Firestore read.
+        True = the API answered (both values cached, including "the site has
+        neither"); False = fall back to the Firestore read.
 
-        Name-only by design: a non-None `site_timezone` would flip schedule
-        evaluation from machine-local to site time fleet-wide, which is deferred.
+        The SERVER owns the policy: it returns a `timezone` only when the site's
+        `schedulesFollowSiteTime` is true and it has one set, and `null` in every
+        other case. The agent never re-derives that, which is why the assignment
+        below is unconditional — a site switching the flag back off has to CLEAR
+        a cached timezone, not keep evaluating windows against a stale one.
         """
         try:
             token = self.auth_manager.get_valid_token()
@@ -441,41 +449,77 @@ class FirebaseClient:
                 timeout=10,
             )
             if response.status_code != 200:
-                self._warn_site_name_api_once(
+                self._warn_site_metadata_api_once(
                     f"HTTP {response.status_code} from {api_base}/agent/site"
                 )
                 return False
 
-            name = response.json().get('name')
-            self.site_name = name.strip() if isinstance(name, str) and name.strip() else None
-            if self.site_name:
-                self.logger.info(f"Site name: {self.site_name}")
+            payload = response.json()
+
+            name = payload.get('name')
+            name = name.strip() if isinstance(name, str) and name.strip() else None
+            # Transition-only: the 900s refresh would otherwise repeat this line
+            # 96 times a day.
+            if name and name != self.site_name:
+                self.logger.info(f"Site name: {name}")
+            self.site_name = name
+
+            timezone = payload.get('timezone')
+            timezone = timezone.strip() if isinstance(timezone, str) and timezone.strip() else None
+            self._apply_site_timezone(timezone)
             return True
         except Exception as e:
-            self._warn_site_name_api_once(str(e))
+            self._warn_site_metadata_api_once(str(e))
             return False
 
-    def _warn_site_name_api_once(self, detail: str):
-        """Log an API name-lookup failure once, then stay quiet.
+    def _apply_site_timezone(self, timezone: Optional[str]):
+        """Assign the schedule timezone, logging only the transitions.
+
+        Always assigns — including None, which is how a site that turns
+        `schedulesFollowSiteTime` off (or clears its timezone) drops the whole
+        fleet back to machine-local windows without a service restart.
+        """
+        if timezone == self.site_timezone:
+            return
+        previous = self.site_timezone
+        self.site_timezone = timezone
+        if timezone:
+            self.logger.info(
+                f"Process schedules now follow the site's timezone: {timezone}"
+                + (f" (was {previous})" if previous else "")
+            )
+        else:
+            self.logger.info(
+                f"Process schedules now follow each machine's local clock — "
+                f"the site's timezone ({previous}) no longer applies"
+            )
+
+    def _warn_site_metadata_api_once(self, detail: str):
+        """Log an API site-metadata lookup failure once, then stay quiet.
 
         Unlike a Firestore denial this does not latch: an undeployed/unreachable
-        route is temporary, so every connect retries — only the noise is muted.
+        route is temporary, so every connect and every refresh retries — only the
+        noise is muted.
         """
-        if self._site_name_api_warned:
-            self.logger.debug(f"Site name lookup failed: {detail}")
+        if self._site_metadata_api_warned:
+            self.logger.debug(f"Site metadata lookup failed: {detail}")
             return
-        self._site_name_api_warned = True
+        self._site_metadata_api_warned = True
         self.logger.warning(
-            f"Could not resolve this site's display name via the API — "
-            f"falling back to the site id: {detail}"
+            f"Could not resolve this site's display name or schedule timezone via "
+            f"the API — falling back to the site id and machine-local time: {detail}"
         )
 
     def _fetch_site_metadata_from_firestore(self):
         """Read `sites/{siteId}` for the name and timezone.
 
-        Still the only source of `site_timezone`. Agent tokens cannot satisfy the
-        site-document rule today, so this denies once per run then no-ops; kept
-        wired so a future rule grant needs no agent change.
+        Agent tokens cannot satisfy the site-document rule today, so this denies
+        once per run then no-ops; kept wired so a future rule grant needs no agent
+        change.
+
+        Honours the same opt-in as the API path: the timezone applies only when
+        `schedulesFollowSiteTime` is exactly true, so this fallback can never turn
+        site-time scheduling on for a site that declined it.
         """
         if self._site_metadata_denied:
             return
@@ -484,12 +528,13 @@ class FirebaseClient:
                 return
             site_doc = self.db.get_document(f"sites/{self.site_id}")
             if site_doc:
-                self.site_timezone = site_doc.get('timezone') or None
-                self.site_name = site_doc.get('name') or None
-                if self.site_timezone:
-                    self.logger.info(f"Site timezone: {self.site_timezone}")
-                if self.site_name:
-                    self.logger.info(f"Site name: {self.site_name}")
+                follows_site_time = site_doc.get('schedulesFollowSiteTime') is True
+                timezone = site_doc.get('timezone') or None
+                self._apply_site_timezone(timezone if follows_site_time else None)
+                name = site_doc.get('name') or None
+                if name and name != self.site_name:
+                    self.logger.info(f"Site name: {name}")
+                self.site_name = name
         except Exception as e:
             # A denial is an answer, not an outage — warn once (a debug-level
             # swallow hid this for months) and stop asking. Everything else is
@@ -707,6 +752,9 @@ class FirebaseClient:
 
         last_mode = None
         last_command_cleanup = 0  # epoch seconds — run cleanup on first connected cycle
+        # Seeded to now, not 0: connect (start/_on_connected) has just fetched, so
+        # the first refresh is due 900s in rather than immediately re-fetching.
+        last_site_metadata_refresh = time.time()
         first_loop = True  # Skip initial sleep so first metrics upload happens immediately
         try:
             while self.running:
@@ -782,6 +830,18 @@ class FirebaseClient:
                                 self._cleanup_stale_commands()
                             except Exception as e:
                                 self.logger.debug(f"Command cleanup failed (non-critical): {e}")
+
+                        # A site renaming itself, or opting in/out of site-time
+                        # schedules, used to need a reconnect to land. This is a
+                        # 10s-timeout HTTP round trip, so it belongs on THIS
+                        # thread — never in the 5s main loop, which only reads the
+                        # cached attribute.
+                        if now - last_site_metadata_refresh > 900:
+                            last_site_metadata_refresh = now
+                            try:
+                                self._fetch_site_metadata()
+                            except Exception as e:
+                                self.logger.debug(f"Site metadata refresh failed (non-critical): {e}")
 
                     else:
                         state = self.connection_manager.state

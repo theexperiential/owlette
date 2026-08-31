@@ -7,9 +7,7 @@ import { auth } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
-import { LoadingWord } from '@/components/LoadingWord';
+import { AuthShell, authFooterLinkClass } from '@/components/auth/AuthShell';
 import { EyeIcon, EyeOffIcon } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { FormError } from '@/components/ui/form-error';
@@ -94,135 +92,123 @@ function ResetPasswordForm() {
     }
   };
 
+  /* The account email is rendered EXACTLY ONCE on this page (here, in the brand
+     description): password-reset.spec.ts asserts getByText(email) with no
+     .first(), so a second copy is a strict-mode failure. break-words because it
+     is arbitrary user data. */
+  const brandDescription =
+    status === 'ready' ? (
+      <>
+        resetting the password for{' '}
+        <span className="break-words text-foreground">{accountEmail}</span>
+      </>
+    ) : status === 'invalid' ? (
+      'this reset link is invalid or has expired'
+    ) : (
+      'verifying your reset link...'
+    );
+
   return (
-    <div className="relative flex min-h-screen items-center justify-center p-4">
-      {/* Grid background */}
-      <div className="absolute inset-0 dot-grid opacity-30" />
-      <div className="absolute inset-0 blueprint-grid opacity-15" />
-      <Card className="relative z-10 w-full max-w-md border-border bg-card">
-        <CardHeader className="space-y-4 flex flex-col items-center">
-          <OwletteEyeIcon size={80} />
-          <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-foreground">set a new password</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {status === 'ready'
-                ? <>resetting the password for <span className="text-foreground">{accountEmail}</span></>
-                : status === 'invalid'
-                  ? 'this reset link is invalid or has expired'
-                  : 'verifying your reset link…'}
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {status === 'verifying' && (
-            <div className="text-center text-muted-foreground"><LoadingWord /></div>
-          )}
+    <AuthShell
+      brandTitle="set a new password"
+      brandDescription={brandDescription}
+      loading={status === 'verifying'}
+      /* Reserve the resolved height so the card does not jump ~250px upward
+         when verification completes — the wrapper centres it vertically. */
+      contentClassName={status === 'verifying' ? 'md:min-h-[26rem]' : undefined}
+      footer={
+        <a href="/login" className={authFooterLinkClass}>
+          back to sign in
+        </a>
+      }
+    >
+      {status === 'invalid' && (
+        <div className="space-y-4">
+          <p className="text-center text-sm text-muted-foreground">
+            password reset links expire after a short while and can only be used once. request a fresh one to continue.
+          </p>
+          <Button
+            type="button"
+            onClick={() => router.push('/forgot-password')}
+            className="w-full text-background font-medium cursor-pointer"
+          >
+            request a new link
+          </Button>
+        </div>
+      )}
 
-          {status === 'invalid' && (
-            <div className="space-y-4">
-              <p className="text-center text-sm text-muted-foreground">
-                password reset links expire after a short while and can only be used once. request a fresh one to continue.
-              </p>
-              <Button
+      {status === 'ready' && (
+        <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+          <div className="space-y-2">
+            <Label htmlFor="newPassword" className="text-foreground">new password</Label>
+            <div className="relative">
+              <Input
+                id="newPassword"
+                type={showPassword ? 'text' : 'password'}
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                disabled={submitting}
+                className="bg-input border-border pr-10 text-foreground placeholder:text-muted-foreground"
+              />
+              <button
                 type="button"
-                onClick={() => router.push('/forgot-password')}
-                className="w-full text-background font-medium cursor-pointer"
+                onClick={() => setShowPassword(!showPassword)}
+                /* inset-y-0 + px-3 grows the hit area to the full field height
+                   without moving the glyph — it was a 16x16 tap target. */
+                className="absolute inset-y-0 right-0 flex items-center px-3 cursor-pointer text-muted-foreground hover:text-foreground"
+                aria-label={showPassword ? 'hide password' : 'show password'}
               >
-                request a new link
-              </Button>
-              <div className="text-center text-sm text-muted-foreground">
-                <a href="/login" className="hl-link text-accent-cyan">
-                  back to sign in
-                </a>
-              </div>
+                {showPassword ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+              </button>
             </div>
-          )}
+            <p className="text-xs text-muted-foreground">must be at least 6 characters</p>
+          </div>
 
-          {status === 'ready' && (
-            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-              <div className="space-y-2">
-                <Label htmlFor="newPassword" className="text-foreground">new password</Label>
-                <div className="relative">
-                  <Input
-                    id="newPassword"
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    disabled={submitting}
-                    className="bg-input border-border pr-10 text-foreground placeholder:text-muted-foreground"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-foreground"
-                    aria-label={showPassword ? 'hide password' : 'show password'}
-                  >
-                    {showPassword ? <EyeOffIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
-                  </button>
-                </div>
-                <p className="text-xs text-muted-foreground">must be at least 6 characters</p>
-              </div>
+          <div className="space-y-2">
+            <Label htmlFor="confirmPassword" className="text-foreground">confirm new password</Label>
+            <Input
+              id="confirmPassword"
+              type={showPassword ? 'text' : 'password'}
+              placeholder="••••••••"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              required
+              disabled={submitting}
+              className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+            />
+          </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="confirmPassword" className="text-foreground">confirm new password</Label>
-                <Input
-                  id="confirmPassword"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="••••••••"
-                  value={confirm}
-                  onChange={(e) => setConfirm(e.target.value)}
-                  required
-                  disabled={submitting}
-                  className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-                />
-              </div>
+          <FormError message={error} />
 
-              <FormError message={error} />
-
-              <Button
-                type="submit"
-                className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={submitting || !password || !confirm}
-              >
-                {submitting ? 'resetting...' : 'reset password'}
-              </Button>
-
-              <div className="text-center text-sm text-muted-foreground">
-                <a href="/login" className="hl-link text-accent-cyan">
-                  back to sign in
-                </a>
-              </div>
-            </form>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+          <Button
+            type="submit"
+            className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={submitting || !password || !confirm}
+          >
+            {submitting ? 'resetting...' : 'reset password'}
+          </Button>
+        </form>
+      )}
+    </AuthShell>
   );
 }
 
 export default function ResetPasswordPage() {
   return (
-    <Suspense fallback={
-      <div className="relative flex min-h-screen items-center justify-center p-4">
-        {/* Grid background */}
-        <div className="absolute inset-0 dot-grid opacity-30" />
-        <div className="absolute inset-0 blueprint-grid opacity-15" />
-        <Card className="relative z-10 w-full max-w-md border-border bg-card">
-          <CardHeader className="space-y-4 flex flex-col items-center">
-            <OwletteEyeIcon size={80} />
-            <div className="space-y-1 text-center">
-              <CardTitle className="text-2xl font-bold text-foreground">set a new password</CardTitle>
-              <CardDescription className="text-muted-foreground">verifying your reset link…</CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-center text-muted-foreground"><LoadingWord /></div>
-          </CardContent>
-        </Card>
-      </div>
-    }>
+    /* Identical shell to the resolved page, so the card does not change shape
+       when the boundary resolves. */
+    <Suspense
+      fallback={
+        <AuthShell
+          brandTitle="set a new password"
+          brandDescription="verifying your reset link..."
+          loading
+          contentClassName="md:min-h-[26rem]"
+        />
+      }
+    >
       <ResetPasswordForm />
     </Suspense>
   );

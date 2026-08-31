@@ -20,7 +20,7 @@ use crate::paths::{self, SERVICE_STATUS_REL};
 use crate::process_ctl::{self, TerminateOutcome, DEFAULT_GRACEFUL_TIMEOUT};
 use crate::service_ctl::{self, ServiceCommandOutcome, ServiceStatus};
 use crate::shell_open;
-use crate::window_state::LayoutState;
+use crate::window_state::{DetailSections, LayoutState};
 
 /// Absolute path of the owlette data root (`%PROGRAMDATA%\Owlette`). The frontend
 /// otherwise uses relative paths; this is for spawning the bundled interpreter or
@@ -87,10 +87,11 @@ pub fn service_status() -> Result<ServiceStatus, String> {
   service_ctl::status(&paths::data_root().join(SERVICE_STATUS_REL))
 }
 
-/// Start `OwletteService`, elevating only when this process lacks the right.
+/// Start `OwletteService`. `allow_elevation` gates the UAC fallback when this
+/// process lacks the right — false for automatic callers, true for a click.
 #[tauri::command(async)]
-pub fn service_start() -> Result<ServiceCommandOutcome, String> {
-  service_ctl::start()
+pub fn service_start(allow_elevation: bool) -> Result<ServiceCommandOutcome, String> {
+  service_ctl::start(allow_elevation)
 }
 
 /// Stop `OwletteService`, elevating only when this process lacks the right.
@@ -219,6 +220,23 @@ pub fn set_sidebar_collapsed(
   collapsed: bool,
 ) -> Result<bool, String> {
   layout.set_sidebar_collapsed(collapsed)
+}
+
+/// Which detail-pane sections open expanded. Shares the per-user layout file.
+#[tauri::command(async)]
+pub fn detail_sections(layout: State<'_, LayoutState>) -> DetailSections {
+  layout.detail_sections()
+}
+
+/// Remember one detail-pane section's open state, returning what was kept. The
+/// section key is whitelisted on the other side of this call.
+#[tauri::command(async)]
+pub fn set_detail_section(
+  layout: State<'_, LayoutState>,
+  section: String,
+  open: bool,
+) -> Result<bool, String> {
+  layout.set_detail_section(&section, open)
 }
 
 #[cfg(test)]

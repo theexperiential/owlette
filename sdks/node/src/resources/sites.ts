@@ -7,6 +7,11 @@ export interface Site {
   timezone: string | null;
   owner: string | null;
   createdAt: string | null;
+  /**
+   * True when process schedules run on the site's `timezone` instead of each
+   * machine's own clock. Sites that were never asked report `false`.
+   */
+  schedulesFollowSiteTime: boolean;
 }
 
 export class Sites {

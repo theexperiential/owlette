@@ -23,6 +23,24 @@ const STORAGE_EMULATOR_HOST =
 const NEXT_DIST_DIR = process.env.OWLETTE_NEXT_DIST_DIR || '.next-e2e';
 const OUTPUT_DIR = process.env.E2E_VIDEOS_OUTPUT_DIR || './e2e/.output/videos-results';
 
+/**
+ * WebAuthn RP override for episode 2's passkey beats. Honored by
+ * `lib/webauthn.server.ts` only while `OWLETTE_E2E === '1'`; without it the
+ * production build signs ceremonies for RP `owlette.app` + https origins and no
+ * loopback ceremony can complete. `localhost`, not BASE_URL's `127.0.0.1` — an
+ * IP literal is not a valid RP ID, which is also why that scene navigates on
+ * `WEBAUTHN_BASE_URL` (`e2e/helpers/webauthn.ts:10-14`).
+ *
+ * Written back onto THIS process as well as the webServer's: 02-day-zero's
+ * precondition guard reads `process.env` in the test runner, so a webServer-only
+ * block would still throw before the scene records a frame. Mirrors
+ * `playwright.config.ts`'s webServer values so the two suites agree.
+ */
+const WEBAUTHN_RP_ID = process.env.WEBAUTHN_RP_ID || 'localhost';
+const WEBAUTHN_ORIGINS = process.env.WEBAUTHN_ORIGINS || `http://localhost:${PORT}`;
+process.env.WEBAUTHN_RP_ID = WEBAUTHN_RP_ID;
+process.env.WEBAUTHN_ORIGINS = WEBAUTHN_ORIGINS;
+
 export default defineConfig({
   testDir: './e2e/videos',
   testMatch: /\.video\.ts$/,
@@ -93,7 +111,13 @@ export default defineConfig({
     command: `node scripts/e2e-next-server.mjs --port ${PORT} --hostname 127.0.0.1`,
     url: BASE_URL,
     reuseExistingServer: false,
-    timeout: 60_000,
+    // 3 minutes, not the E2E suite's 60s. Recording sessions run on a
+    // workstation that is also driving the capture display (and often the
+    // operator's own dev servers), and a cold Next production start there
+    // intermittently crosses 60s — four takes in one batch died on the boot
+    // budget alone, each costing a full re-run. The timeout only bounds a
+    // hang; a healthy server still starts in ~10s and the suite proceeds.
+    timeout: 180_000,
     stdout: 'pipe',
     stderr: 'pipe',
     env: {
@@ -119,6 +143,15 @@ export default defineConfig({
       UPSTASH_REDIS_REST_TOKEN: '',
       E2E_DISABLE_RATE_LIMIT: 'true',
       OWLETTE_E2E: '1',
+      WEBAUTHN_RP_ID,
+      WEBAUTHN_ORIGINS,
+      // The build bakes the always-pass Turnstile TEST sitekey
+      // (scripts/e2e-build.mjs), so the SERVER needs the matching test secret
+      // or /api/users/bootstrap fails closed with 403 and a fresh signup never
+      // gets its requiresMfaSetup gate. Mirrors playwright.config.ts:154-155;
+      // the hostname list already admits localhost, which this suite runs on.
+      TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
+      TURNSTILE_HOSTNAMES: 'example.com,localhost,127.0.0.1',
     },
   },
 });

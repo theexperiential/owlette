@@ -36,6 +36,8 @@ import {
   type TextField,
   type Visibility,
 } from '@/lib/owletteConfig'
+import { DETAIL_SECTION_DEFAULTS } from '@/hooks/useDetailSections'
+import type { DetailSectionKey, DetailSections } from '@/lib/ipc'
 import { isLive, STATUS_TEXT, statusLabel, type ProcessStatus } from '@/lib/processStatus'
 import { cn } from '@/lib/utils'
 
@@ -68,32 +70,40 @@ const LAUNCH_MODE_TEXT: Record<LaunchMode, string> = {
 }
 
 /**
- * Group heading. Spans both columns of the form grid so the rows underneath keep
+ * Group heading and disclosure in one: the chevron trigger for a section's
+ * Collapsible. Spans both columns of the form grid so the rows underneath keep
  * their shared label gutter.
  */
-function SectionLabel({
+function SectionToggle({
   children,
+  testId,
   first = false,
   dimmed = false,
   note,
 }: {
   children: ReactNode
+  testId: string
   /** No top margin on the first one; it already has the header above it. */
   first?: boolean
   dimmed?: boolean
   note?: ReactNode
 }) {
   return (
-    <div
+    <CollapsibleTrigger
+      data-testid={testId}
       className={cn(
-        'col-span-2 flex min-w-0 items-baseline gap-2 text-xs font-medium text-muted-foreground/80 transition-opacity',
+        'group col-span-2 flex min-w-0 cursor-pointer items-baseline gap-1 text-xs font-medium text-muted-foreground/80 transition-all hover:text-foreground',
         first ? 'mt-0' : 'mt-3',
         dimmed && 'opacity-60',
       )}
     >
+      <ChevronRight
+        aria-hidden
+        className="size-3.5 self-center transition-transform group-data-[state=open]:rotate-90 motion-reduce:transition-none"
+      />
       <span>{children}</span>
-      {note && <span className="min-w-0 truncate text-muted-foreground/70">{note}</span>}
-    </div>
+      {note && <span className="min-w-0 truncate font-normal text-muted-foreground/70">{note}</span>}
+    </CollapsibleTrigger>
   )
 }
 
@@ -112,9 +122,10 @@ interface ProcessDetailProps {
   onVisibility: (visibility: Visibility) => void
   onRestart: () => void
   onKill: () => void
-  /** Owned above so it survives a process change. */
-  advancedOpen?: boolean
-  onAdvancedOpenChange?: (open: boolean) => void
+  /** Open state of the three section disclosures. Owned above so it survives
+   *  a process change, and persisted as a per-user layout preference. */
+  sections?: DetailSections
+  onSectionToggle?: (section: DetailSectionKey, open: boolean) => void
 }
 
 /**
@@ -139,8 +150,8 @@ export function ProcessDetail({
   onVisibility,
   onRestart,
   onKill,
-  advancedOpen = false,
-  onAdvancedOpenChange,
+  sections = DETAIL_SECTION_DEFAULTS,
+  onSectionToggle,
 }: ProcessDetailProps) {
   const [draft, setDraft] = useState<ProcessForm>(() => formFromProcess(process))
   const [pendingRefresh, setPendingRefresh] = useState(false)
@@ -357,30 +368,40 @@ export function ProcessDetail({
             </Tooltip>
           )}
 
+          {/*
+            Both actions follow liveness alone, never the launch mode: a running
+            process can be restarted or killed whatever its mode, and a dead one
+            can be neither — the launch mode is what brings it back. Disabled
+            buttons get no pointer events, so each tooltip hangs off a wrapper.
+          */}
           <div className="flex items-center gap-2">
             <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="icon-sm"
-                  variant="outline"
-                  onClick={onRestart}
-                  aria-label="restart process"
-                >
-                  <RotateCcw />
-                </Button>
-              </TooltipTrigger>
-              {/* Always offered: restart is launch-mode aware, so on a managed
-                  entry that is down it is how you ask the service for it back. */}
-              <TooltipContent>restart — stop it and let the service bring it back</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              {/* A disabled button gets no pointer events, so the tooltip hangs
-                  off the wrapper. */}
               <TooltipTrigger asChild>
                 <span className="inline-flex">
                   <Button
                     size="icon-sm"
                     variant="outline"
+                    onClick={onRestart}
+                    disabled={!live}
+                    aria-label="restart process"
+                  >
+                    <RotateCcw />
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {live
+                  ? 'restart — stop it and let the service start it again'
+                  : `restart — nothing to restart while this process is ${statusLabel(status)}`}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <Button
+                    size="icon-sm"
+                    variant="outline"
+                    className="text-destructive hover:text-destructive"
                     onClick={onKill}
                     disabled={!live}
                     aria-label="kill process"
@@ -400,10 +421,19 @@ export function ProcessDetail({
       </header>
 
       {/* Scrolls under the header rather than being clipped by it. */}
-      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 @container">
         <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
           {/* The name lives in the header row above; this is the rest of it. */}
-          <SectionLabel first>what to run</SectionLabel>
+          <Collapsible
+            open={sections.whatToRun}
+            onOpenChange={(open) => onSectionToggle?.('whatToRun', open)}
+            className="contents"
+          >
+            <SectionToggle first testId="what-to-run-toggle">
+              what to run
+            </SectionToggle>
+            <CollapsibleContent className="col-span-2">
+              <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3 pt-3">
 
           <Tooltip>
             <TooltipTrigger asChild>
@@ -489,7 +519,18 @@ export function ProcessDetail({
             />
           </div>
 
-          <SectionLabel>when to run</SectionLabel>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+
+          <Collapsible
+            open={sections.whenToRun}
+            onOpenChange={(open) => onSectionToggle?.('whenToRun', open)}
+            className="contents"
+          >
+            <SectionToggle testId="when-to-run-toggle">when to run</SectionToggle>
+            <CollapsibleContent className="col-span-2">
+              <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3 pt-3">
 
           <Tooltip>
             <TooltipTrigger asChild>
@@ -587,147 +628,158 @@ export function ProcessDetail({
             )}
           </div>
 
-          <SectionLabel
-            dimmed={unmanaged}
-            note={unmanaged ? '· applies once a launch mode is set' : undefined}
-          >
-            recovery
-          </SectionLabel>
+                {/* Launch timing is a "when": dimmed while the mode is off,
+                    because nothing launches until one is set. */}
+                <div
+                  className={cn(
+                    'col-span-2 grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3 @2xl:grid-cols-[7rem_minmax(0,1fr)_7rem_minmax(0,1fr)] [&>*]:transition-opacity',
+                    unmanaged && '[&>*]:opacity-70 [&>*]:focus-within:opacity-100',
+                  )}
+                  data-testid="when-to-run-timing"
+                  data-dimmed={unmanaged || undefined}
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Label htmlFor="time_delay" className="justify-end text-muted-foreground">
+                        delay (sec)
+                      </Label>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      seconds to wait before launching this process on startup — stagger heavy apps
+                      so they don&apos;t fight over the gpu
+                    </TooltipContent>
+                  </Tooltip>
+                  <Input
+                    id="time_delay"
+                    className="h-8 w-20"
+                    inputMode="numeric"
+                    {...field('time_delay')}
+                  />
 
-          {/* Dimmed, not disabled — see the isOff note above. */}
-          <div
-            className={cn(
-              'contents [&>*]:transition-opacity',
-              // Full strength for the focused field: the dimming is about when
-              // these apply, not about what is under the cursor.
-              unmanaged && '[&>*]:opacity-70 [&>*]:focus-within:opacity-100',
-            )}
-            data-testid="recovery-fields"
-            data-dimmed={unmanaged || undefined}
-          >
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Label htmlFor="time_delay" className="justify-end text-muted-foreground">
-                  delay (sec)
-                </Label>
-              </TooltipTrigger>
-              <TooltipContent>
-                seconds to wait before launching this process on startup — stagger heavy apps so
-                they don&apos;t fight over the gpu
-              </TooltipContent>
-            </Tooltip>
-            <Input id="time_delay" className="h-8 w-20" inputMode="numeric" {...field('time_delay')} />
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Label htmlFor="time_to_init" className="justify-end text-muted-foreground">
+                        wait (sec)
+                      </Label>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      seconds to wait after launch before monitoring starts — give slow apps time
+                      to boot before crash checks apply
+                    </TooltipContent>
+                  </Tooltip>
+                  <Input
+                    id="time_to_init"
+                    className="h-8 w-20"
+                    inputMode="numeric"
+                    {...field('time_to_init')}
+                  />
+                </div>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Label htmlFor="time_to_init" className="justify-end text-muted-foreground">
-                  wait (sec)
-                </Label>
-              </TooltipTrigger>
-              <TooltipContent>
-                seconds to wait after launch before monitoring starts — give slow apps time to boot
-                before crash checks apply
-              </TooltipContent>
-            </Tooltip>
-            <Input
-              id="time_to_init"
-              className="h-8 w-20"
-              inputMode="numeric"
-              {...field('time_to_init')}
-            />
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Label htmlFor="relaunch_attempts" className="justify-end text-muted-foreground">
-                  attempts
-                </Label>
-              </TooltipTrigger>
-              <TooltipContent>
-                max relaunch attempts before an automatic machine restart is initiated — 0 is
-                unlimited
-              </TooltipContent>
-            </Tooltip>
-            <Input
-              id="relaunch_attempts"
-              className="h-8 w-20"
-              inputMode="numeric"
-              {...field('relaunch_attempts')}
-            />
-          </div>
-
-          {/* Priority and visibility are set once, if ever — folded away. */}
+          {/*
+            Tune-once fields — recovery attempts, priority, visibility — behind
+            their own disclosure so the everyday view stays name / what / when.
+            Two or three columns when the pane is wide enough; the label gutter
+            repeats per column.
+          */}
           <Collapsible
-            open={advancedOpen}
-            onOpenChange={onAdvancedOpenChange}
-            className="col-span-2 mt-3"
+            open={sections.howToRun}
+            onOpenChange={(open) => onSectionToggle?.('howToRun', open)}
+            className="contents"
           >
-            <CollapsibleTrigger
-              data-testid="advanced-toggle"
-              className="group flex cursor-pointer items-center gap-1 text-xs font-medium text-muted-foreground/80 transition-colors hover:text-foreground"
+            <SectionToggle
+              testId="how-to-run-toggle"
+              dimmed={unmanaged}
+              note={unmanaged ? '· applies once a launch mode is set' : undefined}
             >
-              <ChevronRight
-                aria-hidden
-                className="size-3.5 transition-transform group-data-[state=open]:rotate-90 motion-reduce:transition-none"
-              />
-              advanced
-            </CollapsibleTrigger>
-            <CollapsibleContent
-              data-testid="advanced-fields"
-              className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3 pt-3"
-            >
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Label htmlFor="priority" className="justify-end text-muted-foreground">
-                    priority
-                  </Label>
-                </TooltipTrigger>
-                <TooltipContent>
-                  windows cpu priority for this process — leave normal unless it must outrank
-                  everything else
-                </TooltipContent>
-              </Tooltip>
-              <Select
-                value={priorityOf(process)}
-                onValueChange={(value) => onPriority(value as Priority)}
+              how to run
+            </SectionToggle>
+            <CollapsibleContent className="col-span-2">
+              {/* Dimmed, not disabled — see the isOff note above. */}
+              <div
+                className={cn(
+                  'grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3 pt-3 @2xl:grid-cols-[7rem_minmax(0,1fr)_7rem_minmax(0,1fr)] @4xl:grid-cols-[7rem_minmax(0,1fr)_7rem_minmax(0,1fr)_7rem_minmax(0,1fr)] [&>*]:transition-opacity',
+                  // Full strength for the focused field: the dimming is about when
+                  // these apply, not about what is under the cursor.
+                  unmanaged && '[&>*]:opacity-70 [&>*]:focus-within:opacity-100',
+                )}
+                data-testid="how-to-run-fields"
+                data-dimmed={unmanaged || undefined}
               >
-                <SelectTrigger id="priority" className="h-8 w-32" data-testid="priority">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PRIORITIES.map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {option.toLowerCase()}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Label htmlFor="relaunch_attempts" className="justify-end text-muted-foreground">
+                      attempts
+                    </Label>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    max relaunch attempts before an automatic machine restart is initiated — 0 is
+                    unlimited
+                  </TooltipContent>
+                </Tooltip>
+                <Input
+                  id="relaunch_attempts"
+                  className="h-8 w-20"
+                  inputMode="numeric"
+                  {...field('relaunch_attempts')}
+                />
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Label htmlFor="visibility" className="justify-end text-muted-foreground">
-                    visibility
-                  </Label>
-                </TooltipTrigger>
-                <TooltipContent>
-                  window visibility on launch — hidden suppresses the console window (ideal for
-                  background scripts); apps that create their own windows stay visible
-                </TooltipContent>
-              </Tooltip>
-              <Select
-                value={visibilityOf(process)}
-                onValueChange={(value) => onVisibility(value as Visibility)}
-              >
-                <SelectTrigger id="visibility" className="h-8 w-32" data-testid="visibility">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {VISIBILITIES.map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {option.toLowerCase()}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Label htmlFor="priority" className="justify-end text-muted-foreground">
+                      priority
+                    </Label>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    windows cpu priority for this process — leave normal unless it must outrank
+                    everything else
+                  </TooltipContent>
+                </Tooltip>
+                <Select
+                  value={priorityOf(process)}
+                  onValueChange={(value) => onPriority(value as Priority)}
+                >
+                  <SelectTrigger id="priority" className="h-8 w-32" data-testid="priority">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PRIORITIES.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option.toLowerCase()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Label htmlFor="visibility" className="justify-end text-muted-foreground">
+                      visibility
+                    </Label>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    window visibility on launch — hidden suppresses the console window (ideal for
+                    background scripts); apps that create their own windows stay visible
+                  </TooltipContent>
+                </Tooltip>
+                <Select
+                  value={visibilityOf(process)}
+                  onValueChange={(value) => onVisibility(value as Visibility)}
+                >
+                  <SelectTrigger id="visibility" className="h-8 w-32" data-testid="visibility">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VISIBILITIES.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option.toLowerCase()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </CollapsibleContent>
           </Collapsible>
         </div>

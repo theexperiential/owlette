@@ -42,6 +42,7 @@ interface CreateSiteBody {
   siteId?: unknown;
   name?: unknown;
   timezone?: unknown;
+  schedulesFollowSiteTime?: unknown;
 }
 
 export async function GET(request: NextRequest) {
@@ -196,6 +197,12 @@ export const POST = withRateLimit(async (request: NextRequest) => {
             name: typeof body.name === 'string' ? body.name : '',
             ownerUid: auth.userId,
             timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
+            // Anything but a real boolean is `undefined`, which leaves the field
+            // off the document — the "never asked" state, not a decline.
+            schedulesFollowSiteTime:
+              typeof body.schedulesFollowSiteTime === 'boolean'
+                ? body.schedulesFollowSiteTime
+                : undefined,
           },
         );
 
@@ -227,6 +234,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
               timezone: result.timezone,
               owner: result.owner,
               createdAt: result.createdAt,
+              schedulesFollowSiteTime: result.schedulesFollowSiteTime,
             },
             { status: 201 },
           ),
@@ -261,6 +269,7 @@ function summariseSite(d: FirebaseFirestore.QueryDocumentSnapshot): {
   timezone: string | null;
   owner: string | null;
   createdAt: string | null;
+  schedulesFollowSiteTime: boolean;
 } {
   const data = d.data();
   return {
@@ -270,6 +279,10 @@ function summariseSite(d: FirebaseFirestore.QueryDocumentSnapshot): {
     timezone: typeof data.timezone === 'string' ? data.timezone : null,
     owner: typeof data.owner === 'string' ? data.owner : null,
     createdAt: timestampToIso(data.createdAt),
+    // Effective value: the document's third state ("never asked", i.e. the field
+    // is absent) reads as `false` here, because the API answers "is site time
+    // on" and an unanswered site runs on machine clocks.
+    schedulesFollowSiteTime: data.schedulesFollowSiteTime === true,
   };
 }
 

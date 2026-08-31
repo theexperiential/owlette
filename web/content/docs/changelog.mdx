@@ -5,6 +5,31 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ---
 
+## [3.2.3] - 2026-08-30
+
+### fixed
+
+- **self-updates no longer raise a UAC prompt on every machine.** while an update was installing, the desktop app saw the service stop, tried to start it back up, and — lacking the right — fell back to an elevated command, putting a "Windows Command Processor" consent prompt over whatever was on screen, fleet-wide. the app now stands down entirely while an update is in progress (the installer stops the service on purpose, restarts it itself, and has a watchdog for the failure case), and automatic starts never elevate at all — the UAC path is reserved for a deliberate click on the start button or the tray menu.
+
+## [3.2.2] - 2026-08-30
+
+### changed
+
+- **kill and restart now follow whether a process is running, never its launch mode.** in both the dashboard and the desktop app, a running process can be restarted or killed whatever its launch mode — switching a running process to off no longer takes the controls away — and a process that is not running has both buttons greyed out. previously the dashboard offered kill on any off-mode process even when nothing was running, and the desktop app refused to kill a running process that had just been switched to off.
+- **restarting a process whose launch mode is off now actually restarts it.** the service relaunches it once and then goes back to leaving it alone; previously a restart from the desktop app only stopped it.
+- **the desktop app's process form is grouped into three collapsible sections** — what to run, when to run, how to run — and the open state of each is remembered per user across launches. delay and wait moved beside the launch mode under *when to run*; attempts, priority, and visibility make up *how to run*, absorbing the old advanced section. the compact fields flow into two or three columns when the window is wide enough.
+
+### fixed
+
+- **the desktop app no longer reports "no running instance" when restarting a process that is clearly running.** when the service's process table held a stale generation alongside the live one, the app could pick the dead entry and give up; it now tries every candidate until it finds the one that is alive.
+- **the desktop kill button is red, matching the dashboard,** and the dashboard's restart icon now matches the desktop app's counter-clockwise arrow.
+
+## [3.2.1] - 2026-08-29
+
+### fixed
+
+- **the service now starts on machines that have never had the Visual C++ runtime installed.** `owlette-host.exe` was linked against `VCRUNTIME140.dll`, which ships with the Visual C++ redistributable rather than with Windows. on a freshly imaged machine the install completed normally and then the service refused to start with *"the code execution cannot proceed because VCRUNTIME140.dll was not found"*, leaving the dashboard reporting the machine as service not running. the host is now statically linked and depends on nothing beyond Windows itself. machines that already carried the redistributable — which is most machines with development tooling or common desktop software on them — were never affected; this only ever hit clean images, which is precisely what kiosks, signage players and media servers are.
+
 ## [3.2.0] - 2026-08-24
 
 ### changed

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { InteractiveBackground } from './InteractiveBackground';
 import { OwletteEye } from './OwletteEye';
 import type { HeroHeadline } from '@/lib/heroHeadlines';
+import { LICENSE_URL } from '@/lib/repoLinks';
 
 interface HeroSectionProps {
   /** Chosen per request by the server component — see app/page.tsx. */
@@ -63,7 +64,7 @@ export function HeroSection({ headline }: HeroSectionProps) {
         <p className="mt-6 sm:mt-8 text-xs sm:text-sm text-muted-foreground text-center hero-enter-delay-3">
           windows only <span className="mx-1 sm:mx-2">&middot;</span> free during beta <span className="mx-1 sm:mx-2">&middot;</span>
           <a
-            href="https://github.com/theexperiential/owlette/blob/main/LICENSE"
+            href={LICENSE_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="hover:text-foreground transition-colors"

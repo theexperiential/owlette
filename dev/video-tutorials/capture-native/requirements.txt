@@ -1,4 +1,6 @@
-# Native (windows) capture tooling for the installer / agent GUI / tray.
+# Native (windows) capture tooling for the installer wizard and the tray icon.
+# (The desktop app's window is WebView2 — driven over CDP by web/e2e/desktop-screenshots/,
+# not from here.)
 # Windows-only. Install into a throwaway venv on the demo machine.
 #   python -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt
 #

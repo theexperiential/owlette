@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ProcessEntry } from '@/lib/owletteConfig'
-import { STATUS_DOT, statusForProcess, statusLabel, type AppStates } from '@/lib/processStatus'
+import { STATUS_DOT, isLive, statusForProcess, statusLabel, type AppStates } from '@/lib/processStatus'
 import { setRowDragging } from '@/lib/rowDrag'
 import { MENU_SURFACE } from '@/lib/surfaces'
 import { cn } from '@/lib/utils'
@@ -117,6 +117,7 @@ export function ProcessList({
   const [draggingId, setDraggingId] = useState<string | null>(null)
 
   const index = anchor ? processes.findIndex((process) => process.id === anchor.id) : -1
+  const anchorLive = anchor ? isLive(statusForProcess(states, anchor.id)) : false
 
   function act(action: ProcessAction) {
     if (!anchor) return
@@ -319,15 +320,16 @@ export function ProcessList({
                           // shows no text.
                           aria-label={collapsed ? name : undefined}
                           className={cn(
-                            'group flex w-full touch-none items-center rounded-md text-left text-sm transition-colors select-none',
+                            // btn-sweep is the hover feedback — the same
+                            // animated scrim every button carries; a hover:bg
+                            // would cross-fade underneath it and muddy the sweep.
+                            'btn-sweep group flex w-full touch-none items-center rounded-md text-left text-sm transition-colors select-none',
                             collapsed ? 'justify-center px-0 py-1' : 'gap-2 px-1.5 py-2',
                             // Grab cursor on the grip only — the row is a
                             // click-to-select surface, though a drag may start
                             // anywhere on it.
                             draggingId ? 'cursor-grabbing' : 'cursor-pointer',
-                            selected
-                              ? 'bg-accent text-accent-foreground'
-                              : 'text-foreground/90 hover:bg-accent/50',
+                            selected ? 'bg-accent text-accent-foreground' : 'text-foreground/90',
                             dragged && 'opacity-90 shadow-lg ring-1 ring-border',
                           )}
                           onClick={() => onSelect(process.id)}
@@ -483,11 +485,17 @@ export function ProcessList({
             />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="bottom" sideOffset={2} className={MENU_SURFACE}>
-            <DropdownMenuItem onSelect={() => act('restart')}>
+            {/* Same rule as the detail pane: run controls follow liveness, not
+                the launch mode. */}
+            <DropdownMenuItem disabled={!anchorLive} onSelect={() => act('restart')}>
               <RotateCcw />
               restart process
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => act('kill')}>
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={!anchorLive}
+              onSelect={() => act('kill')}
+            >
               <Square />
               kill process
             </DropdownMenuItem>

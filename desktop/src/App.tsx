@@ -18,6 +18,7 @@ import { InlineNotice } from '@/components/ui/inline-notice'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useAppStates } from '@/hooks/useAppStates'
+import { useDetailSections } from '@/hooks/useDetailSections'
 import { useFileDrop } from '@/hooks/useFileDrop'
 import { useLaunchFlag } from '@/hooks/useLaunchFlag'
 import { useOwletteConfig } from '@/hooks/useOwletteConfig'
@@ -68,7 +69,7 @@ import {
   type ScheduleBlock,
   type Visibility,
 } from '@/lib/owletteConfig'
-import { launchedAtForProcess, livePidForProcess, statusForProcess } from '@/lib/processStatus'
+import { isLive, launchedAtForProcess, livePidForProcess, statusForProcess } from '@/lib/processStatus'
 import { NoLiveInstanceError, stopProcess, type StopMode } from '@/lib/processControl'
 
 function message(error: unknown): string {
@@ -103,9 +104,9 @@ function App() {
   const [host, setHost] = useState<string | null>(null)
   const [sidebarDragging, setSidebarDragging] = useState(false)
   // Owned here, not in the pane: the pane remounts per process
-  // (`key={selected.id}`), so it would shut itself when comparing two entries.
-  // Deliberately not persisted — a within-session reading position.
-  const [advancedOpen, setAdvancedOpen] = useState(false)
+  // (`key={selected.id}`), so the disclosures would shut themselves when
+  // comparing two entries. Persisted per user beside the window layout.
+  const detailSections = useDetailSections()
 
   // Guarded on purpose: closing the dialog calls `pairLaunch.dismiss()`, which
   // flips `armed` back to false and re-runs this effect. Without the `if`, that
@@ -309,13 +310,17 @@ function App() {
 
       editSelected('could not change the launch mode', (process) => setLaunchMode(process, mode))
 
-      // An unmanaged process keeps its last live status forever (nothing corrects
-      // it), so write the intent alongside the config change — as
-      // `owlette_gui.on_launch_mode_change` does.
+      // Launch mode and liveness are separate: a running process stays `RUNNING`
+      // whatever mode it is switched to, so kill/restart stay offered until it
+      // is actually gone (the service prunes dead pids). Only a dead row gets
+      // the intent written over it — `INACTIVE` for off, `QUEUED` while the
+      // service picks it up — as `owlette_gui.on_launch_mode_change` did.
       const pid = livePidForProcess(appStates.states, selected.id)
       if (pid === null) return
+      const status = statusForProcess(appStates.states, selected.id)
+      if (isLive(status)) return
       const intent = mode === 'off' ? 'INACTIVE' : 'QUEUED'
-      if (statusForProcess(appStates.states, selected.id) === intent) return
+      if (status === intent) return
 
       void appStates
         .mutate((states) => ({
@@ -342,13 +347,13 @@ function App() {
           toast.success(`${process.name} was killed`, {
             description: managed
               ? `pid ${result.pid} — the service will start it again, because its launch mode is not off`
-              : `pid ${result.pid} — it stays stopped until you start it again`,
+              : `pid ${result.pid} — it stays stopped until you set its launch mode to always on or scheduled`,
           })
         } else {
           toast.success(`${process.name} was stopped`, {
             description: managed
               ? `pid ${result.pid} — the service relaunches it within a few seconds`
-              : `pid ${result.pid} — its launch mode is off, so nothing will start it again`,
+              : `pid ${result.pid} — the service starts it again within a few seconds, and leaves it alone after that because its launch mode is off`,
           })
         }
       } catch (cause) {
@@ -386,7 +391,7 @@ function App() {
             title: 'restart process',
             description: managed
               ? `restart ${name}? this will briefly stop the process before the service relaunches it.`
-              : `restart ${name}? its launch mode is off, so the service will not start it again — this will only stop it.`,
+              : `restart ${name}? this will briefly stop the process before the service starts it again. its launch mode is off, so it will not be watched afterwards.`,
             confirmLabel: 'restart',
             onConfirm: () => void stop(process, 'restart'),
           })
@@ -399,7 +404,7 @@ function App() {
             title: 'kill process',
             description: managed
               ? `kill ${name}? it will be terminated, and because its launch mode is not off the service will start it again within a few seconds. set the launch mode to off first if you want it to stay stopped.`
-              : `kill ${name}? it will be terminated and stays stopped until you start it again.`,
+              : `kill ${name}? it will be terminated and stays stopped until you set its launch mode to always on or scheduled.`,
             confirmLabel: 'kill',
             destructive: true,
             onConfirm: () => void stop(process, 'kill'),
@@ -512,8 +517,8 @@ function App() {
                 process={selected}
                 status={statusForProcess(appStates.states, selected.id)}
                 startedAt={launchedAtForProcess(appStates.states, selected.id)}
-                advancedOpen={advancedOpen}
-                onAdvancedOpenChange={setAdvancedOpen}
+                sections={detailSections.sections}
+                onSectionToggle={detailSections.toggle}
                 onSave={handleSaveForm}
                 onLaunchMode={handleLaunchMode}
                 onSchedules={(schedules: ScheduleBlock[]) =>

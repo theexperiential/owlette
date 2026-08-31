@@ -27,6 +27,7 @@ import {
 import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
 import { hootInternalSecret } from '@/lib/hootInternalSecret';
+import { sanitizeForLog } from '@/lib/logSanitize';
 
 /**
  * POST /api/agent/alert — agent-authenticated alert intake (connection
@@ -160,14 +161,14 @@ export const POST = withRateLimit(
       // Token's site_id must match the claimed siteId.
       if (decodedToken.site_id && decodedToken.site_id !== siteId) {
         console.warn(
-          `[agent/alert] site_id mismatch: token=${decodedToken.site_id}, body=${siteId}`
+          `[agent/alert] site_id mismatch: token=${decodedToken.site_id}, body=${sanitizeForLog(siteId)}`
         );
         return NextResponse.json({ error: 'site_id mismatch' }, { status: 403 });
       }
 
       if (decodedToken.machine_id !== machineId) {
         console.warn(
-          `[agent/alert] machine_id mismatch: token=${decodedToken.machine_id}, body=${machineId}`
+          `[agent/alert] machine_id mismatch: token=${decodedToken.machine_id}, body=${sanitizeForLog(machineId)}`
         );
         return NextResponse.json({ error: 'machine_id_mismatch' }, { status: 403 });
       }
@@ -177,7 +178,7 @@ export const POST = withRateLimit(
         const processRateLimitKey = `process_alert:${machineId}:${resolvedProcessName}`;
         const processRateResult = await checkRateLimit(processAlertRateLimit, processRateLimitKey);
         if (!processRateResult.success) {
-          console.warn(`[agent/alert] Process alert rate limited: ${processRateLimitKey}`);
+          console.warn(`[agent/alert] Process alert rate limited: ${sanitizeForLog(processRateLimitKey)}`);
           return NextResponse.json({
             success: true,
             emailSent: false,
@@ -271,7 +272,7 @@ export const POST = withRateLimit(
         }
 
         console.log(
-          `[agent/alert] Display ${resolvedEventType} on ${machineId} (${siteId}): ` +
+          `[agent/alert] Display ${sanitizeForLog(resolvedEventType)} on ${sanitizeForLog(machineId)} (${sanitizeForLog(siteId)}): ` +
           `email=${queuedForEmail ? 'queued' : immediateEmailsSent > 0 ? `inline:${immediateEmailsSent}` : 'no'} ` +
           `webhook=${webhookFired} suppressed=${suppressAlert}`,
         );
@@ -325,7 +326,7 @@ export const POST = withRateLimit(
 
         console.log(
           `[agent/alert] Executable missing for ${resolvedProcessName || processId || 'unknown process'} ` +
-          `on ${machineId} (${siteId})`,
+          `on ${sanitizeForLog(machineId)} (${sanitizeForLog(siteId)})`,
         );
         return NextResponse.json({ success: true, logged: true });
       }
@@ -343,7 +344,7 @@ export const POST = withRateLimit(
           agentVersion,
         });
 
-        console.log(`[agent/alert] Generic ${resolvedEventType} on ${machineId} (${siteId})`);
+        console.log(`[agent/alert] Generic ${sanitizeForLog(resolvedEventType)} on ${sanitizeForLog(machineId)} (${sanitizeForLog(siteId)})`);
         return NextResponse.json({ success: true, logged: true });
       }
 
@@ -363,7 +364,7 @@ export const POST = withRateLimit(
           timestamp: FieldValue.serverTimestamp(),
         });
 
-        console.log(`[agent/alert] Queued process alert: ${resolvedEventType} - ${resolvedProcessName} on ${machineId} (${siteId})`);
+        console.log(`[agent/alert] Queued process alert: ${sanitizeForLog(resolvedEventType)} - ${sanitizeForLog(resolvedProcessName)} on ${sanitizeForLog(machineId)} (${sanitizeForLog(siteId)})`);
 
         const siteDoc = await db.collection('sites').doc(siteId).get();
         const siteName = siteDoc.data()?.name || siteId;
@@ -374,7 +375,7 @@ export const POST = withRateLimit(
 
         const localHootRunning = await isLocalHootRunning(db, siteId, machineId);
         if (localHootRunning) {
-          console.log(`[agent/alert] Local Hoot is running on ${machineId} — skipping server-side investigation`);
+          console.log(`[agent/alert] Local Hoot is running on ${sanitizeForLog(machineId)} — skipping server-side investigation`);
         } else {
           triggerAutonomousHoot(db, {
             siteId,
@@ -403,7 +404,7 @@ export const POST = withRateLimit(
       ]);
 
       if (recipients.length === 0) {
-        console.warn(`[agent/alert] No recipients found for site ${siteId}`);
+        console.warn(`[agent/alert] No recipients found for site ${sanitizeForLog(siteId)}`);
         return NextResponse.json({ success: true, emailSent: false, reason: 'No recipients' });
       }
 
@@ -430,16 +431,16 @@ export const POST = withRateLimit(
           });
 
           if (result.error) {
-            console.error(`[agent/alert] Resend error for ${recipient.email}:`, result.error);
+            console.error(`[agent/alert] Resend error for ${sanitizeForLog(recipient.email)}:`, result.error);
           } else {
             emailsSent++;
           }
         } catch (emailError) {
-          console.error(`[agent/alert] Failed to send to ${recipient.email}:`, emailError);
+          console.error(`[agent/alert] Failed to send to ${sanitizeForLog(recipient.email)}:`, emailError);
         }
       }
 
-      console.log(`[agent/alert] Alert sent for ${machineId} (${siteId}): ${resolvedEventType}, ${recipients.length} recipient(s)`);
+      console.log(`[agent/alert] Alert sent for ${sanitizeForLog(machineId)} (${sanitizeForLog(siteId)}): ${sanitizeForLog(resolvedEventType)}, ${recipients.length} recipient(s)`);
 
       const siteDoc = await db.collection('sites').doc(siteId).get();
       const siteName = siteDoc.data()?.name || siteId;
@@ -586,16 +587,16 @@ async function sendCriticalDisplayEmailNow(params: {
         html,
       });
       if (result.error) {
-        console.error(`[agent/alert] Resend error for ${recipient.email}:`, result.error);
+        console.error(`[agent/alert] Resend error for ${sanitizeForLog(recipient.email)}:`, result.error);
       } else {
         emailsSent++;
       }
     } catch (e) {
-      console.error(`[agent/alert] Failed to send critical display email to ${recipient.email}:`, e);
+      console.error(`[agent/alert] Failed to send critical display email to ${sanitizeForLog(recipient.email)}:`, e);
     }
   }
   console.log(
-    `[agent/alert] Critical display email sent: ${eventType} on ${machineId} → ${emailsSent}/${recipients.length} recipients`,
+    `[agent/alert] Critical display email sent: ${eventType} on ${sanitizeForLog(machineId)} → ${emailsSent}/${recipients.length} recipients`,
   );
   return emailsSent;
 }

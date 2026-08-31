@@ -293,7 +293,7 @@ export function LeaveSiteDialog({
       if (stopped) {
         setStatus('starting the owlette service')
         leaveLog('starting the service again')
-        serviceDown = !(await serviceStart()
+        serviceDown = !(await serviceStart(true)
           .then(() => waitForService('running', START_TIMEOUT_MS))
           .catch(() => false))
         leaveLog(

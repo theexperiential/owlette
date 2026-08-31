@@ -553,6 +553,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'connected': False,
                     'site_id': '',
                     'site_name': '',
+                    # Same shape as the steady-state write: readers must never
+                    # have to tell "key absent" from "site opted out".
+                    'schedule_timezone': '',
                     'last_heartbeat': 0
                 },
                 'health': self._health_section()
@@ -612,6 +615,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             firebase_connected = False
             site_id = ''
             site_name = ''
+            schedule_timezone = ''
             last_heartbeat = 0
 
             if self.firebase_client:
@@ -621,6 +625,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # Read off the client, not cached here, so a rename picked up
                     # on reconnect needs no second copy kept in step.
                     site_name = getattr(self.firebase_client, 'site_name', None) or ''
+                    # '' means "this site's process windows are machine-local" —
+                    # either it never opted in or it opted back out. The desktop
+                    # app reads this to know which clock to name in schedule copy.
+                    schedule_timezone = getattr(self.firebase_client, 'site_timezone', None) or ''
                     if hasattr(self.firebase_client, '_last_heartbeat_time'):
                         last_heartbeat = int(self.firebase_client._last_heartbeat_time)
                 except Exception:
@@ -639,6 +647,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'connected': firebase_connected,
                     'site_id': site_id,
                     'site_name': site_name,
+                    'schedule_timezone': schedule_timezone,
                     'last_heartbeat': last_heartbeat
                 },
                 'health': health_section
@@ -654,6 +663,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # In the signature so a rename reaches the desktop app on the next
                 # tick, not on the 30s refresh floor.
                 site_name,
+                # Likewise: opting in or out rewrites the schedule copy the
+                # desktop app shows, so it must not wait out the refresh floor.
+                schedule_timezone,
                 health_section.get('status'),
                 health_section.get('error_code'),
             )
@@ -3092,6 +3104,55 @@ class OwletteService(win32serviceutil.ServiceFramework):
         except Exception as e:
             logging.error(f"Error cleaning up stale tracking data: {e}")
 
+    def _relaunch_if_restarting(self, process):
+        """Honour a desktop-app restart of a process whose launch mode is off.
+
+        handle_process() is never called for an off process, so the RESTARTING
+        marker it looks for (PROCESS_RESTARTING_STATUS) would otherwise turn a
+        restart into a plain stop. Restart means restart whatever the mode:
+        once every marked pid is gone, launch once, log it, and go back to
+        leaving the process alone.
+        """
+        process_id = process.get('id')
+        if not process_id:
+            return
+        marked = [
+            pid_str for pid_str, state in self.results.items()
+            if isinstance(state, dict)
+            and state.get('id') == process_id
+            and state.get('status') == PROCESS_RESTARTING_STATUS
+            and pid_str.isdigit()
+        ]
+        if not marked:
+            return
+        # The marker is written before the kill; the process takes a few
+        # seconds to close (WM_CLOSE, grace, terminate). Wait for it.
+        if any(Util.is_pid_running(int(pid_str)) for pid_str in marked):
+            return
+
+        for pid_str in marked:
+            self.results.pop(pid_str, None)
+        shared_utils.write_json_to_file(self.results, shared_utils.RESULT_FILE_PATH)
+
+        process_name = Util.get_process_name(process)
+        old_pids = ', '.join(marked)
+        logging.info(f"'{process_name}' (PID {old_pids}) was restarted from the local app - relaunching once (launch mode is off)")
+        if self.firebase_client and self.firebase_client.is_connected():
+            self.firebase_client.log_event(
+                action='process_restarted',
+                level='info',
+                process_name=process_name,
+                details=f'Manual restart from the local app - terminated PID {old_pids}, relaunching once (launch mode is off)'
+            )
+
+        self.last_started.pop(process_id, None)
+        self._skip_launch_delay.add(process_id)
+        new_pid = self.handle_process_launch(process)
+        if new_pid:
+            # Tracked so a later dashboard kill/restart finds it without a scan;
+            # off-mode processes are still never monitored.
+            self.last_started[process_id] = {'time': datetime.datetime.now(), 'pid': new_pid}
+
     def _get_process_launch_mode(self, process):
         return process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
 
@@ -5428,6 +5489,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
             state = reboot_state.prune_orphaned_entries(state, current_ids)
 
             # MACHINE-local, not site timezone — see _now_in_local_tz().
+            # "Schedules follow site time" does NOT reach here: it moves PROCESS
+            # windows only. Restart entries stay machine-local by design.
             today_date_iso = self._today_iso_in_local_tz()
             now_tz = self._now_in_local_tz()
             current_dayname = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][now_tz.weekday()]
@@ -5694,8 +5757,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
     # "14:00" entry must fire at 14:00 in Tokyo and 14:00 in NYC. The dashboard
     # dialog is timezone-agnostic for this reason.
     #
-    # Process schedules (is_within_schedule) DO use site timezone on purpose —
-    # office-hours schedules want every machine aligned. Don't unify them.
+    # Process schedules (is_within_schedule) DO use the site timezone on purpose,
+    # but only for sites that opted in (schedulesFollowSiteTime) — office-hours
+    # windows want every machine aligned. Sites that declined, and sites on agents
+    # older than 3.3.0, evaluate those windows machine-locally too. Either way the
+    # two schedule kinds stay separate: don't unify them.
 
     def _now_in_local_tz(self):
         """Return now() in the MACHINE's local timezone (not the site timezone).
@@ -7235,6 +7301,14 @@ with open(out_path, 'wb') as f:
 
                 self._process_cortex_ipc_commands()
 
+                # A plain attribute read — the client refreshes it every 900s on
+                # the metrics thread, so nothing here blocks the 5s tick. Without
+                # this the value stayed frozen at whatever connect saw, and a site
+                # opting in or out of site-time schedules needed a service restart
+                # to take effect.
+                if self.firebase_client:
+                    self._cached_site_timezone = self.firebase_client.site_timezone
+
                 self.current_time = datetime.datetime.now()
 
                 content = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
@@ -7285,7 +7359,10 @@ with open(out_path, 'wb') as f:
                                                 del self.last_started[process_id]
                                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                                         pass
-                    # mode == 'off': skip entirely
+                    else:
+                        # Off: not watched, but an operator restart still means
+                        # restart. Nothing else here touches an off process.
+                        self._relaunch_if_restarting(process)
 
                 # Every REBOOT_CHECK_INTERVAL_SECONDS, derived from SLEEP_INTERVAL.
                 self._reboot_schedule_counter += 1

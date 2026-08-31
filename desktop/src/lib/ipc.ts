@@ -205,9 +205,13 @@ export function serviceStatus(): Promise<ServiceStatus> {
   return invoke<ServiceStatus>('service_status')
 }
 
-/** Start OwletteService. May raise a UAC prompt; poll {@link serviceStatus}. */
-export function serviceStart(): Promise<ServiceCommandOutcome> {
-  return invoke<ServiceCommandOutcome>('service_start')
+/**
+ * Start OwletteService. With `allowElevation` the access-denied fallback is one
+ * UAC prompt; without it the call errors instead — automatic callers must never
+ * put a consent dialog on screen. Poll {@link serviceStatus} for the result.
+ */
+export function serviceStart(allowElevation: boolean): Promise<ServiceCommandOutcome> {
+  return invoke<ServiceCommandOutcome>('service_start', { allowElevation })
 }
 
 /** Stop OwletteService. May raise a UAC prompt; poll {@link serviceStatus}. */
@@ -260,6 +264,28 @@ export function sidebarCollapsed(): Promise<boolean> {
  */
 export function setSidebarCollapsed(collapsed: boolean): Promise<boolean> {
   return invoke<boolean>('set_sidebar_collapsed', { collapsed })
+}
+
+/** Detail-pane sections and whether each opens expanded. */
+export interface DetailSections {
+  whatToRun: boolean
+  whenToRun: boolean
+  howToRun: boolean
+}
+
+export type DetailSectionKey = keyof DetailSections
+
+/**
+ * Which detail-pane sections open expanded. Reading preferences, stored beside
+ * the window and sidebar layout in the per-user file — not fleet `config.json`.
+ */
+export function detailSections(): Promise<DetailSections> {
+  return invoke<DetailSections>('detail_sections')
+}
+
+/** Remember one section's open state; resolves to the value kept. */
+export function setDetailSection(section: DetailSectionKey, open: boolean): Promise<boolean> {
+  return invoke<boolean>('set_detail_section', { section, open })
 }
 
 /**
