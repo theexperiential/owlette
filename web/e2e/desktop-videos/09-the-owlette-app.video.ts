@@ -157,15 +157,20 @@ test('episode 9 — the owlette app', async () => {
     await highlight(page, page.getByTestId('launch-mode'), 1800);
     await narrate(page, 'b05 when to run', 5);
 
-    await expect(page.getByTestId('recovery-fields')).toHaveAttribute('data-dimmed', 'true');
+    // The redesign merged the old "recovery" and "advanced" groups into a single
+    // "how to run" disclosure, COLLAPSED by default (DETAIL_SECTION_DEFAULTS).
+    // Its fields are not in the DOM until it is opened, which is what broke the
+    // previous take: it asserted on `recovery-fields`, an id the new UI no
+    // longer has.
+    await clickWithCursor(page, page.getByTestId('how-to-run-toggle'));
+    await expect(page.getByTestId('how-to-run-fields')).toBeVisible();
+    // Dimmed, not disabled: the fields stay editable, because configuring them
+    // before switching the mode on is the normal flow.
+    await expect(page.getByTestId('how-to-run-fields')).toHaveAttribute('data-dimmed', 'true');
     await highlight(page, page.locator('#relaunch_attempts'), 1800);
-    await narrate(page, 'b05 recovery, dimmed while the mode is off', 5);
-
-    await clickWithCursor(page, page.getByTestId('advanced-toggle'));
-    await expect(page.getByTestId('advanced-fields')).toBeVisible();
     await highlight(page, page.getByTestId('priority'), 1400);
     await highlight(page, page.getByTestId('visibility'), 1400);
-    await narrate(page, 'b05 priority and visibility under advanced', 5);
+    await narrate(page, 'b05 how to run - dimmed until a launch mode is set', 6);
 
     // No save button: leaving the field is the write. Tab, not Escape — Escape
     // would abandon the edit rather than commit it.
@@ -216,10 +221,21 @@ test('episode 9 — the owlette app', async () => {
     // the process straight back, or whether it stays down". `highlight`'s
     // outline is a page-side timer that does not block, so the dwell here is the
     // whole of the picture: hold on each dialog long enough to read it.
-    // Managed entry: the service brings it straight back.
+    // Live entry: the confirm explains that the service brings it straight back.
     await readConfirm(page, SHOW, 'restart process', 8);
-    // Off entry: the same action, different promise.
-    await readConfirm(page, PROJECTOR, 'restart process', 8.5);
+
+    // Stopped entry: restart and kill are DISABLED now. Run controls follow
+    // liveness, not the launch mode (ProcessList.tsx: disabled={!anchorLive}),
+    // so there is no second confirm to open - the previous take failed trying.
+    // Showing them greyed out demonstrates the rule better than the old wording
+    // contrast did.
+    await rightClickWithCursor(page, row(page, PROJECTOR));
+    const restartOff = page.getByRole('menuitem', { name: 'restart process' });
+    await expect(restartOff).toBeVisible();
+    await expect(restartOff).toHaveAttribute('aria-disabled', 'true');
+    await highlight(page, restartOff, 2200);
+    await narrate(page, 'b07 restart and kill only light up while it is running', 8.5);
+    await page.keyboard.press('Escape');
     await parkPointer(page);
     await narrate(page, 'b07 the wording tells you what happens next', 4);
 

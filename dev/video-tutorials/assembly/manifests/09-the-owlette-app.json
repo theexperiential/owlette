@@ -7,7 +7,7 @@
   "scenario": null,
   "script": "scripts/09-the-owlette-app.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 213.0,
+  "narration_s": 216.067,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,7 +20,7 @@
       "rel": "dev/video-tutorials/footage/desktop/09-the-owlette-app.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\desktop\\09-the-owlette-app.mp4",
       "exists": true,
-      "duration_s": 191.367,
+      "duration_s": 180.267,
       "width": 1600,
       "height": 900,
       "fps": 60.0
@@ -31,7 +31,7 @@
       "rel": "dev/video-tutorials/footage/desktop/09-the-owlette-app-unpaired.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\desktop\\09-the-owlette-app-unpaired.mp4",
       "exists": true,
-      "duration_s": 32.767,
+      "duration_s": 35.433,
       "width": 1600,
       "height": 900,
       "fps": 60.0
@@ -119,17 +119,17 @@
     {
       "id": "b05",
       "title": "the fields",
-      "screen_note": "the detail pane, group by group: \"what to run\" (exe, path / args, cwd — each with a browse button), \"when to run\" (the off / always on / scheduled segmented control), \"recovery\" (delay (sec), wait (sec), attempts — dimmed while the mode is off). Expand the collapsed \"advanced\" disclosure to reveal priority and visibility. Type in a field, tab away, and cut to config.json changing on disk — no save button anywhere in the pane.",
+      "screen_note": "the detail pane, group by group: \"what to run\" (exe, path / args, cwd — each with a browse button), \"when to run\" (the off / always on / scheduled segmented control). Expand the collapsed \"how to run\" disclosure to reveal relaunch attempts, priority and visibility — dimmed while the mode is off. Type in a field, tab away, and cut to config.json changing on disk — no save button anywhere in the pane.",
       "direction": {
-        "SCREEN": "the detail pane, group by group: \"what to run\" (exe, path / args, cwd — each with a browse button), \"when to run\" (the off / always on / scheduled segmented control), \"recovery\" (delay (sec), wait (sec), attempts — dimmed while the mode is off). Expand the collapsed \"advanced\" disclosure to reveal priority and visibility. Type in a field, tab away, and cut to config.json changing on disk — no save button anywhere in the pane."
+        "SCREEN": "the detail pane, group by group: \"what to run\" (exe, path / args, cwd — each with a browse button), \"when to run\" (the off / always on / scheduled segmented control). Expand the collapsed \"how to run\" disclosure to reveal relaunch attempts, priority and visibility — dimmed while the mode is off. Type in a field, tab away, and cut to config.json changing on disk — no save button anywhere in the pane."
       },
       "start_s": 101.05,
       "start_frame": 6063,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\09-the-owlette-app\\ep09-b05.mp3",
       "mp3_name": "ep09-b05.mp3",
-      "duration_s": 30.772,
-      "duration_frames": 1846,
+      "duration_s": 35.239,
+      "duration_frames": 2114,
       "status": "ok"
     },
     {
@@ -139,8 +139,8 @@
       "direction": {
         "SCREEN": "the pencil button next to the launch-mode control; click it with the mode still on \"off\" to show it is not gated. The schedule editor opens — week summary bar, day pills, time blocks — identical to the dashboard's. Add a block, save, then flip the mode to \"scheduled\" and show the summary line beside the control."
       },
-      "start_s": 131.833,
-      "start_frame": 7910,
+      "start_s": 136.3,
+      "start_frame": 8178,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\09-the-owlette-app\\ep09-b06.mp3",
       "mp3_name": "ep09-b06.mp3",
@@ -151,17 +151,17 @@
     {
       "id": "b07",
       "title": "reordering, and the row menu",
-      "screen_note": "hover a row so the grip appears; drag it up two places — the blue drop indicator tracks the gap — and release. Then right-click a row: restart process, kill process, separator, duplicate, separator, delete. Pick restart on an \"always on\" entry and read the confirm text aloud on screen; repeat on an \"off\" entry to show the wording change.",
+      "screen_note": "hover a row so the grip appears; drag it up two places — the blue drop indicator tracks the gap — and release. Then right-click a row: restart process, kill process, separator, duplicate, separator, delete. Pick restart on a live entry and read the confirm text aloud on screen; then right-click a stopped entry to show restart and kill greyed out — run controls follow liveness, not the launch mode.",
       "direction": {
-        "SCREEN": "hover a row so the grip appears; drag it up two places — the blue drop indicator tracks the gap — and release. Then right-click a row: restart process, kill process, separator, duplicate, separator, delete. Pick restart on an \"always on\" entry and read the confirm text aloud on screen; repeat on an \"off\" entry to show the wording change."
+        "SCREEN": "hover a row so the grip appears; drag it up two places — the blue drop indicator tracks the gap — and release. Then right-click a row: restart process, kill process, separator, duplicate, separator, delete. Pick restart on a live entry and read the confirm text aloud on screen; then right-click a stopped entry to show restart and kill greyed out — run controls follow liveness, not the launch mode."
       },
-      "start_s": 152.367,
-      "start_frame": 9142,
+      "start_s": 156.833,
+      "start_frame": 9410,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\09-the-owlette-app\\ep09-b07.mp3",
       "mp3_name": "ep09-b07.mp3",
-      "duration_s": 26.749,
-      "duration_frames": 1605,
+      "duration_s": 25.339,
+      "duration_frames": 1520,
       "status": "ok"
     },
     {
@@ -171,8 +171,8 @@
       "direction": {
         "SCREEN": "the footer sentence with its tone dot (\"<HOSTNAME> is connected to <site>\") and the service version on the right; cut to a machine with the service stopped to show the \"start service\" button, and an unpaired one to show \"join site\". Open the hamburger: join or leave site, config, logs, docs, submit bug report, start on login, restart service, reload window. Split screen: edit a launch mode in the app, and the dashboard's machine card updating about a second later."
       },
-      "start_s": 179.117,
-      "start_frame": 10747,
+      "start_s": 182.183,
+      "start_frame": 10931,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\09-the-owlette-app\\ep09-b08.mp3",
       "mp3_name": "ep09-b08.mp3",

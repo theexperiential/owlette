@@ -52,12 +52,13 @@ folder. owlette works out how to launch it. a project file opens in the newest
 touchdesigner on the machine. confirm the card, and it arrives with its launch mode off.
 
 ## [b05] the fields
-**SCREEN:** the detail pane, group by group: "what to run" (exe, path / args, cwd — each with a browse button), "when to run" (the off / always on / scheduled segmented control), "recovery" (delay (sec), wait (sec), attempts — dimmed while the mode is off). Expand the collapsed "advanced" disclosure to reveal priority and visibility. Type in a field, tab away, and cut to config.json changing on disk — no save button anywhere in the pane.
+**SCREEN:** the detail pane, group by group: "what to run" (exe, path / args, cwd — each with a browse button), "when to run" (the off / always on / scheduled segmented control). Expand the collapsed "how to run" disclosure to reveal relaunch attempts, priority and visibility — dimmed while the mode is off. Type in a field, tab away, and cut to config.json changing on disk — no save button anywhere in the pane.
 **VOICEOVER:**
-the details pane is three short groups. what to run — the exe, a file or arguments, and the
-folder to start in, each with a browse button. when to run — off, always on, or scheduled.
-and recovery — delay, wait, and relaunch attempts. priority and visibility sit under
-advanced. there's no save button; every field saves as you leave it.
+the details pane is two short groups, plus one you open when you need it. what to run — the
+exe, a file or arguments, and the folder to start in, each with a browse button. when to
+run — off, always on, or scheduled. and behind how to run: relaunch attempts, priority, and
+visibility — dimmed until you've set a launch mode, because until then none of it applies.
+there's no save button; every field saves as you leave it.
 
 ## [b06] schedules, right here
 **SCREEN:** the pencil button next to the launch-mode control; click it with the mode still on "off" to show it is not gated. The schedule editor opens — week summary bar, day pills, time blocks — identical to the dashboard's. Add a block, save, then flip the mode to "scheduled" and show the summary line beside the control.
@@ -68,13 +69,13 @@ launch mode, not just scheduled. build the windows first, switch the mode on whe
 ready. the scheduling episode goes deep on the windows themselves.
 
 ## [b07] reordering, and the row menu
-**SCREEN:** hover a row so the grip appears; drag it up two places — the blue drop indicator tracks the gap — and release. Then right-click a row: restart process, kill process, separator, duplicate, separator, delete. Pick restart on an "always on" entry and read the confirm text aloud on screen; repeat on an "off" entry to show the wording change.
+**SCREEN:** hover a row so the grip appears; drag it up two places — the blue drop indicator tracks the gap — and release. Then right-click a row: restart process, kill process, separator, duplicate, separator, delete. Pick restart on a live entry and read the confirm text aloud on screen; then right-click a stopped entry to show restart and kill greyed out — run controls follow liveness, not the launch mode.
 **VOICEOVER:**
 the order of that list is the launch order — drag a row by its grip to change it.
-right-click for the rest: restart process, kill process, duplicate, delete. restart, kill
-and delete ask you to confirm, and the wording tells you what happens next — whether the
-service brings the process straight back, or whether it stays down because its launch mode
-is off.
+right-click for the rest: restart process, kill process, duplicate, delete. restart and
+kill only light up while the process is actually running — they follow what's live, not
+what the launch mode says. and restart, kill and delete all ask you to confirm, with
+wording that tells you what happens next.
 
 ## [b08] the footer, the menu, and the cloud
 **SCREEN:** the footer sentence with its tone dot ("<HOSTNAME> is connected to <site>") and the service version on the right; cut to a machine with the service stopped to show the "start service" button, and an unpaired one to show "join site". Open the hamburger: join or leave site, config, logs, docs, submit bug report, start on login, restart service, reload window. Split screen: edit a launch mode in the app, and the dashboard's machine card updating about a second later.

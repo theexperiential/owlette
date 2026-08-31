@@ -20,7 +20,7 @@ its SCREEN direction.
 | 06 | run apps on a schedule | [06-run-on-a-schedule.md](06-run-on-a-schedule.md) | 2:03.5 |
 | 07 | reading machine health | [07-reading-machine-health.md](07-reading-machine-health.md) | 2:19.2 |
 | 08 | remote actions: restart, screenshot, live view | [08-remote-actions.md](08-remote-actions.md) | 2:24.2 |
-| 09 | the owlette app on the machine | [09-the-owlette-app.md](09-the-owlette-app.md) | 3:33.0 |
+| 09 | the owlette app on the machine | [09-the-owlette-app.md](09-the-owlette-app.md) | 3:36.1 |
 | 10 | deploy software to many machines | [10-deploy-software.md](10-deploy-software.md) | 2:44.8 |
 | 11 | distribute project folders with roost | [11-distribute-with-roost.md](11-distribute-with-roost.md) | 2:27.1 |
 | 12 | hoot: manage machines by chat | [12-cortex.md](12-cortex.md) | 3:05.7 |

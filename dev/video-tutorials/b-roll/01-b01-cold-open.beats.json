@@ -1,31 +1,31 @@
 {
   "scene": "01-b01-cold-open",
-  "source": "generated b-roll (kling, 1080p, no watermark) \u2014 NOT a harness capture; sidecar hand-authored",
-  "totalSec": 15.04,
+  "source": "generated b-roll (kling, 1080p, no watermark) — NOT a harness capture; sidecar hand-authored — retimed 0.9% slower 2026-08-30 so it covers the re-voiced b01 (was 66ms short)",
+  "totalSec": 15.167,
   "shots": [
     {
       "name": "exhibit",
       "startSec": 0.0,
-      "endSec": 5.29
+      "endSec": 5.33
     },
     {
       "name": "lobby",
-      "startSec": 5.29,
-      "endSec": 10.83
+      "startSec": 5.33,
+      "endSec": 10.92
     },
     {
       "name": "control room",
-      "startSec": 10.83,
-      "endSec": 15.04
+      "startSec": 10.92,
+      "endSec": 15.17
     }
   ],
   "beats": [
     {
       "beat": "b01",
       "startSec": 0.0,
-      "mp3Sec": 14.106,
+      "mp3Sec": 15.099,
       "enforcedWaitSec": 0,
-      "videoSec": 15.04
+      "videoSec": 15.167
     }
   ]
 }
