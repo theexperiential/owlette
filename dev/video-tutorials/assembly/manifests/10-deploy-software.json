@@ -7,7 +7,7 @@
   "scenario": "deploy-roost-rolling",
   "script": "scripts/10-deploy-software.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 164.767,
+  "narration_s": 156.917,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -40,8 +40,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\10-deploy-software\\ep10-b01.mp3",
       "mp3_name": "ep10-b01.mp3",
-      "duration_s": 17.894,
-      "duration_frames": 1074,
+      "duration_s": 18.756,
+      "duration_frames": 1125,
       "status": "ok"
     },
     {
@@ -52,13 +52,13 @@
         "SCREEN": "click \"new deployment\"; the \"deploy software\" dialog (DeploymentDialog.tsx:405). Open the template dropdown showing system presets grouped under their category labels (:449-463) and the \"Saved\" group of user templates (:466-479).",
         "NOTE": "fixture gap — seedDeployRoostRolling seeds no system_presets and no installer_templates (e2e/screenshots/fixtures.ts:790-900), so the dropdown renders only \"none\". Seed both before capture; helper exists at web/e2e/helpers/coverageSeed.ts:256 (seedSystemPreset)."
       },
-      "start_s": 17.9,
-      "start_frame": 1074,
+      "start_s": 18.767,
+      "start_frame": 1126,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\10-deploy-software\\ep10-b02.mp3",
       "mp3_name": "ep10-b02.mp3",
-      "duration_s": 17.58,
-      "duration_frames": 1055,
+      "duration_s": 17.267,
+      "duration_frames": 1036,
       "status": "ok"
     },
     {
@@ -69,13 +69,13 @@
         "SCREEN": "fill the \"installer URL\" field (#installer-url, DeploymentDialog.tsx:557 — the filename auto-derives underneath). A checksum row sits directly under it (:575): it reads \"computing sha256 checksum…\" while the server hashes, then resolves to a green-ticked \"sha256: <first twelve>…<last eight>\" (InstallerChecksumStatus.tsx:64, 76-83). Then fill \"silent install flags\" (#silent-flags, :582, placeholder /VERYSILENT /DIR=\"...\").",
         "NOTE": "the emulator can't reach a real download host, so the row will land amber — \"failed to compute checksum — retry or enter manually\" (InstallerChecksumStatus.tsx:88-110). Click \"enter manually\" and fill #manual-checksum with a 64-hex digest, exactly as web/e2e/specs/dispatch/create-deployment.spec.ts:59-63 does. Deploy stays blocked until a digest exists (DeploymentDialog.tsx:319-328)."
       },
-      "start_s": 35.483,
-      "start_frame": 2129,
+      "start_s": 36.05,
+      "start_frame": 2163,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\10-deploy-software\\ep10-b03.mp3",
       "mp3_name": "ep10-b03.mp3",
-      "duration_s": 27.167,
-      "duration_frames": 1630,
+      "duration_s": 25.966,
+      "duration_frames": 1558,
       "status": "ok"
     },
     {
@@ -86,13 +86,13 @@
         "SCREEN": "show \"parallel install (keep existing versions)\" checkbox (#parallel-install, DeploymentDialog.tsx:596, label at :602-603), and the \"close running processes before install\" section (:619) with the managed-process checklist + amber warning.",
         "NOTE": "the checklist only renders once targets are selected — before that the panel reads \"select target machines to see managed processes\" (DeploymentDialog.tsx:654-657), and seedMachine writes no processes at all. Either pick targets first (b05's action) and seed processes, or shoot the amber warning from #additional-processes alone."
       },
-      "start_s": 62.667,
-      "start_frame": 3760,
+      "start_s": 62.017,
+      "start_frame": 3721,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\10-deploy-software\\ep10-b04.mp3",
       "mp3_name": "ep10-b04.mp3",
-      "duration_s": 29.336,
-      "duration_frames": 1760,
+      "duration_s": 26.436,
+      "duration_frames": 1586,
       "status": "ok"
     },
     {
@@ -102,13 +102,13 @@
       "direction": {
         "SCREEN": "the target machines list with online/offline badges; click \"online only (N)\" (DeploymentDialog.tsx:762), then adjust with \"select all\" / individual checkboxes (:771)."
       },
-      "start_s": 92.017,
-      "start_frame": 5521,
+      "start_s": 88.467,
+      "start_frame": 5308,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\10-deploy-software\\ep10-b05.mp3",
       "mp3_name": "ep10-b05.mp3",
-      "duration_s": 16.536,
-      "duration_frames": 992,
+      "duration_s": 17.659,
+      "duration_frames": 1060,
       "status": "ok"
     },
     {
@@ -119,13 +119,13 @@
         "SCREEN": "click \"deploy to N machines\" (DeploymentDialog.tsx:827); the deployment expands showing per-machine progress: pending → closing processes → downloading → installing → completed, with a percentage during download and install (page.tsx:245-247); a cancel control on every unfinished target (page.tsx:271-276).",
         "NOTE": "no live agents in the harness, so a freshly created deployment would sit at pending — expand the seeded in-progress record `depl-stage-show-v4` (fixtures.ts:826-846: three completed, one installing at 64%, the rest pending) for the progress board."
       },
-      "start_s": 108.567,
-      "start_frame": 6514,
+      "start_s": 106.133,
+      "start_frame": 6368,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\10-deploy-software\\ep10-b06.mp3",
       "mp3_name": "ep10-b06.mp3",
-      "duration_s": 25.26,
-      "duration_frames": 1516,
+      "duration_s": 23.171,
+      "duration_frames": 1390,
       "status": "ok"
     },
     {
@@ -135,13 +135,13 @@
       "direction": {
         "SCREEN": "the failed row `depl-touchdesigner-driver-update` (fixtures.ts:867-882 — one target failed on \"msi exit code 1603\"). Open its ⋮ → \"retry failed\" (page.tsx:185): the same record flips to in progress, the failed target returns to pending, toast \"retrying deployment for 1 machine(s)\" (page.tsx:380). Then expand the row and hover the per-target retry arrow, tooltip \"retry this machine\" (page.tsx:259-266)."
       },
-      "start_s": 133.833,
-      "start_frame": 8030,
+      "start_s": 129.317,
+      "start_frame": 7759,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\10-deploy-software\\ep10-b07.mp3",
       "mp3_name": "ep10-b07.mp3",
-      "duration_s": 30.929,
-      "duration_frames": 1856,
+      "duration_s": 27.585,
+      "duration_frames": 1655,
       "status": "ok"
     }
   ]

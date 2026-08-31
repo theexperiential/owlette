@@ -25,7 +25,7 @@ renders UI text as garbled glyphs, and a fake-looking error dialog undercuts the
 that has to feel real. Generate the ROOMS; drop the frozen frame and the dialog on the
 screen in post.
 **VOICEOVER:**
-[concerned] three in the morning. your installation isn't running. nobody's on site,
+three in the morning. your installation isn't running. nobody's on site,
 the machine driving your show crashed hours ago, and the display's been frozen ever
 since — you won't find out until someone walks in at opening.
 

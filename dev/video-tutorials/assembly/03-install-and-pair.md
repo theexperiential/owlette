@@ -1,6 +1,6 @@
 # assembly — episode 03: install owlette & pair your first machine
 
-Narration: **3:16.2** across 10 spoken beats.
+Narration: **3:16.5** across 10 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
@@ -24,4 +24,4 @@ Footage:
 | b07 | choosing a site | `ep03-b07.mp3` | 16.8s | 1:51.6 | 2:08.4 |
 | b08 | the machine appears | `ep03-b08.mp3` | 19.6s | 2:08.4 | 2:27.9 |
 | b09 | recap & the other two ways | `ep03-b09.mp3` | 26.7s | 2:27.9 | 2:54.6 |
-| b10 | if pairing doesn't go through | `ep03-b10.mp3` | 21.6s | 2:54.6 | 3:16.2 |
+| b10 | if pairing doesn't go through | `ep03-b10.mp3` | 21.8s | 2:54.6 | 3:16.4 |

@@ -1,6 +1,6 @@
 # assembly — episode 11: distribute project folders with roost
 
-Narration: **2:27.1** across 6 spoken beats.
+Narration: **2:22.8** across 6 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
@@ -12,9 +12,9 @@ Footage:
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|
-| b01 | what roost is | `ep11-b01.mp3` | 26.3s | 0:00.0 | 0:26.3 |
-| b02 | new roost | `ep11-b02.mp3` | 18.8s | 0:26.3 | 0:45.1 |
-| b03 | upload the folder | `ep11-b03.mp3` | 32.7s | 0:45.1 | 1:17.7 |
-| b04 | targets and distribute | `ep11-b04.mp3` | 22.2s | 1:17.7 | 1:39.9 |
-| b05 | ship a new version | `ep11-b05.mp3` | 19.2s | 1:39.9 | 1:59.1 |
-| b06 | roll back | `ep11-b06.mp3` | 27.9s | 1:59.1 | 2:27.0 |
+| b01 | what roost is | `ep11-b01.mp3` | 23.4s | 0:00.0 | 0:23.4 |
+| b02 | new roost | `ep11-b02.mp3` | 18.5s | 0:23.4 | 0:41.8 |
+| b03 | upload the folder | `ep11-b03.mp3` | 31.1s | 0:41.8 | 1:12.9 |
+| b04 | targets and distribute | `ep11-b04.mp3` | 22.5s | 1:12.9 | 1:35.4 |
+| b05 | ship a new version | `ep11-b05.mp3` | 17.9s | 1:35.4 | 1:53.3 |
+| b06 | roll back | `ep11-b06.mp3` | 29.4s | 1:53.3 | 2:22.7 |

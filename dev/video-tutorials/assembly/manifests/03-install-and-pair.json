@@ -7,7 +7,7 @@
   "scenario": "dashboard-mixed-states",
   "script": "scripts/03-install-and-pair.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 196.233,
+  "narration_s": 196.483,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -224,8 +224,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\03-install-and-pair\\ep03-b10.mp3",
       "mp3_name": "ep03-b10.mp3",
-      "duration_s": 21.551,
-      "duration_frames": 1293,
+      "duration_s": 21.812,
+      "duration_frames": 1309,
       "status": "ok"
     }
   ]

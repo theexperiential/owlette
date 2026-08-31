@@ -7,7 +7,7 @@
   "scenario": "automate-schedule-editor",
   "script": "scripts/14-team-and-alerts.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 170.517,
+  "narration_s": 162.45,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -40,8 +40,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b01.mp3",
       "mp3_name": "ep14-b01.mp3",
-      "duration_s": 19.409,
-      "duration_frames": 1165,
+      "duration_s": 18.625,
+      "duration_frames": 1118,
       "status": "ok"
     },
     {
@@ -51,13 +51,13 @@
       "direction": {
         "SCREEN": "change a user's role via the row's menu → \"change role...\" (page.tsx:641) → role-change confirm dialog (member → admin); then open \"manage sites\" to assign which sites they cover. While the row menu is open, let \"reset 2FA...\" (page.tsx:659) sit on camera for a beat — it's the recovery path when a teammate loses their last factor."
       },
-      "start_s": 19.417,
-      "start_frame": 1165,
+      "start_s": 18.633,
+      "start_frame": 1118,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b02.mp3",
       "mp3_name": "ep14-b02.mp3",
-      "duration_s": 21.812,
-      "duration_frames": 1309,
+      "duration_s": 20.976,
+      "duration_frames": 1259,
       "status": "ok"
     },
     {
@@ -67,13 +67,13 @@
       "direction": {
         "SCREEN": "overlay the three role cards — member, admin, superadmin (page.tsx:771-800, copy from ROLE_DESCRIPTIONS at :47-51). Zoom each card as the narration names it; the card text and the narration now say the same thing."
       },
-      "start_s": 41.233,
-      "start_frame": 2474,
+      "start_s": 39.617,
+      "start_frame": 2377,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b03.mp3",
       "mp3_name": "ep14-b03.mp3",
-      "duration_s": 31.896,
-      "duration_frames": 1914,
+      "duration_s": 31.922,
+      "duration_frames": 1915,
       "status": "ok"
     },
     {
@@ -84,13 +84,13 @@
         "SCREEN": "the admin \"alerts\" page (web/app/admin/alerts/page.tsx:376) with the per-site selector and a list of threshold rules.",
         "NOTE": "capture as superadmin (admin pages require it). To show a populated list, seed sites/{id}/settings/alerts inline the way web/e2e/screenshots/email-alerts.spec.ts does — the automate-schedule-editor fixture seeds nothing this page reads. The other automation schema in the fixtures is sites/{siteId}/talons (scenario automate-talons-list); sites/{id}/alertRules is dead data, written only by fixtures.ts and read by nothing."
       },
-      "start_s": 73.133,
-      "start_frame": 4388,
+      "start_s": 71.55,
+      "start_frame": 4293,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b04.mp3",
       "mp3_name": "ep14-b04.mp3",
-      "duration_s": 13.401,
-      "duration_frames": 804,
+      "duration_s": 12.774,
+      "duration_frames": 766,
       "status": "ok"
     },
     {
@@ -100,13 +100,13 @@
       "direction": {
         "SCREEN": "create a rule — metric dropdown (cpu / memory / disk / gpu usage, cpu/gpu temperature, latency, packet loss), operator (> < >= <=, page.tsx:60-65), value, severity (info/warning/critical, :67), channel (email and/or webhook), cooldown. Then open \"presets\" and show the four templates (:75-117)."
       },
-      "start_s": 86.55,
-      "start_frame": 5193,
+      "start_s": 84.333,
+      "start_frame": 5060,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b05.mp3",
       "mp3_name": "ep14-b05.mp3",
-      "duration_s": 35.5,
-      "duration_frames": 2130,
+      "duration_s": 31.451,
+      "duration_frames": 1887,
       "status": "ok"
     },
     {
@@ -116,13 +116,13 @@
       "direction": {
         "SCREEN": "Account Settings → \"alerts\" section: six toggles — machine offline alerts, process crash alerts, threshold alerts, hoot escalation alerts, display events, talon alerts (web/components/AccountSettingsDialog.tsx:589-661) — then the alert email block with up to 5 CC recipients (\"max 5.\", :721)."
       },
-      "start_s": 122.067,
-      "start_frame": 7324,
+      "start_s": 115.8,
+      "start_frame": 6948,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b06.mp3",
       "mp3_name": "ep14-b06.mp3",
-      "duration_s": 20.14,
-      "duration_frames": 1208,
+      "duration_s": 19.357,
+      "duration_frames": 1161,
       "status": "ok"
     },
     {
@@ -132,13 +132,13 @@
       "direction": {
         "SCREEN": "an offline alert email open in a mail client: subject \"N machine(s) offline in <site>\", the \"machines offline\" heading (web/app/api/cron/health-check/route.ts:217), and the three grouped sections — not responding / reported shutting down / still offline (:219-221). Scroll to the footer: \"manage alerts · unsubscribe\" (web/lib/emailTemplates.server.ts:121-133); click \"manage alerts\" → /settings/alerts, the same toggles from b06. Close on the display layout panel's \"store the current live arrangement as the stored layout\" row (web/components/charts/DisplayLayoutPanel.tsx:1176) as the handoff lands."
       },
-      "start_s": 142.217,
-      "start_frame": 8533,
+      "start_s": 135.167,
+      "start_frame": 8110,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b07.mp3",
       "mp3_name": "ep14-b07.mp3",
-      "duration_s": 28.291,
-      "duration_frames": 1697,
+      "duration_s": 27.272,
+      "duration_frames": 1636,
       "status": "ok"
     }
   ]
