@@ -1,4 +1,4 @@
-pywin32==306
+pywin32==312
 psutil==5.9.5
 email-validator==2.0.0
 GPUtil==1.4.0
