@@ -115,6 +115,26 @@ describe('ProjectDistributionDialog — source picker (inside deploy)', () => {
   });
 });
 
+describe('ProjectDistributionDialog — target selection', () => {
+  // Regression: the row div and the Checkbox BOTH toggle. Before the checkbox
+  // stopped click propagation, clicking the box fired onCheckedChange AND
+  // bubbled to the row's onClick — toggle twice, net zero, "(0 selected)".
+  // This test fails against that behavior (it saw 0, expects 1).
+  it('clicking the checkbox itself selects the machine exactly once', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByRole('checkbox', { name: 'lobby-01' }));
+    expect(screen.getByText(/1 selected/)).toBeInTheDocument();
+  });
+
+  it('clicking the row also selects the machine exactly once', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByText('gallery-02'));
+    expect(screen.getByText(/1 selected/)).toBeInTheDocument();
+  });
+});
+
 describe('ProjectDistributionDialog — distribute button gating', () => {
   it('disabled on fresh url dialog until name + url + target are filled', async () => {
     const user = userEvent.setup();

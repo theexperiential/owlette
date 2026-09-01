@@ -1170,6 +1170,10 @@ export default function ProjectDistributionDialog({
                         onCheckedChange={
                           isNewVersion ? undefined : () => toggleMachine(machine.machineId)
                         }
+                        // The row's own onClick also toggles; without stopping
+                        // propagation a click ON the checkbox fired both and
+                        // net-zeroed — the box visibly did nothing.
+                        onClick={(e) => e.stopPropagation()}
                         disabled={isNewVersion}
                         className={isNewVersion ? '' : 'cursor-pointer'}
                       />
