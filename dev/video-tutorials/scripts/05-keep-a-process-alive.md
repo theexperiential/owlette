@@ -26,7 +26,16 @@ set one up.
 on the machine's card, click add process. this dialog is where you describe the app you
 want owlette to watch over.
 
-## [b03] the essential fields
+## [b03] or just drop it on the machine
+**SCREEN:** native capture — the owlette desktop app open on the machine itself. Drag `lobby-wall.bat` from the desktop onto the owlette window: the drop overlay lights up, release, the "add process" confirm card pops with the details pre-filled. Confirm; the process appears in the list.
+**NOTE:** filmed on the VM (`scripts/vm/22-shoot-drag-drop.ps1`) — an OS file drop arrives as a Tauri host event (`useFileDrop` listens to `onDragDropEvent`, not `ondrop`), which CDP cannot synthesize, so this is a real host-driven pointer drag through VMConnect. The same footage fills the drag half of ep09 b04.
+**VOICEOVER:**
+[warm] there's a faster way too, right on the machine itself. drag an app — or
+the file it opens — from anywhere in windows onto the owlette window. drop it,
+confirm the one question it asks, and the process is on the card. however you
+add one, the dialog is where you shape it — so let's fill it in.
+
+## [b04] the essential fields
 **SCREEN:** fill the dialog — name "TouchDesigner"; the launch mode segmented control set to "always on" (all three segments are lowercase: off / always on / scheduled); executable path "C:\Program Files\Derivative\TouchDesigner\bin\TouchDesigner.exe"; then "file path / command arguments" pointing at a .toe project.
 **NOTE:** create mode defaults launch mode to "off" (page.tsx:558), so setting it really is required; save only validates name + executable path (page.tsx:586-594), which is what makes "that's genuinely all you need" true.
 **VOICEOVER:**
@@ -35,7 +44,7 @@ should never be down, that's "always on." then point it at the executable. if yo
 opens a specific project file, add that in the file path field too. that's genuinely all
 you need.
 
-## [b04] the resilience knobs
+## [b05] the resilience knobs
 **SCREEN:** scroll the dialog to working directory, task priority (low / normal / high / realtime), window visibility (normal / "hidden (console apps only)"), launch delay (sec), init timeout (sec), relaunch attempts.
 **NOTE:** relaunch attempts defaults to 3, and 0 is a real setting meaning unlimited — owlette relaunches forever and never escalates to a machine restart (owlette_service.py:2548-2579). Hold on the field a beat longer than the rest; b06 says it out loud.
 **VOICEOVER:**
@@ -45,14 +54,14 @@ owlette starts health-checking it — and relaunch attempts: how many times to b
 back before owlette decides something's really wrong. the defaults are sensible; leave
 them until you have a reason.
 
-## [b05] save and watch it run
+## [b06] save and watch it run
 **SCREEN:** click "create process"; the dialog closes and the new process row appears, status LAUNCHING, then flipping to RUNNING (green).
 **NOTE:** this needs seeding to film. Create writes only the config doc (useFirestore.ts:1433 → createProcess.server.ts), while rows render from the agent-written status (`data.metrics?.processes || data.processes`, useFirestore.ts:1012) — with no agent in the emulator, no row ever appears. After the create click, write the new process into sites/{siteId}/machines/{machineId}.metrics.processes at LAUNCHING, wait ~4s, then flip it to RUNNING.
 **VOICEOVER:**
 hit create process. within a second or two the agent picks it up — you'll see the status
 go from launching to running, green. it's alive, and owlette is now watching it.
 
-## [b06] what happens on a crash
+## [b07] what happens on a crash
 **SCREEN:** the focus card's touchdesigner mid-relaunch (LAUNCHING), then the same row in STALLED, then the amber "restart pending" banner with its approve and dismiss buttons.
 **NOTE:** the banner copy is "restart pending: {reason}" (MachineCardView.tsx:325) and the buttons read approve / dismiss (:343, :358) — site admins only. The underlying field and testids still say reboot; that split is deliberate, never speak it. A hung process is marked STALLED first and only killed and relaunched once the hang is confirmed (owlette_service.py:2837-2854), which is what "or hangs" points at.
 **VOICEOVER:**
@@ -61,7 +70,7 @@ attempt limit you set. set that limit to zero and it never gives up. otherwise, 
 limit owlette stops fighting and raises a restart pending banner — sometimes the machine
 itself needs a fresh start. approve that restart, or dismiss it. you stay in control.
 
-## [b07] day-to-day controls
+## [b08] day-to-day controls
 **SCREEN:** a process row's always-visible controls (they are not hover-revealed — they render for every site admin): the inline off / always on / scheduled toggle with its schedule gear inside the "scheduled" segment, then edit (pencil) and duplicate, with restart and kill floated to the right of the row.
 **NOTE:** labels are lowercase (MachineCardView.tsx:832). Duplicate (:889-906) clones the whole config as "… (copy)" with launch mode off — show it in the pass, but the narration doesn't name it.
 **VOICEOVER:**

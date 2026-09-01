@@ -7,7 +7,7 @@
   "scenario": "dashboard-mixed-states",
   "script": "scripts/03-install-and-pair.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 196.483,
+  "narration_s": 180.267,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -73,9 +73,10 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\03-install-and-pair\\ep03-b01.mp3",
       "mp3_name": "ep03-b01.mp3",
-      "duration_s": 13.897,
-      "duration_frames": 834,
-      "status": "ok"
+      "duration_s": 16.457,
+      "duration_frames": 987,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b02",
@@ -85,14 +86,15 @@
         "SCREEN": "the dashboard header — the download icon button (tooltip \"download owlette agent v<current version>\"). Click it; the installer downloads. Note the copy-link button right beside it. surface: web (playwright).",
         "NOTE": "the same download link also lives inside the \"+ add machine\" modal's \"enter code\" tab, and there's a public owlette.app/download permalink — but the header button is the simplest path to show."
       },
-      "start_s": 13.9,
-      "start_frame": 834,
+      "start_s": 17.067,
+      "start_frame": 1024,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\03-install-and-pair\\ep03-b02.mp3",
       "mp3_name": "ep03-b02.mp3",
-      "duration_s": 18.364,
-      "duration_frames": 1102,
-      "status": "ok"
+      "duration_s": 18.547,
+      "duration_frames": 1113,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b03",
@@ -101,14 +103,15 @@
       "direction": {
         "SCREEN": "double-click the installer; the windows user-account-control prompt appears; click yes. surface: native (obs)."
       },
-      "start_s": 32.267,
-      "start_frame": 1936,
+      "start_s": 36.217,
+      "start_frame": 2173,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\03-install-and-pair\\ep03-b03.mp3",
       "mp3_name": "ep03-b03.mp3",
-      "duration_s": 13.662,
-      "duration_frames": 820,
-      "status": "ok"
+      "duration_s": 14.028,
+      "duration_frames": 842,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b04",
@@ -118,14 +121,15 @@
         "SCREEN": "the installer progress screen. on a machine that needs them, the status caption cycles through \"Installing the WebView2 runtime...\" and \"Installing the PawnIO driver...\" before \"Installing Owlette service...\" — hold on those captions if the demo VM shows them; skip the hold if it doesn't. surface: native (obs).",
         "ON-SCREEN": "installs as a service • auto-starts on boot"
       },
-      "start_s": 45.933,
-      "start_frame": 2756,
+      "start_s": 50.85,
+      "start_frame": 3051,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\03-install-and-pair\\ep03-b04.mp3",
       "mp3_name": "ep03-b04.mp3",
-      "duration_s": 23.249,
-      "duration_frames": 1395,
-      "status": "ok"
+      "duration_s": 19.984,
+      "duration_frames": 1199,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b05",
@@ -135,14 +139,15 @@
         "SCREEN": "the owlette app window opens over the installer's progress page, on the \"join a site\" dialog: a big three-word phrase rendered as a click-to-copy button (e.g. \"silver-compass-drift\") with \"click to copy\" underneath, an amber status line reading \"waiting for authorization\", and the line \"approve this machine at owlette.app/add — from here or from any other device\". a `dev` badge sits next to the dialog title on anything non-production. zoom in on the phrase. surface: the owlette desktop app, captured via CDP.",
         "NOTE": "no console window appears on an interactive install any more. the installer's own finished page now reads: service and tray start automatically, and \"if this machine is not paired yet, finish pairing in the Owlette window that opened, or open Owlette from the Start menu.\""
       },
-      "start_s": 69.183,
-      "start_frame": 4151,
+      "start_s": 71.45,
+      "start_frame": 4287,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\03-install-and-pair\\ep03-b05.mp3",
       "mp3_name": "ep03-b05.mp3",
-      "duration_s": 15.961,
-      "duration_frames": 958,
-      "status": "ok"
+      "duration_s": 14.916,
+      "duration_frames": 895,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b06",
@@ -152,14 +157,15 @@
         "SCREEN": "in the pairing window, click the footer button labelled \"open owlette.app/add\"; the default browser opens the add page with the phrase already filled in from the link. hold a beat on the host name in both places — the dialog names the server it will authorize against, and the add page says \"authorizing on owlette.app\" under its title. (alternative b-roll: leaving the pairing window open on the machine and typing the three words into owlette.app/add on a laptop — click-to-copy on the phrase means the operator never has to retype it locally.) surface: mixed — pairing window via CDP, add page via web.",
         "NOTE": "capture precondition for the on-machine take: /add sends a signed-out visitor to /login?redirect=/add (web/app/add/page.tsx:128-132) and that redirect carries only the path, so the `?code=` pre-fill is lost across the login (web/app/login/page.tsx:179-181). sign the demo machine's browser in to owlette before rolling so the phrase really is pre-filled on screen — otherwise the honest take is the laptop route, or pasting the phrase with the dialog's click-to-copy button."
       },
-      "start_s": 85.15,
-      "start_frame": 5109,
+      "start_s": 86.967,
+      "start_frame": 5218,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\03-install-and-pair\\ep03-b06.mp3",
       "mp3_name": "ep03-b06.mp3",
-      "duration_s": 26.462,
-      "duration_frames": 1588,
-      "status": "ok"
+      "duration_s": 20.872,
+      "duration_frames": 1252,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b07",
@@ -168,14 +174,15 @@
       "direction": {
         "SCREEN": "the add page — a \"site\" dropdown; pick \"main gallery\"; the authorize button lights up. surface: web (playwright)."
       },
-      "start_s": 111.617,
-      "start_frame": 6697,
+      "start_s": 108.45,
+      "start_frame": 6507,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\03-install-and-pair\\ep03-b07.mp3",
       "mp3_name": "ep03-b07.mp3",
-      "duration_s": 16.771,
-      "duration_frames": 1006,
-      "status": "ok"
+      "duration_s": 12.643,
+      "duration_frames": 759,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b08",
@@ -185,14 +192,15 @@
         "SCREEN": "cut to the dashboard; within ~30 seconds a new machine card pops in, status pill turns green, heartbeat starts. surface: web (playwright).",
         "NOTE": "on the machine, the pairing dialog settles from \"waiting for authorization\" to \"paired — this machine will appear on your dashboard shortly\" at the same moment; a quick two-shot of both surfaces sells it if the capture allows. (that is the string a fresh install produces — pairing runs before the service is installed, so there is no service restart to report; agent/owlette_installer.iss:900-919, desktop/src/components/JoinSiteDialog.tsx:112-119.)"
       },
-      "start_s": 128.4,
-      "start_frame": 7704,
+      "start_s": 121.7,
+      "start_frame": 7302,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\03-install-and-pair\\ep03-b08.mp3",
       "mp3_name": "ep03-b08.mp3",
-      "duration_s": 19.566,
-      "duration_frames": 1174,
-      "status": "ok"
+      "duration_s": 17.737,
+      "duration_frames": 1064,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b09",
@@ -202,14 +210,15 @@
         "SCREEN": "back to the add-machine modal showing both tabs: \"enter code\" and \"generate code\". on the \"generate code\" tab, show the copied command — `Owlette-Installer-v<version>.exe /ADD=<phrase> /SILENT`, with `/SERVER=dev` included automatically when the dashboard is dev. surface: web (playwright).",
         "NOTE": "this is the LAST beat in the cut — its audio ends on the next-episode handoff. the recovery beat (b10) is cut in ahead of it, between b08 and this one. the /ADD= silent path is verified working on current code — the phrase is pre-authorized in the dashboard and the token is minted against the real machine id at poll time. a silent install with no /ADD= phrase now skips pairing outright rather than hanging; that's the recovery case b10 covers."
       },
-      "start_s": 147.967,
-      "start_frame": 8878,
+      "start_s": 140.05,
+      "start_frame": 8403,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\03-install-and-pair\\ep03-b09.mp3",
       "mp3_name": "ep03-b09.mp3",
-      "duration_s": 26.697,
-      "duration_frames": 1602,
-      "status": "ok"
+      "duration_s": 21.499,
+      "duration_frames": 1290,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b10",
@@ -219,14 +228,15 @@
         "SCREEN": "on the machine: close the pairing window while it still reads \"waiting for authorization\", then start menu → Owlette → the app's hamburger menu → \"join site\" → the join-a-site dialog reopens with a fresh phrase. surface: native (obs) into the owlette desktop app via CDP.",
         "NOTE": "cut this BETWEEN b08 and b09 — beat ids are render slots, not timeline order, and b09's rendered audio ends on the next-episode handoff, so b09 has to stay last. do not fold this into b09; b09's audio is already rendered. do not try to shoot the installer's \"Pairing was not completed\" dialog (agent/owlette_installer.iss:788-800): on this episode's path the GUI handoff always reports success (agent/owlette_installer.iss:816, :855), so that msgbox only fires on the console fallback — a machine without WebView2, or an /ADD= install."
       },
-      "start_s": 174.667,
-      "start_frame": 10480,
+      "start_s": 162.15,
+      "start_frame": 9729,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\03-install-and-pair\\ep03-b10.mp3",
       "mp3_name": "ep03-b10.mp3",
-      "duration_s": 21.812,
-      "duration_frames": 1309,
-      "status": "ok"
+      "duration_s": 17.502,
+      "duration_frames": 1050,
+      "status": "ok",
+      "breath_s": 0.6
     }
   ]
 }

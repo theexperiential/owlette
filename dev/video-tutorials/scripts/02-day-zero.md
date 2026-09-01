@@ -14,14 +14,13 @@ model: eleven_v3
 > After this you can create an owlette account, get through mandatory two-factor with a passkey or an authenticator app, keep recovery material you can actually use, and stand up your first site with the right clock on it.
 
 ## [b01] cold open
-**SCREEN:** clean browser. Type `owlette.app/dashboard`, hit enter — the URL bounces to `/setup-2fa` before the dashboard ever paints. Hold on the "set up two-factor authentication" card.
-**NOTE:** shoot this cold open OUT OF ORDER. An unauthenticated visitor typing `/dashboard` is sent to `/login`, not `/setup-2fa` (`web/proxy.ts:148-158`); the setup bounce only fires for a session that is already signed in with zero factors (`web/proxy.ts:169-181`). So: register first (b02), then — before enrolling any factor — type `/dashboard` and film the bounce for this beat.
+**SCREEN:** clean browser on the owlette.app sign-up page, held — where a new account actually begins.
 **NOTE:** no capture fixture exists for this episode. `seedScreenshotFixtures` has no scenario for the auth pages or a zero-site dashboard (`web/e2e/screenshots/fixtures.ts` — the union runs `dashboard-mixed-states` … `display-storyboard-frame-3`), so every beat here needs a fresh emulator account: register → enroll → create site. Build one before capture; `scenario: null` until then.
 **VOICEOVER:**
-[warm] owlette holds the keys to every machine you run — so it doesn't hand you a
-dashboard until your account is locked down. two-factor isn't optional here, and
-there's no dismiss button. two minutes, once. let's do the whole first day:
-account, second factor, backup codes, and your first site.
+[warm] before owlette can look after your machines, it makes sure your account
+is looked after first. two-factor is built into setup — no nag screen, no skip
+button. a few minutes, done for good. the whole first day: account, second
+factor, backup codes, and your first site.
 
 ## [b02] signing up
 **SCREEN:** `/register` — the "create an account" card. Show "continue with Google" at the top, then click into the email field so the rest unfolds (first/last name, password with its "8+ characters with at least 2 of..." hint, confirm, terms checkbox, the bot-check widget), then "create account". Land on `/setup-2fa`.

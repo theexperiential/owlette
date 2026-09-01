@@ -64,6 +64,18 @@ LEAD_MS = 250
 # 3 of 16 episodes - twice because the markers were shorter than the floor, once
 # because a natural pause outranked a real marker.
 MIN_GAP_S = 0.30
+# Silence threshold for gap detection. -40dB is right for most takes, but v3
+# sometimes renders a marker gap with breath/room tone above it - ep04's fifth
+# marker sat at 102.9-103.5s with a floor between -40 and -35dB and was
+# invisible at the default. Override per run with --noise; positional selection
+# keeps a looser threshold safe, because extra natural-pause candidates lose to
+# the marker nearest each expected boundary.
+NOISE_DB = -40
+# Seconds to discard from the very head of the take before beat 1's cut. v3
+# sometimes opens a take with non-speech junk (ep04: a broadband double-pop
+# and a falling sweep, ~1.4s, before the first word). Trimming at split time
+# is free; a re-render is the fallback if the junk overlaps the first word.
+HEAD_TRIM_S = 0.0
 # How far a cut may sit from its text-proportional position, as a fraction of
 # the whole take. Speech rate varies beat to beat; 12% is loose enough for that
 # and tight enough to catch a genuine mis-split.
@@ -83,7 +95,7 @@ def find_gaps(path: Path) -> List[Tuple[float, float]]:
     """Every silence >= MIN_GAP_S, as (start, end)."""
     out = subprocess.run(
         ["ffmpeg", "-hide_banner", "-i", str(path),
-         "-af", f"silencedetect=noise=-40dB:d={MIN_GAP_S}", "-f", "null", "-"],
+         "-af", f"silencedetect=noise={NOISE_DB}dB:d={MIN_GAP_S}", "-f", "null", "-"],
         capture_output=True, text=True).stderr
     pairs = re.findall(r"silence_start: ([\d.]+).*?silence_end: ([\d.]+)", out, re.S)
     return [(float(a), float(b)) for a, b in pairs]
@@ -203,15 +215,41 @@ def split_take(ep, spoken, whole: Path, out_dir: Path) -> bool:
 
     lead = LEAD_MS / 1000.0
     bounds = []
-    start = 0.0
+    start = HEAD_TRIM_S
+    if HEAD_TRIM_S > 0:
+        print(f"  head trim: beat 1 starts at {HEAD_TRIM_S:.2f}s of the take")
     for gs, ge in cuts:
         bounds.append((start, gs + lead))       # keep a short tail
         start = max(0.0, ge - lead)             # and hand the next beat a lead-in
     bounds.append((start, total))
 
+    # Every cut is verified by reading the written file BACK. Resolve holding a
+    # handle on an mp3 once let a rewrite fail while this script reported the
+    # episode as a success, which left old and new beats mixed in one episode -
+    # the worst possible silent failure. A wrong read-back aborts the episode
+    # immediately and says exactly which beats were rewritten before the stop.
+    written = []
     for k, ((bid, _), (a, b)) in enumerate(zip(spoken, bounds)):
         dest = out_dir / f"ep{ep.number:02d}-{bid}.mp3"
-        cut(whole, dest, a, b, lead_in=(k == 0))
+        expect = (b - a) + (LEAD_MS / 1000.0 if k == 0 else 0.0)
+        try:
+            cut(whole, dest, a, b, lead_in=(k == 0))
+        except subprocess.CalledProcessError as exc:
+            err = (exc.stderr or b"").decode(errors="replace").strip().splitlines()
+            print(f"  !! FAILED writing {dest.name}: {err[-1] if err else exc}")
+            print(f"  !! EPISODE IS NOW MIXED: rewritten so far: "
+                  f"{', '.join(written) or 'none'} - re-run --split-only "
+                  f"with every mp3 closed (Resolve!) before using this episode")
+            return False
+        got = ffprobe_duration(dest)
+        if abs(got - expect) > 0.25:
+            print(f"  !! {dest.name} reads back {got:.2f}s, expected "
+                  f"{expect:.2f}s - the write did not take (locked file?)")
+            print(f"  !! EPISODE IS NOW MIXED: rewritten so far: "
+                  f"{', '.join(written) or 'none'} - re-run --split-only "
+                  f"with every mp3 closed (Resolve!) before using this episode")
+            return False
+        written.append(dest.name)
         print(f"    {dest.name}  {b - a:6.2f}s")
     # The take is KEPT. Re-splitting is free; re-rendering is not, and the
     # split is the part most likely to need another go.
@@ -219,6 +257,7 @@ def split_take(ep, spoken, whole: Path, out_dir: Path) -> bool:
 
 
 def main() -> None:
+    global NOISE_DB, HEAD_TRIM_S
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("scripts", nargs="*")
     ap.add_argument("--all", action="store_true")
@@ -228,7 +267,15 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--split-only", action="store_true",
                     help="re-split an existing _continuous.mp3 without calling the API")
+    ap.add_argument("--noise", type=int, default=NOISE_DB,
+                    help="silencedetect threshold in dB (default %(default)s); "
+                         "raise toward -35 when a marker gap has audible room tone")
+    ap.add_argument("--head-trim", type=float, default=HEAD_TRIM_S,
+                    help="seconds to discard from the take's head before beat 1 "
+                         "(v3 sometimes opens with non-speech junk)")
     args = ap.parse_args()
+    NOISE_DB = args.noise
+    HEAD_TRIM_S = args.head_trim
 
     generate.load_env()
     api_key = os.environ.get("ELEVENLABS_API_KEY", "")

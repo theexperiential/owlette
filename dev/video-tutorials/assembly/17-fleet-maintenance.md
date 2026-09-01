@@ -1,6 +1,6 @@
 # assembly — episode 17: keeping the fleet current
 
-Narration: **2:56.5** across 9 spoken beats.
+Narration: **3:01.9** across 9 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

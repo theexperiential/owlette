@@ -1,6 +1,6 @@
 # assembly — episode 13: talons: rules that watch and act
 
-Narration: **3:15.3** across 8 spoken beats.
+Narration: **3:20.1** across 8 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

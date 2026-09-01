@@ -7,7 +7,7 @@
   "scenario": "control-process-restarting",
   "script": "scripts/05-keep-a-process-alive.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 116.967,
+  "narration_s": 135.283,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,10 +20,21 @@
       "rel": "dev/video-tutorials/footage/web/05-keep-a-process-alive.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\05-keep-a-process-alive.mp4",
       "exists": true,
-      "duration_s": 159.133,
+      "duration_s": 151.417,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
+    },
+    {
+      "role": "pool",
+      "note": "native: b03 drag-and-drop add-process demo",
+      "rel": "dev/video-tutorials/footage/native/05-b03-drag-drop.mp4",
+      "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\native\\05-b03-drag-drop.mp4",
+      "exists": true,
+      "duration_s": 50.0,
+      "width": 1920,
+      "height": 1080,
+      "fps": 30.0
     }
   ],
   "beats": [
@@ -39,9 +50,10 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b01.mp3",
       "mp3_name": "ep05-b01.mp3",
-      "duration_s": 12.304,
-      "duration_frames": 738,
-      "status": "ok"
+      "duration_s": 11.52,
+      "duration_frames": 691,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b02",
@@ -50,99 +62,123 @@
       "direction": {
         "SCREEN": "on a machine card, click the \"add process\" control (accessible name is exactly \"add process\"); the process dialog opens in create mode."
       },
-      "start_s": 12.317,
-      "start_frame": 739,
+      "start_s": 12.133,
+      "start_frame": 728,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b02.mp3",
       "mp3_name": "ep05-b02.mp3",
-      "duration_s": 7.628,
-      "duration_frames": 458,
-      "status": "ok"
+      "duration_s": 7.288,
+      "duration_frames": 437,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b03",
+      "title": "or just drop it on the machine",
+      "screen_note": "native capture — the owlette desktop app open on the machine itself. Drag `lobby-wall.bat` from the desktop onto the owlette window: the drop overlay lights up, release, the \"add process\" confirm card pops with the details pre-filled. Confirm; the process appears in the list.",
+      "direction": {
+        "SCREEN": "native capture — the owlette desktop app open on the machine itself. Drag `lobby-wall.bat` from the desktop onto the owlette window: the drop overlay lights up, release, the \"add process\" confirm card pops with the details pre-filled. Confirm; the process appears in the list.",
+        "NOTE": "filmed on the VM (`scripts/vm/22-shoot-drag-drop.ps1`) — an OS file drop arrives as a Tauri host event (`useFileDrop` listens to `onDragDropEvent`, not `ondrop`), which CDP cannot synthesize, so this is a real host-driven pointer drag through VMConnect. The same footage fills the drag half of ep09 b04."
+      },
+      "start_s": 20.033,
+      "start_frame": 1202,
+      "spoken": true,
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b03.mp3",
+      "mp3_name": "ep05-b03.mp3",
+      "duration_s": 19.069,
+      "duration_frames": 1144,
+      "status": "ok",
+      "breath_s": 0.6
+    },
+    {
+      "id": "b04",
       "title": "the essential fields",
       "screen_note": "fill the dialog — name \"TouchDesigner\"; the launch mode segmented control set to \"always on\" (all three segments are lowercase: off / always on / scheduled); executable path \"C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe\"; then \"file path / command arguments\" pointing at a .toe project.",
       "direction": {
         "SCREEN": "fill the dialog — name \"TouchDesigner\"; the launch mode segmented control set to \"always on\" (all three segments are lowercase: off / always on / scheduled); executable path \"C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe\"; then \"file path / command arguments\" pointing at a .toe project.",
         "NOTE": "create mode defaults launch mode to \"off\" (page.tsx:558), so setting it really is required; save only validates name + executable path (page.tsx:586-594), which is what makes \"that's genuinely all you need\" true."
       },
-      "start_s": 19.95,
-      "start_frame": 1197,
+      "start_s": 39.717,
+      "start_frame": 2383,
       "spoken": true,
-      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b03.mp3",
-      "mp3_name": "ep05-b03.mp3",
-      "duration_s": 18.599,
-      "duration_frames": 1116,
-      "status": "ok"
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b04.mp3",
+      "mp3_name": "ep05-b04.mp3",
+      "duration_s": 15.83,
+      "duration_frames": 950,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
-      "id": "b04",
+      "id": "b05",
       "title": "the resilience knobs",
       "screen_note": "scroll the dialog to working directory, task priority (low / normal / high / realtime), window visibility (normal / \"hidden (console apps only)\"), launch delay (sec), init timeout (sec), relaunch attempts.",
       "direction": {
         "SCREEN": "scroll the dialog to working directory, task priority (low / normal / high / realtime), window visibility (normal / \"hidden (console apps only)\"), launch delay (sec), init timeout (sec), relaunch attempts.",
         "NOTE": "relaunch attempts defaults to 3, and 0 is a real setting meaning unlimited — owlette relaunches forever and never escalates to a machine restart (owlette_service.py:2548-2579). Hold on the field a beat longer than the rest; b06 says it out loud."
       },
-      "start_s": 38.55,
-      "start_frame": 2313,
+      "start_s": 56.15,
+      "start_frame": 3369,
       "spoken": true,
-      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b04.mp3",
-      "mp3_name": "ep05-b04.mp3",
-      "duration_s": 24.137,
-      "duration_frames": 1448,
-      "status": "ok"
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b05.mp3",
+      "mp3_name": "ep05-b05.mp3",
+      "duration_s": 25.13,
+      "duration_frames": 1508,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
-      "id": "b05",
+      "id": "b06",
       "title": "save and watch it run",
       "screen_note": "click \"create process\"; the dialog closes and the new process row appears, status LAUNCHING, then flipping to RUNNING (green).",
       "direction": {
         "SCREEN": "click \"create process\"; the dialog closes and the new process row appears, status LAUNCHING, then flipping to RUNNING (green).",
         "NOTE": "this needs seeding to film. Create writes only the config doc (useFirestore.ts:1433 → createProcess.server.ts), while rows render from the agent-written status (`data.metrics?.processes || data.processes`, useFirestore.ts:1012) — with no agent in the emulator, no row ever appears. After the create click, write the new process into sites/{siteId}/machines/{machineId}.metrics.processes at LAUNCHING, wait ~4s, then flip it to RUNNING."
       },
-      "start_s": 62.7,
-      "start_frame": 3762,
+      "start_s": 81.883,
+      "start_frame": 4913,
       "spoken": true,
-      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b05.mp3",
-      "mp3_name": "ep05-b05.mp3",
-      "duration_s": 11.651,
-      "duration_frames": 699,
-      "status": "ok"
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b06.mp3",
+      "mp3_name": "ep05-b06.mp3",
+      "duration_s": 11.05,
+      "duration_frames": 663,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
-      "id": "b06",
+      "id": "b07",
       "title": "what happens on a crash",
       "screen_note": "the focus card's touchdesigner mid-relaunch (LAUNCHING), then the same row in STALLED, then the amber \"restart pending\" banner with its approve and dismiss buttons.",
       "direction": {
         "SCREEN": "the focus card's touchdesigner mid-relaunch (LAUNCHING), then the same row in STALLED, then the amber \"restart pending\" banner with its approve and dismiss buttons.",
         "NOTE": "the banner copy is \"restart pending: {reason}\" (MachineCardView.tsx:325) and the buttons read approve / dismiss (:343, :358) — site admins only. The underlying field and testids still say reboot; that split is deliberate, never speak it. A hung process is marked STALLED first and only killed and relaunched once the hang is confirmed (owlette_service.py:2837-2854), which is what \"or hangs\" points at."
       },
-      "start_s": 74.367,
-      "start_frame": 4462,
+      "start_s": 93.533,
+      "start_frame": 5612,
       "spoken": true,
-      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b06.mp3",
-      "mp3_name": "ep05-b06.mp3",
-      "duration_s": 24.477,
-      "duration_frames": 1469,
-      "status": "ok"
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b07.mp3",
+      "mp3_name": "ep05-b07.mp3",
+      "duration_s": 23.693,
+      "duration_frames": 1422,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
-      "id": "b07",
+      "id": "b08",
       "title": "day-to-day controls",
       "screen_note": "a process row's always-visible controls (they are not hover-revealed — they render for every site admin): the inline off / always on / scheduled toggle with its schedule gear inside the \"scheduled\" segment, then edit (pencil) and duplicate, with restart and kill floated to the right of the row.",
       "direction": {
         "SCREEN": "a process row's always-visible controls (they are not hover-revealed — they render for every site admin): the inline off / always on / scheduled toggle with its schedule gear inside the \"scheduled\" segment, then edit (pencil) and duplicate, with restart and kill floated to the right of the row.",
         "NOTE": "labels are lowercase (MachineCardView.tsx:832). Duplicate (:889-906) clones the whole config as \"… (copy)\" with launch mode off — show it in the pass, but the narration doesn't name it."
       },
-      "start_s": 98.85,
-      "start_frame": 5931,
+      "start_s": 117.833,
+      "start_frame": 7070,
       "spoken": true,
-      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b07.mp3",
-      "mp3_name": "ep05-b07.mp3",
-      "duration_s": 18.103,
-      "duration_frames": 1086,
-      "status": "ok"
+      "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\05-keep-a-process-alive\\ep05-b08.mp3",
+      "mp3_name": "ep05-b08.mp3",
+      "duration_s": 16.849,
+      "duration_frames": 1011,
+      "status": "ok",
+      "breath_s": 0.6
     }
   ]
 }

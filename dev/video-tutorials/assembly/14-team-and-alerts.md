@@ -1,6 +1,6 @@
 # assembly — episode 14: team & alerts
 
-Narration: **2:42.4** across 7 spoken beats.
+Narration: **2:46.7** across 7 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

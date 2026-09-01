@@ -42,20 +42,18 @@ for mpath in sorted(MANIFESTS.glob("*.json")):
         if cut is None or dur_s <= 0:
             gaps.append(beat["id"])
             continue
-        if i + 1 < len(beats):
-            length = int(beats[i + 1]["start_frame"]) - int(beat["start_frame"])
-        else:
-            length = int(round(dur_s * fps))
         src_fps = fps                     # all footage is 60fps (verified)
-        src_in = int(round(cut["in_s"] * src_fps))
-        src_len = max(1, int(round(length * src_fps / fps)))
-        avail = max(1, int(round(cut["video_s"] * src_fps))) if cut["video_s"] else None
-        if avail is not None and src_len > avail:
-            print("  %s %s: TRIM needed %d > avail %d" % (m["stem"], beat["id"], src_len, avail))
+        segs, seg_warns = be.beat_segments(beats, i, cut, fps, src_fps)
+        for w in seg_warns:
+            if w.startswith("needs "):    # the videoSec trim, kept as before
+                print("  %s %s: TRIM %s" % (m["stem"], beat["id"], w))
+            else:
+                print("  %s %s: %s" % (m["stem"], beat["id"], w))
             problems += 1
-            src_len = avail
         start = int(beat["start_frame"])
-        placed.append((beat["id"], start, start + src_len))
+        lo = min(a for a, _l, _si, _sl, _f in segs) if segs else 0
+        hi = max(a + l for a, l, _si, _sl, _f in segs) if segs else 0
+        placed.append((beat["id"], start + lo, start + hi))
 
     # 1 + 2: adjacency of consecutive PLACED segments
     for (aid, a0, a1), (bid, b0, b1) in zip(placed, placed[1:]):

@@ -7,7 +7,7 @@
   "scenario": "dashboard-mixed-states",
   "script": "scripts/08-remote-actions.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 135.767,
+  "narration_s": 140.567,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,7 +20,7 @@
       "rel": "dev/video-tutorials/footage/web/08-remote-actions.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\08-remote-actions.mp4",
       "exists": true,
-      "duration_s": 176.65,
+      "duration_s": 173.567,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -31,7 +31,7 @@
       "rel": "dev/video-tutorials/footage/web/08-remote-actions-b08-member.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\08-remote-actions-b08-member.mp4",
       "exists": true,
-      "duration_s": 21.467,
+      "duration_s": 20.45,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -53,7 +53,8 @@
       "mp3_name": "ep08-b01.mp3",
       "duration_s": 12.748,
       "duration_frames": 765,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b02",
@@ -62,14 +63,15 @@
       "direction": {
         "SCREEN": "click \"screenshot\"; the ScreenshotDialog captures the desktop; show the history sidebar and the download / fullscreen controls."
       },
-      "start_s": 12.75,
-      "start_frame": 765,
+      "start_s": 13.35,
+      "start_frame": 801,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\08-remote-actions\\ep08-b02.mp3",
       "mp3_name": "ep08-b02.mp3",
       "duration_s": 16.588,
       "duration_frames": 995,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b03",
@@ -78,14 +80,15 @@
       "direction": {
         "SCREEN": "click \"live view\"; the LiveViewModal starts a polling live feed with an interval; show start/stop."
       },
-      "start_s": 29.35,
-      "start_frame": 1761,
+      "start_s": 30.55,
+      "start_frame": 1833,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\08-remote-actions\\ep08-b03.mp3",
       "mp3_name": "ep08-b03.mp3",
       "duration_s": 18.547,
       "duration_frames": 1113,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b04",
@@ -95,14 +98,15 @@
         "SCREEN": "click \"restart machine\" (testid `machine-context-menu-reboot`) → the \"restart {machine}?\" confirm dialog and its copy, \"this will restart the machine in 30 seconds\" → click \"restart\" → the countdown pill takes over the card's status badge, hover it to reveal \"cancel\", and click to cancel.",
         "NOTE": "the countdown does not appear until the dialog is confirmed. The pill's cancel affordance hides in the final 5 seconds (Windows `shutdown /a` is unreliable that late) — shoot the cancel with time on the clock. The menu also swaps to \"cancel restart\" while a countdown is live."
       },
-      "start_s": 47.9,
-      "start_frame": 2874,
+      "start_s": 49.7,
+      "start_frame": 2982,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\08-remote-actions\\ep08-b04.mp3",
       "mp3_name": "ep08-b04.mp3",
       "duration_s": 20.01,
       "duration_frames": 1201,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b05",
@@ -112,14 +116,15 @@
         "SCREEN": "\"shutdown machine\" with its own confirm dialog and countdown; then the little gear on the \"restart machine\" row (tooltip \"schedule restarts\") opening RestartScheduleDialog. Cut to an offline machine's menu, where \"schedule restarts\" stands on its own as a full item (testid `machine-context-menu-schedule-restarts`).",
         "NOTE": "the gear is icon-only with no accessible name — locate it by icon or add a data-testid; `getByRole('button', { name: 'schedule restarts' })` cannot resolve."
       },
-      "start_s": 67.917,
-      "start_frame": 4075,
+      "start_s": 70.317,
+      "start_frame": 4219,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\08-remote-actions\\ep08-b05.mp3",
       "mp3_name": "ep08-b05.mp3",
       "duration_s": 19.879,
       "duration_frames": 1193,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b06",
@@ -128,14 +133,15 @@
       "direction": {
         "SCREEN": "click \"mute alerts\" on a noisy machine."
       },
-      "start_s": 87.8,
-      "start_frame": 5268,
+      "start_s": 90.8,
+      "start_frame": 5448,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\08-remote-actions\\ep08-b06.mp3",
       "mp3_name": "ep08-b06.mp3",
       "duration_s": 11.99,
       "duration_frames": 719,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b07",
@@ -145,14 +151,15 @@
         "SCREEN": "group the open menu by tier — members assigned to the site: screenshot, live view, view displays; site admins: restart machine, schedule restarts, shutdown machine, revoke token, remove machine; everyone: mute alerts. Show \"view displays\" in place between live view and mute alerts, and open it once to reveal the display panel.",
         "NOTE": "revoke token is a SITE ADMIN action as of e0c8341a — the site-scoped `AGENT_TOKEN_REVOKE` capability. It used to 403 for admins because the route still demanded a superadmin capability; do not repeat the old \"superadmin only\" framing. The revoke dialog offers two choices: \"revoke current token\" (only the most-recently-used token for that hostname) and \"revoke all for hostname\" (every token, which disconnects any other machine sharing the name) — frame both."
       },
-      "start_s": 99.8,
-      "start_frame": 5988,
+      "start_s": 103.4,
+      "start_frame": 6204,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\08-remote-actions\\ep08-b07.mp3",
       "mp3_name": "ep08-b07.mp3",
       "duration_s": 23.458,
       "duration_frames": 1407,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b08",
@@ -161,14 +168,15 @@
       "direction": {
         "SCREEN": "hold on the menu as rendered for a member — the admin-only block absent — then dissolve to the owlette desktop app on the machine to hand off."
       },
-      "start_s": 123.267,
-      "start_frame": 7396,
+      "start_s": 127.467,
+      "start_frame": 7648,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\08-remote-actions\\ep08-b08.mp3",
       "mp3_name": "ep08-b08.mp3",
       "duration_s": 12.487,
       "duration_frames": 749,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     }
   ]
 }

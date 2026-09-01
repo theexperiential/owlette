@@ -1,6 +1,6 @@
 # assembly — episode 07: reading machine health
 
-Narration: **2:19.2** across 7 spoken beats.
+Narration: **2:23.4** across 7 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

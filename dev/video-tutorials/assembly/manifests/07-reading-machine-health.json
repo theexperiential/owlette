@@ -7,7 +7,7 @@
   "scenario": "dashboard-mixed-states",
   "script": "scripts/07-reading-machine-health.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 139.25,
+  "narration_s": 143.45,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,7 +20,7 @@
       "rel": "dev/video-tutorials/footage/web/07-reading-machine-health.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\07-reading-machine-health.mp4",
       "exists": true,
-      "duration_s": 158.6,
+      "duration_s": 156.567,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -42,7 +42,8 @@
       "mp3_name": "ep07-b01.mp3",
       "duration_s": 19.017,
       "duration_frames": 1141,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b02",
@@ -51,14 +52,15 @@
       "direction": {
         "SCREEN": "point across cards at different usage levels; overlay the band key: <30 green, 30–50 violet, 50–70 sky blue, 70–85 amber, ≥85 red."
       },
-      "start_s": 19.033,
-      "start_frame": 1142,
+      "start_s": 19.633,
+      "start_frame": 1178,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b02.mp3",
       "mp3_name": "ep07-b02.mp3",
       "duration_s": 21.002,
       "duration_frames": 1260,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b03",
@@ -68,14 +70,15 @@
         "SCREEN": "a card showing cpu / gpu temperature; overlay: under 70°C normal, 70 to under 85°C warning, 85°C and above critical. Note the °C / °F toggle in account settings. Then cut to a machine whose cpu temperature slot is empty.",
         "NOTE": "since 3.2.0 temperatures come from the PawnIO driver — a machine without it reads a BLANK cpu temperature (gpu temps still arrive via vendor APIs), and reads can be switched off per machine with `\"temperature\": { \"enabled\": false }` in config.json. Seed or pick a machine with no cpuTemp for the second half of the shot."
       },
-      "start_s": 40.05,
-      "start_frame": 2403,
+      "start_s": 41.25,
+      "start_frame": 2475,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b03.mp3",
       "mp3_name": "ep07-b03.mp3",
       "duration_s": 29.884,
       "duration_frames": 1793,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b04",
@@ -85,14 +88,15 @@
         "SCREEN": "the card's COLLAPSED metrics summary row — the \"ping 12ms\" chip and, beside it, the \"% loss\" chip. Collapse the stats section (or seed statsExpanded false) to bring the row on screen.",
         "NOTE": "latency and packet loss render ONLY in the collapsed summary row; the expanded \"network\" tile shows the NIC id and ↑tx / ↓rx throughput, neither of which is narrated here. statsExpanded defaults to true and the harness seeds it true, so this beat needs the toggle shut. Seed a degraded machine — latencyMs above 50 for yellow, above 100 for red, and packetLossPct above 0, since the loss chip is hidden at zero."
       },
-      "start_s": 69.95,
-      "start_frame": 4197,
+      "start_s": 71.75,
+      "start_frame": 4305,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b04.mp3",
       "mp3_name": "ep07-b04.mp3",
       "duration_s": 16.222,
       "duration_frames": 973,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b05",
@@ -101,14 +105,15 @@
       "direction": {
         "SCREEN": "click the \"cpu\" tile; the MetricsDetailPanel slides open with a full line chart. Note cpu temperature appears alongside."
       },
-      "start_s": 86.183,
-      "start_frame": 5171,
+      "start_s": 88.583,
+      "start_frame": 5315,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b05.mp3",
       "mp3_name": "ep07-b05.mp3",
       "duration_s": 16.457,
       "duration_frames": 987,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b06",
@@ -118,14 +123,15 @@
         "SCREEN": "in the panel, show tabs for each disk, gpu, and network adapter; the time-range selector; and the machine switcher in the title bar.",
         "NOTE": "two-fixture beat. dashboard-mixed-states seeds 10 machines, which trips the >5 threshold for the title-bar machine switcher — but it writes no per-device history, so the panel shows one disk, one gpu, one nic. Only monitor-single-machine's focus machine has 2 disks + 2 nics; it seeds 4 machines, so no switcher. Record the per-device-tabs half there and the switcher half here, or add disks/gpus/nics history to media-server-stage in seedDashboardMixedStates and shoot it in one take."
       },
-      "start_s": 102.65,
-      "start_frame": 6159,
+      "start_s": 105.65,
+      "start_frame": 6339,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b06.mp3",
       "mp3_name": "ep07-b06.mp3",
       "duration_s": 19.487,
       "duration_frames": 1169,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b07",
@@ -135,14 +141,15 @@
         "SCREEN": "the offline \"touring-rig-04\" card — red \"offline\" pill, stale heartbeat (the row dims in list view).",
         "NOTE": "touring-rig-04 is seeded offline in this scenario (600s stale heartbeat). A machine flips to offline once its heartbeat is older than five minutes."
       },
-      "start_s": 122.15,
-      "start_frame": 7329,
+      "start_s": 125.75,
+      "start_frame": 7545,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b07.mp3",
       "mp3_name": "ep07-b07.mp3",
       "duration_s": 17.084,
       "duration_frames": 1025,
-      "status": "ok"
+      "status": "ok",
+      "breath_s": 0.6
     }
   ]
 }

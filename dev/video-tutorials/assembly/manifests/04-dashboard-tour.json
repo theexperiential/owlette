@@ -7,7 +7,7 @@
   "scenario": "dashboard-mixed-states",
   "script": "scripts/04-dashboard-tour.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 132.367,
+  "narration_s": 136.95,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,7 +20,7 @@
       "rel": "dev/video-tutorials/footage/web/04-dashboard-tour.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\04-dashboard-tour.mp4",
       "exists": true,
-      "duration_s": 178.233,
+      "duration_s": 146.25,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -30,69 +30,74 @@
     {
       "id": "b01",
       "title": "orientation",
-      "screen_note": "/dashboard with the seeded fleet. Highlight the header breadcrumb \"owlette / flagship ▾\" (the dashboard-mixed-states fixture seeds the site name as \"flagship\"), then the \"online\" stat tile (showing \"9 / 10\") and the \"processes\" tile.",
+      "screen_note": "/dashboard with the seeded fleet, cards COLLAPSED from the first frame (fold everything in the pre-roll, off camera — the whole episode opens rolled up and b03 does the revealing). CLICK the site switcher breadcrumb \"owlette / flagship ▾\" open exactly on \"click it\" — hold the open dropdown while the line plays, close it (Escape) — then the \"online\" stat tile (showing \"9 / 10\") and the \"processes\" tile.",
       "direction": {
-        "SCREEN": "/dashboard with the seeded fleet. Highlight the header breadcrumb \"owlette / flagship ▾\" (the dashboard-mixed-states fixture seeds the site name as \"flagship\"), then the \"online\" stat tile (showing \"9 / 10\") and the \"processes\" tile.",
-        "NOTE": "the fixture seeds no processes — `writeMachineMetrics` never writes `metrics.processes`, and the tile counts exactly that (page.tsx:804). As shot today the \"processes\" tile reads 0 while this beat narrates \"how many processes owlette is managing for you\". Seed processes on at least three machines before recording."
+        "SCREEN": "/dashboard with the seeded fleet, cards COLLAPSED from the first frame (fold everything in the pre-roll, off camera — the whole episode opens rolled up and b03 does the revealing). CLICK the site switcher breadcrumb \"owlette / flagship ▾\" open exactly on \"click it\" — hold the open dropdown while the line plays, close it (Escape) — then the \"online\" stat tile (showing \"9 / 10\") and the \"processes\" tile.",
+        "NOTE": "the switcher is DEMONSTRATED, not just pointed at — an earlier take hovered it while the narration said \"click it\", which read as lame. Cue the click from the measured mp3 (voiceover/measure-phrases.py). the fixture seeds no processes — `writeMachineMetrics` never writes `metrics.processes`, and the tile counts exactly that (page.tsx:804). As shot today the \"processes\" tile reads 0 while this beat narrates \"how many processes owlette is managing for you\". Seed processes on at least three machines before recording."
       },
       "start_s": 0.0,
       "start_frame": 0,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b01.mp3",
       "mp3_name": "ep04-b01.mp3",
-      "duration_s": 21.342,
-      "duration_frames": 1281,
-      "status": "ok"
+      "duration_s": 22.491,
+      "duration_frames": 1349,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b02",
       "title": "the machines section",
-      "screen_note": "slow pan across the card grid — online machines (green pill), one offline machine (red pill), and the left accent bars on the metric tiles at their natural spread (emerald and violet on the quiet machines, sky and amber and red on media-server-stage, nyc-signage-01, unreal-render-1, td-control-room).",
+      "screen_note": "the COLLAPSED card grid (a third the height of the expanded one — no long pan; a short gentle drift down the compact grid and rest). Green pills, the one red offline pill, and each folded card's at-a-glance numbers.",
       "direction": {
-        "SCREEN": "slow pan across the card grid — online machines (green pill), one offline machine (red pill), and the left accent bars on the metric tiles at their natural spread (emerald and violet on the quiet machines, sky and amber and red on media-server-stage, nyc-signage-01, unreal-render-1, td-control-room).",
-        "NOTE": "five bands, not three (web/lib/usageColorUtils.ts:8-20). The narration deliberately talks about headroom vs pinned rather than naming a hue ramp, so no grading is needed — shoot it as it renders."
+        "SCREEN": "the COLLAPSED card grid (a third the height of the expanded one — no long pan; a short gentle drift down the compact grid and rest). Green pills, the one red offline pill, and each folded card's at-a-glance numbers.",
+        "NOTE": "rewritten 2026-08-31 evening — the expanded-grid version was \"too heavy, too complicated, and scrolls weird\" (rosco). The usage-bar color talk moved out with the expanded tiles; b03 owns the detail now."
       },
-      "start_s": 21.35,
-      "start_frame": 1281,
+      "start_s": 23.1,
+      "start_frame": 1386,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b02.mp3",
       "mp3_name": "ep04-b02.mp3",
-      "duration_s": 24.059,
-      "duration_frames": 1444,
-      "status": "ok"
+      "duration_s": 20.715,
+      "duration_frames": 1243,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b03",
       "title": "reading a single card",
-      "screen_note": "zoom into the \"media-server-stage\" card, top to bottom in the order it actually renders: status pill and last heartbeat (plus the display button in the header with its drift / circuit-breaker dots), then the metric tiles — cpu, ram, disk, gpu, network — with sparklines behind cpu / ram / disk / gpu and up-down throughput on network, cpu and gpu carrying inline temperature readings. Then the displays section, and BELOW it the process list.",
+      "screen_note": "zoom into the \"media-server-stage\" card with its sections STARTING FOLDED (stats default collapsed on first render, MachineCardView.tsx:142). Reveal each section AS IT IS NAMED: expand the metrics collapsible (cpu, ram, disk, gpu with sparklines, network throughput, cpu/gpu inline temperatures), then the displays collapsible, then the process list. Sections open one at a time — never all at once.",
       "direction": {
-        "SCREEN": "zoom into the \"media-server-stage\" card, top to bottom in the order it actually renders: status pill and last heartbeat (plus the display button in the header with its drift / circuit-breaker dots), then the metric tiles — cpu, ram, disk, gpu, network — with sparklines behind cpu / ram / disk / gpu and up-down throughput on network, cpu and gpu carrying inline temperature readings. Then the displays section, and BELOW it the process list.",
-        "NOTE": "order matters — the displays collapsible is MachineCardView.tsx:646 and the process list is :750, so displays sits above processes. The second tile's on-screen label is \"ram\", not \"memory\"."
+        "SCREEN": "zoom into the \"media-server-stage\" card with its sections STARTING FOLDED (stats default collapsed on first render, MachineCardView.tsx:142). Reveal each section AS IT IS NAMED: expand the metrics collapsible (cpu, ram, disk, gpu with sparklines, network throughput, cpu/gpu inline temperatures), then the displays collapsible, then the process list. Sections open one at a time — never all at once.",
+        "NOTE": "order matters — the stats collapsible is MachineCardView.tsx:367, displays :646, and the process list below it. The second tile's on-screen label is \"ram\", not \"memory\". Cue each expand to the narration phrase that names it (measure the rendered mp3's phrase gaps with silencedetect; do not eyeball the dwells)."
       },
-      "start_s": 45.417,
-      "start_frame": 2725,
+      "start_s": 44.417,
+      "start_frame": 2665,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b03.mp3",
       "mp3_name": "ep04-b03.mp3",
-      "duration_s": 25.887,
-      "duration_frames": 1553,
-      "status": "ok"
+      "duration_s": 27.69,
+      "duration_frames": 1661,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b04",
       "title": "card view vs list view",
-      "screen_note": "click the list-view toggle (List icon, tooltip \"list view\"); the fleet becomes dense rows (machine-row). Then click the card-view toggle (LayoutGrid icon, tooltip \"card view\") to switch back.",
+      "screen_note": "hold on the CARD grid while cards are being praised. Click the list-view toggle (List icon, tooltip \"list view\") exactly on \"flip to list view\" — the fleet becomes ROLLED-UP rows (machine-row); hold the rolled-up state. Expand ONE row in place (its processes unfold) on the \"any row expands\" line. Click the card-view toggle (LayoutGrid icon) only as \"one click back to cards\" is spoken — never earlier.",
       "direction": {
-        "SCREEN": "click the list-view toggle (List icon, tooltip \"list view\"); the fleet becomes dense rows (machine-row). Then click the card-view toggle (LayoutGrid icon, tooltip \"card view\") to switch back."
+        "SCREEN": "hold on the CARD grid while cards are being praised. Click the list-view toggle (List icon, tooltip \"list view\") exactly on \"flip to list view\" — the fleet becomes ROLLED-UP rows (machine-row); hold the rolled-up state. Expand ONE row in place (its processes unfold) on the \"any row expands\" line. Click the card-view toggle (LayoutGrid icon) only as \"one click back to cards\" is spoken — never earlier.",
+        "NOTE": "the previous take showed list view while the narration still praised cards and cut back to cards well before the VO said so — the actions must be cued to the mp3's internal phrase boundaries, same method as b03."
       },
-      "start_s": 71.317,
-      "start_frame": 4279,
+      "start_s": 72.717,
+      "start_frame": 4363,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b04.mp3",
       "mp3_name": "ep04-b04.mp3",
-      "duration_s": 17.006,
-      "duration_frames": 1020,
-      "status": "ok"
+      "duration_s": 19.017,
+      "duration_frames": 1141,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b05",
@@ -102,14 +107,15 @@
         "SCREEN": "click the expand/collapse-all control (ChevronsUpDown / ChevronsDownUp, tooltip \"expand all\" / \"collapse all\"). Then click a card's \"cpu\" metric tile; the MetricsDetailPanel slides open above the list.",
         "NOTE": "to close the panel, click its X button (MetricsDetailPanel.tsx:935-942) — `page.keyboard.press('Escape')` does nothing, the panel has no key handler, and the old harness line that relied on it leaves the panel open through the rest of the take."
       },
-      "start_s": 88.333,
-      "start_frame": 5300,
+      "start_s": 92.35,
+      "start_frame": 5541,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b05.mp3",
       "mp3_name": "ep04-b05.mp3",
-      "duration_s": 20.611,
-      "duration_frames": 1237,
-      "status": "ok"
+      "duration_s": 18.625,
+      "duration_frames": 1118,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b06",
@@ -118,16 +124,17 @@
       "direction": {
         "SCREEN": "open the page switcher (the second breadcrumb dropdown) so all six destinations are on screen in order — dashboard, hoot, talons, roost, deploy, logs — each with its one-line description. Hover down the list as the names are spoken.",
         "B-ROLL": "optional two-second cut — the same dashboard on a phone; the hamburger opens the drawer that carries the site switcher and this same page list below the md breakpoint.",
-        "NOTE": "the nav label is \"hoot\" (PageHeader.tsx:39-43); nothing in the UI reads \"cortex\" any more. \"roost\" points at /roosts and \"deploy\" at /deployments."
+        "NOTE": "the nav label is \"hoot\" (PageHeader.tsx:39-43); nothing in the UI reads \"cortex\" any more. \"roost\" points at /roosts and \"deploy\" at /deployments. the hover must move at the SPOKEN cadence — the previous take crawled down the list while the narration had already finished naming it. Cue each hover step to its name's moment in the rendered mp3 (voiceover/measure-phrases.py), like b03/b04."
       },
-      "start_s": 108.95,
-      "start_frame": 6537,
+      "start_s": 111.583,
+      "start_frame": 6695,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b06.mp3",
       "mp3_name": "ep04-b06.mp3",
-      "duration_s": 23.406,
-      "duration_frames": 1404,
-      "status": "ok"
+      "duration_s": 24.764,
+      "duration_frames": 1486,
+      "status": "ok",
+      "breath_s": 0.6
     }
   ]
 }

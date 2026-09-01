@@ -1,6 +1,6 @@
 # assembly — episode 03: install owlette & pair your first machine
 
-Narration: **3:16.5** across 10 spoken beats.
+Narration: **3:00.3** across 10 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
@@ -15,13 +15,13 @@ Footage:
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|
-| b01 | cold open | `ep03-b01.mp3` | 13.9s | 0:00.0 | 0:13.9 |
-| b02 | where the installer comes from | `ep03-b02.mp3` | 18.4s | 0:13.9 | 0:32.3 |
-| b03 | running the installer | `ep03-b03.mp3` | 13.7s | 0:32.3 | 0:45.9 |
-| b04 | what it's installing | `ep03-b04.mp3` | 23.2s | 0:45.9 | 1:09.2 |
-| b05 | the pairing phrase | `ep03-b05.mp3` | 16.0s | 1:09.2 | 1:25.1 |
-| b06 | opening the pairing page | `ep03-b06.mp3` | 26.5s | 1:25.1 | 1:51.6 |
-| b07 | choosing a site | `ep03-b07.mp3` | 16.8s | 1:51.6 | 2:08.4 |
-| b08 | the machine appears | `ep03-b08.mp3` | 19.6s | 2:08.4 | 2:27.9 |
-| b09 | recap & the other two ways | `ep03-b09.mp3` | 26.7s | 2:27.9 | 2:54.6 |
-| b10 | if pairing doesn't go through | `ep03-b10.mp3` | 21.8s | 2:54.6 | 3:16.4 |
+| b01 | cold open | `ep03-b01.mp3` | 16.5s | 0:00.0 | 0:16.5 |
+| b02 | where the installer comes from | `ep03-b02.mp3` | 18.5s | 0:16.5 | 0:35.0 |
+| b03 | running the installer | `ep03-b03.mp3` | 14.0s | 0:35.0 | 0:49.0 |
+| b04 | what it's installing | `ep03-b04.mp3` | 20.0s | 0:49.0 | 1:09.0 |
+| b05 | the pairing phrase | `ep03-b05.mp3` | 14.9s | 1:09.0 | 1:23.9 |
+| b06 | opening the pairing page | `ep03-b06.mp3` | 20.9s | 1:23.9 | 1:44.8 |
+| b07 | choosing a site | `ep03-b07.mp3` | 12.6s | 1:44.8 | 1:57.4 |
+| b08 | the machine appears | `ep03-b08.mp3` | 17.7s | 1:57.4 | 2:15.2 |
+| b09 | recap & the other two ways | `ep03-b09.mp3` | 21.5s | 2:15.2 | 2:36.7 |
+| b10 | if pairing doesn't go through | `ep03-b10.mp3` | 17.5s | 2:36.7 | 2:54.2 |

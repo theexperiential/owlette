@@ -106,7 +106,16 @@ FOOTAGE: Dict[int, List[Source]] = {
     ],
     2: [web()],
     4: [web()],
-    5: [web()],
+    5: [
+        web(),
+        # One native take off the capture VM (scripts/vm/22-shoot-drag-drop.ps1):
+        # a real host-driven Explorer drag of lobby-wall.bat onto the owlette
+        # window - drop overlay, confirm card, the row appearing. 30fps HONEST
+        # (the capture cannot hold 60 grabbing a VM console). The same take,
+        # copied as 09-b04-drag-drop.mp4, fills ep09 b04's drag half.
+        Source("pool", NATIVE.format(name="05-b03-drag-drop.mp4"),
+               "native: b03 drag-and-drop add-process demo"),
+    ],
     6: [web()],
     7: [web()],
     10: [web()],
@@ -155,6 +164,13 @@ FOOTAGE: Dict[int, List[Source]] = {
         # menu. Both live in one file at their own in-points.
         Source("scene", NATIVE.format(name="09-b01-b02-tray.mp4"),
                "native: b01 tray tooltip, b02 tray menu"),
+        # The drag half of b04 (same take as ep05's 05-b03-drag-drop.mp4, from
+        # scripts/vm/22-shoot-drag-drop.ps1, 30fps). Referenced by the "cuts"
+        # list on the scene sidecar's b04 entry - "pool" so only the cut places
+        # it, replacing the stretch the desktop capture spends frozen on the
+        # + button (its old enforcedWaitSec was 14.76s of dead air).
+        Source("pool", NATIVE.format(name="09-b04-drag-drop.mp4"),
+               "native: b04 drag half (drop overlay -> confirm -> row)"),
     ],
     16: [
         web(),
@@ -262,6 +278,39 @@ def mmss(t: float) -> str:
     return f"{int(t // 60)}:{t % 60:04.1f}"
 
 
+# A moment to breathe between beats: each spoken beat's slot is extended by up
+# to BREATH_S of silence AFTER its narration, while its PICTURE keeps playing
+# (the conform stretches every beat's segment to its slot). Rosco's ask
+# 2026-08-31: the butt-jointed narration never paused. Clamped per beat to the
+# picture the sidecar says exists (videoSec - narration - SAFETY_S), because a
+# handful of older recordings have only 0.24-0.53s of tail; those beats take
+# what their footage can cover and no more - a short breath beats a black hole.
+BREATH_S = 0.6
+SAFETY_S = 0.1
+
+
+def sidecar_coverage(sources: List[Dict[str, object]]) -> Dict[str, float]:
+    """{beat_id: videoSec} from the episode's sidecars, scene takes claiming
+    first - the same first-claim order the conform uses."""
+    cover: Dict[str, float] = {}
+    ordered = ([s for s in sources if s.get("role") == "scene" and s.get("exists")]
+               + [s for s in sources if s.get("role") != "scene" and s.get("exists")])
+    for src in ordered:
+        path = str(src["path"])
+        side = Path(path[: -len(Path(path).suffix)] + ".beats.json")
+        if not side.is_file():
+            continue
+        try:
+            data = json.loads(side.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for mark in data.get("beats", []):
+            bid = mark.get("beat")
+            if bid and bid not in cover:
+                cover[bid] = float(mark.get("videoSec", 0) or 0)
+    return cover
+
+
 def resolve_sources(number: int, stem: str, media_root: Path) -> List[Dict[str, object]]:
     """Turn this episode's FOOTAGE rows into concrete, probed source records."""
     out: List[Dict[str, object]] = []
@@ -289,6 +338,27 @@ def build_episode_record(
     strip = not model.lower().startswith("eleven_v3")
     blocks = beat_blocks(path)
     audio_dir = out_audio / ep.out_name
+
+    sources = resolve_sources(ep.number, ep.out_name, media_root)
+    cover = sidecar_coverage(sources)
+
+    # Take sanity: a healthy continuous take is its beats plus marker gaps
+    # (observed 1.01-1.09x). ep06's take once came back from the API as 17s of
+    # speech and THIRTEEN MINUTES of silence; the split refused, the failure
+    # was silent, and the episode kept old cold-take beats that only ears
+    # caught. A ratio far above the gap overhead now says so out loud.
+    take = audio_dir / "_continuous.mp3"
+    if take.exists():
+        take_d = probe(take)
+        beat_sum = sum(
+            probe(audio_dir / f"ep{ep.number:02d}-{b.id}.mp3")
+            for b in ep.beats
+            if (audio_dir / f"ep{ep.number:02d}-{b.id}.mp3").exists()
+        )
+        if beat_sum > 0 and take_d > beat_sum * 1.5:
+            print(f"  !! {ep.out_name}: take is {take_d:.0f}s but beats sum "
+                  f"{beat_sum:.0f}s ({take_d / beat_sum:.1f}x) - the take is a "
+                  f"BROKEN RENDER or the beats never came from it. Re-render.")
 
     beats: List[Dict[str, object]] = []
     cursor = 0.0
@@ -342,10 +412,17 @@ def build_episode_record(
         # shorter than the audio it has to hold; the cost is at most one frame
         # of silence per beat.
         frame_cursor += int(math.ceil(d * TIMELINE_FPS - 1e-9))
+        # The breath (see BREATH_S above): silence after this beat's narration
+        # while its picture keeps playing. Clamped to the picture that exists.
+        if b.id in cover and cover[b.id] > 0:
+            breath = max(0.0, min(BREATH_S, cover[b.id] - d - SAFETY_S))
+        else:
+            breath = BREATH_S
+        rec["breath_s"] = round(breath, 3)
+        frame_cursor += int(round(breath * TIMELINE_FPS))
         cursor = frame_cursor / TIMELINE_FPS
         beats.append(rec)
 
-    sources = resolve_sources(ep.number, ep.out_name, media_root)
     return {
         "episode": ep.number,
         "slug": ep.slug,

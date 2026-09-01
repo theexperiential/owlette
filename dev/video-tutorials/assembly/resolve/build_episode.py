@@ -44,7 +44,10 @@ BUILD_EPISODE = ""
 #
 # It deletes only what this script makes: the bin named after the episode stem and
 # timelines named "<stem> v<N>". A timeline you renamed is not touched - which is
-# also how you protect an edit you care about.
+# also how you protect an edit you care about. On top of that, a "<stem> v<N>"
+# timeline whose clip layout no longer matches what the generator would produce
+# is treated as hand-edited and REFUSED (the rebuild versions up beside it);
+# OWLETTE_BUILD_FORCE=1 overrides that guard deliberately.
 BUILD_FRESH = False
 
 # Where the manifests live. Leave "" to auto-discover (see find_manifest_dir).
@@ -349,10 +352,90 @@ def want_fresh():
     return bool(BUILD_FRESH)
 
 
-def drop_previous_build(project, media_pool, stem, report):
+def expected_layout(manifest, conform, fps):
+    """What build() would place: {"V1": [(rec_off, tl_len, basename)], "A1": ...}.
+
+    Offsets are relative to the timeline start, in timeline frames. Source
+    frame rates are unknown here (media may not be imported yet), so the
+    timeline fps stands in - every capture is ~60 and the guard compares with
+    a tolerance, so the substitution cannot flip a verdict.
+    """
+    beats = manifest["beats"]
+    v1, a1 = [], []
+    for i, beat in enumerate(beats):
+        cut = conform.get(beat["id"])
+        dur_s = float(beat.get("duration_s") or 0)
+        if beat.get("mp3") and os.path.isfile(beat["mp3"] or ""):
+            a1.append((int(beat["start_frame"]), int(round(dur_s * fps)),
+                       os.path.basename(beat["mp3"])))
+        if cut is None or dur_s <= 0 or not os.path.isfile(cut["path"]):
+            continue
+        segs, _ = beat_segments(beats, i, cut, fps, fps)
+        for rec_off, tl_len, _si, _sl, over in segs:
+            v1.append((int(beat["start_frame"]) + rec_off, tl_len,
+                       os.path.basename(over or cut["path"])))
+    return {"V1": v1, "A1": a1}
+
+
+def timeline_matches_generated(tl, expected, report):
+    """True when a timeline still IS what build() would produce.
+
+    The point: OWLETTE_BUILD_FRESH deletes timelines, and a hand edit lives
+    only in Resolve's project database - one unguarded fresh build destroyed
+    (nearly) an edit rosco had spent an evening on. So a timeline is only
+    deletable when its clip layout matches the generated one: same segment
+    count per track, every clip within 2 frames of its expected record frame
+    and duration, same source file. Anything else - an extra track with
+    content, a split, a move, a retrim - marks it hand-edited and the delete
+    is refused (the rebuild versions up beside it instead).
+
+    A pure source-window slip (same position, length and file, different
+    in-point) is the one edit this cannot see; a slip usually rides with a
+    split or a length change, which it does see.
+    """
+    name = tl.GetName() or "?"
+    try:
+        start = int(tl.GetStartFrame() or 0)
+        for kind, prefix in (("video", "V"), ("audio", "A")):
+            n = int(tl.GetTrackCount(kind) or 0)
+            for idx in range(2, n + 1):
+                if tl.GetItemListInTrack(kind, idx):
+                    report.say('  guard: "%s" has content on %s%d - hand-edited'
+                               % (name, prefix, idx))
+                    return False
+        for track, want in (("video", expected["V1"]), ("audio", expected["A1"])):
+            items = tl.GetItemListInTrack(track, 1) or []
+            if len(items) != len(want):
+                report.say('  guard: "%s" %s1 has %d clip(s), generator places %d '
+                           "- hand-edited" % (name, track[0].upper(), len(items), len(want)))
+                return False
+            actual = []
+            for it in items:
+                s, e = int(it.GetStart()), int(it.GetEnd())  # GetEnd is exclusive
+                actual.append((s - start, e - s, str(it.GetName() or "")))
+            actual.sort()
+            for (a_off, a_len, a_name), (w_off, w_len, w_name) in zip(actual, sorted(want)):
+                if a_name != w_name or abs(a_off - w_off) > 2 or abs(a_len - w_len) > 2:
+                    report.say('  guard: "%s" clip %s at %d (%d frames) vs generated '
+                               "%s at %d (%d frames) - hand-edited"
+                               % (name, a_name, a_off, a_len, w_name, w_off, w_len))
+                    return False
+        return True
+    except Exception as exc:
+        report.say('  guard: could not inspect "%s" (%s) - treating it as '
+                   "hand-edited" % (name, exc))
+        return False
+
+
+def drop_previous_build(project, media_pool, manifest, conform, report):
     """Delete this script's own timelines + bin for one episode, so the rebuild
     re-imports its media instead of trusting properties cached from files that
-    have since been overwritten. Anything named differently is left alone."""
+    have since been overwritten. Anything named differently is left alone, and
+    so is any "<stem> vN" timeline that no longer matches what the generator
+    would produce - that difference IS a hand edit (capture it with
+    export_timings.py / a sidecar "cuts" list to make it deletable again, or
+    set OWLETTE_BUILD_FORCE=1 to override deliberately)."""
+    stem = manifest["stem"]
     pattern = re.compile(r"^%s v\d+$" % re.escape(stem))
     doomed = []
     try:
@@ -364,6 +447,33 @@ def drop_previous_build(project, media_pool, stem, report):
     except Exception as exc:
         report.warn("could not enumerate timelines for %s: %s" % (stem, exc))
 
+    force = (os.environ.get("OWLETTE_BUILD_FORCE") or "").strip().lower() \
+        not in ("", "0", "false", "no", "off")
+    if doomed and not force:
+        fps = float((manifest.get("timeline") or {}).get("fps", 60))
+        expected = expected_layout(manifest, conform, fps)
+        kept = [tl for tl in doomed if not timeline_matches_generated(tl, expected, report)]
+        if kept:
+            names = ", ".join(t.GetName() for t in kept)
+            report.warn("fresh: %s differ(s) from the generated layout - REFUSING "
+                        "to delete (hand edits live only in the project database). "
+                        "The rebuild will version up beside them. Deliberate? Set "
+                        "OWLETTE_BUILD_FORCE=1." % names)
+            # The bin must survive too: deleting it would pull the media out
+            # from under the timelines just kept.
+            report.say('fresh: keeping bin "%s" (its clips back the kept '
+                       "timeline(s))" % stem)
+            # And that kept bin is a TRAP if this episode's files were REPLACED
+            # on disk since import: the re-used media pool items keep the old
+            # durations and decoded-audio cache, and a timeline built from them
+            # plays truncated/garbled audio (2026-08-31: five re-voiced episodes
+            # built exactly that way - clips cut off, old takes bleeding in).
+            report.warn('fresh: building against bin "%s"\'s EXISTING media '
+                        "items - if this episode's mp3s or footage were "
+                        "replaced since they were imported, this timeline WILL "
+                        "be wrong; delete the old timelines (or FORCE) so the "
+                        "bin re-imports" % stem)
+            return
     if doomed:
         names = ", ".join(t.GetName() for t in doomed)
         try:
@@ -508,8 +618,113 @@ def build_conform_index(manifest, report):
                 continue
             index[bid] = {"path": src["path"], "in_s": float(mark.get("startSec", 0)),
                           "mp3_s": float(mark.get("mp3Sec", 0)),
-                          "video_s": float(mark.get("videoSec", 0))}
+                          "video_s": float(mark.get("videoSec", 0)),
+                          # Optional hand-authored cut list (see beat_segments).
+                          "cuts": mark.get("cuts") or None}
     return index
+
+
+def beat_segments(beats, i, cut, fps, src_fps):
+    """The V1 segment(s) for one beat: [(rec_off, tl_len, src_in, src_len, file)].
+
+    rec_off and tl_len are TIMELINE frames relative to the beat's start_frame;
+    src_in and src_len are SOURCE frames; file is None (the claiming sidecar's
+    own footage) or a cut's explicit source file. Returns (segments, warnings)
+    so the builder and simulate-conform.py share one piece of arithmetic and
+    cannot drift apart.
+
+    Normally a beat is ONE segment: the sidecar's in-point, trimmed to the beat
+    grid. A sidecar beat entry may instead carry a hand-authored "cuts" list -
+    captured from a timeline edit (export_timings.py) so the edit survives a
+    fresh rebuild. Each cut takes frames or seconds:
+      atFrames/atSec       timeline offset from the beat start
+                           (default: butted to the previous cut)
+      srcInFrames/srcInSec source in-point
+      lenFrames/lenSec     timeline length (required)
+      file                 optional: a DIFFERENT source file (basename or path)
+                           - lets one beat mix footage, e.g. ep09 b04's plus-
+                           button half from the desktop capture and its drag
+                           half from the VM shoot. Use the frames forms with
+                           it: the seconds forms are converted at the CLAIMING
+                           file's frame rate.
+      srcLenFrames         optional: source frame count, verbatim. REQUIRED in
+                           practice when "file" has a different frame rate than
+                           the claiming footage (the default derives source
+                           length at the claiming file's fps - for a 30fps
+                           drag capture on a 60fps grid that is 2x too long).
+    Frames win over seconds when both are present - frames are exact, and the
+    values captured out of Resolve are frames.
+    """
+    beat = beats[i]
+    warnings = []
+    if i + 1 < len(beats):
+        grid_len = int(beats[i + 1]["start_frame"]) - int(beat["start_frame"])
+    else:
+        grid_len = int(round(float(beat.get("duration_s") or 0) * fps))
+
+    hand = cut.get("cuts") or []
+    if hand:
+        segs = []
+        cursor = 0
+        for k, c in enumerate(hand):
+            try:
+                tl_len = (int(c["lenFrames"]) if "lenFrames" in c
+                          else int(round(float(c["lenSec"]) * fps)))
+                src_in = (int(c["srcInFrames"]) if "srcInFrames" in c
+                          else int(round(float(c["srcInSec"]) * src_fps)))
+                at = (int(c["atFrames"]) if "atFrames" in c
+                      else int(round(float(c["atSec"]) * fps)) if "atSec" in c
+                      else cursor)
+            except (KeyError, TypeError, ValueError) as exc:
+                warnings.append("cut %d is malformed (%s) - skipped" % (k + 1, exc))
+                continue
+            if tl_len <= 0:
+                warnings.append("cut %d has no length - skipped" % (k + 1))
+                continue
+            try:
+                if "srcLenFrames" in c:
+                    src_len = max(1, int(c["srcLenFrames"]))
+                else:
+                    src_len = max(1, int(round(tl_len * src_fps / fps)))
+            except (TypeError, ValueError) as exc:
+                warnings.append("cut %d has a malformed srcLenFrames (%s) - skipped"
+                                % (k + 1, exc))
+                continue
+            over = c.get("file") or None
+            if cut.get("video_s") and not over:
+                # The sidecar's measured window is [in_s, in_s + video_s].
+                # (An overridden file has its own window this sidecar cannot
+                # speak for, so the check only applies to the claiming file.)
+                window_end = int(round((cut["in_s"] + cut["video_s"]) * src_fps))
+                if src_in + src_len > window_end + 3:
+                    warnings.append(
+                        "cut %d reaches source frame %d but the sidecar's "
+                        "picture ends at %d" % (k + 1, src_in + src_len, window_end))
+            segs.append((at, tl_len, src_in, src_len, over))
+            cursor = at + tl_len
+        if segs:
+            covered = max(a + l for a, l, _si, _sl, _f in segs)
+            if abs(covered - grid_len) > 3:
+                warnings.append(
+                    "hand cuts cover %d timeline frame(s) but the beat grid is "
+                    "%d - check the tail" % (covered, grid_len))
+        return segs, warnings
+
+    src_in = int(round(cut["in_s"] * src_fps))
+    src_len = max(1, int(round(grid_len * src_fps / fps)))
+    tl_len = grid_len
+    # Never cut past the picture that actually exists for this beat: the
+    # sidecar's videoSec is this beat's measured segment length, and src_in is
+    # that segment's first frame.
+    if cut.get("video_s"):
+        avail = max(1, int(round(cut["video_s"] * src_fps)))
+        if src_len > avail:
+            warnings.append("needs %d source frames but its segment only has "
+                            "%d - trimming (re-record if this repeats)"
+                            % (src_len, avail))
+            src_len = avail
+            tl_len = max(1, int(round(src_len * fps / src_fps)))
+    return [(0, tl_len, src_in, src_len, None)], warnings
 
 def append_clip(media_pool, item, record_frame, media_type, track_index, report, label,
                 src_in=None, src_out=None):
@@ -596,8 +811,11 @@ def build(manifest, report):
     apply_format(project, spec, report)
 
     media_pool = project.GetMediaPool()
+    # The conform index is needed up front: the fresh-build guard compares the
+    # doomed timelines against the layout this run would generate.
+    conform = build_conform_index(manifest, report)
     if want_fresh():
-        drop_previous_build(project, media_pool, manifest["stem"], report)
+        drop_previous_build(project, media_pool, manifest, conform, report)
     bin_folder = get_or_make_bin(media_pool, manifest["stem"], report)
 
     # --- gather the files -------------------------------------------------
@@ -659,7 +877,6 @@ def build(manifest, report):
     # narration's own frame - picture and audio line up beat by beat. The
     # butt-joint fallback exists only for pre-sidecar footage and does NOT
     # produce a synced edit.
-    conform = build_conform_index(manifest, report)
     if conform:
         placed_video = 0
         gap_beats = []
@@ -675,40 +892,36 @@ def build(manifest, report):
                 report.warn("%s: sidecar narration %.2fs != manifest %.2fs - the "
                             "footage predates a re-voice; re-record it before "
                             "trusting this cut" % (beat["id"], cut["mp3_s"], dur_s))
-            # Segment length comes from the manifest's own frame grid. The
-            # start_frames are round(cumulative seconds); deriving length as a
-            # SECOND independent rounding of duration_s made the two grids
-            # disagree by one frame (round(sum) != sum(round)) - one-frame
-            # collisions with the next beat's recordFrame, one-frame holes
-            # between others. The last beat has no successor, so its own
-            # rounded duration is the grid.
-            if i + 1 < len(beats):
-                length = int(beats[i + 1]["start_frame"]) - int(beat["start_frame"])
-            else:
-                length = int(round(dur_s * fps))
+            # Segment length comes from the manifest's own frame grid (see
+            # beat_segments: round(cumulative seconds) is the one grid both
+            # picture and audio share). A beat is one segment unless its
+            # sidecar carries a hand-authored "cuts" list.
             src_fps = clip_fps(item, fps)
-            src_in = int(round(cut["in_s"] * src_fps))
-            src_len = max(1, int(round(length * src_fps / fps)))
-            # Never cut past the picture that actually exists for this beat:
-            # the sidecar's videoSec is this beat's measured segment length,
-            # and src_in is that segment's first frame.
-            if cut["video_s"]:
-                avail = max(1, int(round(cut["video_s"] * src_fps)))
-                if src_len > avail:
-                    report.warn("%s: needs %d source frames but its segment only "
-                                "has %d - trimming (re-record if this repeats)"
-                                % (beat["id"], src_len, avail))
-                    src_len = avail
-            src_out = src_in + src_len - 1
-            placed = append_clip(media_pool, item, start + int(beat["start_frame"]),
-                                 VIDEO_ONLY, 1, report,
-                                 "%s <- %s" % (beat["id"], os.path.basename(cut["path"])),
-                                 src_in=src_in, src_out=src_out)
-            if placed is not None:
-                placed_video += 1
-                end_frame = int(beat["start_frame"]) + src_len
-        report.say("V1 conform: %d/%d beat segment(s) placed, ends at frame %d"
-                   % (placed_video, len(beats), end_frame))
+            segs, seg_warns = beat_segments(beats, i, cut, fps, src_fps)
+            for w in seg_warns:
+                report.warn("%s: %s" % (beat["id"], w))
+            for rec_off, tl_len, src_in, src_len, over in segs:
+                seg_item, seg_name = item, os.path.basename(cut["path"])
+                if over:
+                    seg_name = os.path.basename(over)
+                    seg_item = next((it for p, it in items.items()
+                                     if os.path.basename(p).lower() == seg_name.lower()),
+                                    None)
+                    if seg_item is None:
+                        report.warn('%s: cut file "%s" is not in this episode\'s '
+                                    "imported media - segment skipped"
+                                    % (beat["id"], seg_name))
+                        continue
+                placed = append_clip(media_pool, seg_item,
+                                     start + int(beat["start_frame"]) + rec_off,
+                                     VIDEO_ONLY, 1, report,
+                                     "%s <- %s" % (beat["id"], seg_name),
+                                     src_in=src_in, src_out=src_in + src_len - 1)
+                if placed is not None:
+                    placed_video += 1
+                    end_frame = int(beat["start_frame"]) + rec_off + tl_len
+        report.say("V1 conform: %d segment(s) placed across %d beat(s), ends at "
+                   "frame %d" % (placed_video, len(beats), end_frame))
         if gap_beats:
             report.warn("no picture for %s - left as V1 gap(s)" % ", ".join(gap_beats))
     else:
@@ -732,10 +945,19 @@ def build(manifest, report):
     if extras:
         if conform:
             used = set(c["path"] for c in conform.values())
+            # A hand cut may pull its picture from a DIFFERENT file ("file"
+            # override) - count those as used too, by basename, or this block
+            # would report the drag-shoot insert as "not placed".
+            used_names = set(os.path.basename(p).lower() for p in used)
+            for c in conform.values():
+                for hc in (c.get("cuts") or []):
+                    if hc.get("file"):
+                        used_names.add(os.path.basename(hc["file"]).lower())
             report.say("%d insert/alt clip(s) imported; %d feed the conform"
-                       % (len(extras), sum(1 for s in extras if s["path"] in used)))
+                       % (len(extras), sum(1 for s in extras
+                                           if os.path.basename(s["path"]).lower() in used_names)))
             for s in extras:
-                if s["path"] in used:
+                if os.path.basename(s["path"]).lower() in used_names:
                     continue
                 if sidecar_for(s["path"]) is None:
                     report.warn("insert %s has no sidecar - not placed"
@@ -844,10 +1066,22 @@ def main():
         return
 
     # "ALL" (env or the constant) builds every episode in one run — the mode an
-    # unattended launcher uses, so it must never open a dialog mid-run.
+    # unattended launcher uses, so it must never open a dialog mid-run. A
+    # comma-separated list ("02-day-zero,05-keep-a-process-alive") builds just
+    # those, in manifest order — how a targeted repair run names its patients.
     wanted = (os.environ.get("OWLETTE_BUILD_EPISODE") or BUILD_EPISODE or "").strip()
     if wanted.upper() == "ALL":
         chosen = list(manifests)
+    elif "," in wanted:
+        stems = [w.strip() for w in wanted.split(",") if w.strip()]
+        chosen = [m for m in manifests
+                  if m["stem"] in stems or str(m["episode"]) in
+                  [s.lstrip("0") for s in stems]]
+        missing = [s for s in stems
+                   if not any(s == m["stem"] or s.lstrip("0") == str(m["episode"])
+                              for m in manifests)]
+        for s in missing:
+            report.warn('episode "%s" in the list matched no manifest' % s)
     else:
         manifest = pick_manifest(manifests, report)
         if manifest is None:
