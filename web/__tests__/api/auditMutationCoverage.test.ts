@@ -53,6 +53,9 @@ export const EXEMPT_ROUTES: readonly string[] = [
   'chunks/check',
   // read-only: mints short-lived presigned GET urls, writes nothing.
   'chunks/download-urls',
+  // e2e-only chunk sink standing in for an R2 presigned PUT — hard 404 unless
+  // OWLETTE_E2E=1, so it does not exist in any real deployment.
+  'chunks/e2e-put',
   // mints presigned PUT urls into the immutable content-addressed store; the roost publish that references them is audited.
   'chunks/upload-urls',
   // CLI pairing-phrase issuance, unauthenticated bootstrap step of the device-code flow.

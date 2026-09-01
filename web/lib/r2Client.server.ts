@@ -176,6 +176,14 @@ export async function presignPutChunk(
   hash: string,
   ttlSeconds: number = PUT_URL_TTL_SECONDS,
 ): Promise<string> {
+  // E2E: no real R2 under OWLETTE_E2E=1 — this was the ONE seam in the chunk
+  // flow without an e2e branch, so a browser-driven upload presigned real R2
+  // URLs and every PUT died on CORS from the loopback origin. Point the
+  // client at the local e2e-put route instead, which records presence as the
+  // `siteChunks/{hash}` row that `hasChunk` above already reads.
+  if (process.env.OWLETTE_E2E === '1') {
+    return `/api/chunks/e2e-put?siteId=${encodeURIComponent(siteId)}&hash=${encodeURIComponent(hash)}`;
+  }
   const client = getR2Client();
   const bucket = bucketFor(currentEnv(), 'content');
   return getSignedUrl(
