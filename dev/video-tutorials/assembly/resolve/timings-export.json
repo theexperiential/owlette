@@ -1,0 +1,2234 @@
+{
+  "exported_at": "2026-08-31T08:35:05",
+  "project": "owlette tutorials",
+  "timeline_fps": 60.0,
+  "playback_fps": "60",
+  "timelines": [
+    {
+      "name": "01-what-is-owlette v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "01-b01-cold-open.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 865,
+            "duration_s": 14.417,
+            "source_in": 0
+          },
+          {
+            "name": "01-what-is-owlette-b02.mp4",
+            "record_frame": 865,
+            "record_s": 14.417,
+            "duration_frames": 621,
+            "duration_s": 10.35,
+            "source_in": 53
+          },
+          {
+            "name": "01-what-is-owlette-b02.mp4",
+            "record_frame": 1486,
+            "record_s": 24.767,
+            "duration_frames": 792,
+            "duration_s": 13.2,
+            "source_in": 768
+          },
+          {
+            "name": "01-what-is-owlette.mp4",
+            "record_frame": 2278,
+            "record_s": 37.967,
+            "duration_frames": 1718,
+            "duration_s": 28.633,
+            "source_in": 244
+          },
+          {
+            "name": "01-what-is-owlette.mp4",
+            "record_frame": 3996,
+            "record_s": 66.6,
+            "duration_frames": 963,
+            "duration_s": 16.05,
+            "source_in": 2104
+          },
+          {
+            "name": "01-what-is-owlette.mp4",
+            "record_frame": 4959,
+            "record_s": 82.65,
+            "duration_frames": 1483,
+            "duration_s": 24.717,
+            "source_in": 3334
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep01-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 863,
+            "duration_s": 14.383,
+            "source_in": 0
+          },
+          {
+            "name": "ep01-b02.mp3",
+            "record_frame": 864,
+            "record_s": 14.4,
+            "duration_frames": 1413,
+            "duration_s": 23.55,
+            "source_in": 0
+          },
+          {
+            "name": "ep01-b03.mp3",
+            "record_frame": 2278,
+            "record_s": 37.967,
+            "duration_frames": 1717,
+            "duration_s": 28.617,
+            "source_in": 0
+          },
+          {
+            "name": "ep01-b04.mp3",
+            "record_frame": 3996,
+            "record_s": 66.6,
+            "duration_frames": 962,
+            "duration_s": 16.033,
+            "source_in": 0
+          },
+          {
+            "name": "ep01-b05.mp3",
+            "record_frame": 4959,
+            "record_s": 82.65,
+            "duration_frames": 1482,
+            "duration_s": 24.7,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "02-day-zero v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "02-day-zero.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1157,
+            "duration_s": 19.283,
+            "source_in": 2138
+          },
+          {
+            "name": "02-day-zero.mp4",
+            "record_frame": 1157,
+            "record_s": 19.283,
+            "duration_frames": 1187,
+            "duration_s": 19.783,
+            "source_in": 160
+          },
+          {
+            "name": "02-day-zero.mp4",
+            "record_frame": 2344,
+            "record_s": 39.067,
+            "duration_frames": 1331,
+            "duration_s": 22.183,
+            "source_in": 3428
+          },
+          {
+            "name": "02-day-zero.mp4",
+            "record_frame": 3675,
+            "record_s": 61.25,
+            "duration_frames": 1281,
+            "duration_s": 21.35,
+            "source_in": 5001
+          },
+          {
+            "name": "02-day-zero.mp4",
+            "record_frame": 4956,
+            "record_s": 82.6,
+            "duration_frames": 1062,
+            "duration_s": 17.7,
+            "source_in": 6672
+          },
+          {
+            "name": "02-day-zero.mp4",
+            "record_frame": 6018,
+            "record_s": 100.3,
+            "duration_frames": 1160,
+            "duration_s": 19.333,
+            "source_in": 14750
+          },
+          {
+            "name": "02-day-zero.mp4",
+            "record_frame": 7178,
+            "record_s": 119.633,
+            "duration_frames": 1165,
+            "duration_s": 19.417,
+            "source_in": 7948
+          },
+          {
+            "name": "02-day-zero.mp4",
+            "record_frame": 8343,
+            "record_s": 139.05,
+            "duration_frames": 1468,
+            "duration_s": 24.467,
+            "source_in": 11133
+          },
+          {
+            "name": "02-day-zero.mp4",
+            "record_frame": 9811,
+            "record_s": 163.517,
+            "duration_frames": 1379,
+            "duration_s": 22.983,
+            "source_in": 9483
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep02-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1156,
+            "duration_s": 19.267,
+            "source_in": 0
+          },
+          {
+            "name": "ep02-b02.mp3",
+            "record_frame": 1157,
+            "record_s": 19.283,
+            "duration_frames": 1186,
+            "duration_s": 19.767,
+            "source_in": 0
+          },
+          {
+            "name": "ep02-b03.mp3",
+            "record_frame": 2344,
+            "record_s": 39.067,
+            "duration_frames": 1330,
+            "duration_s": 22.167,
+            "source_in": 0
+          },
+          {
+            "name": "ep02-b04.mp3",
+            "record_frame": 3675,
+            "record_s": 61.25,
+            "duration_frames": 1280,
+            "duration_s": 21.333,
+            "source_in": 0
+          },
+          {
+            "name": "ep02-b05.mp3",
+            "record_frame": 4956,
+            "record_s": 82.6,
+            "duration_frames": 1061,
+            "duration_s": 17.683,
+            "source_in": 0
+          },
+          {
+            "name": "ep02-b06.mp3",
+            "record_frame": 6018,
+            "record_s": 100.3,
+            "duration_frames": 1159,
+            "duration_s": 19.317,
+            "source_in": 0
+          },
+          {
+            "name": "ep02-b07.mp3",
+            "record_frame": 7178,
+            "record_s": 119.633,
+            "duration_frames": 1164,
+            "duration_s": 19.4,
+            "source_in": 0
+          },
+          {
+            "name": "ep02-b08.mp3",
+            "record_frame": 8343,
+            "record_s": 139.05,
+            "duration_frames": 1467,
+            "duration_s": 24.45,
+            "source_in": 0
+          },
+          {
+            "name": "ep02-b09.mp3",
+            "record_frame": 9811,
+            "record_s": 163.517,
+            "duration_frames": 1379,
+            "duration_s": 22.983,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "03-install-and-pair v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "03-b01-desktop.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 834,
+            "duration_s": 13.9,
+            "source_in": 0
+          },
+          {
+            "name": "03-install-and-pair.mp4",
+            "record_frame": 834,
+            "record_s": 13.9,
+            "duration_frames": 1102,
+            "duration_s": 18.367,
+            "source_in": 146
+          },
+          {
+            "name": "03-b03-b04-install.mp4",
+            "record_frame": 1936,
+            "record_s": 32.267,
+            "duration_frames": 819,
+            "duration_s": 13.65,
+            "source_in": 329
+          },
+          {
+            "name": "03-b03-b04-install.mp4",
+            "record_frame": 2756,
+            "record_s": 45.933,
+            "duration_frames": 1395,
+            "duration_s": 23.25,
+            "source_in": 2868
+          },
+          {
+            "name": "03-install-and-pair-desktop.mp4",
+            "record_frame": 4151,
+            "record_s": 69.183,
+            "duration_frames": 957,
+            "duration_s": 15.95,
+            "source_in": 0
+          },
+          {
+            "name": "03-install-and-pair-desktop.mp4",
+            "record_frame": 5109,
+            "record_s": 85.15,
+            "duration_frames": 1587,
+            "duration_s": 26.45,
+            "source_in": 1067
+          },
+          {
+            "name": "03-install-and-pair.mp4",
+            "record_frame": 6697,
+            "record_s": 111.617,
+            "duration_frames": 1007,
+            "duration_s": 16.783,
+            "source_in": 1524
+          },
+          {
+            "name": "03-install-and-pair.mp4",
+            "record_frame": 7704,
+            "record_s": 128.4,
+            "duration_frames": 1174,
+            "duration_s": 19.567,
+            "source_in": 2711
+          },
+          {
+            "name": "03-install-and-pair.mp4",
+            "record_frame": 8878,
+            "record_s": 147.967,
+            "duration_frames": 1602,
+            "duration_s": 26.7,
+            "source_in": 3970
+          },
+          {
+            "name": "03-install-and-pair-desktop.mp4",
+            "record_frame": 10480,
+            "record_s": 174.667,
+            "duration_frames": 1309,
+            "duration_s": 21.817,
+            "source_in": 2699
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep03-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 833,
+            "duration_s": 13.883,
+            "source_in": 0
+          },
+          {
+            "name": "ep03-b02.mp3",
+            "record_frame": 834,
+            "record_s": 13.9,
+            "duration_frames": 1101,
+            "duration_s": 18.35,
+            "source_in": 0
+          },
+          {
+            "name": "ep03-b03.mp3",
+            "record_frame": 1936,
+            "record_s": 32.267,
+            "duration_frames": 819,
+            "duration_s": 13.65,
+            "source_in": 0
+          },
+          {
+            "name": "ep03-b04.mp3",
+            "record_frame": 2756,
+            "record_s": 45.933,
+            "duration_frames": 1394,
+            "duration_s": 23.233,
+            "source_in": 0
+          },
+          {
+            "name": "ep03-b05.mp3",
+            "record_frame": 4151,
+            "record_s": 69.183,
+            "duration_frames": 957,
+            "duration_s": 15.95,
+            "source_in": 0
+          },
+          {
+            "name": "ep03-b06.mp3",
+            "record_frame": 5109,
+            "record_s": 85.15,
+            "duration_frames": 1587,
+            "duration_s": 26.45,
+            "source_in": 0
+          },
+          {
+            "name": "ep03-b07.mp3",
+            "record_frame": 6697,
+            "record_s": 111.617,
+            "duration_frames": 1006,
+            "duration_s": 16.767,
+            "source_in": 0
+          },
+          {
+            "name": "ep03-b08.mp3",
+            "record_frame": 7704,
+            "record_s": 128.4,
+            "duration_frames": 1173,
+            "duration_s": 19.55,
+            "source_in": 0
+          },
+          {
+            "name": "ep03-b09.mp3",
+            "record_frame": 8878,
+            "record_s": 147.967,
+            "duration_frames": 1601,
+            "duration_s": 26.683,
+            "source_in": 0
+          },
+          {
+            "name": "ep03-b10.mp3",
+            "record_frame": 10480,
+            "record_s": 174.667,
+            "duration_frames": 1308,
+            "duration_s": 21.8,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "04-dashboard-tour v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "04-dashboard-tour.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1281,
+            "duration_s": 21.35,
+            "source_in": 182
+          },
+          {
+            "name": "04-dashboard-tour.mp4",
+            "record_frame": 1281,
+            "record_s": 21.35,
+            "duration_frames": 1444,
+            "duration_s": 24.067,
+            "source_in": 2569
+          },
+          {
+            "name": "04-dashboard-tour.mp4",
+            "record_frame": 2725,
+            "record_s": 45.417,
+            "duration_frames": 1553,
+            "duration_s": 25.883,
+            "source_in": 4060
+          },
+          {
+            "name": "04-dashboard-tour.mp4",
+            "record_frame": 4279,
+            "record_s": 71.317,
+            "duration_frames": 1021,
+            "duration_s": 17.017,
+            "source_in": 5986
+          },
+          {
+            "name": "04-dashboard-tour.mp4",
+            "record_frame": 5300,
+            "record_s": 88.333,
+            "duration_frames": 1237,
+            "duration_s": 20.617,
+            "source_in": 7250
+          },
+          {
+            "name": "04-dashboard-tour.mp4",
+            "record_frame": 6537,
+            "record_s": 108.95,
+            "duration_frames": 1404,
+            "duration_s": 23.4,
+            "source_in": 8671
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep04-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1280,
+            "duration_s": 21.333,
+            "source_in": 0
+          },
+          {
+            "name": "ep04-b02.mp3",
+            "record_frame": 1281,
+            "record_s": 21.35,
+            "duration_frames": 1443,
+            "duration_s": 24.05,
+            "source_in": 0
+          },
+          {
+            "name": "ep04-b03.mp3",
+            "record_frame": 2725,
+            "record_s": 45.417,
+            "duration_frames": 1553,
+            "duration_s": 25.883,
+            "source_in": 0
+          },
+          {
+            "name": "ep04-b04.mp3",
+            "record_frame": 4279,
+            "record_s": 71.317,
+            "duration_frames": 1020,
+            "duration_s": 17.0,
+            "source_in": 0
+          },
+          {
+            "name": "ep04-b05.mp3",
+            "record_frame": 5300,
+            "record_s": 88.333,
+            "duration_frames": 1236,
+            "duration_s": 20.6,
+            "source_in": 0
+          },
+          {
+            "name": "ep04-b06.mp3",
+            "record_frame": 6537,
+            "record_s": 108.95,
+            "duration_frames": 1404,
+            "duration_s": 23.4,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "05-keep-a-process-alive v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "05-keep-a-process-alive.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 738,
+            "duration_s": 12.3,
+            "source_in": 150
+          },
+          {
+            "name": "05-keep-a-process-alive.mp4",
+            "record_frame": 739,
+            "record_s": 12.317,
+            "duration_frames": 458,
+            "duration_s": 7.633,
+            "source_in": 1143
+          },
+          {
+            "name": "05-keep-a-process-alive.mp4",
+            "record_frame": 1197,
+            "record_s": 19.95,
+            "duration_frames": 1116,
+            "duration_s": 18.6,
+            "source_in": 2273
+          },
+          {
+            "name": "05-keep-a-process-alive.mp4",
+            "record_frame": 2313,
+            "record_s": 38.55,
+            "duration_frames": 1449,
+            "duration_s": 24.15,
+            "source_in": 3665
+          },
+          {
+            "name": "05-keep-a-process-alive.mp4",
+            "record_frame": 3762,
+            "record_s": 62.7,
+            "duration_frames": 699,
+            "duration_s": 11.65,
+            "source_in": 5358
+          },
+          {
+            "name": "05-keep-a-process-alive.mp4",
+            "record_frame": 4462,
+            "record_s": 74.367,
+            "duration_frames": 1469,
+            "duration_s": 24.483,
+            "source_in": 6229
+          },
+          {
+            "name": "05-keep-a-process-alive.mp4",
+            "record_frame": 5931,
+            "record_s": 98.85,
+            "duration_frames": 1086,
+            "duration_s": 18.1,
+            "source_in": 8112
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep05-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 738,
+            "duration_s": 12.3,
+            "source_in": 0
+          },
+          {
+            "name": "ep05-b02.mp3",
+            "record_frame": 739,
+            "record_s": 12.317,
+            "duration_frames": 457,
+            "duration_s": 7.617,
+            "source_in": 0
+          },
+          {
+            "name": "ep05-b03.mp3",
+            "record_frame": 1197,
+            "record_s": 19.95,
+            "duration_frames": 1115,
+            "duration_s": 18.583,
+            "source_in": 0
+          },
+          {
+            "name": "ep05-b04.mp3",
+            "record_frame": 2313,
+            "record_s": 38.55,
+            "duration_frames": 1448,
+            "duration_s": 24.133,
+            "source_in": 0
+          },
+          {
+            "name": "ep05-b05.mp3",
+            "record_frame": 3762,
+            "record_s": 62.7,
+            "duration_frames": 699,
+            "duration_s": 11.65,
+            "source_in": 0
+          },
+          {
+            "name": "ep05-b06.mp3",
+            "record_frame": 4462,
+            "record_s": 74.367,
+            "duration_frames": 1468,
+            "duration_s": 24.467,
+            "source_in": 0
+          },
+          {
+            "name": "ep05-b07.mp3",
+            "record_frame": 5931,
+            "record_s": 98.85,
+            "duration_frames": 1086,
+            "duration_s": 18.1,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "06-run-on-a-schedule v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "06-run-on-a-schedule.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1051,
+            "duration_s": 17.517,
+            "source_in": 104
+          },
+          {
+            "name": "06-run-on-a-schedule.mp4",
+            "record_frame": 1051,
+            "record_s": 17.517,
+            "duration_frames": 857,
+            "duration_s": 14.283,
+            "source_in": 1473
+          },
+          {
+            "name": "06-run-on-a-schedule.mp4",
+            "record_frame": 1909,
+            "record_s": 31.817,
+            "duration_frames": 1328,
+            "duration_s": 22.133,
+            "source_in": 2513
+          },
+          {
+            "name": "06-run-on-a-schedule.mp4",
+            "record_frame": 3237,
+            "record_s": 53.95,
+            "duration_frames": 890,
+            "duration_s": 14.833,
+            "source_in": 3886
+          },
+          {
+            "name": "06-run-on-a-schedule.mp4",
+            "record_frame": 4128,
+            "record_s": 68.8,
+            "duration_frames": 1151,
+            "duration_s": 19.183,
+            "source_in": 5015
+          },
+          {
+            "name": "06-run-on-a-schedule.mp4",
+            "record_frame": 5279,
+            "record_s": 87.983,
+            "duration_frames": 780,
+            "duration_s": 13.0,
+            "source_in": 6574
+          },
+          {
+            "name": "06-run-on-a-schedule.mp4",
+            "record_frame": 6060,
+            "record_s": 101.0,
+            "duration_frames": 1351,
+            "duration_s": 22.517,
+            "source_in": 7401
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep06-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1050,
+            "duration_s": 17.5,
+            "source_in": 0
+          },
+          {
+            "name": "ep06-b02.mp3",
+            "record_frame": 1051,
+            "record_s": 17.517,
+            "duration_frames": 857,
+            "duration_s": 14.283,
+            "source_in": 0
+          },
+          {
+            "name": "ep06-b03.mp3",
+            "record_frame": 1909,
+            "record_s": 31.817,
+            "duration_frames": 1327,
+            "duration_s": 22.117,
+            "source_in": 0
+          },
+          {
+            "name": "ep06-b04.mp3",
+            "record_frame": 3237,
+            "record_s": 53.95,
+            "duration_frames": 890,
+            "duration_s": 14.833,
+            "source_in": 0
+          },
+          {
+            "name": "ep06-b05.mp3",
+            "record_frame": 4128,
+            "record_s": 68.8,
+            "duration_frames": 1150,
+            "duration_s": 19.167,
+            "source_in": 0
+          },
+          {
+            "name": "ep06-b06.mp3",
+            "record_frame": 5279,
+            "record_s": 87.983,
+            "duration_frames": 780,
+            "duration_s": 13.0,
+            "source_in": 0
+          },
+          {
+            "name": "ep06-b07.mp3",
+            "record_frame": 6060,
+            "record_s": 101.0,
+            "duration_frames": 1351,
+            "duration_s": 22.517,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "07-reading-machine-health v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "07-reading-machine-health.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1142,
+            "duration_s": 19.033,
+            "source_in": 171
+          },
+          {
+            "name": "07-reading-machine-health.mp4",
+            "record_frame": 1142,
+            "record_s": 19.033,
+            "duration_frames": 1261,
+            "duration_s": 21.017,
+            "source_in": 1432
+          },
+          {
+            "name": "07-reading-machine-health.mp4",
+            "record_frame": 2403,
+            "record_s": 40.05,
+            "duration_frames": 1793,
+            "duration_s": 29.883,
+            "source_in": 2723
+          },
+          {
+            "name": "07-reading-machine-health.mp4",
+            "record_frame": 4197,
+            "record_s": 69.95,
+            "duration_frames": 973,
+            "duration_s": 16.217,
+            "source_in": 4640
+          },
+          {
+            "name": "07-reading-machine-health.mp4",
+            "record_frame": 5171,
+            "record_s": 86.183,
+            "duration_frames": 987,
+            "duration_s": 16.45,
+            "source_in": 5863
+          },
+          {
+            "name": "07-reading-machine-health.mp4",
+            "record_frame": 6159,
+            "record_s": 102.65,
+            "duration_frames": 1170,
+            "duration_s": 19.5,
+            "source_in": 6969
+          },
+          {
+            "name": "07-reading-machine-health.mp4",
+            "record_frame": 7329,
+            "record_s": 122.15,
+            "duration_frames": 1025,
+            "duration_s": 17.083,
+            "source_in": 8364
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep07-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1141,
+            "duration_s": 19.017,
+            "source_in": 0
+          },
+          {
+            "name": "ep07-b02.mp3",
+            "record_frame": 1142,
+            "record_s": 19.033,
+            "duration_frames": 1260,
+            "duration_s": 21.0,
+            "source_in": 0
+          },
+          {
+            "name": "ep07-b03.mp3",
+            "record_frame": 2403,
+            "record_s": 40.05,
+            "duration_frames": 1793,
+            "duration_s": 29.883,
+            "source_in": 0
+          },
+          {
+            "name": "ep07-b04.mp3",
+            "record_frame": 4197,
+            "record_s": 69.95,
+            "duration_frames": 973,
+            "duration_s": 16.217,
+            "source_in": 0
+          },
+          {
+            "name": "ep07-b05.mp3",
+            "record_frame": 5171,
+            "record_s": 86.183,
+            "duration_frames": 987,
+            "duration_s": 16.45,
+            "source_in": 0
+          },
+          {
+            "name": "ep07-b06.mp3",
+            "record_frame": 6159,
+            "record_s": 102.65,
+            "duration_frames": 1169,
+            "duration_s": 19.483,
+            "source_in": 0
+          },
+          {
+            "name": "ep07-b07.mp3",
+            "record_frame": 7329,
+            "record_s": 122.15,
+            "duration_frames": 1025,
+            "duration_s": 17.083,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "08-remote-actions v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "08-remote-actions.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 764,
+            "duration_s": 12.733,
+            "source_in": 173
+          },
+          {
+            "name": "08-remote-actions.mp4",
+            "record_frame": 765,
+            "record_s": 12.75,
+            "duration_frames": 995,
+            "duration_s": 16.583,
+            "source_in": 1224
+          },
+          {
+            "name": "08-remote-actions.mp4",
+            "record_frame": 1761,
+            "record_s": 29.35,
+            "duration_frames": 1113,
+            "duration_s": 18.55,
+            "source_in": 2540
+          },
+          {
+            "name": "08-remote-actions.mp4",
+            "record_frame": 2874,
+            "record_s": 47.9,
+            "duration_frames": 1201,
+            "duration_s": 20.017,
+            "source_in": 3893
+          },
+          {
+            "name": "08-remote-actions.mp4",
+            "record_frame": 4075,
+            "record_s": 67.917,
+            "duration_frames": 1193,
+            "duration_s": 19.883,
+            "source_in": 5431
+          },
+          {
+            "name": "08-remote-actions.mp4",
+            "record_frame": 5268,
+            "record_s": 87.8,
+            "duration_frames": 719,
+            "duration_s": 11.983,
+            "source_in": 7450
+          },
+          {
+            "name": "08-remote-actions.mp4",
+            "record_frame": 5988,
+            "record_s": 99.8,
+            "duration_frames": 1408,
+            "duration_s": 23.467,
+            "source_in": 8398
+          },
+          {
+            "name": "08-remote-actions-b08-member.mp4",
+            "record_frame": 7396,
+            "record_s": 123.267,
+            "duration_frames": 749,
+            "duration_s": 12.483,
+            "source_in": 172
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep08-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 764,
+            "duration_s": 12.733,
+            "source_in": 0
+          },
+          {
+            "name": "ep08-b02.mp3",
+            "record_frame": 765,
+            "record_s": 12.75,
+            "duration_frames": 995,
+            "duration_s": 16.583,
+            "source_in": 0
+          },
+          {
+            "name": "ep08-b03.mp3",
+            "record_frame": 1761,
+            "record_s": 29.35,
+            "duration_frames": 1112,
+            "duration_s": 18.533,
+            "source_in": 0
+          },
+          {
+            "name": "ep08-b04.mp3",
+            "record_frame": 2874,
+            "record_s": 47.9,
+            "duration_frames": 1200,
+            "duration_s": 20.0,
+            "source_in": 0
+          },
+          {
+            "name": "ep08-b05.mp3",
+            "record_frame": 4075,
+            "record_s": 67.917,
+            "duration_frames": 1192,
+            "duration_s": 19.867,
+            "source_in": 0
+          },
+          {
+            "name": "ep08-b06.mp3",
+            "record_frame": 5268,
+            "record_s": 87.8,
+            "duration_frames": 719,
+            "duration_s": 11.983,
+            "source_in": 0
+          },
+          {
+            "name": "ep08-b07.mp3",
+            "record_frame": 5988,
+            "record_s": 99.8,
+            "duration_frames": 1407,
+            "duration_s": 23.45,
+            "source_in": 0
+          },
+          {
+            "name": "ep08-b08.mp3",
+            "record_frame": 7396,
+            "record_s": 123.267,
+            "duration_frames": 749,
+            "duration_s": 12.483,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "09-the-owlette-app v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "09-b01-b02-tray.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1299,
+            "duration_s": 21.65,
+            "source_in": 120
+          },
+          {
+            "name": "09-b01-b02-tray.mp4",
+            "record_frame": 1300,
+            "record_s": 21.667,
+            "duration_frames": 1822,
+            "duration_s": 30.367,
+            "source_in": 1631
+          },
+          {
+            "name": "09-the-owlette-app.mp4",
+            "record_frame": 3123,
+            "record_s": 52.05,
+            "duration_frames": 1424,
+            "duration_s": 23.733,
+            "source_in": 0
+          },
+          {
+            "name": "09-the-owlette-app.mp4",
+            "record_frame": 4547,
+            "record_s": 75.783,
+            "duration_frames": 1515,
+            "duration_s": 25.25,
+            "source_in": 1468
+          },
+          {
+            "name": "09-the-owlette-app.mp4",
+            "record_frame": 6063,
+            "record_s": 101.05,
+            "duration_frames": 2115,
+            "duration_s": 35.25,
+            "source_in": 3029
+          },
+          {
+            "name": "09-the-owlette-app.mp4",
+            "record_frame": 8178,
+            "record_s": 136.3,
+            "duration_frames": 1232,
+            "duration_s": 20.533,
+            "source_in": 5189
+          },
+          {
+            "name": "09-the-owlette-app.mp4",
+            "record_frame": 9410,
+            "record_s": 156.833,
+            "duration_frames": 1520,
+            "duration_s": 25.333,
+            "source_in": 6759
+          },
+          {
+            "name": "09-the-owlette-app.mp4",
+            "record_frame": 10931,
+            "record_s": 182.183,
+            "duration_frames": 2033,
+            "duration_s": 33.883,
+            "source_in": 8660
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep09-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1299,
+            "duration_s": 21.65,
+            "source_in": 0
+          },
+          {
+            "name": "ep09-b02.mp3",
+            "record_frame": 1300,
+            "record_s": 21.667,
+            "duration_frames": 1822,
+            "duration_s": 30.367,
+            "source_in": 0
+          },
+          {
+            "name": "ep09-b03.mp3",
+            "record_frame": 3123,
+            "record_s": 52.05,
+            "duration_frames": 1423,
+            "duration_s": 23.717,
+            "source_in": 0
+          },
+          {
+            "name": "ep09-b04.mp3",
+            "record_frame": 4547,
+            "record_s": 75.783,
+            "duration_frames": 1515,
+            "duration_s": 25.25,
+            "source_in": 0
+          },
+          {
+            "name": "ep09-b05.mp3",
+            "record_frame": 6063,
+            "record_s": 101.05,
+            "duration_frames": 2114,
+            "duration_s": 35.233,
+            "source_in": 0
+          },
+          {
+            "name": "ep09-b06.mp3",
+            "record_frame": 8178,
+            "record_s": 136.3,
+            "duration_frames": 1231,
+            "duration_s": 20.517,
+            "source_in": 0
+          },
+          {
+            "name": "ep09-b07.mp3",
+            "record_frame": 9410,
+            "record_s": 156.833,
+            "duration_frames": 1520,
+            "duration_s": 25.333,
+            "source_in": 0
+          },
+          {
+            "name": "ep09-b08.mp3",
+            "record_frame": 10931,
+            "record_s": 182.183,
+            "duration_frames": 2032,
+            "duration_s": 33.867,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "10-deploy-software v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "10-deploy-software.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1126,
+            "duration_s": 18.767,
+            "source_in": 101
+          },
+          {
+            "name": "10-deploy-software.mp4",
+            "record_frame": 1126,
+            "record_s": 18.767,
+            "duration_frames": 1037,
+            "duration_s": 17.283,
+            "source_in": 1322
+          },
+          {
+            "name": "10-deploy-software.mp4",
+            "record_frame": 2163,
+            "record_s": 36.05,
+            "duration_frames": 1558,
+            "duration_s": 25.967,
+            "source_in": 3785
+          },
+          {
+            "name": "10-deploy-software.mp4",
+            "record_frame": 3721,
+            "record_s": 62.017,
+            "duration_frames": 1587,
+            "duration_s": 26.45,
+            "source_in": 5461
+          },
+          {
+            "name": "10-deploy-software.mp4",
+            "record_frame": 5308,
+            "record_s": 88.467,
+            "duration_frames": 1060,
+            "duration_s": 17.667,
+            "source_in": 2588
+          },
+          {
+            "name": "10-deploy-software.mp4",
+            "record_frame": 6368,
+            "record_s": 106.133,
+            "duration_frames": 1391,
+            "duration_s": 23.183,
+            "source_in": 7390
+          },
+          {
+            "name": "10-deploy-software.mp4",
+            "record_frame": 7759,
+            "record_s": 129.317,
+            "duration_frames": 1655,
+            "duration_s": 27.583,
+            "source_in": 8950
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep10-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1125,
+            "duration_s": 18.75,
+            "source_in": 0
+          },
+          {
+            "name": "ep10-b02.mp3",
+            "record_frame": 1126,
+            "record_s": 18.767,
+            "duration_frames": 1036,
+            "duration_s": 17.267,
+            "source_in": 0
+          },
+          {
+            "name": "ep10-b03.mp3",
+            "record_frame": 2163,
+            "record_s": 36.05,
+            "duration_frames": 1557,
+            "duration_s": 25.95,
+            "source_in": 0
+          },
+          {
+            "name": "ep10-b04.mp3",
+            "record_frame": 3721,
+            "record_s": 62.017,
+            "duration_frames": 1586,
+            "duration_s": 26.433,
+            "source_in": 0
+          },
+          {
+            "name": "ep10-b05.mp3",
+            "record_frame": 5308,
+            "record_s": 88.467,
+            "duration_frames": 1059,
+            "duration_s": 17.65,
+            "source_in": 0
+          },
+          {
+            "name": "ep10-b06.mp3",
+            "record_frame": 6368,
+            "record_s": 106.133,
+            "duration_frames": 1390,
+            "duration_s": 23.167,
+            "source_in": 0
+          },
+          {
+            "name": "ep10-b07.mp3",
+            "record_frame": 7759,
+            "record_s": 129.317,
+            "duration_frames": 1655,
+            "duration_s": 27.583,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "11-distribute-with-roost v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "11-distribute-with-roost.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1402,
+            "duration_s": 23.367,
+            "source_in": 152
+          },
+          {
+            "name": "11-distribute-with-roost.mp4",
+            "record_frame": 1402,
+            "record_s": 23.367,
+            "duration_frames": 1110,
+            "duration_s": 18.5,
+            "source_in": 1796
+          },
+          {
+            "name": "11-distribute-with-roost.mp4",
+            "record_frame": 2512,
+            "record_s": 41.867,
+            "duration_frames": 1863,
+            "duration_s": 31.05,
+            "source_in": 2940
+          },
+          {
+            "name": "11-distribute-with-roost.mp4",
+            "record_frame": 4376,
+            "record_s": 72.933,
+            "duration_frames": 1352,
+            "duration_s": 22.533,
+            "source_in": 5041
+          },
+          {
+            "name": "11-distribute-with-roost.mp4",
+            "record_frame": 5728,
+            "record_s": 95.467,
+            "duration_frames": 1076,
+            "duration_s": 17.933,
+            "source_in": 6735
+          },
+          {
+            "name": "11-distribute-with-roost.mp4",
+            "record_frame": 6804,
+            "record_s": 113.4,
+            "duration_frames": 1761,
+            "duration_s": 29.35,
+            "source_in": 8087
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep11-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1401,
+            "duration_s": 23.35,
+            "source_in": 0
+          },
+          {
+            "name": "ep11-b02.mp3",
+            "record_frame": 1402,
+            "record_s": 23.367,
+            "duration_frames": 1109,
+            "duration_s": 18.483,
+            "source_in": 0
+          },
+          {
+            "name": "ep11-b03.mp3",
+            "record_frame": 2512,
+            "record_s": 41.867,
+            "duration_frames": 1863,
+            "duration_s": 31.05,
+            "source_in": 0
+          },
+          {
+            "name": "ep11-b04.mp3",
+            "record_frame": 4376,
+            "record_s": 72.933,
+            "duration_frames": 1351,
+            "duration_s": 22.517,
+            "source_in": 0
+          },
+          {
+            "name": "ep11-b05.mp3",
+            "record_frame": 5728,
+            "record_s": 95.467,
+            "duration_frames": 1075,
+            "duration_s": 17.917,
+            "source_in": 0
+          },
+          {
+            "name": "ep11-b06.mp3",
+            "record_frame": 6804,
+            "record_s": 113.4,
+            "duration_frames": 1761,
+            "duration_s": 29.35,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "12-cortex v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "12-cortex.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1248,
+            "duration_s": 20.8,
+            "source_in": 136
+          },
+          {
+            "name": "12-cortex.mp4",
+            "record_frame": 1248,
+            "record_s": 20.8,
+            "duration_frames": 1479,
+            "duration_s": 24.65,
+            "source_in": 1600
+          },
+          {
+            "name": "12-cortex.mp4",
+            "record_frame": 2727,
+            "record_s": 45.45,
+            "duration_frames": 1079,
+            "duration_s": 17.983,
+            "source_in": 3763
+          },
+          {
+            "name": "12-cortex.mp4",
+            "record_frame": 3806,
+            "record_s": 63.433,
+            "duration_frames": 1236,
+            "duration_s": 20.6,
+            "source_in": 4991
+          },
+          {
+            "name": "12-cortex.mp4",
+            "record_frame": 5042,
+            "record_s": 84.033,
+            "duration_frames": 1220,
+            "duration_s": 20.333,
+            "source_in": 6546
+          },
+          {
+            "name": "12-cortex.mp4",
+            "record_frame": 6262,
+            "record_s": 104.367,
+            "duration_frames": 1516,
+            "duration_s": 25.267,
+            "source_in": 8082
+          },
+          {
+            "name": "12-cortex.mp4",
+            "record_frame": 7778,
+            "record_s": 129.633,
+            "duration_frames": 718,
+            "duration_s": 11.967,
+            "source_in": 9886
+          },
+          {
+            "name": "12-cortex.mp4",
+            "record_frame": 8496,
+            "record_s": 141.6,
+            "duration_frames": 1475,
+            "duration_s": 24.583,
+            "source_in": 11006
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep12-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1247,
+            "duration_s": 20.783,
+            "source_in": 0
+          },
+          {
+            "name": "ep12-b02.mp3",
+            "record_frame": 1248,
+            "record_s": 20.8,
+            "duration_frames": 1478,
+            "duration_s": 24.633,
+            "source_in": 0
+          },
+          {
+            "name": "ep12-b03.mp3",
+            "record_frame": 2727,
+            "record_s": 45.45,
+            "duration_frames": 1078,
+            "duration_s": 17.967,
+            "source_in": 0
+          },
+          {
+            "name": "ep12-b04.mp3",
+            "record_frame": 3806,
+            "record_s": 63.433,
+            "duration_frames": 1235,
+            "duration_s": 20.583,
+            "source_in": 0
+          },
+          {
+            "name": "ep12-b05.mp3",
+            "record_frame": 5042,
+            "record_s": 84.033,
+            "duration_frames": 1219,
+            "duration_s": 20.317,
+            "source_in": 0
+          },
+          {
+            "name": "ep12-b06.mp3",
+            "record_frame": 6262,
+            "record_s": 104.367,
+            "duration_frames": 1515,
+            "duration_s": 25.25,
+            "source_in": 0
+          },
+          {
+            "name": "ep12-b07.mp3",
+            "record_frame": 7778,
+            "record_s": 129.633,
+            "duration_frames": 717,
+            "duration_s": 11.95,
+            "source_in": 0
+          },
+          {
+            "name": "ep12-b08.mp3",
+            "record_frame": 8496,
+            "record_s": 141.6,
+            "duration_frames": 1474,
+            "duration_s": 24.567,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "13-talons v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "13-talons.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1270,
+            "duration_s": 21.167,
+            "source_in": 102
+          },
+          {
+            "name": "13-talons.mp4",
+            "record_frame": 1270,
+            "record_s": 21.167,
+            "duration_frames": 1571,
+            "duration_s": 26.183,
+            "source_in": 1442
+          },
+          {
+            "name": "13-talons.mp4",
+            "record_frame": 2841,
+            "record_s": 47.35,
+            "duration_frames": 1540,
+            "duration_s": 25.667,
+            "source_in": 3778
+          },
+          {
+            "name": "13-talons.mp4",
+            "record_frame": 4381,
+            "record_s": 73.017,
+            "duration_frames": 1482,
+            "duration_s": 24.7,
+            "source_in": 5817
+          },
+          {
+            "name": "13-talons.mp4",
+            "record_frame": 5863,
+            "record_s": 97.717,
+            "duration_frames": 1425,
+            "duration_s": 23.75,
+            "source_in": 7477
+          },
+          {
+            "name": "13-talons.mp4",
+            "record_frame": 7288,
+            "record_s": 121.467,
+            "duration_frames": 1571,
+            "duration_s": 26.183,
+            "source_in": 9338
+          },
+          {
+            "name": "13-talons.mp4",
+            "record_frame": 8859,
+            "record_s": 147.65,
+            "duration_frames": 1369,
+            "duration_s": 22.817,
+            "source_in": 12757
+          },
+          {
+            "name": "13-talons.mp4",
+            "record_frame": 10228,
+            "record_s": 170.467,
+            "duration_frames": 1489,
+            "duration_s": 24.817,
+            "source_in": 11272
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep13-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1269,
+            "duration_s": 21.15,
+            "source_in": 0
+          },
+          {
+            "name": "ep13-b02.mp3",
+            "record_frame": 1270,
+            "record_s": 21.167,
+            "duration_frames": 1570,
+            "duration_s": 26.167,
+            "source_in": 0
+          },
+          {
+            "name": "ep13-b03.mp3",
+            "record_frame": 2841,
+            "record_s": 47.35,
+            "duration_frames": 1539,
+            "duration_s": 25.65,
+            "source_in": 0
+          },
+          {
+            "name": "ep13-b04.mp3",
+            "record_frame": 4381,
+            "record_s": 73.017,
+            "duration_frames": 1481,
+            "duration_s": 24.683,
+            "source_in": 0
+          },
+          {
+            "name": "ep13-b05.mp3",
+            "record_frame": 5863,
+            "record_s": 97.717,
+            "duration_frames": 1424,
+            "duration_s": 23.733,
+            "source_in": 0
+          },
+          {
+            "name": "ep13-b06.mp3",
+            "record_frame": 7288,
+            "record_s": 121.467,
+            "duration_frames": 1570,
+            "duration_s": 26.167,
+            "source_in": 0
+          },
+          {
+            "name": "ep13-b07.mp3",
+            "record_frame": 8859,
+            "record_s": 147.65,
+            "duration_frames": 1368,
+            "duration_s": 22.8,
+            "source_in": 0
+          },
+          {
+            "name": "ep13-b08.mp3",
+            "record_frame": 10228,
+            "record_s": 170.467,
+            "duration_frames": 1488,
+            "duration_s": 24.8,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "14-team-and-alerts v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "14-team-and-alerts.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1118,
+            "duration_s": 18.633,
+            "source_in": 172
+          },
+          {
+            "name": "14-team-and-alerts.mp4",
+            "record_frame": 1118,
+            "record_s": 18.633,
+            "duration_frames": 1259,
+            "duration_s": 20.983,
+            "source_in": 1399
+          },
+          {
+            "name": "14-team-and-alerts.mp4",
+            "record_frame": 2377,
+            "record_s": 39.617,
+            "duration_frames": 1915,
+            "duration_s": 31.917,
+            "source_in": 3350
+          },
+          {
+            "name": "14-team-and-alerts.mp4",
+            "record_frame": 4293,
+            "record_s": 71.55,
+            "duration_frames": 766,
+            "duration_s": 12.767,
+            "source_in": 5560
+          },
+          {
+            "name": "14-team-and-alerts.mp4",
+            "record_frame": 5060,
+            "record_s": 84.333,
+            "duration_frames": 1887,
+            "duration_s": 31.45,
+            "source_in": 6591
+          },
+          {
+            "name": "14-team-and-alerts.mp4",
+            "record_frame": 6948,
+            "record_s": 115.8,
+            "duration_frames": 1162,
+            "duration_s": 19.367,
+            "source_in": 9320
+          },
+          {
+            "name": "14-team-and-alerts.mp4",
+            "record_frame": 8110,
+            "record_s": 135.167,
+            "duration_frames": 1635,
+            "duration_s": 27.25,
+            "source_in": 10585
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep14-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1117,
+            "duration_s": 18.617,
+            "source_in": 0
+          },
+          {
+            "name": "ep14-b02.mp3",
+            "record_frame": 1118,
+            "record_s": 18.633,
+            "duration_frames": 1258,
+            "duration_s": 20.967,
+            "source_in": 0
+          },
+          {
+            "name": "ep14-b03.mp3",
+            "record_frame": 2377,
+            "record_s": 39.617,
+            "duration_frames": 1915,
+            "duration_s": 31.917,
+            "source_in": 0
+          },
+          {
+            "name": "ep14-b04.mp3",
+            "record_frame": 4293,
+            "record_s": 71.55,
+            "duration_frames": 766,
+            "duration_s": 12.767,
+            "source_in": 0
+          },
+          {
+            "name": "ep14-b05.mp3",
+            "record_frame": 5060,
+            "record_s": 84.333,
+            "duration_frames": 1887,
+            "duration_s": 31.45,
+            "source_in": 0
+          },
+          {
+            "name": "ep14-b06.mp3",
+            "record_frame": 6948,
+            "record_s": 115.8,
+            "duration_frames": 1161,
+            "duration_s": 19.35,
+            "source_in": 0
+          },
+          {
+            "name": "ep14-b07.mp3",
+            "record_frame": 8110,
+            "record_s": 135.167,
+            "duration_frames": 1636,
+            "duration_s": 27.267,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "15-display-layouts v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "15-display-layouts.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1110,
+            "duration_s": 18.5,
+            "source_in": 153
+          },
+          {
+            "name": "15-display-layouts.mp4",
+            "record_frame": 1110,
+            "record_s": 18.5,
+            "duration_frames": 1159,
+            "duration_s": 19.317,
+            "source_in": 1476
+          },
+          {
+            "name": "15-display-layouts.mp4",
+            "record_frame": 2269,
+            "record_s": 37.817,
+            "duration_frames": 1240,
+            "duration_s": 20.667,
+            "source_in": 2943
+          },
+          {
+            "name": "15-display-layouts.mp4",
+            "record_frame": 3509,
+            "record_s": 58.483,
+            "duration_frames": 1325,
+            "duration_s": 22.083,
+            "source_in": 4760
+          },
+          {
+            "name": "15-display-layouts.mp4",
+            "record_frame": 4834,
+            "record_s": 80.567,
+            "duration_frames": 1201,
+            "duration_s": 20.017,
+            "source_in": 6424
+          },
+          {
+            "name": "15-display-layouts.mp4",
+            "record_frame": 6035,
+            "record_s": 100.583,
+            "duration_frames": 1080,
+            "duration_s": 18.0,
+            "source_in": 8008
+          },
+          {
+            "name": "15-display-layouts.mp4",
+            "record_frame": 7115,
+            "record_s": 118.583,
+            "duration_frames": 1226,
+            "duration_s": 20.433,
+            "source_in": 9358
+          },
+          {
+            "name": "15-display-layouts.mp4",
+            "record_frame": 8341,
+            "record_s": 139.017,
+            "duration_frames": 1369,
+            "duration_s": 22.817,
+            "source_in": 10861
+          },
+          {
+            "name": "15-display-layouts.mp4",
+            "record_frame": 9710,
+            "record_s": 161.833,
+            "duration_frames": 1345,
+            "duration_s": 22.417,
+            "source_in": 13176
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep15-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1109,
+            "duration_s": 18.483,
+            "source_in": 0
+          },
+          {
+            "name": "ep15-b02.mp3",
+            "record_frame": 1110,
+            "record_s": 18.5,
+            "duration_frames": 1158,
+            "duration_s": 19.3,
+            "source_in": 0
+          },
+          {
+            "name": "ep15-b03.mp3",
+            "record_frame": 2269,
+            "record_s": 37.817,
+            "duration_frames": 1239,
+            "duration_s": 20.65,
+            "source_in": 0
+          },
+          {
+            "name": "ep15-b04.mp3",
+            "record_frame": 3509,
+            "record_s": 58.483,
+            "duration_frames": 1324,
+            "duration_s": 22.067,
+            "source_in": 0
+          },
+          {
+            "name": "ep15-b05.mp3",
+            "record_frame": 4834,
+            "record_s": 80.567,
+            "duration_frames": 1200,
+            "duration_s": 20.0,
+            "source_in": 0
+          },
+          {
+            "name": "ep15-b06.mp3",
+            "record_frame": 6035,
+            "record_s": 100.583,
+            "duration_frames": 1079,
+            "duration_s": 17.983,
+            "source_in": 0
+          },
+          {
+            "name": "ep15-b07.mp3",
+            "record_frame": 7115,
+            "record_s": 118.583,
+            "duration_frames": 1225,
+            "duration_s": 20.417,
+            "source_in": 0
+          },
+          {
+            "name": "ep15-b08.mp3",
+            "record_frame": 8341,
+            "record_s": 139.017,
+            "duration_frames": 1368,
+            "duration_s": 22.8,
+            "source_in": 0
+          },
+          {
+            "name": "ep15-b09.mp3",
+            "record_frame": 9710,
+            "record_s": 161.833,
+            "duration_frames": 1344,
+            "duration_s": 22.4,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "16-logs-and-troubleshooting v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "16-logs-and-troubleshooting.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1529,
+            "duration_s": 25.483,
+            "source_in": 140
+          },
+          {
+            "name": "16-logs-and-troubleshooting.mp4",
+            "record_frame": 1529,
+            "record_s": 25.483,
+            "duration_frames": 1261,
+            "duration_s": 21.017,
+            "source_in": 1619
+          },
+          {
+            "name": "16-logs-and-troubleshooting.mp4",
+            "record_frame": 2790,
+            "record_s": 46.5,
+            "duration_frames": 1479,
+            "duration_s": 24.65,
+            "source_in": 3107
+          },
+          {
+            "name": "16-logs-and-troubleshooting.mp4",
+            "record_frame": 4269,
+            "record_s": 71.15,
+            "duration_frames": 1336,
+            "duration_s": 22.267,
+            "source_in": 4882
+          },
+          {
+            "name": "16-logs-and-troubleshooting.mp4",
+            "record_frame": 5605,
+            "record_s": 93.417,
+            "duration_frames": 914,
+            "duration_s": 15.233,
+            "source_in": 6320
+          },
+          {
+            "name": "16-logs-and-troubleshooting.mp4",
+            "record_frame": 6519,
+            "record_s": 108.65,
+            "duration_frames": 1433,
+            "duration_s": 23.883,
+            "source_in": 7463
+          },
+          {
+            "name": "16-logs-and-troubleshooting.mp4",
+            "record_frame": 7952,
+            "record_s": 132.533,
+            "duration_frames": 1550,
+            "duration_s": 25.833,
+            "source_in": 8843
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep16-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 1528,
+            "duration_s": 25.467,
+            "source_in": 0
+          },
+          {
+            "name": "ep16-b02.mp3",
+            "record_frame": 1529,
+            "record_s": 25.483,
+            "duration_frames": 1260,
+            "duration_s": 21.0,
+            "source_in": 0
+          },
+          {
+            "name": "ep16-b03.mp3",
+            "record_frame": 2790,
+            "record_s": 46.5,
+            "duration_frames": 1478,
+            "duration_s": 24.633,
+            "source_in": 0
+          },
+          {
+            "name": "ep16-b04.mp3",
+            "record_frame": 4269,
+            "record_s": 71.15,
+            "duration_frames": 1335,
+            "duration_s": 22.25,
+            "source_in": 0
+          },
+          {
+            "name": "ep16-b05.mp3",
+            "record_frame": 5605,
+            "record_s": 93.417,
+            "duration_frames": 913,
+            "duration_s": 15.217,
+            "source_in": 0
+          },
+          {
+            "name": "ep16-b06.mp3",
+            "record_frame": 6519,
+            "record_s": 108.65,
+            "duration_frames": 1432,
+            "duration_s": 23.867,
+            "source_in": 0
+          },
+          {
+            "name": "ep16-b07.mp3",
+            "record_frame": 7952,
+            "record_s": 132.533,
+            "duration_frames": 1550,
+            "duration_s": 25.833,
+            "source_in": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "17-fleet-maintenance v1",
+      "start_frame": 216000,
+      "tracks": {
+        "V1": [
+          {
+            "name": "17-fleet-maintenance.mp4",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 891,
+            "duration_s": 14.85,
+            "source_in": 180
+          },
+          {
+            "name": "17-fleet-maintenance.mp4",
+            "record_frame": 892,
+            "record_s": 14.867,
+            "duration_frames": 1073,
+            "duration_s": 17.883,
+            "source_in": 1250
+          },
+          {
+            "name": "17-fleet-maintenance.mp4",
+            "record_frame": 1965,
+            "record_s": 32.75,
+            "duration_frames": 1095,
+            "duration_s": 18.25,
+            "source_in": 2643
+          },
+          {
+            "name": "17-fleet-maintenance.mp4",
+            "record_frame": 3060,
+            "record_s": 51.0,
+            "duration_frames": 1331,
+            "duration_s": 22.183,
+            "source_in": 4335
+          },
+          {
+            "name": "17-fleet-maintenance.mp4",
+            "record_frame": 4391,
+            "record_s": 73.183,
+            "duration_frames": 1145,
+            "duration_s": 19.083,
+            "source_in": 6097
+          },
+          {
+            "name": "17-fleet-maintenance-b06-tokens.mp4",
+            "record_frame": 5536,
+            "record_s": 92.267,
+            "duration_frames": 1120,
+            "duration_s": 18.667,
+            "source_in": 128
+          },
+          {
+            "name": "17-fleet-maintenance.mp4",
+            "record_frame": 6656,
+            "record_s": 110.933,
+            "duration_frames": 1284,
+            "duration_s": 21.4,
+            "source_in": 7832
+          },
+          {
+            "name": "17-fleet-maintenance.mp4",
+            "record_frame": 7940,
+            "record_s": 132.333,
+            "duration_frames": 1391,
+            "duration_s": 23.183,
+            "source_in": 9665
+          },
+          {
+            "name": "17-fleet-maintenance.mp4",
+            "record_frame": 9331,
+            "record_s": 155.517,
+            "duration_frames": 1260,
+            "duration_s": 21.0,
+            "source_in": 11890
+          }
+        ],
+        "A1": [
+          {
+            "name": "ep17-b01.mp3",
+            "record_frame": 0,
+            "record_s": 0.0,
+            "duration_frames": 891,
+            "duration_s": 14.85,
+            "source_in": 0
+          },
+          {
+            "name": "ep17-b02.mp3",
+            "record_frame": 892,
+            "record_s": 14.867,
+            "duration_frames": 1072,
+            "duration_s": 17.867,
+            "source_in": 0
+          },
+          {
+            "name": "ep17-b03.mp3",
+            "record_frame": 1965,
+            "record_s": 32.75,
+            "duration_frames": 1094,
+            "duration_s": 18.233,
+            "source_in": 0
+          },
+          {
+            "name": "ep17-b04.mp3",
+            "record_frame": 3060,
+            "record_s": 51.0,
+            "duration_frames": 1330,
+            "duration_s": 22.167,
+            "source_in": 0
+          },
+          {
+            "name": "ep17-b05.mp3",
+            "record_frame": 4391,
+            "record_s": 73.183,
+            "duration_frames": 1144,
+            "duration_s": 19.067,
+            "source_in": 0
+          },
+          {
+            "name": "ep17-b06.mp3",
+            "record_frame": 5536,
+            "record_s": 92.267,
+            "duration_frames": 1119,
+            "duration_s": 18.65,
+            "source_in": 0
+          },
+          {
+            "name": "ep17-b07.mp3",
+            "record_frame": 6656,
+            "record_s": 110.933,
+            "duration_frames": 1283,
+            "duration_s": 21.383,
+            "source_in": 0
+          },
+          {
+            "name": "ep17-b08.mp3",
+            "record_frame": 7940,
+            "record_s": 132.333,
+            "duration_frames": 1390,
+            "duration_s": 23.167,
+            "source_in": 0
+          },
+          {
+            "name": "ep17-b09.mp3",
+            "record_frame": 9331,
+            "record_s": 155.517,
+            "duration_frames": 1260,
+            "duration_s": 21.0,
+            "source_in": 0
+          }
+        ]
+      }
+    }
+  ]
+}

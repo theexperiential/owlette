@@ -29,7 +29,7 @@ you. that's your whole operation in one glance.
 **VOICEOVER:**
 below that, your machines — one card each. green pill, online. red, offline. even rolled
 up like this, every card shows its vitals at a glance: cpu, memory, disk, gpu. and notice
-how much you can read without touching a thing — let's open one up.
+how much you can read without touching a thing.
 
 ## [b03] reading a single card
 **SCREEN:** zoom into the "media-server-stage" card with its sections STARTING FOLDED (stats default collapsed on first render, MachineCardView.tsx:142). Reveal each section AS IT IS NAMED: expand the metrics collapsible (cpu, ram, disk, gpu with sparklines, network throughput, cpu/gpu inline temperatures), then the displays collapsible, then the process list. Sections open one at a time — never all at once.

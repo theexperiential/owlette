@@ -1,6 +1,6 @@
 # assembly — episode 04: the dashboard, end to end
 
-Narration: **2:16.9** across 6 spoken beats.
+Narration: **2:15.2** across 6 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
@@ -12,9 +12,9 @@ Footage:
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|
-| b01 | orientation | `ep04-b01.mp3` | 22.5s | 0:00.0 | 0:22.5 |
-| b02 | the machines section | `ep04-b02.mp3` | 20.7s | 0:22.5 | 0:43.2 |
-| b03 | reading a single card | `ep04-b03.mp3` | 27.7s | 0:43.2 | 1:10.9 |
-| b04 | card view vs list view | `ep04-b04.mp3` | 19.0s | 1:10.9 | 1:29.9 |
-| b05 | expand, collapse, and the detail panel | `ep04-b05.mp3` | 18.6s | 1:29.9 | 1:48.5 |
-| b06 | the rest of the app | `ep04-b06.mp3` | 24.8s | 1:48.5 | 2:13.3 |
+| b01 | orientation | `ep04-b01.mp3` | 21.7s | 0:00.0 | 0:21.7 |
+| b02 | the machines section | `ep04-b02.mp3` | 16.1s | 0:21.7 | 0:37.8 |
+| b03 | reading a single card | `ep04-b03.mp3` | 31.0s | 0:37.8 | 1:08.8 |
+| b04 | card view vs list view | `ep04-b04.mp3` | 19.1s | 1:08.8 | 1:28.0 |
+| b05 | expand, collapse, and the detail panel | `ep04-b05.mp3` | 18.8s | 1:28.0 | 1:46.7 |
+| b06 | the rest of the app | `ep04-b06.mp3` | 24.9s | 1:46.7 | 2:11.6 |

@@ -1,6 +1,6 @@
 # assembly — episode 16: logs & troubleshooting
 
-Narration: **2:42.6** across 7 spoken beats.
+Narration: **2:43.2** across 7 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
@@ -15,8 +15,8 @@ Footage:
 |---|---|---|---|---|---|
 | b01 | the activity timeline | `ep16-b01.mp3` | 25.5s | 0:00.0 | 0:25.5 |
 | b02 | reading an entry | `ep16-b02.mp3` | 21.0s | 0:25.5 | 0:46.5 |
-| b03 | filtering the noise | `ep16-b03.mp3` | 24.6s | 0:46.5 | 1:11.1 |
-| b04 | the crash screenshot | `ep16-b04.mp3` | 22.3s | 1:11.1 | 1:33.4 |
-| b05 | expand for the full record | `ep16-b05.mp3` | 15.2s | 1:33.4 | 1:48.6 |
-| b06 | clearing up, safely | `ep16-b06.mp3` | 23.9s | 1:48.6 | 2:12.5 |
-| b07 | when you're still stuck | `ep16-b07.mp3` | 25.8s | 2:12.5 | 2:38.3 |
+| b03 | filtering the noise | `ep16-b03.mp3` | 18.9s | 0:46.5 | 1:05.3 |
+| b04 | the crash screenshot | `ep16-b04.mp3` | 28.7s | 1:05.3 | 1:34.0 |
+| b05 | expand for the full record | `ep16-b05.mp3` | 15.2s | 1:34.0 | 1:49.2 |
+| b06 | clearing up, safely | `ep16-b06.mp3` | 23.9s | 1:49.2 | 2:13.1 |
+| b07 | when you're still stuck | `ep16-b07.mp3` | 25.8s | 2:13.1 | 2:38.9 |

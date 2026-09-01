@@ -7,7 +7,7 @@
   "scenario": "dashboard-mixed-states",
   "script": "scripts/04-dashboard-tour.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 136.95,
+  "narration_s": 135.233,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,7 +20,7 @@
       "rel": "dev/video-tutorials/footage/web/04-dashboard-tour.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\04-dashboard-tour.mp4",
       "exists": true,
-      "duration_s": 146.25,
+      "duration_s": 149.883,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -40,8 +40,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b01.mp3",
       "mp3_name": "ep04-b01.mp3",
-      "duration_s": 22.491,
-      "duration_frames": 1349,
+      "duration_s": 21.708,
+      "duration_frames": 1302,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -53,13 +53,13 @@
         "SCREEN": "the COLLAPSED card grid (a third the height of the expanded one — no long pan; a short gentle drift down the compact grid and rest). Green pills, the one red offline pill, and each folded card's at-a-glance numbers.",
         "NOTE": "rewritten 2026-08-31 evening — the expanded-grid version was \"too heavy, too complicated, and scrolls weird\" (rosco). The usage-bar color talk moved out with the expanded tiles; b03 owns the detail now."
       },
-      "start_s": 23.1,
-      "start_frame": 1386,
+      "start_s": 22.317,
+      "start_frame": 1339,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b02.mp3",
       "mp3_name": "ep04-b02.mp3",
-      "duration_s": 20.715,
-      "duration_frames": 1243,
+      "duration_s": 16.118,
+      "duration_frames": 967,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -71,13 +71,13 @@
         "SCREEN": "zoom into the \"media-server-stage\" card with its sections STARTING FOLDED (stats default collapsed on first render, MachineCardView.tsx:142). Reveal each section AS IT IS NAMED: expand the metrics collapsible (cpu, ram, disk, gpu with sparklines, network throughput, cpu/gpu inline temperatures), then the displays collapsible, then the process list. Sections open one at a time — never all at once.",
         "NOTE": "order matters — the stats collapsible is MachineCardView.tsx:367, displays :646, and the process list below it. The second tile's on-screen label is \"ram\", not \"memory\". Cue each expand to the narration phrase that names it (measure the rendered mp3's phrase gaps with silencedetect; do not eyeball the dwells)."
       },
-      "start_s": 44.417,
-      "start_frame": 2665,
+      "start_s": 39.05,
+      "start_frame": 2343,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b03.mp3",
       "mp3_name": "ep04-b03.mp3",
-      "duration_s": 27.69,
-      "duration_frames": 1661,
+      "duration_s": 31.007,
+      "duration_frames": 1860,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -89,13 +89,13 @@
         "SCREEN": "hold on the CARD grid while cards are being praised. Click the list-view toggle (List icon, tooltip \"list view\") exactly on \"flip to list view\" — the fleet becomes ROLLED-UP rows (machine-row); hold the rolled-up state. Expand ONE row in place (its processes unfold) on the \"any row expands\" line. Click the card-view toggle (LayoutGrid icon) only as \"one click back to cards\" is spoken — never earlier.",
         "NOTE": "the previous take showed list view while the narration still praised cards and cut back to cards well before the VO said so — the actions must be cued to the mp3's internal phrase boundaries, same method as b03."
       },
-      "start_s": 72.717,
-      "start_frame": 4363,
+      "start_s": 70.667,
+      "start_frame": 4240,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b04.mp3",
       "mp3_name": "ep04-b04.mp3",
-      "duration_s": 19.017,
-      "duration_frames": 1141,
+      "duration_s": 19.148,
+      "duration_frames": 1149,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -107,13 +107,13 @@
         "SCREEN": "click the expand/collapse-all control (ChevronsUpDown / ChevronsDownUp, tooltip \"expand all\" / \"collapse all\"). Then click a card's \"cpu\" metric tile; the MetricsDetailPanel slides open above the list.",
         "NOTE": "to close the panel, click its X button (MetricsDetailPanel.tsx:935-942) — `page.keyboard.press('Escape')` does nothing, the panel has no key handler, and the old harness line that relied on it leaves the panel open through the rest of the take."
       },
-      "start_s": 92.35,
-      "start_frame": 5541,
+      "start_s": 90.417,
+      "start_frame": 5425,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b05.mp3",
       "mp3_name": "ep04-b05.mp3",
-      "duration_s": 18.625,
-      "duration_frames": 1118,
+      "duration_s": 18.756,
+      "duration_frames": 1125,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -126,15 +126,15 @@
         "B-ROLL": "optional two-second cut — the same dashboard on a phone; the hamburger opens the drawer that carries the site switcher and this same page list below the md breakpoint.",
         "NOTE": "the nav label is \"hoot\" (PageHeader.tsx:39-43); nothing in the UI reads \"cortex\" any more. \"roost\" points at /roosts and \"deploy\" at /deployments. the hover must move at the SPOKEN cadence — the previous take crawled down the list while the narration had already finished naming it. Cue each hover step to its name's moment in the rendered mp3 (voiceover/measure-phrases.py), like b03/b04."
       },
-      "start_s": 111.583,
-      "start_frame": 6695,
+      "start_s": 109.783,
+      "start_frame": 6587,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\04-dashboard-tour\\ep04-b06.mp3",
       "mp3_name": "ep04-b06.mp3",
-      "duration_s": 24.764,
-      "duration_frames": 1486,
+      "duration_s": 24.869,
+      "duration_frames": 1492,
       "status": "ok",
-      "breath_s": 0.6
+      "breath_s": 0.571
     }
   ]
 }

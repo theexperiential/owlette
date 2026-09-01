@@ -7,7 +7,7 @@
   "scenario": "control-process-restarting",
   "script": "scripts/16-logs-and-troubleshooting.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 162.583,
+  "narration_s": 163.2,
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,7 +20,7 @@
       "rel": "dev/video-tutorials/footage/web/16-logs-and-troubleshooting.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\16-logs-and-troubleshooting.mp4",
       "exists": true,
-      "duration_s": 178.217,
+      "duration_s": 183.35,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -85,8 +85,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\16-logs-and-troubleshooting\\ep16-b03.mp3",
       "mp3_name": "ep16-b03.mp3",
-      "duration_s": 24.633,
-      "duration_frames": 1478,
+      "duration_s": 18.86,
+      "duration_frames": 1132,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -97,13 +97,13 @@
       "direction": {
         "SCREEN": "a \"process crashed\" entry with a camera indicator; open the attached crash screenshot full-size (thumbnail img[alt=\"Crash screenshot\"] at page.tsx:411, modal at :1190)."
       },
-      "start_s": 72.95,
-      "start_frame": 4377,
+      "start_s": 67.167,
+      "start_frame": 4030,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\16-logs-and-troubleshooting\\ep16-b04.mp3",
       "mp3_name": "ep16-b04.mp3",
-      "duration_s": 22.256,
-      "duration_frames": 1335,
+      "duration_s": 28.656,
+      "duration_frames": 1719,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -114,8 +114,8 @@
       "direction": {
         "SCREEN": "expand a row to reveal the full details — machine id (page.tsx:380), the absolute timestamp (:388-397), the raw details block (:399-402); show expand-all / collapse-all (:910-919)."
       },
-      "start_s": 95.817,
-      "start_frame": 5749,
+      "start_s": 96.433,
+      "start_frame": 5786,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\16-logs-and-troubleshooting\\ep16-b05.mp3",
       "mp3_name": "ep16-b05.mp3",
@@ -131,8 +131,8 @@
       "direction": {
         "SCREEN": "the \"clear logs\" button (page.tsx:987-997 — only rendered for site admins, `canManageLogs` at :444). Open it: the \"clear event logs\" dialog carries its own \"from (optional)\" / \"to (optional)\" pickers (:1234-1252) and builds a live scope list above them (:1215-1228). Set both dates and show the scope list gaining the from/to lines; then clear them to show the no-filters copy, \"this will permanently delete ALL event logs for this site (across all machines)\"."
       },
-      "start_s": 111.65,
-      "start_frame": 6699,
+      "start_s": 112.267,
+      "start_frame": 6736,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\16-logs-and-troubleshooting\\ep16-b06.mp3",
       "mp3_name": "ep16-b06.mp3",
@@ -148,8 +148,8 @@
       "direction": {
         "SCREEN": "the dashboard header's help menu → \"docs\" opening /docs in-app (web/components/PageHeader.tsx:274-289). Cut to the machine: the owlette app's ⋯ menu → \"submit bug report\" (desktop/src/components/AppMenu.tsx:110, dialog at desktop/src/components/ReportIssueDialog.tsx:96-99); pick a category, type a line, send — toast \"thanks — your feedback was sent · system info and recent logs went with it.\""
       },
-      "start_s": 136.133,
-      "start_frame": 8168,
+      "start_s": 136.75,
+      "start_frame": 8205,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\16-logs-and-troubleshooting\\ep16-b07.mp3",
       "mp3_name": "ep16-b07.mp3",

@@ -146,6 +146,20 @@ Status of the items below, after working the suggested order:
   day). FINAL STATE: 17/17 episodes conform 0 problems / no gaps, vet 0
   failures, provenance clean, levels converged, ep05-b04 dialog + motion
   frames eyeballed good.
+- **Morning wave 2026-09-01, closing the board:** ep07 + ep16 were the last
+  mixed-provenance episodes (deep test: temp-split every take, diff live beat
+  durations - `scratchpad provenance_deep`; worth promoting into the repo) -
+  both re-split free + re-recorded. ep11 b04 is now a REAL demo: synthesized
+  drop (DragEvent with File objects + EMPTY items to force the loose-files
+  fallback), real targets, real upload through the NEW e2e chunk seam
+  (`/api/chunks/e2e-put` - presignPutChunk was the one unstubbed function;
+  browser PUTs died on R2 CORS), PreUploadSummary confirm shown as a beat,
+  agents played with the REAL published versionId (a placeholder renders
+  "awaiting agent"), b06 rollback switched back to stage-show (history).
+  Product fix committed: distribute-dialog checkbox double-toggle
+  (stopPropagation + regression tests). ep04 b02's "let's open one up" promise
+  trimmed (b03 owns the reveal), episode re-rendered/-cued/-recorded. FINAL:
+  conform 0/17-17, vet 0, provenance shallow+deep clean, levels converged.
 - **Still rosco's:** ep01 b02 REVIEWED AND APPROVED 2026-09-01 ("sounds
   great") — the re-authored cut mechanism is validated. Remaining: the motion
   feel overall + ep11/ep13 (kept from batch-1; glance for modal jumps),
