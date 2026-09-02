@@ -304,8 +304,22 @@ async function loadUserActor(auth: ResolvedAuth): Promise<UserActor> {
   return authToActor(auth, role, sites);
 }
 
-export async function requireDistributionManageCapability(
+/**
+ * Site-scoped capability gate for routes that authorize through
+ * `requireSiteAuthAndScope`, which checks site MEMBERSHIP + api-key scope but no
+ * capability (unlike `authorizedSiteHandler`, which runs its own capability
+ * step). Works identically for session and api-key callers: `loadUserActor`
+ * reads the role from `users/{uid}` either way, and `authToActor` carries the
+ * key id onto the actor.
+ *
+ * The site owner short-circuits: self-serve owners are created with global role
+ * `member` (`lib/actions/bootstrapUser.server.ts`) and any authenticated user
+ * may create a site (`/api/sites` POST), so a strict matrix check would lock an
+ * owner out of the site they own.
+ */
+async function requireSiteCapability(
   auth: ResolvedAuth,
+  capability: Capability,
   siteId: string,
 ): Promise<NextResponse | null> {
   const siteSnap = await getAdminDb().collection('sites').doc(siteId).get();
@@ -313,10 +327,29 @@ export async function requireDistributionManageCapability(
   if (siteData?.owner === auth.userId) return null;
 
   const actor = await loadUserActor(auth);
-  if (!hasCapability(actor, Capability.DISTRIBUTION_MANAGE, siteId)) {
+  if (!hasCapability(actor, capability, siteId)) {
     return problemForbidden('capability not granted');
   }
   return null;
+}
+
+export async function requireDistributionManageCapability(
+  auth: ResolvedAuth,
+  siteId: string,
+): Promise<NextResponse | null> {
+  return requireSiteCapability(auth, Capability.DISTRIBUTION_MANAGE, siteId);
+}
+
+/**
+ * WEBHOOK_MANAGE gate for the mutating `/api/webhooks/**` handlers (create,
+ * update, delete, rotate-secret, test). Read paths — list, detail, deliveries,
+ * probe — stay at member level.
+ */
+export async function requireWebhookManageCapability(
+  auth: ResolvedAuth,
+  siteId: string,
+): Promise<NextResponse | null> {
+  return requireSiteCapability(auth, Capability.WEBHOOK_MANAGE, siteId);
 }
 
 function isMutationPermission(permission: ApiKeyPermission): boolean {

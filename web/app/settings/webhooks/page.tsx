@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSites } from '@/hooks/useFirestore';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -26,7 +27,14 @@ interface WebhooksResponse {
 
 export default function WebhooksSettingsPage() {
   const router = useRouter();
-  const { user, loading: authLoading, userSites, lastSiteId } = useAuth();
+  const {
+    user,
+    loading: authLoading,
+    userSites,
+    lastSiteId,
+    isSuperadmin,
+    isSiteAdmin,
+  } = useAuth();
   // User's explicit selection wins once made; otherwise fall back to
   // `lastSiteId` (if still accessible) or the first available site. Computed
   // inline rather than synced via a useEffect to avoid the cascading-render
@@ -37,6 +45,15 @@ export default function WebhooksSettingsPage() {
     : lastSiteId && userSites.includes(lastSiteId)
       ? lastSiteId
       : (userSites[0] ?? '');
+  // Mutating `/api/webhooks/**` routes require WEBHOOK_MANAGE, which the server
+  // grants to superadmins, site admins — and, via an explicit short-circuit, the
+  // site's owner (self-serve owners carry global role `member`). `isSiteAdmin`
+  // knows nothing about ownership, so the owner leg is resolved here from the
+  // site docs. The picker above deliberately keeps listing raw site ids.
+  const { sites, loading: sitesLoading } = useSites(user?.uid, userSites, isSuperadmin);
+  const site = sites.find((s) => s.id === selectedSite);
+  const canManage =
+    !!selectedSite && (isSiteAdmin(selectedSite) || (!!user && site?.owner === user.uid));
   const [webhooks, setWebhooks] = useState<WebhookListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -142,14 +159,15 @@ export default function WebhooksSettingsPage() {
                   </SelectContent>
                 </Select>
               )}
-              <Button
-                type="button"
-                onClick={() => setCreateOpen(true)}
-                disabled={!selectedSite}
-                className="text-gray-900 cursor-pointer"
-              >
-                <Plus className="h-4 w-4 mr-1" /> create webhook
-              </Button>
+              {canManage && (
+                <Button
+                  type="button"
+                  onClick={() => setCreateOpen(true)}
+                  className="text-gray-900 cursor-pointer"
+                >
+                  <Plus className="h-4 w-4 mr-1" /> create webhook
+                </Button>
+              )}
             </div>
           </div>
 
@@ -185,28 +203,39 @@ export default function WebhooksSettingsPage() {
                 you need site access to manage webhooks. ask a site admin to add you.
               </p>
             </Card>
-          ) : loading ? (
+          ) : loading || sitesLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           ) : webhooks.length === 0 ? (
             <Card className="border-border bg-card/50 p-8 text-center space-y-3">
               <Webhook className="h-8 w-8 text-muted-foreground mx-auto" />
-              <div>
-                <p className="text-sm text-white">no webhooks yet</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  subscribe to events so your ci/cd, slack bot, or monitoring can react to roost
-                  activity.
-                </p>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => setCreateOpen(true)}
-                className="text-gray-900 cursor-pointer"
-              >
-                <Plus className="h-3.5 w-3.5 mr-1" /> create your first webhook
-              </Button>
+              {canManage ? (
+                <>
+                  <div>
+                    <p className="text-sm text-white">no webhooks yet</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      subscribe to events so your ci/cd, slack bot, or monitoring can react to
+                      roost activity.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => setCreateOpen(true)}
+                    className="text-gray-900 cursor-pointer"
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" /> create your first webhook
+                  </Button>
+                </>
+              ) : (
+                <div>
+                  <p className="text-sm text-white">no webhooks configured for this site</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    a site admin can add webhooks.
+                  </p>
+                </div>
+              )}
             </Card>
           ) : (
             <div className="space-y-3">
@@ -215,6 +244,7 @@ export default function WebhooksSettingsPage() {
                   key={w.id}
                   webhook={w}
                   siteId={selectedSite}
+                  canManage={canManage}
                   onChanged={() => void refresh(selectedSite)}
                   onSecretRotated={setRevealedSecret}
                 />
@@ -223,7 +253,7 @@ export default function WebhooksSettingsPage() {
           )}
       </main>
 
-      {selectedSite && (
+      {selectedSite && canManage && (
         <CreateWebhookDialog
           open={createOpen}
           onOpenChange={setCreateOpen}

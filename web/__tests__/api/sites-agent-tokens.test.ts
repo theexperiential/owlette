@@ -1,33 +1,64 @@
 /** @jest-environment node */
 
 import { NextRequest } from 'next/server';
+import type { Capability } from '@/lib/capabilities';
 
 type TokenDoc = Record<string, unknown> & { id: string };
 
+type TestUserActor = {
+  type: 'user';
+  userId: string;
+  role: 'member' | 'admin' | 'superadmin';
+  sites: string[];
+};
+
+const SUPERADMIN: TestUserActor = {
+  type: 'user',
+  userId: 'test-admin',
+  role: 'superadmin',
+  sites: [],
+};
+
 let tokenDocs: TokenDoc[] = [];
 const deletedIds: string[] = [];
+// Swapped per-test to exercise the capability each route declares.
+let mockActor: TestUserActor = SUPERADMIN;
 
 jest.mock('@/lib/withRateLimit', () => ({
   withRateLimit: (handler: unknown) => handler,
 }));
 
-jest.mock('@/lib/authorizedHandler.server', () => ({
-  authorizedSiteHandler: () => (handler: (...args: unknown[]) => unknown) =>
-    async (request: NextRequest, routeContext: { params: Promise<{ siteId: string }> }) => {
-      const params = await routeContext.params;
-      return handler(
-        request,
-        {
-          actor: { type: 'user', userId: 'test-admin', role: 'superadmin', sites: [params.siteId] },
-          siteId: params.siteId,
-          correlationId: 'corr-test',
-          auth: { userId: 'test-admin', keyContext: null },
-          scopeCheck: { isLegacy: false },
-        },
-        routeContext,
-      );
-    },
-}));
+// Stands in for the real wrapper but keeps the authorization decision honest:
+// the route's declared capability is evaluated against the real capability
+// matrix, so a route that demands a capability site admins lack 403s here too.
+jest.mock('@/lib/authorizedHandler.server', () => {
+  const { NextResponse } = jest.requireActual<typeof import('next/server')>('next/server');
+  const { hasCapability } = jest.requireActual<typeof import('@/lib/capabilities')>(
+    '@/lib/capabilities',
+  );
+  return {
+    authorizedSiteHandler:
+      (options: { capability: Capability }) =>
+      (handler: (...args: unknown[]) => unknown) =>
+      async (request: NextRequest, routeContext: { params: Promise<{ siteId: string }> }) => {
+        const params = await routeContext.params;
+        if (!hasCapability(mockActor, options.capability, params.siteId)) {
+          return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+        }
+        return handler(
+          request,
+          {
+            actor: mockActor,
+            siteId: params.siteId,
+            correlationId: 'corr-test',
+            auth: { userId: mockActor.userId, keyContext: null },
+            scopeCheck: { isLegacy: false },
+          },
+          routeContext,
+        );
+      },
+  };
+});
 
 jest.mock('@/lib/firebase-admin', () => ({
   adminDb: {
@@ -85,6 +116,7 @@ import { POST } from '@/app/api/sites/[siteId]/agent-tokens/revoke/route';
 beforeEach(() => {
   tokenDocs = [];
   deletedIds.length = 0;
+  mockActor = SUPERADMIN;
   mockEmitMutation.mockClear();
 });
 
@@ -129,6 +161,46 @@ describe('/api/sites/{siteId}/agent-tokens', () => {
     expect(json.tokens.map((t: { id: string }) => t.id)).toEqual(['live']);
     expect(json.count).toBe(1);
     expect(json.prunableCount).toBe(2);
+  });
+
+  // The list route used to demand GLOBAL_SETTINGS_WRITE while revoke already ran
+  // on site-scoped AGENT_TOKEN_REVOKE, so a site admin could revoke a token they
+  // could not list. These three cases fail if that split ever comes back.
+  it('lets a site admin list tokens for a site they are assigned to', async () => {
+    mockActor = { type: 'user', userId: 'u1', role: 'admin', sites: ['site-a'] };
+    tokenDocs = [
+      { id: 'live', siteId: 'site-a', machineId: 'm1', createdAt: timestamp('2026-02-01T00:00:00Z') },
+    ];
+
+    const res = await GET(
+      new NextRequest('http://localhost/api/sites/site-a/agent-tokens'),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).tokens.map((t: { id: string }) => t.id)).toEqual(['live']);
+  });
+
+  it('denies a site admin listing tokens for a site they are NOT assigned to', async () => {
+    mockActor = { type: 'user', userId: 'u1', role: 'admin', sites: ['site-a'] };
+
+    const res = await GET(
+      new NextRequest('http://localhost/api/sites/site-b/agent-tokens'),
+      { params: Promise.resolve({ siteId: 'site-b' }) },
+    );
+
+    expect(res.status).toBe(403);
+  });
+
+  it('denies a member listing tokens on their own site', async () => {
+    mockActor = { type: 'user', userId: 'u2', role: 'member', sites: ['site-a'] };
+
+    const res = await GET(
+      new NextRequest('http://localhost/api/sites/site-a/agent-tokens'),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+
+    expect(res.status).toBe(403);
   });
 });
 

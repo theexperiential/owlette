@@ -23,14 +23,15 @@ description: "The owlette web dashboard is a Next.js application that provides r
 | **logs** | `/logs` | Activity log viewer with filtering |
 | **settings: webhooks** | `/settings/webhooks` | Site webhook subscriptions, delivery history, retries, and secret rotation |
 | **settings: api keys** | `/settings/api-keys` | Scoped API key management for automation |
-| **Admin: Users** | `/admin/users` | User management (admin only) |
-| **Admin: Installers** | `/admin/installers` | Agent installer version management (admin only) |
-| **Admin: Presets** | `/admin/presets` | System preset management (admin only) |
-| **Admin: Schedules** | `/admin/schedules` | Schedule preset management (admin only) |
-| **Admin: Tokens** | `/admin/tokens` | Agent token management (admin only) |
-| **Admin: Alerts** | `/admin/alerts` | Threshold-based alert rule management (admin only) |
-| **Admin: Webhooks** | `/admin/webhooks` | Outbound webhook configuration (admin only) |
-| **Admin: Email** | `/admin/email` | Email notification settings (admin only) |
+| **Admin: Members** | `/admin/members` | Site membership management (site admins, scoped to their sites) |
+| **Admin: Tokens** | `/admin/tokens` | Agent token management (site admins, scoped to their sites) |
+| **Admin: Schedules** | `/admin/schedules` | Schedule preset management (site admins, scoped to their sites) |
+| **Admin: Alerts** | `/admin/alerts` | Threshold-based alert rule management (site admins, scoped to their sites) |
+| **Admin: Webhooks** | `/admin/webhooks` | Outbound webhook configuration (site admins, scoped to their sites) |
+| **Admin: Users** | `/admin/users` | Account, global role, and site assignment management (internal) |
+| **Admin: Installers** | `/admin/installers` | Agent installer version management (internal) |
+| **Admin: Presets** | `/admin/presets` | Deployment template library management (internal) |
+| **Admin: Email** | `/admin/email` | Email notification settings (internal) |
 
 ---
 

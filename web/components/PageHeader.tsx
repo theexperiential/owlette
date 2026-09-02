@@ -99,7 +99,7 @@ export function PageHeader({
   disableNav,
 }: PageHeaderProps) {
   const router = useRouter();
-  const { user, signOut, isSuperadmin } = useAuth();
+  const { user, signOut, role, isSuperadmin } = useAuth();
   const [reportBugOpen, setReportBugOpen] = useState(false);
   const [feedbackLabel, setFeedbackLabel] = useState('report a bug');
   const [feedbackFading, setFeedbackFading] = useState(false);
@@ -346,9 +346,14 @@ export function PageHeader({
                 <p className="text-xs text-muted-foreground truncate mt-0.5">{user?.email}</p>
               </div>
               <DropdownMenuSeparator className="bg-border" />
-              {isSuperadmin && (
+              {/* Site admins get the panel too, landing on the one section their
+                  role can reach; superadmins keep the installers entry point.
+                  The back button's `owlette_pre_admin_path` is written by
+                  LazyAuthProvider on every non-admin route, so it is already
+                  correct for both roles without anything set here. */}
+              {(isSuperadmin || role === 'admin') && (
                 <DropdownMenuItem
-                  onClick={() => router.push('/admin/installers')}
+                  onClick={() => router.push(isSuperadmin ? '/admin/installers' : '/admin/members')}
                   className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
                 >
                   <Shield className="mr-2 h-4 w-4" />

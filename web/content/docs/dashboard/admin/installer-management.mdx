@@ -1,11 +1,17 @@
 ---
 title: "installer management"
-description: "Upload, manage, and distribute agent installer versions."
+description: "Upload, manage, and distribute agent installer versions. This is an internal owlette page; the installer it publishes is what everyone else downloads."
 ---
 
 **Location**: admin panel -> installers (`/admin/installers`)
 
-The dashboard uses the same canonical `/api/installer/*` public management API as the CLI and SDKs. All actions require a superadmin session.
+<Callout type="info" title={"Internal page"}>
+
+Publishing an agent installer is a platform-wide action, so `/admin/installers` is operated by owlette and is not part of the site-scoped admin panel. Every account can still download the current release — see [public download button](#public-download-button).
+
+</Callout>
+
+The dashboard uses the same canonical `/api/installer/*` public management API as the CLI and SDKs. Every action on this page requires the `INSTALLER_MANAGE` capability, which no customer role holds.
 
 ---
 
@@ -90,7 +96,7 @@ Each candidate is soft-deleted via the public API.
 
 ## public download button
 
-All users see a dashboard download button that points to the current latest installer. The unauthenticated permalink remains `GET /download`; admin management metadata comes from `GET /api/installer/latest`.
+All users see a dashboard download button that points to the current latest installer. The unauthenticated permalink remains `GET /download`; management metadata comes from `GET /api/installer/latest`.
 
 ---
 

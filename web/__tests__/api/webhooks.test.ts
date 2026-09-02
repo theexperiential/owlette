@@ -6,6 +6,7 @@ import {
   mockDbFactory,
   docSnapshot,
   querySnapshot,
+  seedSiteOwner,
 } from './helpers/firestore-mock';
 
 const mockEmitMutation = jest.fn();
@@ -55,24 +56,60 @@ import { POST as rotatePOST } from '@/app/api/webhooks/[webhookId]/rotate-secret
 import { GET as deliveriesGET } from '@/app/api/webhooks/[webhookId]/deliveries/route';
 import { GET as deliveryDetailGET } from '@/app/api/webhooks/[webhookId]/deliveries/[deliveryId]/route';
 import { POST as retryPOST } from '@/app/api/webhooks/[webhookId]/deliveries/[deliveryId]/retry/route';
+// Real class — the module mock above spreads `jest.requireActual`, so this is
+// the same constructor `_shared.ts` branches on with `instanceof`.
+import { ApiAuthError } from '@/lib/apiAuth.server';
 
 const SITE = 'site-alpha';
 const WEBHOOK = 'wh_test_0000000001';
 const DELIVERY = 'abcdef123__wh_test_0000000001';
 
+/**
+ * Default caller: `user-1`, who OWNS the site. The mutating routes gate on
+ * WEBHOOK_MANAGE, and the owner short-circuits that gate — so these fixtures
+ * keep every behavioural test below reading one `mocks.get` per route call, with
+ * no `users/{uid}` read interleaved. Capability enforcement itself is covered by
+ * the non-owner fixtures in "WEBHOOK_MANAGE enforcement".
+ */
 function authed() {
   mockResolveAuth.mockResolvedValue({ userId: 'user-1', keyContext: null });
   mockAssertSite.mockResolvedValue({ siteId: SITE, siteData: {} });
+  seedSiteOwner(SITE, 'user-1');
+}
+
+/**
+ * A caller who is NOT the site owner, so the capability matrix — not the owner
+ * short-circuit — decides. `mocks.get` answers per path: the `users/{uid}` read
+ * the gate makes, and the subscription read a route makes afterwards.
+ */
+function authedAsNonOwner(
+  userId: string,
+  role: 'member' | 'admin' | 'superadmin',
+  sites: string[],
+) {
+  mockResolveAuth.mockResolvedValue({ userId, keyContext: null });
+  mockAssertSite.mockResolvedValue({ siteId: SITE, siteData: {} });
+  seedSiteOwner(SITE, 'someone-else');
+  mocks.get.mockImplementation((path?: unknown) =>
+    Promise.resolve(
+      typeof path === 'string' && path.startsWith('users/')
+        ? docSnapshot(userId, { role, sites })
+        : docSnapshot(WEBHOOK, {
+            url: 'https://ex.com',
+            events: ['version.published'],
+            signingSecret: 'whsec_OLD',
+          }),
+    ),
+  );
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
-  authed();
-  mocks.siteDocs.clear();
   mocks.set.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue(undefined);
   mocks.get.mockImplementation(() => Promise.resolve(docSnapshot('any', {})));
   mocks.collectionGet.mockResolvedValue(querySnapshot([]));
+  authed();
 });
 
 // POST /api/webhooks
@@ -812,6 +849,155 @@ describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
     });
     expect(res.status).toBe(404);
     expect(mocks.set).not.toHaveBeenCalled();
+  });
+});
+
+// WEBHOOK_MANAGE enforcement (site-scoped capability, mutations only)
+
+describe('WEBHOOK_MANAGE enforcement', () => {
+  it('403s a member of the site on create', async () => {
+    authedAsNonOwner('member-uid', 'member', [SITE]);
+
+    const req = createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`, {
+      method: 'POST',
+      body: { url: 'https://example.com/hook', events: ['version.published'] },
+    });
+    const res = await createPOST(req);
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { detail?: string };
+    expect(body.detail).toBe('capability not granted');
+    expect(mocks.set).not.toHaveBeenCalled();
+  });
+
+  it('403s a member of the site on rotate-secret', async () => {
+    authedAsNonOwner('member-uid', 'member', [SITE]);
+
+    const req = createMockRequest(
+      `http://localhost/api/webhooks/${WEBHOOK}/rotate-secret?siteId=${SITE}`,
+      { method: 'POST' },
+    );
+    const res = await rotatePOST(req, {
+      params: Promise.resolve({ webhookId: WEBHOOK }),
+    });
+
+    expect(res.status).toBe(403);
+    // The secret is never minted, let alone written.
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it('403s a member of the site on update and delete', async () => {
+    authedAsNonOwner('member-uid', 'member', [SITE]);
+
+    const patchReq = createMockRequest(
+      `http://localhost/api/webhooks/${WEBHOOK}?siteId=${SITE}`,
+      { method: 'PATCH', body: { paused: true } },
+    );
+    const patchRes = await detailPATCH(patchReq, {
+      params: Promise.resolve({ webhookId: WEBHOOK }),
+    });
+    expect(patchRes.status).toBe(403);
+
+    const deleteReq = createMockRequest(
+      `http://localhost/api/webhooks/${WEBHOOK}?siteId=${SITE}`,
+      { method: 'DELETE' },
+    );
+    const deleteRes = await detailDELETE(deleteReq, {
+      params: Promise.resolve({ webhookId: WEBHOOK }),
+    });
+    expect(deleteRes.status).toBe(403);
+
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it('lets an admin of the site create', async () => {
+    authedAsNonOwner('admin-uid', 'admin', [SITE]);
+
+    const req = createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`, {
+      method: 'POST',
+      body: { url: 'https://example.com/hook', events: ['version.published'] },
+    });
+    const res = await createPOST(req);
+
+    expect(res.status).toBe(201);
+    expect(mocks.set).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets an admin of the site rotate a secret', async () => {
+    authedAsNonOwner('admin-uid', 'admin', [SITE]);
+
+    const req = createMockRequest(
+      `http://localhost/api/webhooks/${WEBHOOK}/rotate-secret?siteId=${SITE}`,
+      { method: 'POST' },
+    );
+    const res = await rotatePOST(req, {
+      params: Promise.resolve({ webhookId: WEBHOOK }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { signingSecret: string };
+    expect(body.signingSecret).toMatch(/^whsec_[0-9a-f]{64}$/);
+  });
+
+  it('masks an admin of ANOTHER site as 404, before the capability check', async () => {
+    authedAsNonOwner('admin-uid', 'admin', ['site-other-org']);
+    // Site access is what fails first; it collapses 403 to "not found or no
+    // access" so site existence never leaks.
+    mockAssertSite.mockRejectedValue(
+      new ApiAuthError(403, 'Forbidden: You do not have access to this site'),
+    );
+
+    const req = createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`, {
+      method: 'POST',
+      body: { url: 'https://example.com/hook', events: ['version.published'] },
+    });
+    const res = await createPOST(req);
+
+    expect(res.status).toBe(404);
+    expect(mocks.set).not.toHaveBeenCalled();
+  });
+
+  it('still lets a member list subscriptions (read paths are unchanged)', async () => {
+    authedAsNonOwner('member-uid', 'member', [SITE]);
+    mocks.collectionGet.mockResolvedValueOnce(
+      querySnapshot([
+        {
+          id: 'wh_alive_0000000001',
+          data: {
+            url: 'https://example.com/a',
+            events: ['version.published'],
+            paused: false,
+          },
+        },
+      ]),
+    );
+
+    const req = createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`);
+    const res = await listGET(req);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { webhooks: Array<{ id: string }> };
+    expect(body.webhooks).toHaveLength(1);
+  });
+
+  it('still lets a member read a subscription and its deliveries', async () => {
+    authedAsNonOwner('member-uid', 'member', [SITE]);
+
+    const detailReq = createMockRequest(
+      `http://localhost/api/webhooks/${WEBHOOK}?siteId=${SITE}`,
+    );
+    const detailRes = await detailGET(detailReq, {
+      params: Promise.resolve({ webhookId: WEBHOOK }),
+    });
+    expect(detailRes.status).toBe(200);
+
+    const deliveriesReq = createMockRequest(
+      `http://localhost/api/webhooks/${WEBHOOK}/deliveries?siteId=${SITE}`,
+    );
+    const deliveriesRes = await deliveriesGET(deliveriesReq, {
+      params: Promise.resolve({ webhookId: WEBHOOK }),
+    });
+    expect(deliveriesRes.status).toBe(200);
   });
 });
 

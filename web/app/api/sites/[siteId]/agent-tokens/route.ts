@@ -10,9 +10,17 @@ type RouteParams = {
 
 export const dynamic = 'force-dynamic';
 
-/** GET /api/sites/{siteId}/agent-tokens — list a site's agent refresh tokens. */
+/**
+ * GET /api/sites/{siteId}/agent-tokens — list a site's agent refresh tokens.
+ *
+ * Site-scoped AGENT_TOKEN_REVOKE, matching the revoke route: site admins on
+ * their assigned sites, superadmins anywhere. The query filters on ctx.siteId,
+ * so an admin can never see another site's tokens. Not GLOBAL_SETTINGS_WRITE —
+ * that was inherited from the old /api/admin/tokens path and left site admins
+ * able to revoke a token they could not list.
+ */
 export const GET = authorizedSiteHandler<RouteParams>({
-  capability: 'GLOBAL_SETTINGS_WRITE',
+  capability: 'AGENT_TOKEN_REVOKE',
   siteIdParam: 'path',
   apiKeyPermission: 'read',
 })(async (_request: NextRequest, ctx) => {

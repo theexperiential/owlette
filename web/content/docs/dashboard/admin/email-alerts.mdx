@@ -1,6 +1,6 @@
 ---
 title: "email alerts"
-description: "Owlette sends email notifications for machine health, process, threshold, hoot, and display-event alerts. Superadmins manage alert rules in Admin Panel -> alerts (/admin/alerts) and test email delivery in Admin Panel -> email (/admin/email). Individual recipients manage their own delivery preferences in account settings -> alerts."
+description: "Owlette sends email notifications for machine health, process, threshold, hoot, and display-event alerts. Site admins manage a site's alert rules in Admin Panel -> alerts (/admin/alerts). Individual recipients manage their own delivery preferences in account settings -> alerts."
 ---
 
 ---
@@ -27,7 +27,7 @@ The agent alert route also accepts `exe_missing` events. These are not email-rou
 
 ## threshold alert rules
 
-The **alerts** admin page (`/admin/alerts`) manages site-scoped threshold rules stored at `sites/{siteId}/settings/alerts`. A rule includes:
+The **alerts** admin page (`/admin/alerts`) manages site-scoped threshold rules stored at `sites/{siteId}/settings/alerts`. Site admins can open it; the site selector offers only the sites you belong to, and saving a rule set requires the site-scoped `ALERT_RULES_MANAGE` capability. A rule includes:
 
 | field | current options |
 |-------|-----------------|
@@ -91,7 +91,13 @@ Threshold alerts are not drained by a cron route. The metrics Cloud Function eva
 
 ## testing email delivery
 
-Use **Admin Panel -> email** (`/admin/email`) to verify configuration and send template previews. The page reads current configuration from `GET /api/platform/email/config`, then sends the selected preview through `POST /api/test-email`.
+<Callout type="info" title={"Internal page"}>
+
+**Admin Panel -> email** (`/admin/email`) configures the platform's mail sender, so it is operated by owlette and is not part of the site-scoped admin panel. If alert email is not arriving for your site, work through [troubleshooting](#troubleshooting) below and contact [support@owlette.app](mailto:support@owlette.app).
+
+</Callout>
+
+The email page verifies configuration and sends template previews. It reads current configuration from `GET /api/platform/email/config`, then sends the selected preview through `POST /api/test-email`.
 
 The current test templates are:
 
@@ -125,12 +131,14 @@ The UI sends previews to the configured admin email. The API also accepts option
 
 ### no emails received
 
-1. Check **Admin Panel -> email** for `RESEND_API_KEY`, sender, environment, and admin email status.
-2. Send the `test` template from `/admin/email`.
-3. Confirm the relevant account setting is still enabled for the recipient.
-4. Check whether the machine is muted for that recipient.
-5. Verify `CRON_SECRET` or `CORTEX_INTERNAL_SECRET` for the route that emits the alert.
-6. Check Railway or function logs for Resend errors.
+Start with the checks a site admin can make:
+
+1. Confirm the relevant preference is still enabled for the recipient in **account settings -> alerts**.
+2. Check whether the machine is muted for that recipient.
+3. Confirm the recipient still belongs to the site — the recipient list is built from site membership plus the site owner.
+4. For a threshold alert, confirm a matching rule exists on `/admin/alerts` and that its cooldown has elapsed.
+
+If those are clean, the remaining checks are platform-side: `RESEND_API_KEY`, sender, and environment on the email page; a `test` template send; `CRON_SECRET` or `CORTEX_INTERNAL_SECRET` for the route that emits the alert; and Resend errors in the Railway or function logs.
 
 ### expected process or display alerts are delayed
 

@@ -65,7 +65,7 @@ Quick reference of everything that exists. Check here before creating new files 
 | `/api/admin/commands/send` | POST | Send command to machine (with optional polling) | Admin or API key | No |
 | `/api/admin/logs` | GET | Read activity logs with filters | Admin or API key | No |
 | `/api/admin/events/simulate` | POST | Simulate events (process_crash, machine_offline, connection_failure) + fire webhooks | Admin or API key | No |
-| `/api/webhooks/test` | POST | Test webhook delivery for a specific webhook | Admin | No |
+| `/api/webhooks/test` | POST | Test webhook delivery for a specific webhook | Site membership + `WEBHOOK_MANAGE` (site admin or superadmin); API keys also need `site=<id>:write` | No |
 
 ---
 

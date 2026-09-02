@@ -1,73 +1,85 @@
 ---
 title: "admin panel"
-description: "The Admin Panel provides management tools for users, agent installers, system presets, schedule presets, tokens, alerts, webhooks, and email settings. Only users with the superadmin role can access these platform-wide features. Site-scoped admin capabilities (machine commands and configuration, deployments, roosts, webhooks, logs, and site members on assigned sites) live on the site dashboard and are available to both admin and superadmin roles."
+description: "The Admin Panel is where site admins manage members, agent tokens, schedule presets, alert rules, and webhooks for the sites they belong to. Installer management, the template library, user accounts, and email configuration are internal owlette pages and are not shown to customer accounts."
 ---
+
+---
+
+## two levels of access
+
+The Admin Panel holds two kinds of page.
+
+**Site-scoped pages** are open to site admins — accounts with the global `admin` role — and always act on the sites that account belongs to:
+
+| page | url | what it does |
+|------|-----|--------------|
+| members | `/admin/members` | add and remove the people who can reach one site |
+| agent tokens | `/admin/tokens` | list and revoke agent refresh tokens for a site |
+| schedules | `/admin/schedules` | manage schedule presets |
+| alerts | `/admin/alerts` | manage threshold alert rules for a site |
+| webhooks | `/admin/webhooks` | manage a site's outbound webhook subscriptions |
+
+**Internal pages** — installers (`/admin/installers`), template library (`/admin/presets`), users (`/admin/users`), and email (`/admin/email`) — cover platform-wide operations run by owlette. They are hidden from the sidebar for customer accounts, and their routes bounce anyone else back to the dashboard.
 
 ---
 
 ## roles at a glance
 
-Owlette uses a three-tier role model:
+| role | site access | admin panel |
+|------|-------------|-------------|
+| **member** | read-only on the sites they belong to | none |
+| **admin** (site admin) | write access on the sites they belong to — machine commands and configuration, deployments, roosts, talons, webhooks, logs, and site members | the five site-scoped pages above, always limited to those sites |
 
-| role | platform access | site access |
-|------|-----------------|-------------|
-| **member** | none | read-only on assigned sites |
-| **admin** | none | write access on assigned sites (machine commands/configuration, deployments, roosts, webhooks, logs, site members) |
-| **superadmin** | full Admin Panel | implicit access to every site, regardless of assignment |
-
-Only superadmins can access the Admin Panel routes. Admins are site-scoped — they get elevated controls on sites listed in their `sites` array, but cannot manage users, upload installers, or access sites they aren't assigned to.
+Site data never widens with the panel: a site admin who belongs to two sites sees exactly those two in every site selector.
 
 ---
 
-## becoming a superadmin
+## getting site admin access
 
-The first superadmin must be created manually:
+`admin` is an account-level role, not a per-site setting, so it is granted once and applies to every site that account belongs to. It is set by owlette from the internal user-management page — email [support@owlette.app](mailto:support@owlette.app) to have an account upgraded.
 
-1. Register a user account in the dashboard
-2. Go to Firebase Console → Firestore → `users` collection
-3. Find your user document
-4. Change `role` from `"member"` to `"superadmin"`
-5. Log out and log back in
-
-After that, superadmins can promote other users to `admin` or `superadmin` from the Admin Panel's user-management page.
+Because the role is account-level, adding someone to a site with the **admin** role does not by itself grant admin rights: an account that is still a member joins as a member. See [member management](/docs/dashboard/admin/member-management).
 
 ---
 
 ## access
 
-- **Profile menu** → "Admin Panel" (visible only to superadmins)
-- **Direct URLs**: `/admin/users`, `/admin/installers`, `/admin/presets`, `/admin/schedules`, `/admin/tokens`, `/admin/alerts`, `/admin/webhooks`, `/admin/email`
+- **Profile menu** → "admin panel" (visible to site admins; members do not see the entry). For a site admin it opens on **members**.
+- **Direct URLs**: `/admin/members`, `/admin/tokens`, `/admin/schedules`, `/admin/alerts`, `/admin/webhooks`
 
-Members and site-admins are redirected to the dashboard with an error message.
+Members are redirected to the dashboard with an error message, as is a site admin who opens an internal page directly.
 
 ---
 
 ## capability matrix
 
-Read access to assigned sites is baseline role behavior, not a `Capability` enum value. The capability rows below mirror `RoleCapabilityMatrix` in `web/lib/capabilities.ts`; site-scoped grants apply only to the admin's assigned sites, while superadmins have all-site scope.
+Read access to the sites an account belongs to is baseline role behavior, not a `Capability` enum value. The capability rows below mirror `RoleCapabilityMatrix` in `web/lib/capabilities.ts`; site-scoped grants apply only to the sites that account belongs to.
 
-| capability | member | admin | superadmin | scope |
-|-----------|:------:|:-----:|:----------:|-------|
-| Assigned-site read access | yes | yes | yes, all sites | site assignment / global |
-| `USER_SELF_PREFS` | yes | yes | yes | self |
-| `USER_SELF_DELETE` | yes | yes | yes | self |
-| `MACHINE_EXEC_COMMAND` | no | yes | yes | assigned sites / all sites |
-| `MACHINE_VIEW` | yes | yes | yes | assigned sites / all sites |
-| `MACHINE_CONFIG_WRITE` | no | yes | yes | assigned sites / all sites |
-| `MACHINE_REMOVE` | no | yes | yes | assigned sites / all sites |
-| `DEPLOYMENT_MANAGE` | no | yes | yes | assigned sites / all sites |
-| `DISTRIBUTION_MANAGE` (roost) | no | yes | yes | assigned sites / all sites |
-| `UNINSTALL_TRIGGER` | no | yes | yes | assigned sites / all sites |
-| `PRESET_MANAGE` (site presets) | no | yes | yes | assigned sites / all sites |
-| `SITE_MEMBER_MANAGE` | no | yes | yes | assigned sites / all sites |
-| `WEBHOOK_MANAGE` | no | yes | yes | assigned sites / all sites |
-| `SITE_LOGS_MANAGE` | no | yes | yes | assigned sites / all sites |
-| `TALON_MANAGE` | no | yes | yes | assigned sites / all sites |
-| `AGENT_TOKEN_REVOKE` | no | yes | yes | assigned sites / all sites |
-| `USER_ROLE_MANAGE` | no | no | yes | global |
-| `USER_DELETE` | no | no | yes | global |
-| `SYSTEM_PRESET_MANAGE` (deployment template presets) | no | no | yes | global |
-| `INSTALLER_MANAGE` | no | no | yes | global |
-| `GLOBAL_SETTINGS_WRITE` | no | no | yes | global |
+| capability | member | site admin | scope |
+|-----------|:------:|:----------:|-------|
+| Read access to sites you belong to | yes | yes | site membership |
+| `USER_SELF_PREFS` | yes | yes | self |
+| `USER_SELF_DELETE` | yes | yes | self |
+| `MACHINE_VIEW` | yes | yes | sites you belong to |
+| `MACHINE_EXEC_COMMAND` | no | yes | sites you belong to |
+| `MACHINE_CONFIG_WRITE` | no | yes | sites you belong to |
+| `MACHINE_REMOVE` | no | yes | sites you belong to |
+| `DEPLOYMENT_MANAGE` | no | yes | sites you belong to |
+| `DISTRIBUTION_MANAGE` (roost) | no | yes | sites you belong to |
+| `UNINSTALL_TRIGGER` | no | yes | sites you belong to |
+| `PRESET_MANAGE` (site presets) | no | yes | sites you belong to |
+| `SITE_MEMBER_MANAGE` | no | yes | sites you belong to |
+| `WEBHOOK_MANAGE` | no | yes | sites you belong to |
+| `SITE_LOGS_MANAGE` | no | yes | sites you belong to |
+| `TALON_MANAGE` | no | yes | sites you belong to |
+| `AGENT_TOKEN_REVOKE` | no | yes | sites you belong to |
+| `ALERT_RULES_MANAGE` | no | yes | sites you belong to |
+| `USER_ROLE_MANAGE` | no | no | internal |
+| `USER_DELETE` | no | no | internal |
+| `SYSTEM_PRESET_MANAGE` (deployment template presets) | no | no | internal |
+| `INSTALLER_MANAGE` | no | no | internal |
+| `GLOBAL_SETTINGS_WRITE` | no | no | internal |
+
+The last five capabilities back the internal pages; no customer role holds them.
 
 hoot chat access follows site read access. hoot actions that execute commands or write machine configuration require `MACHINE_EXEC_COMMAND` or `MACHINE_CONFIG_WRITE`. LLM keys are per-user and are managed by each person in their own account settings — there is no admin-managed shared key.

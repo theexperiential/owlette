@@ -28,6 +28,7 @@ import {
   auditActorIdentifier,
   applyAuthDeprecations,
   requireSiteAuthAndScope,
+  requireWebhookManageCapability,
   validateSiteIdBody,
 } from '../../../_shared';
 
@@ -61,6 +62,11 @@ export async function POST(
 
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
     if (!auth.ok) return auth.response;
+
+    // Site-admin action: rotation both mints a secret the caller gets to read and
+    // breaks every receiver still on the old one after the grace window.
+    const capabilityError = await requireWebhookManageCapability(auth.auth, site.siteId);
+    if (capabilityError) return capabilityError;
 
     const rawBody = await request.text().catch(() => '');
     const idem = await checkIdempotency(

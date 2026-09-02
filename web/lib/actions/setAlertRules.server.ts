@@ -3,11 +3,9 @@
  * `sites/{siteId}/settings/alerts`. Whole-document semantics (the client
  * fetches, mutates and re-uploads the array); no field-level rule edits.
  *
- * KNOWN capability mis-classification (route-audit.md §3.11): this writes a
- * SITE-scoped doc but is gated by `authorizedPlatformHandler` +
- * `GLOBAL_SETTINGS_WRITE` (superadmin) and takes `siteId` in the BODY, not the
- * URL — the only place that does. Follow-up: a per-site `ALERT_RULES_MANAGE`
- * capability, or split into `/api/sites/{siteId}/alerts`.
+ * Reached via `PUT /api/sites/{siteId}/alerts` under `authorizedSiteHandler` +
+ * the site-scoped `ALERT_RULES_MANAGE` — resolving the capability
+ * mis-classification recorded in route-audit.md §3.11.
  */
 
 import type { DocumentReference } from 'firebase-admin/firestore';

@@ -245,6 +245,23 @@ function makeBatch() {
   };
 }
 
+/**
+ * Admin Auth email→uid directory. `seedAuthEmail` registers an address; anything
+ * else rejects with the real `auth/user-not-found` code the route branches on.
+ */
+const authEmailToUid: Record<string, string> = {};
+const mockGetUserByEmail = jest.fn(async (email: string) => {
+  const uid = authEmailToUid[email];
+  if (!uid) {
+    const err = new Error(`no user record for ${email}`) as Error & {
+      code?: string;
+    };
+    err.code = 'auth/user-not-found';
+    throw err;
+  }
+  return { uid, email };
+});
+
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
     collection: (name: string) => makeCollectionRef([name]),
@@ -253,6 +270,7 @@ jest.mock('@/lib/firebase-admin', () => ({
   }),
   getAdminAuth: () => ({
     verifyIdToken: jest.fn().mockRejectedValue(new Error('n/a')),
+    getUserByEmail: (email: string) => mockGetUserByEmail(email),
   }),
   getAdminStorage: () => ({ bucket: () => ({}) }),
 }));
@@ -322,6 +340,11 @@ function seedUser(uid: string, data: Record<string, unknown>): void {
   else collectionDocs['users'].push({ id: uid, data: merged });
 }
 
+/** Register an address in the Admin Auth directory so it resolves to `uid`. */
+function seedAuthEmail(email: string, uid: string): void {
+  authEmailToUid[email] = uid;
+}
+
 function seedSite(siteId: string, data: Record<string, unknown> = {}): void {
   const path = `sites/${siteId}`;
   const merged = { owner: 'admin-uid', ...data };
@@ -336,6 +359,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   for (const k of Object.keys(docStore)) delete docStore[k];
   for (const k of Object.keys(collectionDocs)) delete collectionDocs[k];
+  for (const k of Object.keys(authEmailToUid)) delete authEmailToUid[k];
 });
 
 // GET /api/sites/{siteId}/members
@@ -362,6 +386,43 @@ describe('GET /api/sites/{siteId}/members', () => {
     expect(byUid['owner-bob']?.role).toBe('owner');
     expect(byUid['alice']?.role).toBe('admin');
     expect(byUid['member-charlie']?.role).toBe('member');
+  });
+
+  it('never exposes a member\'s other site memberships', async () => {
+    authedAsSuperadminWithKey();
+    seedSite(SITE, { owner: 'owner-bob' });
+    // owner-bob is NOT in the membership query (empty sites[]) so he comes back
+    // through the owner-append branch — both code paths must be scrubbed.
+    seedUser('owner-bob', { role: 'admin', sites: [] });
+    seedUser('alice', { role: 'admin', sites: [SITE, 'site-other-org'] });
+
+    const req = createMockRequest(`http://localhost/api/sites/${SITE}/members`);
+    const res = await membersGET(req, {
+      params: Promise.resolve({ siteId: SITE }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    const byUid: Record<string, Record<string, unknown>> = {};
+    for (const m of body.members) {
+      byUid[m.uid as string] = m;
+    }
+    // Queried member.
+    expect(byUid['alice']).toBeDefined();
+    expect(byUid['alice']).not.toHaveProperty('sites');
+    // Appended owner.
+    expect(byUid['owner-bob']).toBeDefined();
+    expect(byUid['owner-bob']).not.toHaveProperty('sites');
+    // Nothing anywhere in the payload names the other org's site.
+    expect(JSON.stringify(body)).not.toContain('site-other-org');
+    // The fields callers do rely on survive.
+    expect(byUid['alice']).toEqual({
+      uid: 'alice',
+      email: 'alice@example.com',
+      role: 'admin',
+      globalRole: 'admin',
+      displayName: null,
+    });
   });
 
   it('returns 404 when site does not exist', async () => {
@@ -506,6 +567,160 @@ describe('POST /api/sites/{siteId}/members', () => {
     });
 
     expect(res.status).toBe(400);
+  });
+
+  // add-by-email — the dashboard affordance; resolves to the same uid path
+
+  describe('by email', () => {
+    it('resolves the address through Admin Auth and adds the member', async () => {
+      authedAsSuperadminWithKey();
+      seedSite(SITE);
+      seedUser('alice', { role: 'admin', sites: [] });
+      seedAuthEmail('alice@example.com', 'alice');
+
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/members`,
+        { method: 'POST', body: { email: 'alice@example.com', role: 'admin' } },
+      );
+      const res = await membersPOST(req, {
+        params: Promise.resolve({ siteId: SITE }),
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.uid).toBe('alice');
+      expect(body.requestedRole).toBe('admin');
+      expect(body.roleHonored).toBe(true);
+      expect(body.globalRole).toBe('admin');
+      expect(docStore['users/alice']?.data?.sites).toContain(SITE);
+      expect(mockEmitMutation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'site_member_mutated',
+          siteId: SITE,
+          targetId: 'alice',
+          attributes: expect.objectContaining({ verb: 'member_added' }),
+        }),
+      );
+    });
+
+    it('trims and lowercases before the directory lookup', async () => {
+      authedAsSuperadminWithKey();
+      seedSite(SITE);
+      seedUser('alice', { role: 'member', sites: [] });
+      seedAuthEmail('alice@example.com', 'alice');
+
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/members`,
+        {
+          method: 'POST',
+          body: { email: '  Alice@Example.COM \n', role: 'member' },
+        },
+      );
+      const res = await membersPOST(req, {
+        params: Promise.resolve({ siteId: SITE }),
+      });
+      const body = await res.json();
+
+      expect(mockGetUserByEmail).toHaveBeenCalledWith('alice@example.com');
+      expect(res.status).toBe(200);
+      expect(body.uid).toBe('alice');
+      expect(docStore['users/alice']?.data?.sites).toContain(SITE);
+    });
+
+    it('returns 404 for an address with no auth user', async () => {
+      authedAsSuperadminWithKey();
+      seedSite(SITE);
+
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/members`,
+        { method: 'POST', body: { email: 'ghost@example.com', role: 'admin' } },
+      );
+      const res = await membersPOST(req, {
+        params: Promise.resolve({ siteId: SITE }),
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(404);
+      expect(body.code).toBe('not_found');
+    });
+
+    it('returns 400 when the resolved user is soft-deleted', async () => {
+      authedAsSuperadminWithKey();
+      seedSite(SITE);
+      seedUser('alice', { role: 'admin', sites: [], deletedAt: 1700000000000 });
+      seedAuthEmail('alice@example.com', 'alice');
+
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/members`,
+        { method: 'POST', body: { email: 'alice@example.com', role: 'admin' } },
+      );
+      const res = await membersPOST(req, {
+        params: Promise.resolve({ siteId: SITE }),
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(body.errors).toHaveProperty(['body.email']);
+      expect(docStore['users/alice']?.data?.sites).toEqual([]);
+    });
+
+    it('rejects uid and email together with 400 (no directory lookup)', async () => {
+      authedAsSuperadminWithKey();
+      seedSite(SITE);
+      seedUser('alice', { role: 'admin', sites: [] });
+      seedAuthEmail('alice@example.com', 'alice');
+
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/members`,
+        {
+          method: 'POST',
+          body: { uid: 'alice', email: 'alice@example.com', role: 'admin' },
+        },
+      );
+      const res = await membersPOST(req, {
+        params: Promise.resolve({ siteId: SITE }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(mockGetUserByEmail).not.toHaveBeenCalled();
+      expect(docStore['users/alice']?.data?.sites).toEqual([]);
+    });
+
+    it('rejects neither uid nor email with 400', async () => {
+      authedAsSuperadminWithKey();
+      seedSite(SITE);
+
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/members`,
+        { method: 'POST', body: { role: 'admin' } },
+      );
+      const res = await membersPOST(req, {
+        params: Promise.resolve({ siteId: SITE }),
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(body.errors).toHaveProperty(['body.uid']);
+      expect(body.errors).toHaveProperty(['body.email']);
+    });
+
+    it('rejects an implausible address before hitting Admin Auth', async () => {
+      authedAsSuperadminWithKey();
+      seedSite(SITE);
+
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/members`,
+        { method: 'POST', body: { email: '   ', role: 'admin' } },
+      );
+      const res = await membersPOST(req, {
+        params: Promise.resolve({ siteId: SITE }),
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(body.errors).toHaveProperty(['body.email']);
+      expect(mockGetUserByEmail).not.toHaveBeenCalled();
+    });
   });
 });
 

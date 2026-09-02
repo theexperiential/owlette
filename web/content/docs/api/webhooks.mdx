@@ -544,7 +544,7 @@ every operation on a webhook subscription - create, list, detail, update, delete
 - `POST /api/webhooks/{id}/deliveries/{deliveryId}/retry?siteId=<id>` - manually redeliver a past event.
 - `POST /api/webhooks/probe?siteId=<id>` - fire a signed synthetic event at a url without creating a subscription.
 
-scopes: list/detail/deliveries require `site=<id>:read`; create/update/delete/rotate/probe/retry require `site=<id>:write`.
+scopes: list/detail/deliveries require `site=<id>:read`; create/update/delete/rotate/probe/retry require `site=<id>:write`. create, update, delete, and rotate-secret additionally check webhook-manage rights on the site, so the key's owner must be a site admin or that site's owner - a `site=<id>:write` key held by a plain member is rejected.
 
 ---
 

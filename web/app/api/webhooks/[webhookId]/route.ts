@@ -40,6 +40,7 @@ import {
   applyAuthDeprecations,
   readAndParseJsonBody,
   requireSiteAuthAndScope,
+  requireWebhookManageCapability,
   validateSiteIdBody,
 } from '../../_shared';
 import { serializeSubscription } from '../route';
@@ -128,6 +129,11 @@ export async function PATCH(
 
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
     if (!auth.ok) return auth.response;
+
+    // Site-admin action: membership + scope alone must not let a member edit a
+    // subscription's url or events.
+    const capabilityError = await requireWebhookManageCapability(auth.auth, site.siteId);
+    if (capabilityError) return capabilityError;
 
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
@@ -281,6 +287,11 @@ export async function DELETE(
 
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
     if (!auth.ok) return auth.response;
+
+    // Site-admin action: a member on the site must not be able to tombstone a
+    // subscription other operators depend on.
+    const capabilityError = await requireWebhookManageCapability(auth.auth, site.siteId);
+    if (capabilityError) return capabilityError;
 
     const db = getAdminDb();
     const ref = db

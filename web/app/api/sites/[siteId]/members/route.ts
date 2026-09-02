@@ -4,11 +4,13 @@
  *      `users where sites array-contains {siteId}` and additionally surface the
  *      site `owner`, who is always an effective member.
  *
- * POST /api/sites/{siteId}/members  `{uid, role}` — adds siteId to
+ * POST /api/sites/{siteId}/members  `{uid | email, role}` — adds siteId to
  *      `users/{uid}.sites[]` via arrayUnion after validating the user exists.
- *      Per-site role is derived from global role + ownership at read time, so
- *      add-with-role is just sugar for that membership write. Idempotency-Key
- *      required.
+ *      `email` is the dashboard's affordance (an admin knows a colleague's
+ *      address, not their uid) and resolves through Admin Auth to the same uid
+ *      path. Per-site role is derived from global role + ownership at read
+ *      time, so add-with-role is just sugar for that membership write.
+ *      Idempotency-Key required.
  *
  * Auth (both verbs): `requireSiteAuthAndScope(req, siteId, 'admin')` — an api key
  * with `site=<siteId>:admin`, or a session/id-token whose caller is a site admin
@@ -24,7 +26,7 @@ import {
   problemNotFound,
   problemValidation,
 } from '@/lib/apiErrors';
-import { getAdminDb } from '@/lib/firebase-admin';
+import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { withIdempotency } from '@/lib/idempotency';
 import { emitMutation } from '@/lib/auditLogClient';
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
@@ -36,18 +38,25 @@ import {
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 const VALID_ADD_ROLES = new Set(['member', 'admin']);
+/** RFC 5321 max path length — a plausibility bound, not an address validator. */
+const MAX_EMAIL_LENGTH = 254;
 
 type RouteParams = { siteId: string };
 
 interface AddMemberBody {
   uid?: unknown;
+  email?: unknown;
   role?: unknown;
 }
+
+/** Which identifier the caller supplied; resolved to a uid before any write. */
+type AddMemberTarget =
+  | { kind: 'uid'; uid: string }
+  | { kind: 'email'; email: string };
 
 interface UserDoc {
   email?: string;
   role?: string;
-  sites?: string[];
   displayName?: string;
   deletedAt?: number;
 }
@@ -95,12 +104,13 @@ export const GET = authorizedSiteHandler<RouteParams>({
       typeof siteData.owner === 'string' ? siteData.owner : null;
 
     const seen = new Set<string>();
+    // No `sites` field: a member's full membership list would hand a site admin
+    // the site ids of every other org that member belongs to.
     const members: Array<{
       uid: string;
       email: string | null;
       role: 'owner' | 'superadmin' | 'admin' | 'member';
       globalRole: string;
-      sites: string[];
       displayName: string | null;
     }> = [];
 
@@ -109,15 +119,11 @@ export const GET = authorizedSiteHandler<RouteParams>({
       if (typeof data.deletedAt === 'number') continue;
       const globalRole =
         typeof data.role === 'string' ? data.role : 'member';
-      const sites = Array.isArray(data.sites)
-        ? data.sites.filter((s): s is string => typeof s === 'string')
-        : [];
       members.push({
         uid: doc.id,
         email: typeof data.email === 'string' ? data.email : null,
         role: derivePerSiteRole({ uid: doc.id, role: globalRole }, ownerUid),
         globalRole,
-        sites,
         displayName:
           typeof data.displayName === 'string' ? data.displayName : null,
       });
@@ -138,9 +144,6 @@ export const GET = authorizedSiteHandler<RouteParams>({
             email: typeof data.email === 'string' ? data.email : null,
             role: 'owner',
             globalRole,
-            sites: Array.isArray(data.sites)
-              ? data.sites.filter((s): s is string => typeof s === 'string')
-              : [],
             displayName:
               typeof data.displayName === 'string' ? data.displayName : null,
           });
@@ -179,12 +182,43 @@ export const POST = authorizedSiteHandler<RouteParams>({
       parsed.raw,
       async () => {
         const body = parsed.body as AddMemberBody;
-        const targetUid = body.uid;
-        if (typeof targetUid !== 'string' || !UID_REGEX.test(targetUid)) {
-          return problemValidation('uid is required and must be valid', {
-            'body.uid': ['must be 1-128 chars: letters, digits, underscore, hyphen'],
-          });
+        const hasUid = body.uid !== undefined && body.uid !== null;
+        const hasEmail = body.email !== undefined && body.email !== null;
+        if (hasUid === hasEmail) {
+          return problemValidation(
+            'exactly one of uid or email is required',
+            {
+              'body.uid': ['provide exactly one of uid or email'],
+              'body.email': ['provide exactly one of uid or email'],
+            },
+          );
         }
+
+        let target: AddMemberTarget;
+        if (hasUid) {
+          if (typeof body.uid !== 'string' || !UID_REGEX.test(body.uid)) {
+            return problemValidation('uid is required and must be valid', {
+              'body.uid': ['must be 1-128 chars: letters, digits, underscore, hyphen'],
+            });
+          }
+          target = { kind: 'uid', uid: body.uid };
+        } else {
+          const email =
+            typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+          if (
+            email.length === 0 ||
+            email.length > MAX_EMAIL_LENGTH ||
+            !email.includes('@')
+          ) {
+            return problemValidation('email is required and must be valid', {
+              'body.email': [
+                `must be an email address of at most ${MAX_EMAIL_LENGTH} chars`,
+              ],
+            });
+          }
+          target = { kind: 'email', email };
+        }
+
         const requestedRole = body.role;
         if (
           typeof requestedRole !== 'string' ||
@@ -196,6 +230,26 @@ export const POST = authorizedSiteHandler<RouteParams>({
           );
         }
 
+        // An email is only an alias for a uid — resolve it through Admin Auth,
+        // then every downstream step is the uid path unchanged.
+        let targetUid: string;
+        if (target.kind === 'uid') {
+          targetUid = target.uid;
+        } else {
+          try {
+            const record = await getAdminAuth().getUserByEmail(target.email);
+            targetUid = record.uid;
+          } catch (authErr) {
+            if (
+              (authErr as { code?: string } | null)?.code ===
+              'auth/user-not-found'
+            ) {
+              return problemNotFound(`user ${target.email} not found`);
+            }
+            throw authErr;
+          }
+        }
+
         const db = getAdminDb();
         const userRef = db.collection('users').doc(targetUid);
         const userSnap = await userRef.get();
@@ -204,9 +258,10 @@ export const POST = authorizedSiteHandler<RouteParams>({
         }
         const userData = userSnap.data() ?? {};
         if (typeof userData.deletedAt === 'number') {
+          // Key the field error to whichever identifier the caller actually sent.
           return problemValidation(
             'cannot add a soft-deleted user as a member',
-            { 'body.uid': ['user is soft-deleted'] },
+            { [`body.${target.kind}`]: ['user is soft-deleted'] },
           );
         }
 

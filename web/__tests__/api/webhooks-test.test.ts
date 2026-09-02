@@ -1,40 +1,56 @@
 /** @jest-environment node */
 
+/**
+ * POST /api/webhooks/test — send a test payload to an existing subscription.
+ *
+ * Authorization is site membership + the site-scoped `WEBHOOK_MANAGE`
+ * capability (it was superadmin-only, which locked site admins out of testing
+ * their own subscriptions). `assertUserHasSiteAccess` runs for real against the
+ * doc store here, so the membership and capability layers are exercised
+ * together; only `resolveAuth` is mocked, to inject the caller.
+ */
+
 import { NextRequest } from 'next/server';
+
+import {
+  mocks,
+  mockDbFactory,
+  docSnapshot,
+  seedSiteOwner,
+} from './helpers/firestore-mock';
 
 jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   __esModule: true,
 }));
 
+jest.mock('@sentry/nextjs', () => ({
+  captureException: jest.fn(),
+  captureMessage: jest.fn(),
+}));
+
+jest.mock('@/lib/auditLogClient', () => ({
+  emitApiKeyUsed: jest.fn(),
+  emitMutation: jest.fn(),
+  scopeFingerprint: jest.fn(() => 'fp'),
+}));
+
+const mockResolveAuth = jest.fn();
 jest.mock('@/lib/apiAuth.server', () => {
-  class _ApiAuthError extends Error {
-    status: number;
-    constructor(status: number, message: string) {
-      super(message);
-      this.status = status;
-    }
-  }
+  const actual = jest.requireActual('@/lib/apiAuth.server');
   return {
-    requireAdmin: jest.fn().mockResolvedValue('test-admin'),
-    ApiAuthError: _ApiAuthError,
+    ...actual,
+    resolveAuth: (...a: unknown[]) => mockResolveAuth(...a),
   };
 });
 
-const { requireAdmin, ApiAuthError } = jest.requireMock('@/lib/apiAuth.server');
-
-const mockDocGet = jest.fn();
-const mockDocUpdate = jest.fn().mockResolvedValue(undefined);
-
 jest.mock('@/lib/firebase-admin', () => ({
-  getAdminDb: () => ({
-    collection: () => ({
-      doc: () => ({
-        get: mockDocGet,
-        ref: { update: mockDocUpdate },
-      }),
-    }),
-  }),
+  getAdminDb: () => mockDbFactory(),
+  getAdminAuth: () => ({ verifyIdToken: jest.fn().mockRejectedValue(new Error('n/a')) }),
+}));
+
+jest.mock('firebase-admin/firestore', () => ({
+  FieldValue: { serverTimestamp: () => ({ __op: 'serverTimestamp' }) },
 }));
 
 const mockTestWebhook = jest.fn();
@@ -43,6 +59,12 @@ jest.mock('@/lib/webhookSender.server', () => ({
 }));
 
 import { POST } from '@/app/api/webhooks/test/route';
+import { ApiAuthError } from '@/lib/apiAuth.server';
+
+const SITE = 's1';
+const WEBHOOK = 'wh-1';
+
+const mockDocUpdate = jest.fn().mockResolvedValue(undefined);
 
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest('http://localhost/api/webhooks/test', {
@@ -52,11 +74,42 @@ function makeRequest(body: Record<string, unknown>) {
   });
 }
 
-describe('POST /api/webhooks/test', () => {
-  beforeEach(() => jest.clearAllMocks());
+/**
+ * `mocks.get` is called with the document path for regular collections and with
+ * no path for the slash-form `sites/{siteId}/webhooks` collection the route
+ * uses — which is how the caller's `users/{uid}` read is told apart from the
+ * subscription read.
+ */
+function seedCaller(
+  userId: string,
+  role: 'member' | 'admin' | 'superadmin',
+  sites: string[],
+  options: { webhook?: Record<string, unknown> | null } = {},
+) {
+  const webhook =
+    options.webhook === undefined
+      ? { url: 'https://hooks.example.com', signingSecret: 'abc' }
+      : options.webhook;
+  mockResolveAuth.mockResolvedValue({ userId, keyContext: null });
+  seedSiteOwner(SITE, 'owner-someone-else');
+  mocks.get.mockImplementation((path?: unknown) =>
+    Promise.resolve(
+      typeof path === 'string' && path.startsWith('users/')
+        ? docSnapshot(userId, { role, sites })
+        : { ...docSnapshot(WEBHOOK, webhook), ref: { update: mockDocUpdate } },
+    ),
+  );
+}
 
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockDocUpdate.mockResolvedValue(undefined);
+  seedCaller('admin-uid', 'admin', [SITE]);
+});
+
+describe('POST /api/webhooks/test', () => {
   it('returns 400 when webhookId is missing', async () => {
-    const res = await POST(makeRequest({ siteId: 's1' }));
+    const res = await POST(makeRequest({ siteId: SITE }));
     const json = await res.json();
 
     expect(res.status).toBe(400);
@@ -64,7 +117,7 @@ describe('POST /api/webhooks/test', () => {
   });
 
   it('returns 400 when siteId is missing', async () => {
-    const res = await POST(makeRequest({ webhookId: 'wh-1' }));
+    const res = await POST(makeRequest({ webhookId: WEBHOOK }));
     const json = await res.json();
 
     expect(res.status).toBe(400);
@@ -72,9 +125,9 @@ describe('POST /api/webhooks/test', () => {
   });
 
   it('returns 404 when webhook does not exist', async () => {
-    mockDocGet.mockResolvedValue({ exists: false });
+    seedCaller('admin-uid', 'admin', [SITE], { webhook: null });
 
-    const res = await POST(makeRequest({ webhookId: 'wh-1', siteId: 's1' }));
+    const res = await POST(makeRequest({ webhookId: WEBHOOK, siteId: SITE }));
     const json = await res.json();
 
     expect(res.status).toBe(404);
@@ -82,14 +135,9 @@ describe('POST /api/webhooks/test', () => {
   });
 
   it('sends test and returns success for 2xx response', async () => {
-    mockDocGet.mockResolvedValue({
-      exists: true,
-      data: () => ({ url: 'https://hooks.example.com', signingSecret: 'abc' }),
-      ref: { update: mockDocUpdate },
-    });
     mockTestWebhook.mockResolvedValue({ status: 200 });
 
-    const res = await POST(makeRequest({ webhookId: 'wh-1', siteId: 's1' }));
+    const res = await POST(makeRequest({ webhookId: WEBHOOK, siteId: SITE }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -99,14 +147,9 @@ describe('POST /api/webhooks/test', () => {
   });
 
   it('returns success:false for non-2xx response', async () => {
-    mockDocGet.mockResolvedValue({
-      exists: true,
-      data: () => ({ url: 'https://hooks.example.com', signingSecret: 'abc' }),
-      ref: { update: mockDocUpdate },
-    });
     mockTestWebhook.mockResolvedValue({ status: 500 });
 
-    const res = await POST(makeRequest({ webhookId: 'wh-1', siteId: 's1' }));
+    const res = await POST(makeRequest({ webhookId: WEBHOOK, siteId: SITE }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -115,14 +158,9 @@ describe('POST /api/webhooks/test', () => {
   });
 
   it('returns error message on network failure', async () => {
-    mockDocGet.mockResolvedValue({
-      exists: true,
-      data: () => ({ url: 'https://hooks.example.com', signingSecret: 'abc' }),
-      ref: { update: mockDocUpdate },
-    });
     mockTestWebhook.mockResolvedValue({ status: 0, error: 'ECONNREFUSED' });
 
-    const res = await POST(makeRequest({ webhookId: 'wh-1', siteId: 's1' }));
+    const res = await POST(makeRequest({ webhookId: WEBHOOK, siteId: SITE }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -130,15 +168,44 @@ describe('POST /api/webhooks/test', () => {
     expect(json.error).toBe('ECONNREFUSED');
   });
 
-  it('returns 401 when not admin', async () => {
-    (requireAdmin as jest.Mock).mockRejectedValueOnce(
-      new ApiAuthError(401, 'Unauthorized')
-    );
+  it('returns 401 when unauthenticated', async () => {
+    mockResolveAuth.mockRejectedValue(new ApiAuthError(401, 'Unauthorized: No valid session'));
 
-    const res = await POST(makeRequest({ webhookId: 'wh-1', siteId: 's1' }));
-    const json = await res.json();
+    const res = await POST(makeRequest({ webhookId: WEBHOOK, siteId: SITE }));
 
     expect(res.status).toBe(401);
-    expect(json.error).toBe('Unauthorized');
+    expect(mockTestWebhook).not.toHaveBeenCalled();
+  });
+
+  it('403s a member of the site — WEBHOOK_MANAGE is site-admin only', async () => {
+    seedCaller('member-uid', 'member', [SITE]);
+
+    const res = await POST(makeRequest({ webhookId: WEBHOOK, siteId: SITE }));
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.detail).toBe('capability not granted');
+    expect(mockTestWebhook).not.toHaveBeenCalled();
+  });
+
+  it('lets a superadmin who is not a member of the site through', async () => {
+    seedCaller('root-uid', 'superadmin', []);
+    mockTestWebhook.mockResolvedValue({ status: 204 });
+
+    const res = await POST(makeRequest({ webhookId: WEBHOOK, siteId: SITE }));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+  });
+
+  it('404s an admin of another site before reaching the webhook', async () => {
+    seedCaller('admin-uid', 'admin', ['site-other-org']);
+
+    const res = await POST(makeRequest({ webhookId: WEBHOOK, siteId: SITE }));
+
+    // Access failure masks site existence; a 403 here would leak it.
+    expect(res.status).toBe(404);
+    expect(mockTestWebhook).not.toHaveBeenCalled();
   });
 });

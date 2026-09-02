@@ -4776,6 +4776,10 @@ paths:
       description: |
         Creates a webhook subscription. The `signingSecret` is returned
         **once** on creation.
+
+        Requires `site=<siteId>:write` scope and admin of this site.
+        Listing and reading subscriptions is open to any member of the
+        site; creating, updating, deleting and rotating are not.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -4835,7 +4839,8 @@ paths:
       summary: update webhook url / events / paused state
       description: |
         Partial update — any subset of `url`, `events`, `description`,
-        `paused` may be specified.
+        `paused` may be specified. Requires `site=<siteId>:write` scope
+        and admin of this site.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -4868,6 +4873,7 @@ paths:
       description: |
         Soft-deletes a subscription and pauses future delivery. Delivery
         history remains available for the 30-day retention window.
+        Requires `site=<siteId>:write` scope and admin of this site.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -4905,7 +4911,8 @@ paths:
       description: |
         Mints a new hmac signing secret. The previous secret is retained
         for a fixed 24-hour verifier grace window. The new secret is
-        returned once.
+        returned once. Requires `site=<siteId>:write` scope and admin of
+        this site.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -7111,6 +7118,10 @@ paths:
         role is derived: `owner` (always wins), then `superadmin`,
         `admin` (global admin assigned to the site), else `member`.
 
+        A member's other site memberships are deliberately not returned —
+        they would disclose the site ids of every other organization that
+        member belongs to.
+
         Requires `site=<siteId>:admin` scope or session/id-token from an
         admin of this site.
       security:
@@ -7138,7 +7149,7 @@ paths:
                         globalRole:
                           type: string
                           enum: [member, admin, superadmin]
-                        sites: { type: array, items: { type: string } }
+                        displayName: { type: string, nullable: true }
         '401': { description: Unauthorized }
         '403': { description: Forbidden (not site admin) }
         '404': { description: Site not found or no access }
@@ -7152,6 +7163,11 @@ paths:
         only succeeds in extending membership — the global role is
         unchanged (use `/api/users/{uid}/promote` for that). The
         response includes `roleHonored: false` in that case.
+
+        Identify the target by **exactly one** of `uid` or `email`.
+        `email` is trimmed and lowercased, then resolved to a uid through
+        Firebase Auth; supplying both, or neither, is a `400`, and an
+        address with no auth user is the same `404` as an unknown uid.
 
         Requires `site=<siteId>:admin` scope or session/id-token from an
         admin of this site.
@@ -7170,10 +7186,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [uid, role]
+              required: [role]
               properties:
                 uid: { type: string }
+                email: { type: string, format: email, maxLength: 254 }
                 role: { type: string, enum: [admin, member] }
+              oneOf:
+                - required: [uid]
+                - required: [email]
       responses:
         '200': { description: Member added }
         '400': { description: Validation failure }

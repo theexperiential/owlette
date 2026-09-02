@@ -7,7 +7,7 @@ description: "View agent refresh tokens for a site and revoke them when an agent
 
 <Callout type="info" title={"Permissions"}>
 
-The admin token page is superadmin-only. The backing site APIs require the `GLOBAL_SETTINGS_WRITE` capability, so site admins and members cannot use this page.
+Site admins can open this page. Both the list and the revoke APIs require the site-scoped `AGENT_TOKEN_REVOKE` capability, so the site selector offers only the sites you belong to, and a token you cannot list is a token you cannot revoke. Members do not see the page.
 
 </Callout>
 ---
@@ -101,7 +101,7 @@ This is a site-wide action. Every agent in the selected site must be re-register
 
 ### machine-scoped revoke
 
-The revoke API also accepts a `machineId` and can delete all token records for that machine in the selected site. The current admin page does not expose a machine-scoped bulk action; it only exposes per-token revoke and site-wide revoke all. The dashboard machine context menu exposes it instead — site admins can revoke a machine's current token, or every token for its hostname, on sites they are assigned to (`AGENT_TOKEN_REVOKE`). This admin page remains superadmin-only.
+The revoke API also accepts a `machineId` and can delete all token records for that machine in the selected site. The admin page does not expose a machine-scoped bulk action; it only exposes per-token revoke and site-wide revoke all. The dashboard machine context menu exposes it instead — revoke a machine's current token, or every token for its hostname, on a site you administer. Both surfaces are gated on the same `AGENT_TOKEN_REVOKE` capability.
 
 ---
 

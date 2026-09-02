@@ -49,6 +49,13 @@ interface DeliverySummary {
 interface WebhookCardProps {
   webhook: WebhookListItem;
   siteId: string;
+  /**
+   * Whether the viewer holds WEBHOOK_MANAGE on this site (site admin, superadmin,
+   * or site owner). Pause/resume, rotate-secret and delete all 403 without it, so
+   * the actions column is not rendered at all. Reads — the delivery log and its
+   * retry, which the server leaves at member level — stay available.
+   */
+  canManage: boolean;
   onChanged: () => void;
   onSecretRotated: (secret: string) => void;
 }
@@ -82,6 +89,7 @@ function stateIcon(state: DeliverySummary['state']) {
 export function WebhookCard({
   webhook,
   siteId,
+  canManage,
   onChanged,
   onSecretRotated,
 }: WebhookCardProps) {
@@ -258,69 +266,71 @@ export function WebhookCard({
           </div>
         </div>
 
-        <div className="flex items-center gap-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleTogglePaused}
-                disabled={busyAction !== null}
-                className="h-8 w-8 p-0 border-border cursor-pointer"
-              >
-                {busyAction === 'paused' ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : webhook.paused ? (
-                  <Play className="h-3.5 w-3.5" />
-                ) : (
-                  <Pause className="h-3.5 w-3.5" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{webhook.paused ? 'resume' : 'pause'}</TooltipContent>
-          </Tooltip>
+        {canManage && (
+          <div className="flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleTogglePaused}
+                  disabled={busyAction !== null}
+                  className="h-8 w-8 p-0 border-border cursor-pointer"
+                >
+                  {busyAction === 'paused' ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : webhook.paused ? (
+                    <Play className="h-3.5 w-3.5" />
+                  ) : (
+                    <Pause className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{webhook.paused ? 'resume' : 'pause'}</TooltipContent>
+            </Tooltip>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleRotateSecret}
-                disabled={busyAction !== null}
-                className="h-8 w-8 p-0 border-border cursor-pointer"
-              >
-                {busyAction === 'rotate' ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-3.5 w-3.5" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>rotate secret</TooltipContent>
-          </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleRotateSecret}
+                  disabled={busyAction !== null}
+                  className="h-8 w-8 p-0 border-border cursor-pointer"
+                >
+                  {busyAction === 'rotate' ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>rotate secret</TooltipContent>
+            </Tooltip>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleDelete}
-                disabled={busyAction !== null}
-                className="h-8 w-8 p-0 border-border text-red-400 hover:bg-red-950 cursor-pointer"
-              >
-                {busyAction === 'delete' ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="h-3.5 w-3.5" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>delete</TooltipContent>
-          </Tooltip>
-        </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleDelete}
+                  disabled={busyAction !== null}
+                  className="h-8 w-8 p-0 border-border text-red-400 hover:bg-red-950 cursor-pointer"
+                >
+                  {busyAction === 'delete' ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>delete</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
       </div>
 
       {expanded && (

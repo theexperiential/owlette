@@ -13,11 +13,11 @@ description: "System presets are the platform template library for software depl
 
 ## who manages them
 
-Superadmins manage system presets from the admin template library. The admin route is wrapped by the superadmin-only admin layout, and the platform API requires the `SYSTEM_PRESET_MANAGE` capability.
+The template library is curated by owlette. `/admin/presets` is an internal page — it is not part of the site-scoped admin panel, and the platform API requires the `SYSTEM_PRESET_MANAGE` capability, which no customer role holds.
 
 All authenticated users can read `system_presets` from Firestore. Create, update, and delete writes go through trusted server routes and service-account writes, not direct client writes.
 
-Site admins use these presets when creating deployments. The deployment dialog treats system presets as catalog entries; it does not let site admins overwrite the global library.
+Site admins use these presets when creating deployments. The deployment dialog treats system presets as catalog entries; it does not let site admins overwrite the shared library. Site-specific templates live alongside them as saved deployment templates — see [use in deployments](#use-in-deployments).
 
 ---
 
@@ -57,7 +57,7 @@ System preset documents may contain:
 | `is_owlette_agent` | Yes | Marks special Owlette Agent presets; normal admin-created templates set this to `false` |
 | `timeout_seconds` | No | Custom install timeout; the admin dialog defaults to `600` seconds |
 | `order` | Yes | Display order; lower values sort first |
-| `createdBy` | Yes | User ID of the superadmin who created the preset |
+| `createdBy` | Yes | User ID of the account that created the preset |
 | `createdAt` | Yes | Server timestamp for creation |
 | `updatedAt` | No | Server timestamp for the most recent update |
 

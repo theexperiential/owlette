@@ -15,6 +15,11 @@ export const Capability = {
   WEBHOOK_MANAGE: 'WEBHOOK_MANAGE',
   SITE_LOGS_MANAGE: 'SITE_LOGS_MANAGE',
   TALON_MANAGE: 'TALON_MANAGE',
+  // Per-site alert-rule authoring (`sites/{siteId}/settings/alerts`). Site-scoped
+  // rather than global: the rules only ever govern one site's machines, so gating
+  // them on GLOBAL_SETTINGS_WRITE would have forced superadmin for a purely
+  // site-local setting.
+  ALERT_RULES_MANAGE: 'ALERT_RULES_MANAGE',
   // Per-site agent refresh-token revocation. Site-scoped rather than global:
   // MACHINE_REMOVE (already a site-admin capability) deletes the same
   // agent_refresh_tokens rows via the same siteId+machineId query — see
@@ -82,6 +87,7 @@ const SITE_ADMIN_CAPABILITIES: readonly Capability[] = [
   Capability.SITE_MEMBER_MANAGE,
   Capability.TALON_MANAGE,
   Capability.AGENT_TOKEN_REVOKE,
+  Capability.ALERT_RULES_MANAGE,
 ];
 
 const SUPERADMIN_CAPABILITIES: readonly Capability[] = Object.values(Capability);
@@ -100,6 +106,7 @@ const SITE_SCOPED_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   Capability.SITE_LOGS_MANAGE,
   Capability.TALON_MANAGE,
   Capability.AGENT_TOKEN_REVOKE,
+  Capability.ALERT_RULES_MANAGE,
 ]);
 
 export const RoleCapabilityMatrix: Readonly<Record<Role, readonly Capability[]>> = {

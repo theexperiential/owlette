@@ -3,13 +3,15 @@
 import { useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import RequireSuperadmin from '@/components/RequireSuperadmin';
-import { Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook, Clock, Bell, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import RequireAdminAccess from '@/components/RequireAdminAccess';
+import { ArrowLeft, Menu, X, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { useAuth } from '@/contexts/AuthContext';
 import { useDevicePrefFlag, useDevicePrefNumber } from '@/hooks/useDevicePrefFlag';
 import { useScrollFade } from '@/hooks/useScrollFade';
+import { requiredRoleForPath, visibleNavItems } from './navItems';
 
 /** Resizable sidebar bounds (lg+ expanded state only; the icon rail is fixed). */
 const SIDEBAR_MIN_W = 200;
@@ -23,6 +25,7 @@ const SIDEBAR_COMPACT_BELOW_W = 232;
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { role } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Explicit user control, not the old viewport-driven auto-collapse, so width is
@@ -66,56 +69,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // narrow-but-expanded drops descriptions so names keep their room (lg+ only)
   const compactNav = !collapsed && sidebarWidth < SIDEBAR_COMPACT_BELOW_W;
 
-  const navItems = [
-    {
-      name: 'installers',
-      href: '/admin/installers',
-      icon: Package,
-      description: 'manage agent installer versions',
-    },
-    {
-      name: 'template library',
-      href: '/admin/presets',
-      icon: Settings,
-      description: 'manage software catalog',
-    },
-    {
-      name: 'users',
-      href: '/admin/users',
-      icon: Users,
-      description: 'manage user roles and permissions',
-    },
-    {
-      name: 'agent tokens',
-      href: '/admin/tokens',
-      icon: KeyRound,
-      description: 'view and revoke agent tokens',
-    },
-    {
-      name: 'schedules',
-      href: '/admin/schedules',
-      icon: Clock,
-      description: 'manage schedule presets',
-    },
-    {
-      name: 'alerts',
-      href: '/admin/alerts',
-      icon: Bell,
-      description: 'manage alert rules',
-    },
-    {
-      name: 'webhooks',
-      href: '/admin/webhooks',
-      icon: Webhook,
-      description: 'configure webhook integrations',
-    },
-    {
-      name: 'email',
-      href: '/admin/email',
-      icon: Mail,
-      description: 'email configuration & testing',
-    },
-  ];
+  const navItems = visibleNavItems(role);
+  const requiredRole = requiredRoleForPath(pathname);
 
   // Lazy initializer, not an effect: the first render needs the right back-target
   // and a post-mount setState trips react-hooks/set-state-in-effect.
@@ -153,7 +108,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   );
 
   return (
-    <RequireSuperadmin>
+    <RequireAdminAccess minRole={requiredRole}>
       <TooltipProvider delayDuration={100}>
         <div className="flex min-h-screen">
         {/* Mobile Menu Button */}
@@ -343,6 +298,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </main>
       </div>
       </TooltipProvider>
-    </RequireSuperadmin>
+    </RequireAdminAccess>
   );
 }

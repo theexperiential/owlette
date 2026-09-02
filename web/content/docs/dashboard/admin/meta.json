@@ -2,6 +2,7 @@
   "title": "admin",
   "pages": [
     "index",
+    "member-management",
     "user-management",
     "installer-management",
     "system-presets",

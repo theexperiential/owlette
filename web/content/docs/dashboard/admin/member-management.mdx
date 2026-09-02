@@ -1,0 +1,86 @@
+---
+title: "member management"
+description: "Add and remove the people who can reach one site, and see who owns it. Site admins manage membership for the sites they belong to from Admin Panel -> members."
+---
+
+**Location**: admin panel -> members (`/admin/members`)
+
+<Callout type="info" title={"Permissions"}>
+
+Site admins can open this page. It only ever acts on one site at a time, and the site selector offers only the sites you belong to. Adding and removing members requires the site-scoped `SITE_MEMBER_MANAGE` capability. Members do not see the page.
+
+</Callout>
+
+---
+
+## the member list
+
+The page lists everyone who can reach the selected site — accounts that have the site in their membership, plus the site owner. Header chips show the total member count and how many of them are admins.
+
+| column | description |
+|--------|-------------|
+| **member** | Display name when present, email address, and a `you` badge on your own row |
+| **role** | Role on this site: `owner`, `admin`, or `member` |
+| **actions** | Row menu; shows `—` when no action is available on that row |
+
+The list is scoped to the selected site by design. It never shows which other sites a member belongs to, and it never lists accounts that are not on this site.
+
+---
+
+## what the roles mean
+
+| role | on this site |
+|------|--------------|
+| **owner** | Created or was handed the site. Has admin rights on it and cannot be removed from the member list. |
+| **admin** | Write access: machine commands and configuration, deployments, roosts, talons, webhooks, logs, and membership. |
+| **member** | Read-only: view machines, capture screenshots, open live view. No commands, no configuration edits. |
+
+`admin` is an account-level role. Someone who holds it is an admin on every site they belong to, which is why the member list shows the role but does not change it — see [changing a role](#changing-a-role).
+
+---
+
+## adding a member
+
+The person must already have an owlette account; this page adds an existing account to a site, it does not send invitations.
+
+1. Click **add member**.
+2. Enter their email address.
+3. Choose **member** or **admin**.
+4. Click **add member**.
+
+If no account matches the address, the page says so — ask them to register first, then add them.
+
+### asking for admin
+
+Choosing **admin** records what you asked for, but the role itself is account-level. If the account is not already an admin, they are added to the site as a **member** and keep that access until their account is upgraded; the dialog says so before you submit, and the confirmation toast repeats it. If the account already holds the admin role, they join as an admin on this site immediately.
+
+---
+
+## removing a member
+
+1. Open the row menu.
+2. Select `remove...`.
+3. Read the confirmation dialog, then click **remove member**.
+
+Removal takes the site out of that account's membership. The account itself and any other sites they belong to are untouched, and the change is immediate.
+
+Two rows cannot be removed:
+
+- **the site owner** — ownership transfer is a separate account-level operation; transfer the site first, then remove them.
+- **yourself** — ask another admin on the site to remove your access.
+
+### talon reassignment
+
+Talons belong to the site, but every run re-checks the **author's** access to it. An author who has just been removed cannot run their own automations, so those talons fail silently.
+
+When the person you are removing authored talons on this site, the dialog says how many (naming the first five), and offers a successor picker before you confirm. Candidates are the admins on this site; a member cannot inherit a talon, because authoring one requires `TALON_MANAGE`. Choosing a successor rewrites authorship before the membership change lands, and the page confirms how many talons moved.
+
+Reassignment is never automatic. If you leave the picker empty, the removal still goes through and the talons are left with an author who can no longer run them — reassign or delete them yourself afterwards.
+
+---
+
+## changing a role
+
+Promoting a member to admin, or demoting an admin, changes the account, not just this site: it applies everywhere that account has access, including sites in other organizations. It is therefore not a membership action and is not available here. Email [support@owlette.app](mailto:support@owlette.app) to have an account's role changed.
+
+To narrow someone's access instead, remove them from the sites they should not reach.

@@ -11,14 +11,19 @@ description: "Send site events to external systems over HTTPS. Use webhooks for 
 
 | surface | route | who uses it | shipped controls |
 |---------|-------|-------------|------------------|
-| admin panel -> webhooks | `/admin/webhooks` | superadmins managing webhooks across sites | site selector, add webhook, enable/disable switch, edit, test, delete |
-| settings -> webhooks | `/settings/webhooks` | users managing webhooks for a site they can administer | create webhook, pause/resume, rotate secret, delete, delivery history, delivery retry |
+| admin panel -> webhooks | `/admin/webhooks` | site admins managing webhooks across the sites they belong to | site selector, add webhook, enable/disable switch, edit, test, delete |
+| settings -> webhooks | `/settings/webhooks` | anyone with access to a site; management controls appear for site admins and the site owner | create webhook, pause/resume, rotate secret, delete, delivery history, delivery retry |
 
-The admin panel is the cross-site control surface. If more than one site is
-available, choose the site first, then manage that site's webhook list.
-Members without webhook-management permission should treat the page as
-read-only; create, edit, delete, retry, and secret rotation require site write
-access.
+The admin panel is the multi-site control surface. If more than one site is
+available, choose the site first, then manage that site's webhook list. The
+selector only ever offers sites you belong to.
+
+Creating, editing, testing, deleting, and rotating a secret require the
+site-scoped `WEBHOOK_MANAGE` capability — site admins on that site, and the
+site's owner. Members get read-only visibility: in settings -> webhooks they can
+list subscriptions, expand delivery history, retry a delivery, and run a probe,
+but the create button and the per-card action buttons are not rendered, and the
+API refuses those calls. The admin panel page itself is not shown to members.
 
 ![webhook subscription configuration](/docs-screens/webhooks.png)
 

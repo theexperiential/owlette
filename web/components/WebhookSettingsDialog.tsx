@@ -244,10 +244,13 @@ export function WebhookList({ siteId }: { siteId: string }) {
       });
       const data = await res.json();
 
+      // `detail` covers the problem+json the route returns when authorization
+      // fails; `error` is its own legacy shape for validation / not-found.
+      const failure = data.error ?? data.detail;
       if (data.success) {
         toast.success(`test delivered (HTTP ${data.status})`);
-      } else if (data.error) {
-        toast.error(`test failed: ${data.error}`);
+      } else if (failure) {
+        toast.error(`test failed: ${failure}`);
       } else {
         toast.error(`test failed with HTTP ${data.status}`);
       }

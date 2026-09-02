@@ -8,7 +8,8 @@
  */
 
 export const mocks = {
-  /** doc().get() */
+  /** doc().get() — called with the document's full path, so an implementation
+   *  can answer per-collection (e.g. `users/{uid}` vs the route's own doc). */
   get: jest.fn(),
   /** doc().set() */
   set: jest.fn().mockResolvedValue(undefined),
@@ -60,7 +61,7 @@ function buildDoc(path: string): Record<string, unknown> {
         }
         return Promise.resolve(docSnapshot(parts[1], {}));
       }
-      return mocks.get();
+      return mocks.get(path);
     },
     set: mocks.set,
     update: mocks.update,

@@ -30,6 +30,7 @@ const SITE_SCOPED: Capability[] = [
   Capability.SITE_LOGS_MANAGE,
   Capability.TALON_MANAGE,
   Capability.AGENT_TOKEN_REVOKE,
+  Capability.ALERT_RULES_MANAGE,
 ];
 
 const GLOBAL_CAPABILITIES: Capability[] = ALL_CAPABILITIES.filter(
@@ -71,6 +72,7 @@ describe('Capability enum', () => {
         'WEBHOOK_MANAGE',
         'SITE_LOGS_MANAGE',
         'TALON_MANAGE',
+        'ALERT_RULES_MANAGE',
         'AGENT_TOKEN_REVOKE',
         'USER_ROLE_MANAGE',
         'USER_DELETE',
@@ -109,6 +111,7 @@ describe('RoleCapabilityMatrix', () => {
         'SITE_MEMBER_MANAGE',
         'TALON_MANAGE',
         'AGENT_TOKEN_REVOKE',
+        'ALERT_RULES_MANAGE',
       ].sort()
     );
   });
@@ -326,6 +329,61 @@ describe('hasCapability — system actor allowlist', () => {
     const actor = systemActor({ name: 'cortex_autonomous', siteId: 'site_a' });
     expect(hasCapability(actor, Capability.MACHINE_EXEC_COMMAND)).toBe(false);
     expect(hasCapability(actor, Capability.MACHINE_CONFIG_WRITE)).toBe(false);
+  });
+});
+
+describe('ALERT_RULES_MANAGE — site-admin grant for PUT /api/sites/{siteId}/alerts', () => {
+  const admin = userActor({ userId: 'u1', role: 'admin', sites: ['s1'] });
+
+  it('admin holds it on an assigned site only', () => {
+    expect(hasCapability(admin, Capability.ALERT_RULES_MANAGE, 's1')).toBe(true);
+    expect(hasCapability(admin, Capability.ALERT_RULES_MANAGE, 's2')).toBe(false);
+    expect(hasCapability(admin, Capability.ALERT_RULES_MANAGE)).toBe(false);
+  });
+
+  it('member never holds it, even on their own site', () => {
+    const member = userActor({ userId: 'u1', role: 'member', sites: ['s1'] });
+    expect(hasCapability(member, Capability.ALERT_RULES_MANAGE, 's1')).toBe(false);
+  });
+
+  it('superadmin holds it unscoped', () => {
+    const superadmin = userActor({ userId: 'u0', role: 'superadmin', sites: [] });
+    expect(hasCapability(superadmin, Capability.ALERT_RULES_MANAGE)).toBe(true);
+    expect(hasCapability(superadmin, Capability.ALERT_RULES_MANAGE, 's2')).toBe(true);
+  });
+
+  it('opening alerts to admins did NOT hand them GLOBAL_SETTINGS_WRITE', () => {
+    // Negative control: the alerts route traded GLOBAL_SETTINGS_WRITE for the new
+    // site-scoped capability. Granting the old one to admins would silently open
+    // every platform settings route — this assertion must fail if that happens.
+    expect(hasCapability(admin, Capability.GLOBAL_SETTINGS_WRITE, 's1')).toBe(false);
+    expect(RoleCapabilityMatrix.admin).not.toContain(Capability.GLOBAL_SETTINGS_WRITE);
+  });
+});
+
+describe('AGENT_TOKEN_REVOKE — site-admin grant for the agent-tokens list + revoke routes', () => {
+  // The role × capability sweep above derives its expectations from
+  // RoleCapabilityMatrix, so it stays green whether or not admins hold this
+  // capability. These assertions pin the grant itself: GET/POST
+  // /api/sites/{siteId}/agent-tokens both run on it, and the admin tokens page
+  // 403s the moment it is withdrawn.
+  const admin = userActor({ userId: 'u1', role: 'admin', sites: ['s1'] });
+
+  it('admin holds it on an assigned site only', () => {
+    expect(hasCapability(admin, Capability.AGENT_TOKEN_REVOKE, 's1')).toBe(true);
+    expect(hasCapability(admin, Capability.AGENT_TOKEN_REVOKE, 's2')).toBe(false);
+    expect(hasCapability(admin, Capability.AGENT_TOKEN_REVOKE)).toBe(false);
+  });
+
+  it('member never holds it, even on their own site', () => {
+    const member = userActor({ userId: 'u2', role: 'member', sites: ['s1'] });
+    expect(hasCapability(member, Capability.AGENT_TOKEN_REVOKE, 's1')).toBe(false);
+  });
+
+  it('superadmin holds it unscoped', () => {
+    const superadmin = userActor({ userId: 'u0', role: 'superadmin', sites: [] });
+    expect(hasCapability(superadmin, Capability.AGENT_TOKEN_REVOKE)).toBe(true);
+    expect(hasCapability(superadmin, Capability.AGENT_TOKEN_REVOKE, 's2')).toBe(true);
   });
 });
 

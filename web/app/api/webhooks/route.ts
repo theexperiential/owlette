@@ -43,6 +43,7 @@ import {
   applyAuthDeprecations,
   readAndParseJsonBody,
   requireSiteAuthAndScope,
+  requireWebhookManageCapability,
   validateSiteIdBody,
 } from '../_shared';
 
@@ -74,6 +75,11 @@ export async function POST(request: NextRequest) {
 
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
     if (!auth.ok) return auth.response;
+
+    // Membership + scope are not enough: creating a subscription is a site-admin
+    // action (WEBHOOK_MANAGE), so a plain member on the site is refused here.
+    const capabilityError = await requireWebhookManageCapability(auth.auth, site.siteId);
+    if (capabilityError) return capabilityError;
 
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;

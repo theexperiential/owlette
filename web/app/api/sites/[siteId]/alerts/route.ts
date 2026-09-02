@@ -27,9 +27,8 @@ interface PutBody {
 }
 
 export const PUT = authorizedSiteHandler<RouteParams>({
-  capability: 'GLOBAL_SETTINGS_WRITE',
+  capability: 'ALERT_RULES_MANAGE',
   siteIdParam: 'path',
-  apiKeyScope: { resource: 'user', id: '*', permission: 'admin' },
 })(async (request: NextRequest, ctx) => {
   try {
     const parsed = await parseJsonBody(request);
