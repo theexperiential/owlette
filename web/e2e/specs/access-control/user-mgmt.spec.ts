@@ -15,11 +15,17 @@ test.describe('/admin/users — stats row', () => {
 
     const labels = ['total users', 'members', 'site admins', 'superadmins'];
     for (const label of labels) {
-      await expect(page.getByText(label, { exact: true })).toBeVisible();
+      // Scoped to main: the admin nav now carries a "members" link too
+      // (e6e99cbf opened the panel to site admins), so the bare text match
+      // resolves to two elements and trips strict mode.
+      await expect(page.getByRole('main').getByText(label, { exact: true })).toBeVisible();
     }
 
-    // DOM order must match ascending privilege.
+    // DOM order must match ascending privilege. Scoped to main for the same
+    // reason as above — the nav's "manage site members" description also
+    // matches the regex.
     const texts = await page
+      .getByRole('main')
       .locator('p.text-xs.text-muted-foreground')
       .filter({ hasText: /total users|members|site admins|superadmins/ })
       .allTextContents();
