@@ -13,34 +13,38 @@ model: eleven_v3
 
 > After this you can give teammates the right level of access and have owlette email you when something crosses a line.
 
-## [b01] how the team works
-**SCREEN:** the admin "user management" page listing existing users with their roles (web/app/admin/users/page.tsx:420).
-**NOTE:** capture as superadmin — /admin is wrapped in RequireSuperadmin (web/app/admin/layout.tsx:156).
+## [b01] the team, from your admin seat
+**SCREEN:** dashboard as a SITE ADMIN (`roleState('admin')` — never superadmin on camera) → the admin panel entry in the page header → lands on `/admin/members`. Let the filtered nav sit on camera: members, agent tokens, schedules, alerts, webhooks — nothing else (nav filtering: web/app/admin/navItems.ts, guard: RequireAdminAccess).
+**NOTE:** e6e99cbf opened /admin to site admins, scoped to their sites. `superadmin` must never appear on screen or in narration — the members page maps per-site "superadmin" to "admin" via displayRole, and the internal-only pages (users, installers, template library, email) are absent from an admin's nav by design.
 **VOICEOVER:**
-owlette has two halves to team setup. first, people: a teammate creates their own owlette
-account by registering — there's no "invite" step to chase. once they've signed up, you,
-as a superadmin, decide what they can see and do from this user management page.
+owlette has two halves to team setup. first, people. a teammate creates their own
+owlette account by registering — there's no invite email to chase. then, from your
+admin panel, you decide who's on each of your sites. [warm] and notice the panel
+only shows what's yours to run — members, agent tokens, schedules, alerts,
+webhooks — always scoped to your sites.
 
-## [b02] assign a role and sites
-**SCREEN:** change a user's role via the row's menu → "change role..." (page.tsx:641) → role-change confirm dialog (member → admin); then open "manage sites" to assign which sites they cover. While the row menu is open, let "reset 2FA..." (page.tsx:659) sit on camera for a beat — it's the recovery path when a teammate loses their last factor.
+## [b02] members: who's on this site
+**SCREEN:** the members page (web/app/admin/members/page.tsx): the stat chips (total members / admins), the table — the owner row with its crown badge, the "you" badge on your own row, member/admin badges. Click "add member" → the dialog: email + role → add → success toast → the new row appears. Open a row's menu so "remove from site" sits on camera briefly; don't click it.
+**NOTE:** seed a fourth emulator account (registered, unassigned to the site) before the take so add-by-email lands a real row. Add as MEMBER — adding as admin when the target's global role is member triggers the roleHonored downgrade toast, which is honest but muddies the demo.
 **VOICEOVER:**
-two controls per person. their role, which sets how much power they have. and their
-sites — which venues or clients they're responsible for. an admin, for instance, only has
-their elevated powers on the sites you assign them. set both, and that person sees exactly
-their slice of the operation.
+pick a site and you see everyone on it — the owner wears the crown, and you'll
+find your own row too. adding a teammate takes the email they registered with:
+they appear as a member, read-only eyes on this site's machines. [warm] members
+watch. admins do — commands, settings, deployments, talons. and if someone needs
+to step up from member to admin, that's an account-level change — your platform
+operator handles the promotion.
 
-## [b03] what each role can do
-**SCREEN:** overlay the three role cards — member, admin, superadmin (page.tsx:771-800, copy from ROLE_DESCRIPTIONS at :47-51). Zoom each card as the narration names it; the card text and the narration now say the same thing.
+## [b03] the rest of your panel
+**SCREEN:** walk the remaining nav items as an admin: agent tokens (the per-site credential list, revoke affordance visible), schedules (preset list), webhooks (integration list) — a short dwell each — ending on the alerts nav item as the handoff to b04.
 **VOICEOVER:**
-[warm] three roles. a member is read-only on their sites — watch machines, take a
-screenshot, open live view, set their own alert preferences. an admin adds the doing:
-commands and restarts, machine and process settings, removing machines, deployments,
-talons, presets, webhooks, members. a superadmin runs everything, plus users and
-installers. and every new teammate sets up two-factor before they reach the dashboard.
+the rest of the panel works the same way. agent tokens lists every machine
+credential on your sites — and revokes one that shouldn't be out there. schedules
+keeps your reusable schedule presets. webhooks feeds owlette's events into your
+other systems. and alerts — alerts are the other half of this episode.
 
 ## [b04] alerts: let owlette tell you
 **SCREEN:** the admin "alerts" page (web/app/admin/alerts/page.tsx:376) with the per-site selector and a list of threshold rules.
-**NOTE:** capture as superadmin (admin pages require it). To show a populated list, seed sites/{id}/settings/alerts inline the way web/e2e/screenshots/email-alerts.spec.ts does — the automate-schedule-editor fixture seeds nothing this page reads. The other automation schema in the fixtures is sites/{siteId}/talons (scenario automate-talons-list); sites/{id}/alertRules is dead data, written only by fixtures.ts and read by nothing.
+**NOTE:** capture as site admin (the page admits admins since e6e99cbf). To show a populated list, seed sites/{id}/settings/alerts inline the way web/e2e/screenshots/email-alerts.spec.ts does — the automate-schedule-editor fixture seeds nothing this page reads. The other automation schema in the fixtures is sites/{siteId}/talons (scenario automate-talons-list); sites/{id}/alertRules is dead data, written only by fixtures.ts and read by nothing.
 **VOICEOVER:**
 the second half is alerts — so you're not the one constantly watching. alert rules are set
 per site, and each one is a simple sentence: when this metric crosses this line, tell me.

@@ -2,16 +2,16 @@
  * Scene — episode 14, "team & alerts". Every beat is SCREEN capture.
  *
  * Rendered VO (voiceover/out/14-team-and-alerts/, ffprobe):
- *   b01 18.5s how the team works · b02 20.0s assign a role and sites
- *   b03 33.3s what each role can do · b04 12.4s alerts: let owlette tell you
- *   b05 33.2s build a rule · b06 18.8s your personal alert preferences
- *   b07 28.6s what actually arrives
- * b03 and b06 were revoiced for the v2 series; b03's narration now matches the
- * role-card copy word for word, so the beat frames the cards themselves rather
- * than talking over them.
+ *   b01 24.2s the team, from your admin seat · b02 28.1s members: who's on this site
+ *   b03 19.6s the rest of your panel · b04 11.7s alerts: let owlette tell you
+ *   b05 29.8s build a rule · b06 18.2s your personal alert preferences
+ *   b07 25.6s what actually arrives
  *
- * SUPERADMIN throughout: /admin is wrapped in RequireSuperadmin
- * (app/admin/layout.tsx:156).
+ * SITE ADMIN throughout — e6e99cbf opened /admin to site admins (guard
+ * RequireAdminAccess, nav filtered by app/admin/navItems.ts). `superadmin`
+ * must never render on camera: the recording role is global `admin`, the
+ * internal-only nav items are absent for it by design, and the seeded site
+ * owner gets a human display name below because the members table shows it.
  *
  * ALERT SCHEMA. /admin/alerts reads `sites/{id}/settings/alerts.rules[]`, seeded
  * inline below the way `screenshots/email-alerts.spec.ts` does. The base
@@ -28,28 +28,107 @@
 
 import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
-import { getAdminDb, E2E_BASE_URL } from '../helpers/emulator';
-import { TEST_USERS } from '../helpers/seed';
-import { seedScreenshotFixtures } from '../screenshots/fixtures';
+import { getAdminAuth, getAdminDb, E2E_BASE_URL } from '../helpers/emulator';
+import { TEST_USERS, seedUser } from '../helpers/seed';
+import { FIXED_NOW_MS, seedScreenshotFixtures } from '../screenshots/fixtures';
 import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   clickWithCursor,
   typewrite,
   centerInView,
-  slowScrollToBottom,
 } from './video-helpers';
 
 test('episode 14 — team & alerts', async ({ browser }) => {
   const ctx = await seedScreenshotFixtures('automate-schedule-editor');
   try {
-    // Pin the superadmin to the seeded site so per-site selectors find data.
+    // Pin the RECORDING admin to the seeded site so per-site selectors find
+    // data. The admin is a member of the site (fixtures assign it), but the
+    // crown belongs to someone else — b02's narration separates "the owner"
+    // from "your own row", so the owner must be a distinct account.
+    await getAdminDb()
+      .collection('users')
+      .doc(TEST_USERS.admin.uid)
+      .set({ lastSiteId: ctx.siteId }, { merge: true });
+    await getAdminDb()
+      .collection('sites')
+      .doc(ctx.siteId)
+      .set({ owner: TEST_USERS.superadmin.uid }, { merge: true });
+    // The owner row renders the account's display name — "E2E Superadmin"
+    // would put the internal role word on camera, so the owner films as a
+    // person. Both stores, because the members API reads the users doc and
+    // the auth record is what a future re-seed restores from.
     await getAdminDb()
       .collection('users')
       .doc(TEST_USERS.superadmin.uid)
-      .set({ lastSiteId: ctx.siteId }, { merge: true });
+      .set({ displayName: 'avery quinn' }, { merge: true });
+    await getAdminAuth().updateUser(TEST_USERS.superadmin.uid, { displayName: 'avery quinn' });
+
+    // b02 adds a teammate by email on camera — the account must exist
+    // (members POST resolves email via Admin Auth) and must NOT already be on
+    // the site, so the add lands a genuinely new row.
+    await seedUser({
+      uid: 'rae-uid',
+      email: 'rae@e2e.test',
+      password: 'e2e-rae-password',
+      role: 'member',
+      sites: [],
+      displayName: 'rae calloway',
+    });
+
+    // b03 pans the tokens and webhooks pages — empty states would put
+    // "no active tokens" under narration about machine credentials, so both
+    // get realistic rows. Tokens: top-level `agent_refresh_tokens`, one live
+    // doc per machine (no supersededAt/expiresAt = live; shape mirrors what
+    // the pairing flow writes, read back by /api/sites/{id}/agent-tokens).
+    const hoursAgo = (h: number) => new Date(FIXED_NOW_MS - h * 3_600_000);
+    const tokenMachines = [
+      ['mainstage-led', 26 * 24],
+      ['media-server-stage', 19 * 24],
+      ['td-control-room', 11 * 24],
+      ['touring-rig-04', 6 * 24],
+      ['unreal-render-1', 2 * 24],
+    ] as const;
+    for (const [machineId, ageHours] of tokenMachines) {
+      await getAdminDb()
+        .collection('agent_refresh_tokens')
+        .doc(`e2e-token-${machineId}`)
+        .set({
+          siteId: ctx.siteId,
+          machineId,
+          agentUid: `agent-${machineId}`,
+          version: '3.2.3',
+          createdBy: 'device-code',
+          createdAt: hoursAgo(ageHours),
+          lastUsed: hoursAgo(1),
+        });
+    }
+    // Webhooks: sites/{id}/webhooks/{id}, the full shape the POST route writes.
+    await getAdminDb()
+      .collection('sites')
+      .doc(ctx.siteId)
+      .collection('webhooks')
+      .doc('e2e-webhook-ops')
+      .set({
+        schemaVersion: 1,
+        url: 'https://hooks.example-productions.com/owlette',
+        hostname: 'hooks.example-productions.com',
+        events: ['machine.offline', 'deployment.completed', 'version.rolled_back'],
+        description: 'ops channel bridge',
+        signingSecret: 'whsec_e2e_demo_secret_000000000000',
+        secretRotatedAt: null,
+        createdAt: hoursAgo(14 * 24),
+        updatedAt: hoursAgo(14 * 24),
+        createdBy: TEST_USERS.admin.uid,
+        paused: false,
+        deletedAt: null,
+        lastDeliveryAt: hoursAgo(3),
+        lastDeliveryStatus: 'success',
+        failureCount: 0,
+      });
 
     // Threshold-rule schema on settings/alerts — what /admin/alerts reads.
     await getAdminDb()
@@ -98,85 +177,89 @@ test('episode 14 — team & alerts', async ({ browser }) => {
     await recordScene(
       browser,
       '14-team-and-alerts',
-      { baseURL: E2E_BASE_URL, storageState: roleState('superadmin').storageState },
+      { baseURL: E2E_BASE_URL, storageState: roleState('admin').storageState },
       async (page) => {
-        // [b01] how the team works (~18.5s) — the user-management list.
-        await openForCapture(page, '/admin/users');
+        // [b01] the team, from your admin seat (~24.2s). Dashboard → the
+        // avatar menu's "admin panel" entry → lands on members; then frame
+        // the filtered nav — the visual proof of "only what's yours to run".
+        await openForCapture(page, '/dashboard');
+        await narrate(page, 'b01 first, people — register, no invite email', 6.0);
+        await clickWithCursor(page, page.getByTestId('user-menu-trigger'));
+        const adminPanelItem = page.getByRole('menuitem', { name: /admin panel/i });
+        await expect(adminPanelItem).toBeVisible();
+        await highlight(page, adminPanelItem, 1800);
+        await clickWithCursor(page, adminPanelItem);
         await expect(
-          page.getByRole('heading', { name: 'user management', exact: true }),
+          page.getByRole('heading', { name: 'members', exact: true }),
         ).toBeVisible();
-        await expect(page.getByText('admin@e2e.test', { exact: false }).first()).toBeVisible();
-        await narrate(page, 'b01 user list — no invite step to chase', 19);
+        await narrate(page, 'b01 from your admin panel, who is on each site', 3.5);
+        await slowPush(page, { scale: 1.04, originXPct: 18, originYPct: 40, seconds: 3.2 });
+        await narrate(page, 'b01 the nav only shows what is yours to run', 5.0);
+        await slowPush(page, { scale: 1.0, seconds: 2.6 });
+        await narrate(page, 'b01 settle', 0.5);
 
-        // [b02] assign a role and sites (~20.0s). Let "reset 2FA…" sit on camera
-        // for a beat while the row menu is open — it is the recovery path when a
-        // teammate loses their last factor, and episode 2 b09 cuts this frame in.
-        const memberRow = page.getByRole('row').filter({ hasText: 'member@e2e.test' });
-        // MoreVertical is the last button in the row; it carries no testid.
-        const memberActions = memberRow.getByRole('button').last();
-        await centerInView(page, memberRow);
-        await clickWithCursor(page, memberActions);
-        await highlight(page, page.getByRole('menuitem', { name: /reset 2FA/i }), 2200);
-        await narrate(page, 'b02 the row menu, reset 2FA included', 5);
-        const changeRoleItem = page.getByRole('menuitem', { name: /change role/i });
-        await clickWithCursor(page, changeRoleItem);
-
-        const roleDialog = page.getByRole('dialog', { name: /change role/i });
-        await expect(roleDialog).toBeVisible();
-        const roleSelectTrigger = roleDialog.getByRole('combobox').first();
-        await clickWithCursor(page, roleSelectTrigger);
-        await page.waitForTimeout(400);
-        const adminOption = page.getByRole('option', { name: /^admin$/i }).first();
-        await expect(adminOption).toBeVisible();
-        await highlight(page, adminOption, 1600);
-        await narrate(page, 'b02 role select', 6);
-        await clickWithCursor(page, adminOption);
-        await narrate(page, 'b02 admin description', 4);
-        // Cancel — never mutate the seeded users.
-        await clickWithCursor(page, roleDialog.getByRole('button', { name: /^cancel$/i }));
-        await expect(roleDialog).not.toBeVisible();
-        // "manage sites" is the second of the two controls this beat names.
-        await clickWithCursor(page, memberActions);
-        await highlight(page, page.getByRole('menuitem', { name: /manage sites/i }), 2200);
-        await narrate(page, 'b02 and their sites', 5);
+        // [b02] members: who's on this site (~28.1s). Crown + "you", then a
+        // real add-by-email, then the row menu's "remove..." held on camera.
+        const ownerRow = page.getByRole('row').filter({ hasText: 'avery quinn' });
+        await expect(ownerRow.getByText('owner', { exact: true })).toBeVisible();
+        await highlight(page, ownerRow, 2200);
+        await narrate(page, 'b02 the owner wears the crown, your own row too', 4.5);
+        await clickWithCursor(page, page.getByRole('button', { name: /add member/i }));
+        const addDialog = page.getByRole('dialog').filter({
+          has: page.locator('#add-member-email'),
+        });
+        await expect(addDialog).toBeVisible();
+        await typewrite(page, addDialog.locator('#add-member-email'), 'rae@e2e.test', 45);
+        // Role select stays on its default, member — adding as admin would
+        // trip the roleHonored downgrade toast (honest, but muddies the demo).
+        await narrate(page, 'b02 the email they registered with', 3.5);
+        await clickWithCursor(page, addDialog.getByRole('button', { name: /add member/i }));
+        const raeRow = page.getByRole('row').filter({ hasText: 'rae calloway' });
+        await expect(raeRow).toBeVisible();
+        await narrate(page, 'b02 members watch, admins do', 6.5);
+        await clickWithCursor(page, raeRow.getByRole('button').last());
+        await highlight(page, page.getByRole('menuitem', { name: /remove/i }), 1800);
         await page.keyboard.press('Escape');
         await page.waitForTimeout(400);
+        await narrate(page, 'b02 promotion is account-level — the operator', 6.0);
 
-        // [b03] what each role can do (~33.3s). The card copy and the narration
-        // now say the same thing, so each card is framed while its role is
-        // named — no paraphrase to talk over.
-        await slowScrollToBottom(page, 6);
-        const memberRoleCard = page
-          .locator('div')
-          .filter({ hasText: /read-only access to assigned sites/i })
-          .last();
-        await centerInView(page, memberRoleCard);
-        await highlight(page, memberRoleCard, 2600);
-        await narrate(page, 'b03 member — read-only, own alert prefs', 10);
-        const adminRoleCard = page
-          .locator('div')
-          .filter({ hasText: /site-scoped elevated tier/i })
-          .last();
-        await centerInView(page, adminRoleCard);
-        await highlight(page, adminRoleCard, 2600);
-        await narrate(page, 'b03 admin — commands, talons, deployments, members', 14);
-        const superadminRoleCard = page
-          .locator('div')
-          .filter({ hasText: /platform-wide god-mode/i })
-          .last();
-        await centerInView(page, superadminRoleCard);
-        await highlight(page, superadminRoleCard, 2600);
-        await narrate(page, 'b03 superadmin — users and installers', 10);
+        // [b03] the rest of your panel (~19.6s). Walk the remaining nav as an
+        // admin — tokens, schedules, webhooks — ending on alerts as the
+        // hand-off. Motion resolves by mid-beat.
+        await clickWithCursor(page, page.getByRole('link', { name: 'agent tokens' }));
+        await expect(
+          page.getByRole('heading', { name: 'agent tokens', exact: true }),
+        ).toBeVisible();
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 45, seconds: 3.0 });
+        await narrate(page, 'b03 every machine credential on your sites', 3.3);
+        await slowPush(page, { scale: 1.0, seconds: 2.4 });
+        await clickWithCursor(page, page.getByRole('link', { name: 'schedules' }));
+        await expect(
+          page.getByRole('heading', { name: 'schedules', exact: true }),
+        ).toBeVisible();
+        await narrate(page, 'b03 reusable schedule presets', 3.2);
+        await clickWithCursor(page, page.getByRole('link', { name: 'webhooks' }));
+        await expect(
+          page.getByRole('heading', { name: 'webhooks', exact: true }),
+        ).toBeVisible();
+        await narrate(page, 'b03 feeds events into your other systems', 2.8);
+        await highlight(page, page.getByRole('link', { name: 'alerts' }), 1600);
+        await narrate(page, 'b03 and alerts — the other half', 1.0);
 
-        // [b04] alerts: let owlette tell you (~12.4s).
-        await openForCapture(page, '/admin/alerts');
+        // [b04] alerts: let owlette tell you (~11.7s) — enter by clicking the
+        // nav item b03 just framed.
+        await clickWithCursor(page, page.getByRole('link', { name: 'alerts' }));
         await expect(
           page.getByRole('heading', { name: 'alerts', exact: true }),
         ).toBeVisible();
         await expect(page.getByText('GPU Overheating', { exact: false })).toBeVisible();
-        await narrate(page, 'b04 per-site rules list', 13);
+        await narrate(page, 'b04 per-site rules list', 3.2);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 3.0 });
+        await narrate(page, 'b04 per-site rules list - close', 1.8);
+        await slowPush(page, { scale: 1.0, seconds: 2.4 });
+        await narrate(page, 'b04 per-site rules list - settle', 0.5);
 
-        // [b05] build a rule (~33.2s).
+        // [b05] build a rule (~29.8s).
         const createRuleBtn = page.getByRole('button', { name: /create rule/i }).first();
         await clickWithCursor(page, createRuleBtn);
         const ruleDialog = page.getByRole('dialog', { name: /create alert rule/i });
@@ -189,14 +272,14 @@ test('episode 14 — team & alerts', async ({ browser }) => {
         await clickWithCursor(page, metricTrigger);
         await page.waitForTimeout(300);
         await clickWithCursor(page, page.getByRole('option', { name: /GPU temperature/i }));
-        await narrate(page, 'b05 metric', 6);
+        await narrate(page, 'b05 metric', 5.0);
 
         const operatorTrigger = ruleDialog.getByRole('combobox').nth(1);
         await clickWithCursor(page, operatorTrigger);
         await page.waitForTimeout(300);
         await clickWithCursor(page, page.getByRole('option', { name: '>', exact: true }));
         await typewrite(page, ruleDialog.locator('#rule-value'), '85', 60);
-        await narrate(page, 'b05 operator and value', 6);
+        await narrate(page, 'b05 operator and value', 5.0);
 
         // Warning is already the default; opened only to show the options.
         const severityTrigger = ruleDialog.getByRole('combobox').nth(2);
@@ -205,7 +288,7 @@ test('episode 14 — team & alerts', async ({ browser }) => {
         const warningOption = page.getByRole('option', { name: /^warning$/i });
         await highlight(page, warningOption, 1400);
         await clickWithCursor(page, warningOption);
-        await narrate(page, 'b05 severity, channels, cooldown', 10);
+        await narrate(page, 'b05 severity, channels, cooldown', 8.5);
 
         await clickWithCursor(page, ruleDialog.getByRole('button', { name: /^cancel$/i }));
         await expect(ruleDialog).not.toBeVisible();
@@ -214,12 +297,12 @@ test('episode 14 — team & alerts', async ({ browser }) => {
         const firstPreset = page.getByRole('menuitem', { name: /GPU Overheating/i }).first();
         await expect(firstPreset).toBeVisible();
         await highlight(page, firstPreset, 2000);
-        await narrate(page, 'b05 four ready-made templates', 11);
+        await narrate(page, 'b05 four ready-made templates', 9.5);
         // Dismiss without applying — it would add a duplicate rule.
         await page.keyboard.press('Escape');
         await page.waitForTimeout(300);
 
-        // [b06] your personal alert preferences (~18.8s). The admin layout
+        // [b06] your personal alert preferences (~18.2s). The admin layout
         // renders no PageHeader, so `user-menu-trigger` does not exist there —
         // go back to the dashboard before opening the avatar menu.
         await openForCapture(page, '/dashboard');
@@ -239,14 +322,14 @@ test('episode 14 — team & alerts', async ({ browser }) => {
         await expect(
           settingsDialog.getByText('machine offline alerts', { exact: false }),
         ).toBeVisible();
-        await narrate(page, 'b06 the six category toggles', 10);
+        await narrate(page, 'b06 the six category toggles', 8.5);
 
         const alertEmailSection = settingsDialog.getByText('alert email', { exact: true }).first();
         await centerInView(page, alertEmailSection);
         await highlight(page, alertEmailSection, 1800);
-        await narrate(page, 'b06 alert email + up to five CCs', 9);
+        await narrate(page, 'b06 alert email + up to five CCs', 8.0);
 
-        // [b07] what actually arrives (~28.6s).
+        // [b07] what actually arrives (~25.6s).
         //
         // TODO — THE EMAIL FRAME IS BLOCKED, and deliberately not faked here.
         // The offline email's body is built by `buildOfflineEmail` in
@@ -276,7 +359,11 @@ test('episode 14 — team & alerts', async ({ browser }) => {
         await expect(
           page.getByText('machine offline alerts', { exact: false }),
         ).toBeVisible({ timeout: 20_000 });
-        await narrate(page, 'b07 where "manage alerts" lands', 16);
+        await narrate(page, 'b07 where "manage alerts" lands', 4.2);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 4.0 });
+        await narrate(page, 'b07 where "manage alerts" lands - close', 2.6);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b07 where "manage alerts" lands - settle', 0.5);
 
         // The beat's hand-off shot: the display panel's store row, which
         // episode 15 opens on.
@@ -289,7 +376,7 @@ test('episode 14 — team & alerts', async ({ browser }) => {
         await clickWithCursor(page, displayButton);
         await expect(page.getByTestId('display-layout-panel')).toBeVisible();
         await highlight(page, page.getByTestId('display-store-button'), 2400);
-        await narrate(page, 'b07 hand-off to display layouts', 13);
+        await narrate(page, 'b07 hand-off to display layouts', 10.5);
       },
     );
   } finally {

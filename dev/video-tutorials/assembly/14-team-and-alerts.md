@@ -1,6 +1,6 @@
 # assembly — episode 14: team & alerts
 
-Narration: **2:46.7** across 7 spoken beats.
+Narration: **3:08.6** across 7 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
@@ -12,10 +12,10 @@ Footage:
 
 | beat | title | mp3 | length | vo start | vo end |
 |---|---|---|---|---|---|
-| b01 | how the team works | `ep14-b01.mp3` | 18.6s | 0:00.0 | 0:18.6 |
-| b02 | assign a role and sites | `ep14-b02.mp3` | 21.0s | 0:18.6 | 0:39.6 |
-| b03 | what each role can do | `ep14-b03.mp3` | 31.9s | 0:39.6 | 1:11.5 |
-| b04 | alerts: let owlette tell you | `ep14-b04.mp3` | 12.8s | 1:11.5 | 1:24.3 |
-| b05 | build a rule | `ep14-b05.mp3` | 31.5s | 1:24.3 | 1:55.7 |
-| b06 | your personal alert preferences | `ep14-b06.mp3` | 19.4s | 1:55.7 | 2:15.1 |
-| b07 | what actually arrives | `ep14-b07.mp3` | 27.3s | 2:15.1 | 2:42.4 |
+| b01 | the team, from your admin seat | `ep14-b01.mp3` | 24.2s | 0:00.0 | 0:24.2 |
+| b02 | members: who's on this site | `ep14-b02.mp3` | 28.1s | 0:24.2 | 0:52.3 |
+| b03 | the rest of your panel | `ep14-b03.mp3` | 19.6s | 0:52.3 | 1:11.9 |
+| b04 | alerts: let owlette tell you | `ep14-b04.mp3` | 11.7s | 1:11.9 | 1:23.6 |
+| b05 | build a rule | `ep14-b05.mp3` | 29.8s | 1:23.6 | 1:53.4 |
+| b06 | your personal alert preferences | `ep14-b06.mp3` | 18.2s | 1:53.4 | 2:11.6 |
+| b07 | what actually arrives | `ep14-b07.mp3` | 25.6s | 2:11.6 | 2:37.2 |

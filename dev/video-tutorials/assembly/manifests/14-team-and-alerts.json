@@ -7,7 +7,12 @@
   "scenario": "automate-schedule-editor",
   "script": "scripts/14-team-and-alerts.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 166.65,
+  "narration_s": 188.633,
+  "main_card": {
+    "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\14-team-and-alerts-main.mp4",
+    "frames": 330,
+    "duration_s": 5.5
+  },
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,7 +25,7 @@
       "rel": "dev/video-tutorials/footage/web/14-team-and-alerts.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\14-team-and-alerts.mp4",
       "exists": true,
-      "duration_s": 205.567,
+      "duration_s": 178.717,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -29,53 +34,64 @@
   "beats": [
     {
       "id": "b01",
-      "title": "how the team works",
-      "screen_note": "the admin \"user management\" page listing existing users with their roles (web/app/admin/users/page.tsx:420).",
+      "title": "the team, from your admin seat",
+      "screen_note": "dashboard as a SITE ADMIN (`roleState('admin')` — never superadmin on camera) → the admin panel entry in the page header → lands on `/admin/members`. Let the filtered nav sit on camera: members, agent tokens, schedules, alerts, webhooks — nothing else (nav filtering: web/app/admin/navItems.ts, guard: RequireAdminAccess).",
       "direction": {
-        "SCREEN": "the admin \"user management\" page listing existing users with their roles (web/app/admin/users/page.tsx:420).",
-        "NOTE": "capture as superadmin — /admin is wrapped in RequireSuperadmin (web/app/admin/layout.tsx:156)."
+        "SCREEN": "dashboard as a SITE ADMIN (`roleState('admin')` — never superadmin on camera) → the admin panel entry in the page header → lands on `/admin/members`. Let the filtered nav sit on camera: members, agent tokens, schedules, alerts, webhooks — nothing else (nav filtering: web/app/admin/navItems.ts, guard: RequireAdminAccess).",
+        "NOTE": "e6e99cbf opened /admin to site admins, scoped to their sites. `superadmin` must never appear on screen or in narration — the members page maps per-site \"superadmin\" to \"admin\" via displayRole, and the internal-only pages (users, installers, template library, email) are absent from an admin's nav by design."
       },
-      "start_s": 0.0,
-      "start_frame": 0,
+      "start_s": 5.5,
+      "start_frame": 330,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b01.mp3",
       "mp3_name": "ep14-b01.mp3",
-      "duration_s": 18.625,
-      "duration_frames": 1118,
+      "duration_s": 24.216,
+      "duration_frames": 1453,
       "status": "ok",
       "breath_s": 0.6
     },
     {
       "id": "b02",
-      "title": "assign a role and sites",
-      "screen_note": "change a user's role via the row's menu → \"change role...\" (page.tsx:641) → role-change confirm dialog (member → admin); then open \"manage sites\" to assign which sites they cover. While the row menu is open, let \"reset 2FA...\" (page.tsx:659) sit on camera for a beat — it's the recovery path when a teammate loses their last factor.",
+      "title": "members: who's on this site",
+      "screen_note": "the members page (web/app/admin/members/page.tsx): the stat chips (total members / admins), the table — the owner row with its crown badge, the \"you\" badge on your own row, member/admin badges. Click \"add member\" → the dialog: email + role → add → success toast → the new row appears. Open a row's menu so \"remove from site\" sits on camera briefly; don't click it.",
       "direction": {
-        "SCREEN": "change a user's role via the row's menu → \"change role...\" (page.tsx:641) → role-change confirm dialog (member → admin); then open \"manage sites\" to assign which sites they cover. While the row menu is open, let \"reset 2FA...\" (page.tsx:659) sit on camera for a beat — it's the recovery path when a teammate loses their last factor."
+        "SCREEN": "the members page (web/app/admin/members/page.tsx): the stat chips (total members / admins), the table — the owner row with its crown badge, the \"you\" badge on your own row, member/admin badges. Click \"add member\" → the dialog: email + role → add → success toast → the new row appears. Open a row's menu so \"remove from site\" sits on camera briefly; don't click it.",
+        "NOTE": "seed a fourth emulator account (registered, unassigned to the site) before the take so add-by-email lands a real row. Add as MEMBER — adding as admin when the target's global role is member triggers the roleHonored downgrade toast, which is honest but muddies the demo."
       },
-      "start_s": 19.233,
-      "start_frame": 1154,
+      "start_s": 33.767,
+      "start_frame": 2026,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\14-team-and-alerts-b02.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b02.mp3",
       "mp3_name": "ep14-b02.mp3",
-      "duration_s": 20.976,
-      "duration_frames": 1259,
+      "duration_s": 28.108,
+      "duration_frames": 1686,
       "status": "ok",
       "breath_s": 0.6
     },
     {
       "id": "b03",
-      "title": "what each role can do",
-      "screen_note": "overlay the three role cards — member, admin, superadmin (page.tsx:771-800, copy from ROLE_DESCRIPTIONS at :47-51). Zoom each card as the narration names it; the card text and the narration now say the same thing.",
+      "title": "the rest of your panel",
+      "screen_note": "walk the remaining nav items as an admin: agent tokens (the per-site credential list, revoke affordance visible), schedules (preset list), webhooks (integration list) — a short dwell each — ending on the alerts nav item as the handoff to b04.",
       "direction": {
-        "SCREEN": "overlay the three role cards — member, admin, superadmin (page.tsx:771-800, copy from ROLE_DESCRIPTIONS at :47-51). Zoom each card as the narration names it; the card text and the narration now say the same thing."
+        "SCREEN": "walk the remaining nav items as an admin: agent tokens (the per-site credential list, revoke affordance visible), schedules (preset list), webhooks (integration list) — a short dwell each — ending on the alerts nav item as the handoff to b04."
       },
-      "start_s": 40.817,
-      "start_frame": 2449,
+      "start_s": 66.95,
+      "start_frame": 4017,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\14-team-and-alerts-b03.mp4",
+        "frames": 268,
+        "duration_s": 4.483
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b03.mp3",
       "mp3_name": "ep14-b03.mp3",
-      "duration_s": 31.922,
-      "duration_frames": 1915,
+      "duration_s": 19.618,
+      "duration_frames": 1177,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -85,15 +101,20 @@
       "screen_note": "the admin \"alerts\" page (web/app/admin/alerts/page.tsx:376) with the per-site selector and a list of threshold rules.",
       "direction": {
         "SCREEN": "the admin \"alerts\" page (web/app/admin/alerts/page.tsx:376) with the per-site selector and a list of threshold rules.",
-        "NOTE": "capture as superadmin (admin pages require it). To show a populated list, seed sites/{id}/settings/alerts inline the way web/e2e/screenshots/email-alerts.spec.ts does — the automate-schedule-editor fixture seeds nothing this page reads. The other automation schema in the fixtures is sites/{siteId}/talons (scenario automate-talons-list); sites/{id}/alertRules is dead data, written only by fixtures.ts and read by nothing."
+        "NOTE": "capture as site admin (the page admits admins since e6e99cbf). To show a populated list, seed sites/{id}/settings/alerts inline the way web/e2e/screenshots/email-alerts.spec.ts does — the automate-schedule-editor fixture seeds nothing this page reads. The other automation schema in the fixtures is sites/{siteId}/talons (scenario automate-talons-list); sites/{id}/alertRules is dead data, written only by fixtures.ts and read by nothing."
       },
-      "start_s": 73.35,
-      "start_frame": 4401,
+      "start_s": 90.6,
+      "start_frame": 5436,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\14-team-and-alerts-b04.mp4",
+        "frames": 205,
+        "duration_s": 3.433
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b04.mp3",
       "mp3_name": "ep14-b04.mp3",
-      "duration_s": 12.774,
-      "duration_frames": 766,
+      "duration_s": 11.651,
+      "duration_frames": 699,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -104,13 +125,18 @@
       "direction": {
         "SCREEN": "create a rule — metric dropdown (cpu / memory / disk / gpu usage, cpu/gpu temperature, latency, packet loss), operator (> < >= <=, page.tsx:60-65), value, severity (info/warning/critical, :67), channel (email and/or webhook), cooldown. Then open \"presets\" and show the four templates (:75-117)."
       },
-      "start_s": 86.733,
-      "start_frame": 5204,
+      "start_s": 106.317,
+      "start_frame": 6379,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\14-team-and-alerts-b05.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b05.mp3",
       "mp3_name": "ep14-b05.mp3",
-      "duration_s": 31.451,
-      "duration_frames": 1887,
+      "duration_s": 29.832,
+      "duration_frames": 1790,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -121,13 +147,18 @@
       "direction": {
         "SCREEN": "Account Settings → \"alerts\" section: six toggles — machine offline alerts, process crash alerts, threshold alerts, hoot escalation alerts, display events, talon alerts (web/components/AccountSettingsDialog.tsx:589-661) — then the alert email block with up to 5 CC recipients (\"max 5.\", :721)."
       },
-      "start_s": 118.8,
-      "start_frame": 7128,
+      "start_s": 140.2,
+      "start_frame": 8412,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\14-team-and-alerts-b06.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b06.mp3",
       "mp3_name": "ep14-b06.mp3",
-      "duration_s": 19.357,
-      "duration_frames": 1161,
+      "duration_s": 18.181,
+      "duration_frames": 1091,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -138,13 +169,18 @@
       "direction": {
         "SCREEN": "an offline alert email open in a mail client: subject \"N machine(s) offline in <site>\", the \"machines offline\" heading (web/app/api/cron/health-check/route.ts:217), and the three grouped sections — not responding / reported shutting down / still offline (:219-221). Scroll to the footer: \"manage alerts · unsubscribe\" (web/lib/emailTemplates.server.ts:121-133); click \"manage alerts\" → /settings/alerts, the same toggles from b06. Close on the display layout panel's \"store the current live arrangement as the stored layout\" row (web/components/charts/DisplayLayoutPanel.tsx:1176) as the handoff lands."
       },
-      "start_s": 138.767,
-      "start_frame": 8326,
+      "start_s": 162.433,
+      "start_frame": 9746,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\14-team-and-alerts-b07.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\14-team-and-alerts\\ep14-b07.mp3",
       "mp3_name": "ep14-b07.mp3",
-      "duration_s": 27.272,
-      "duration_frames": 1636,
+      "duration_s": 25.6,
+      "duration_frames": 1536,
       "status": "ok",
       "breath_s": 0.6
     }
