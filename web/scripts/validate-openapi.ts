@@ -70,6 +70,9 @@ const INTERNAL_ROUTES = new Set([
   // Internal-secret ingress for `onTalonLogEventCreated`; same posture as
   // /api/alerts/trigger and /api/hoot/autonomous.
   '/api/talons/internal/match',
+  // E2E-only chunk PUT sink (hard 404 unless OWLETTE_E2E=1) — the local stand-in
+  // for the R2 presigned URL, never reachable in production.
+  '/api/chunks/e2e-put',
   '/api/legal/dmca',
   '/api/setup/generate-token',
   '/api/test-email',
