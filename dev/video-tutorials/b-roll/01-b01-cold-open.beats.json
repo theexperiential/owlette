@@ -1,31 +1,31 @@
 {
-  "scene": "01-b01-cold-open",
-  "source": "generated b-roll (kling, 1080p, no watermark) — NOT a harness capture; sidecar hand-authored — retimed 0.9% slower 2026-08-30 so it covers the re-voiced b01 (was 66ms short)",
-  "totalSec": 15.167,
-  "shots": [
-    {
-      "name": "exhibit",
-      "startSec": 0.0,
-      "endSec": 5.33
-    },
-    {
-      "name": "lobby",
-      "startSec": 5.33,
-      "endSec": 10.92
-    },
-    {
-      "name": "control room",
-      "startSec": 10.92,
-      "endSec": 15.17
-    }
-  ],
-  "beats": [
-    {
-      "beat": "b01",
-      "startSec": 0.0,
-      "mp3Sec": 15.099,
-      "enforcedWaitSec": 0,
-      "videoSec": 15.167
-    }
-  ]
+ "scene": "01-b01-cold-open",
+ "source": "generated b-roll (kling, 1080p, no watermark) - NOT a harness capture; sidecar hand-authored - retimed 1.16x slower 2026-09-03 so it covers the 'maxed out' re-voiced b01 (16.69s narration) with breath",
+ "totalSec": 17.6,
+ "shots": [
+  {
+   "name": "exhibit",
+   "startSec": 0.0,
+   "endSec": 6.18
+  },
+  {
+   "name": "lobby",
+   "startSec": 6.18,
+   "endSec": 12.67
+  },
+  {
+   "name": "control room",
+   "startSec": 12.67,
+   "endSec": 17.6
+  }
+ ],
+ "beats": [
+  {
+   "beat": "b01",
+   "startSec": 0.0,
+   "mp3Sec": 16.692,
+   "enforcedWaitSec": 0,
+   "videoSec": 17.6
+  }
+ ]
 }

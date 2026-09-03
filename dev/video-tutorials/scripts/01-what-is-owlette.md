@@ -43,7 +43,7 @@ when one dies, it brings it back. all of it, from one dashboard, from anywhere.
 **VOICEOVER:**
 if you run unattended windows machines — experiential installs, exhibits, broadcast,
 live events — owlette is built for you. here's a real fleet: lobby displays, museum
-kiosks, a media server mid-show, a render node flat out. a green pill means online, a
+kiosks, a media server mid-show, a render node maxed out. a green pill means online, a
 red one means offline, and each usage bar shifts color as load climbs — green when
 there's headroom, red when it's pinned.
 

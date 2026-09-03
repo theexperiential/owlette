@@ -2,3 +2,11 @@
 # Resolve build reports — regenerated on every run
 assembly/resolve/build-log*.txt
 assembly/vet-report-*.txt
+
+# Rendered/derived audio-video assets — regenerable, never committed.
+# (footage/ and voiceover/out/ are already covered by their own .gitignore.)
+voiceover/out_backup_*/
+voiceover/_audition/
+assembly/captions/
+assembly/resolve/render-log.txt
+assembly/resolve/rebuild-revoiced-log.txt

@@ -12,7 +12,7 @@ its SCREEN direction.
 
 | ep | title | sheet | narration |
 |---|---|---|---|
-| 01 | what is owlette? | [01-what-is-owlette.md](01-what-is-owlette.md) | 2:09.6 |
+| 01 | what is owlette? | [01-what-is-owlette.md](01-what-is-owlette.md) | 2:06.3 |
 | 02 | day zero: sign up, 2fa, and your first site | [02-day-zero.md](02-day-zero.md) | 4:06.1 |
 | 03 | install owlette & pair your first machine | [03-install-and-pair.md](03-install-and-pair.md) | 3:40.2 |
 | 04 | the dashboard, end to end | [04-dashboard-tour.md](04-dashboard-tour.md) | 2:37.9 |

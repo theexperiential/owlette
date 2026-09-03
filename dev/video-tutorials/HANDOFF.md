@@ -198,6 +198,19 @@ Status of the items below, after working the suggested order:
     transform` on body for the animation, every frame `scale(s) translateZ(0)`
     (composited), cleared at rest so the page re-rasters sharp. All 16
     push-bearing scenes (every scene except 03) re-recorded on rosco's order.
+  * NEW TRAP — IN-PLACE MP3 REWRITES POISON RESOLVE'S DECODE CACHE
+    (2026-09-02, caught by the CEO): normalize's locked-file fallback
+    (truncate+write, same file identity) let Resolve keep serving its CACHED
+    decode of the old audio THROUGH a bin delete + fresh re-import — five
+    episodes shipped with narration clipped mid-sentence (02 ×5 beats,
+    04-b03, 07-b07, 14-b01/b02, 17-b07/b09; audit = silencedetect death-map
+    vs manifest slots). The mp3 bytes on disk were always correct. Fixes:
+    the fallback is now a HARD FAIL naming the lock holder, and scratchpad
+    `refresh_mp3_identity.py` (run with Resolve CLOSED) gives every beat mp3
+    a fresh identity before the rebuild. Also surfaced by the same rebuild
+    log: ep03's footage predates its 08-31 re-split (all 10 beats,
+    re-recorded 2026-09-02) and ep09's native takes predate the re-voice
+    (8 beats — pending the §3.7/§3.8 VM re-shoots).
   * NEW TRAP — RE-VOICE ⇒ GEN-ASSEMBLY ⇒ ONLY THEN RECORD: the recorder's
     narrate()/hold enforcement reads beat durations from the ASSEMBLY
     MANIFESTS (video-helpers `beatDurationsFor`), not the mp3s. Recording

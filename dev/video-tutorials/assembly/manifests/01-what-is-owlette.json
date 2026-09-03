@@ -7,7 +7,7 @@
   "scenario": "dashboard-mixed-states",
   "script": "scripts/01-what-is-owlette.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 129.6,
+  "narration_s": 126.3,
   "main_card": {
     "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\01-what-is-owlette-main.mp4",
     "frames": 330,
@@ -25,7 +25,7 @@
       "rel": "dev/video-tutorials/footage/web/01-what-is-owlette.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\01-what-is-owlette.mp4",
       "exists": true,
-      "duration_s": 82.8,
+      "duration_s": 83.35,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -36,7 +36,7 @@
       "rel": "dev/video-tutorials/footage/web/01-what-is-owlette-b02.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\01-what-is-owlette-b02.mp4",
       "exists": true,
-      "duration_s": 26.117,
+      "duration_s": 26.65,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -47,10 +47,10 @@
       "rel": "dev/video-tutorials/b-roll/01-b01-cold-open.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\b-roll\\01-b01-cold-open.mp4",
       "exists": true,
-      "duration_s": 15.167,
+      "duration_s": 17.6,
       "width": 1920,
       "height": 1080,
-      "fps": 24.0
+      "fps": 60.0
     }
   ],
   "beats": [
@@ -67,8 +67,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\01-what-is-owlette\\ep01-b01.mp3",
       "mp3_name": "ep01-b01.mp3",
-      "duration_s": 14.393,
-      "duration_frames": 864,
+      "duration_s": 16.692,
+      "duration_frames": 1002,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -79,8 +79,8 @@
       "direction": {
         "B-ROLL": "owlette wordmark; then cut to the dashboard fleet view loading."
       },
-      "start_s": 23.95,
-      "start_frame": 1437,
+      "start_s": 26.25,
+      "start_frame": 1575,
       "card": {
         "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\01-what-is-owlette-b02.mp4",
         "frames": 207,
@@ -89,8 +89,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\01-what-is-owlette\\ep01-b02.mp3",
       "mp3_name": "ep01-b02.mp3",
-      "duration_s": 23.562,
-      "duration_frames": 1414,
+      "duration_s": 19.958,
+      "duration_frames": 1197,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -102,8 +102,8 @@
         "SCREEN": "dashboard at /dashboard — the seeded fleet (lobby-display, museum-kiosk-1/2, media-server-stage, nyc-signage-01, unreal-render-1, td-control-room, lobby-2, mainstage-led, plus the offline touring-rig-04) scrolling slowly. Green \"online\" pills, one red \"offline\" pill.",
         "NOTE": "the left accent bar on each metric tile is a FIVE-band scale (emerald <30, violet <50, sky <70, amber <85, red ≥85 — web/lib/usageColorUtils.ts:8-20), so this fleet legitimately shows violet and sky bars on camera. Don't grade or re-time the shot to force a green-to-red look; the revoiced line describes headroom vs pinned, not a hue ramp."
       },
-      "start_s": 51.533,
-      "start_frame": 3092,
+      "start_s": 50.233,
+      "start_frame": 3014,
       "card": {
         "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\01-what-is-owlette-b03.mp4",
         "frames": 205,
@@ -112,8 +112,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\01-what-is-owlette\\ep01-b03.mp3",
       "mp3_name": "ep01-b03.mp3",
-      "duration_s": 28.63,
-      "duration_frames": 1718,
+      "duration_s": 28.604,
+      "duration_frames": 1716,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -125,8 +125,8 @@
         "SCREEN": "slow zoom into one machine card — status pill and last heartbeat, then the metric tiles in their real order (cpu, ram, disk, gpu, network) with sparklines behind them, then the displays section, then the process list.",
         "NOTE": "the spoken word \"memory\" here maps to the tile the UI labels \"ram\" (MachineCardView.tsx:506) — audio is unchanged, so frame the zoom on the card as a whole rather than resting on that one label. Also: `dashboard-mixed-states` seeds NO processes (fixtures.ts writeMachineMetrics has no `metrics.processes`), so a card renders the empty \"add process\" button instead of a process list. Seed processes on the focus machine before recording, or the last clause of this beat has nothing on screen."
       },
-      "start_s": 84.183,
-      "start_frame": 5051,
+      "start_s": 82.867,
+      "start_frame": 4972,
       "card": {
         "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\01-what-is-owlette-b04.mp4",
         "frames": 205,
@@ -135,8 +135,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\01-what-is-owlette\\ep01-b04.mp3",
       "mp3_name": "ep01-b04.mp3",
-      "duration_s": 16.039,
-      "duration_frames": 962,
+      "duration_s": 14.864,
+      "duration_frames": 892,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -147,8 +147,8 @@
       "direction": {
         "B-ROLL": "quick montage, roughly one second each — the inno installer wizard; the \"add process\" dialog; the schedule editor; a deployment rolling out on /deployments; a roost version list on /roosts; a talons rule on /talons; the display layout panel on a machine card; and last, the hoot chat frame at /hoot (the nav label and the screen are \"hoot\" — nothing in the UI says cortex any more)."
       },
-      "start_s": 104.283,
-      "start_frame": 6257,
+      "start_s": 101.783,
+      "start_frame": 6107,
       "card": {
         "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\01-what-is-owlette-b05.mp4",
         "frames": 207,
@@ -157,8 +157,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\01-what-is-owlette\\ep01-b05.mp3",
       "mp3_name": "ep01-b05.mp3",
-      "duration_s": 24.712,
-      "duration_frames": 1483,
+      "duration_s": 23.902,
+      "duration_frames": 1434,
       "status": "ok",
       "breath_s": 0.6
     }

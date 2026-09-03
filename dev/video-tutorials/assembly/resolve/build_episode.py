@@ -377,7 +377,24 @@ def expected_layout(manifest, conform, fps):
         for rec_off, tl_len, _si, _sl, over in segs:
             v1.append((int(beat["start_frame"]) + rec_off, tl_len,
                        os.path.basename(over or cut["path"])))
-    return {"V1": v1, "A1": a1}
+    v2 = []
+    bug = brand_bug_path(manifest)
+    if bug and v1:
+        end = max(off + ln for off, ln, _n in v1)
+        v2.append((0, end, os.path.basename(bug)))
+    return {"V1": v1, "V2": v2, "A1": a1}
+
+
+def brand_bug_path(manifest):
+    """The full-frame brand bug PNG (V2 overlay), or None if not on disk.
+
+    Authored at exactly 1920x1080 with the mark pre-positioned bottom-right, so
+    placement needs no transform properties — a plain V2 clip spanning the
+    timeline. media_root is the repo root (see gen-assembly resolve_sources).
+    """
+    p = os.path.join(str(manifest["media_root"]), "dev", "video-tutorials",
+                     "footage", "cards", "brand-bug-frame.png")
+    return p if os.path.isfile(p) else None
 
 
 def card_slots(manifest):
@@ -415,18 +432,22 @@ def timeline_matches_generated(tl, expected, report):
     name = tl.GetName() or "?"
     try:
         start = int(tl.GetStartFrame() or 0)
-        for kind, prefix in (("video", "V"), ("audio", "A")):
+        # V2 carries the generated brand bug; anything on V3+/A2+ is a hand edit.
+        for kind, prefix, first_free in (("video", "V", 3), ("audio", "A", 2)):
             n = int(tl.GetTrackCount(kind) or 0)
-            for idx in range(2, n + 1):
+            for idx in range(first_free, n + 1):
                 if tl.GetItemListInTrack(kind, idx):
                     report.say('  guard: "%s" has content on %s%d - hand-edited'
                                % (name, prefix, idx))
                     return False
-        for track, want in (("video", expected["V1"]), ("audio", expected["A1"])):
-            items = tl.GetItemListInTrack(track, 1) or []
+        for track, idx1, want in (("video", 1, expected["V1"]),
+                                  ("video", 2, expected.get("V2") or []),
+                                  ("audio", 1, expected["A1"])):
+            items = tl.GetItemListInTrack(track, idx1) or []
             if len(items) != len(want):
-                report.say('  guard: "%s" %s1 has %d clip(s), generator places %d '
-                           "- hand-edited" % (name, track[0].upper(), len(items), len(want)))
+                report.say('  guard: "%s" %s%d has %d clip(s), generator places %d '
+                           "- hand-edited" % (name, track[0].upper(), idx1,
+                                              len(items), len(want)))
                 return False
             actual = []
             for it in items:
@@ -871,8 +892,11 @@ def build(manifest, report):
                         "- re-run gen-assembly.py" % c["path"])
     cards = [(at, c) for at, c in cards if os.path.isfile(c["path"])]
 
+    bug = brand_bug_path(manifest)
+
     to_import = ([s["path"] for s in scenes] + [s["path"] for s in extras]
-                 + [c["path"] for _at, c in cards] + audio_paths)
+                 + [c["path"] for _at, c in cards]
+                 + ([bug] if bug else []) + audio_paths)
     for path in [p for p in to_import if not os.path.isfile(p)]:
         report.warn("file vanished since the manifest was generated: %s" % path)
     to_import = [p for p in to_import if os.path.isfile(p)]
@@ -974,6 +998,26 @@ def build(manifest, report):
             except Exception:
                 cursor += int(round(float(src.get("duration_s") or 0) * fps))
         report.say("V1: %d scene clip(s), %d frames" % (len(scenes), cursor))
+    # --- V2: brand bug ----------------------------------------------------
+    # One full-frame transparent PNG spanning the whole timeline (the mark is
+    # pre-positioned in the image, so no transform properties are involved).
+    # WYSIWYG in the edit page; hand edits inherit it; the guard expects it.
+    layout = expected_layout(manifest, conform, fps)
+    if bug and layout["V2"]:
+        if (timeline.GetTrackCount("video") or 0) < 2:
+            timeline.AddTrack("video")
+        item = items.get(bug)
+        if item is None:
+            report.warn("brand bug not in imported media: %s" % bug)
+        else:
+            _off, bug_len, _n = layout["V2"][0]
+            placed = append_clip(media_pool, item, start, VIDEO_ONLY, 2, report,
+                                 "brand bug", src_in=0, src_out=bug_len - 1)
+            if placed is not None:
+                report.say("V2: brand bug spans %d frames" % bug_len)
+            else:
+                report.warn("brand bug did not place - V2 empty")
+
     # --- V1: title cards --------------------------------------------------
     # Full-frame interstitials on the same track: the main card at frame 0,
     # each section card butted against its beat. Silent clips — nothing on A1.

@@ -135,19 +135,22 @@ def apply_gain(path: Path, gain_db: float) -> bool:
                 last_exc = exc
                 time.sleep(1.0 + attempt)
         # A rename needs DELETE access, which an open media-player handle
-        # denies indefinitely - while plain WRITES are still shared (the
-        # splitter's direct ffmpeg writes succeed on the same files). So
-        # replace the CONTENT in place instead of the name.
+        # denies indefinitely - while plain WRITES are still shared. The old
+        # fallback replaced the CONTENT in place, and it is BANNED: when the
+        # lock holder was Resolve, in-place rewrites kept the file identity
+        # and Resolve silently served its cached decode of the OLD audio
+        # through a bin delete + fresh import - five episodes shipped to the
+        # CEO with narration clipped mid-sentence (2026-09-02). Fail loudly
+        # instead: close the app holding the file, then re-run.
         try:
-            data = tmp.read_bytes()
-            with open(path, "r+b") as fh:
-                fh.truncate(0)
-                fh.write(data)
             tmp.unlink()
-            print("    (%s: replaced in place - rename was locked)" % path.name)
-            return True
         except OSError:
-            raise last_exc
+            pass
+        raise RuntimeError(
+            "%s is locked against rename (an open app holds it - Resolve or a "
+            "media player). Close it and re-run; NEVER rewrite these files in "
+            "place, cached decoders keep playing the old audio. (%s)"
+            % (path.name, last_exc))
     except (OSError, subprocess.CalledProcessError) as exc:
         print("    !! %s: %s" % (path.name, str(exc).splitlines()[0]))
         if tmp.exists():

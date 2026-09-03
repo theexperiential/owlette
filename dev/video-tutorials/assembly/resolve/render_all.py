@@ -190,7 +190,26 @@ def main():
     say("%d of %d rendered%s" % (len(jobs) - failures, len(jobs),
                                  "" if not failures else " - %d FAILED" % failures))
     flush_log()
-    return 1 if failures or missing else 0
+    if failures or missing:
+        return 1
+
+    # One click, final files: run the publish pass (1.125x speed + embedded
+    # captions; the brand bug is already IN the timelines on V2) over the
+    # fresh exports. Uses the system python — Resolve's embedded interpreter
+    # stays out of it.
+    say("publishing (speed + captions) ...")
+    flush_log()
+    pub = subprocess.run(
+        ["python", os.path.join(os.path.dirname(REPO_MANIFESTS), "publish-videos.py")],
+        capture_output=True, text=True)
+    for line in (pub.stdout or "").splitlines()[-20:]:
+        say(line)
+    if pub.returncode != 0:
+        say("PUBLISH FAILED - run publish-videos.py by hand and read its output")
+        for line in (pub.stderr or "").splitlines()[-5:]:
+            say(line)
+    flush_log()
+    return pub.returncode
 
 
 # No sys.exit: a SystemExit inside Resolve's embedded console reads as a
