@@ -30,6 +30,7 @@ import {
   narrate,
   highlight,
   slowScrollToBottom,
+  slowPush,
   centerInView,
   clickWithCursor,
 } from './video-helpers';
@@ -69,7 +70,12 @@ test('episode 1 — what is owlette?', async ({ browser }) => {
         await narrate(page, 'b03 fleet — settle', 3);
         await slowScrollToBottom(page, 19);
         await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
-        await narrate(page, 'b03 fleet — rest at top', 8);
+        // Rest with a breath, not a freeze — subtle push in and back, resolved
+        // well before the beat ends (motion rule: see 04's spec).
+        await narrate(page, 'b03 fleet — rest at top', 1.5);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 40, seconds: 3.0 });
+        await slowPush(page, { scale: 1.0, seconds: 2.0 });
+        await narrate(page, 'b03 fleet — hold', 1.5);
 
         // [b04] the one-glance promise — zoom into one card, top to bottom
         // (~18.2s). media-server-stage is the only fleet machine seeded with
@@ -82,7 +88,11 @@ test('episode 1 — what is owlette?', async ({ browser }) => {
           .filter({ hasText: 'media-server-stage' });
         await centerInView(page, focusCard);
         await highlight(page, focusCard, 2600);
-        await narrate(page, 'b04 one card', 19);
+        await narrate(page, 'b04 one card', 2.0);
+        await slowPush(page, { scale: 1.06, originXPct: 50, originYPct: 45, seconds: 5.0 });
+        await narrate(page, 'b04 one card — reading it', 5.5);
+        await slowPush(page, { scale: 1.0, seconds: 3.5 });
+        await narrate(page, 'b04 one card — the promise lands', 3.0);
 
         // [b05] what this series covers (~27.6s of VO over a fast montage).
         //
@@ -126,7 +136,10 @@ test('episode 1 — what is owlette?', async ({ browser }) => {
         // Last frame: hoot. The nav label and the route are both "hoot";
         // nothing in the UI reads "cortex" any more.
         await openForCapture(page, '/hoot');
-        await narrate(page, 'b05 montage — hoot', 8);
+        await narrate(page, 'b05 montage — hoot', 1.0);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 45, seconds: 3.0 });
+        await slowPush(page, { scale: 1.0, seconds: 2.5 });
+        await narrate(page, 'b05 montage — hoot hold', 1.5);
       },
     );
   } finally {

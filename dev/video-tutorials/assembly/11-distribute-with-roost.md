@@ -1,6 +1,6 @@
 # assembly — episode 11: distribute project folders with roost
 
-Narration: **2:26.4** across 6 spoken beats.
+Narration: **2:49.1** across 6 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

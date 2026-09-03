@@ -47,6 +47,7 @@ import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   clickWithCursor,
   centerInView,
@@ -76,7 +77,11 @@ test('episode 12 — hoot: manage machines by chat', async ({ browser }) => {
           page.getByText('03:14 incident', { exact: false }).first(),
         ).toBeVisible();
         await expect(page.getByText('access violation', { exact: false })).toBeVisible();
-        await narrate(page, 'b01 hoot chat — settle', 20);
+        await narrate(page, 'b01 hoot chat — settle', 6.0);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 48, seconds: 4.0 });
+        await narrate(page, 'b01 hoot chat — settle - close', 6.0);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b01 hoot chat — settle - settle', 1.0);
 
         // [b02] one key, one place (~32.5s) — account settings → the hoot
         // section: provider, model, and the api key field with its "encrypted
@@ -92,10 +97,18 @@ test('episode 12 — hoot: manage machines by chat', async ({ browser }) => {
         const hootTab = settingsDialog.getByRole('button', { name: /^hoot$/i }).first();
         await clickWithCursor(page, hootTab);
         await expect(settingsDialog.locator('#llmProvider')).toBeVisible();
-        await narrate(page, 'b02 provider + model', 14);
+        await narrate(page, 'b02 provider + model', 4.2);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 42, seconds: 4.0 });
+        await narrate(page, 'b02 provider + model - close', 1.8);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b02 provider + model - settle', 1.0);
         await centerInView(page, settingsDialog.locator('#llmApiKey'));
         await highlight(page, settingsDialog.locator('#llmApiKey'), 2600);
-        await narrate(page, 'b02 the key, encrypted, server-side only', 19);
+        await narrate(page, 'b02 the key, encrypted, server-side only', 5.7);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 4.0 });
+        await narrate(page, 'b02 the key, encrypted, server-side only - close', 5.3);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b02 the key, encrypted, server-side only - settle', 1.0);
 
         await page.keyboard.press('Escape');
         await expect(settingsDialog).not.toBeVisible();
@@ -111,7 +124,11 @@ test('episode 12 — hoot: manage machines by chat', async ({ browser }) => {
         const allMachinesOption = page.getByRole('option', { name: /All Machines/i }).first();
         await expect(allMachinesOption).toBeVisible();
         await highlight(page, allMachinesOption, 1600);
-        await narrate(page, 'b03 all machines vs one machine', 14);
+        await narrate(page, 'b03 all machines vs one machine', 4.2);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 4.0 });
+        await narrate(page, 'b03 all machines vs one machine - close', 1.8);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b03 all machines vs one machine - settle', 1.0);
         await page.keyboard.press('Escape');
         await page.waitForTimeout(300);
         await narrate(page, 'b03 close selector', 5);

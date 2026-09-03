@@ -1,6 +1,6 @@
 # assembly — episode 03: install owlette & pair your first machine
 
-Narration: **3:00.3** across 10 spoken beats.
+Narration: **3:40.2** across 10 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

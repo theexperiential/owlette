@@ -83,10 +83,10 @@ this site's times on that clock, from schedule editors to log windows — and ea
 machine still keeps its own clock, so set both right.
 
 ## [b09] locked out, and what's next
-**SCREEN:** `/admin/users`, the row menu open with "reset 2FA..." highlighted, then the confirm dialog. Cut back to the getting-started card, now showing "step 1: download owlette agent".
+**SCREEN:** the OPERATOR'S user-management view (framed as theirs, not the viewer's — superadmin is an internal role, never presented as a public feature): the row menu open with "reset 2FA..." highlighted, then the confirm dialog. Cut back to the getting-started card, now showing "step 1: download owlette agent".
 **VOICEOVER:**
-last thing — locked out. a backup code gets you straight back in. lost those too,
-and a superadmin can reset two-factor on your row in admin users: it strips every
-factor, revokes your trusted devices, and drops you back on this setup screen at
-the next sign-in. [warm] account done. next up, getting owlette onto a machine
-and pairing it with this site.
+last thing — locked out. a backup code gets you straight back in. lost those too?
+whoever operates your owlette can reset two-factor from their side — this is what
+it looks like for them. it strips every factor, revokes your trusted devices, and
+drops you back on setup at your next sign-in. [warm] account done. next up,
+getting owlette onto a machine and pairing it with this site.

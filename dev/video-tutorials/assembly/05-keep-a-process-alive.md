@@ -1,6 +1,6 @@
 # assembly — episode 05: keep a process alive
 
-Narration: **2:15.3** across 8 spoken beats.
+Narration: **2:45.8** across 8 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

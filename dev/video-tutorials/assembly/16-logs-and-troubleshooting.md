@@ -1,6 +1,6 @@
 # assembly — episode 16: logs & troubleshooting
 
-Narration: **2:43.2** across 7 spoken beats.
+Narration: **3:09.3** across 7 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

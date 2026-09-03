@@ -2,15 +2,19 @@
  * Scene — episode 5, "keep a process alive". All SCREEN beats, no B-ROLL.
  *
  * Rendered VO (voiceover/out/05-keep-a-process-alive/, ffprobe):
- *   b01 13.9s the promise · b02 9.1s add a process · b03 19.8s essential fields
- *   b04 23.8s resilience knobs · b05 12.0s save and watch · b06 28.0s a crash
- *   b07 19.6s day-to-day controls
+ *   b01 13.9s the promise · b02 9.1s add a process · b04 19.8s essential fields
+ *   b05 23.8s resilience knobs · b06 12.0s save and watch · b07 28.0s a crash
+ *   b08 19.6s day-to-day controls
+ *   (b03, "or just drop it on the machine", is NATIVE footage - the VM drag
+ *   shoot, scripts/vm/22-shoot-drag-drop.ps1 - deliberately absent here.
+ *   Durations above predate the 2026-08-31 re-voice; the enforcement hold
+ *   sizes every beat to the real MP3 at record time.)
  *
  * Uses the screenshots harness verbatim: `control-process-restarting`
  * (td-control-room focused, touchdesigner.exe pre-seeded LAUNCHING) + the admin
  * storageState. Two pre-record writes the fixture deliberately leaves out
- * because the still specs frame other states: `rebootPending.active` for b06's
- * amber banner, and b05's agent-written status row (below).
+ * because the still specs frame other states: `rebootPending.active` for b07's
+ * amber banner, and b06's agent-written status row (below).
  *
  * Run:  cd web && npm run videos -- --grep "episode 5"
  * Out:  dev/video-tutorials/footage/web/05-keep-a-process-alive.mp4
@@ -25,6 +29,7 @@ import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   centerInView,
   clickWithCursor,
@@ -33,7 +38,7 @@ import {
 
 const FIXED_NOW_SEC = Math.floor(FIXED_NOW_MS / 1000);
 
-/** The row b05 brings to life. Ours, not the server's — see the beat comment. */
+/** The row b06 brings to life. Ours, not the server's — see the beat comment. */
 const NEW_PROCESS_ID = 'proc-td-capture-demo';
 
 test('episode 5 — keep a process alive', async ({ browser }) => {
@@ -66,7 +71,11 @@ test('episode 5 — keep a process alive', async ({ browser }) => {
         await expect(focusCard).toBeVisible();
         await centerInView(page, focusCard);
         await highlight(page, focusCard, 2600);
-        await narrate(page, 'b01 the promise', 15);
+        await narrate(page, 'b01 the promise', 4.5);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 42, seconds: 4.0 });
+        await narrate(page, 'b01 the promise - close', 2.5);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b01 the promise - settle', 1.0);
 
         // [b02] add a process — the focus card's "add process" control (~9.1s).
         const addProcessButton = focusCard.getByRole('button', { name: /add process/i });
@@ -75,7 +84,7 @@ test('episode 5 — keep a process alive', async ({ browser }) => {
         await expect(dialog).toBeVisible();
         await narrate(page, 'b02 open dialog', 10);
 
-        // [b03] the essential fields — name / launch mode / exe / file path
+        // [b04] the essential fields — name / launch mode / exe / file path
         // (~19.8s). Create mode defaults launch mode to "off"
         // (dashboard/page.tsx:558), so setting it really is required; save only
         // validates name + executable path, which is what makes "that's
@@ -97,24 +106,28 @@ test('episode 5 — keep a process alive', async ({ browser }) => {
         );
         // 16s, not 7: `typewrite` blocks for text.length × perCharMs, which only
         // buys ~4.4s here (13 + 63 + 39 chars). The beat's MP3 is 19.8s.
-        await narrate(page, 'b03 essential fields', 16);
+        await narrate(page, 'b04 essential fields', 4.8);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 4.0 });
+        await narrate(page, 'b04 essential fields - close', 3.2);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b04 essential fields - settle', 1.0);
 
-        // [b04] the resilience knobs (~23.8s). relaunch attempts holds longest:
+        // [b05] the resilience knobs (~23.8s). relaunch attempts holds longest:
         // it defaults to 3 and 0 is a real setting meaning unlimited
-        // (owlette_service.py:2548-2579), which b06 says out loud.
+        // (owlette_service.py:2548-2579), which b07 says out loud.
         await centerInView(page, dialog.locator('#edit-cwd'));
         await highlight(page, dialog.locator('#edit-priority'), 1600);
-        await narrate(page, 'b04 priority', 4);
+        await narrate(page, 'b05 priority', 4);
         await highlight(page, dialog.locator('#edit-visibility'), 1600);
-        await narrate(page, 'b04 visibility', 4);
+        await narrate(page, 'b05 visibility', 4);
         await highlight(page, dialog.locator('#edit-time-delay'), 1600);
-        await narrate(page, 'b04 launch delay', 4);
+        await narrate(page, 'b05 launch delay', 4);
         await highlight(page, dialog.locator('#edit-time-init'), 1600);
-        await narrate(page, 'b04 init timeout', 5);
+        await narrate(page, 'b05 init timeout', 5);
         await highlight(page, dialog.locator('#edit-relaunch'), 2400);
-        await narrate(page, 'b04 relaunch attempts', 8);
+        await narrate(page, 'b05 relaunch attempts', 8);
 
-        // [b05] save and watch it run (~12.0s).
+        // [b06] save and watch it run (~12.0s).
         //
         // Create writes only the CONFIG doc (useFirestore.ts:1433 →
         // createProcess.server.ts) while the card's rows render from the
@@ -154,7 +167,7 @@ test('episode 5 — keep a process alive', async ({ browser }) => {
           },
           { merge: true },
         );
-        await narrate(page, 'b05 row appears — LAUNCHING', 5);
+        await narrate(page, 'b06 row appears — LAUNCHING', 5);
         await machineRef.set(
           {
             metrics: {
@@ -165,9 +178,9 @@ test('episode 5 — keep a process alive', async ({ browser }) => {
           },
           { merge: true },
         );
-        await narrate(page, 'b05 flips to RUNNING', 8);
+        await narrate(page, 'b06 flips to RUNNING', 8);
 
-        // [b06] what happens on a crash (~28.0s). The banner copy is "restart
+        // [b07] what happens on a crash (~28.0s). The banner copy is "restart
         // pending: {reason}" with approve / dismiss (MachineCardView.tsx:325,
         // :343, :358) — site admins only. The underlying field and testids
         // still say reboot; that split is deliberate and never spoken.
@@ -189,13 +202,17 @@ test('episode 5 — keep a process alive', async ({ browser }) => {
           .filter({ hasText: 'td-control-room' });
         await centerInView(page, focusCardAfter);
         await highlight(page, focusCardAfter, 2200);
-        await narrate(page, 'b06 relaunch attempts run out', 14);
+        await narrate(page, 'b07 relaunch attempts run out', 4.2);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 4.0 });
+        await narrate(page, 'b07 relaunch attempts run out - close', 1.8);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b07 relaunch attempts run out - settle', 1.0);
         await highlight(page, focusCardAfter.getByTestId('reboot-pending-approve'), 1600);
-        await narrate(page, 'b06 approve', 8);
+        await narrate(page, 'b07 approve', 8);
         await highlight(page, focusCardAfter.getByTestId('reboot-pending-dismiss'), 1600);
-        await narrate(page, 'b06 dismiss', 7);
+        await narrate(page, 'b07 dismiss', 7);
 
-        // [b07] day-to-day controls (~19.6s). These are NOT hover-revealed —
+        // [b08] day-to-day controls (~19.6s). These are NOT hover-revealed —
         // they render for every site admin: the off / always on / scheduled
         // segmented control with its schedule gear inside the "scheduled"
         // segment, then edit (pencil) and duplicate, with restart and kill
@@ -215,19 +232,19 @@ test('episode 5 — keep a process alive', async ({ browser }) => {
           .first();
         await centerInView(page, tdRow);
         await highlight(page, tdRow.getByRole('button', { name: /^always on$/ }).first(), 1500);
-        await narrate(page, 'b07 launch-mode segments', 5);
+        await narrate(page, 'b08 launch-mode segments', 5);
         // The schedule gear inside the "scheduled" segment — icon-only, so it
         // is reachable only by testid (added alongside this scene).
         await highlight(page, tdRow.getByTestId('process-row-configure-schedule').first(), 1500);
-        await narrate(page, 'b07 schedule gear', 4);
+        await narrate(page, 'b08 schedule gear', 4);
         await highlight(page, tdRow.getByRole('button', { name: /^restart touchdesigner\.exe$/ }), 1500);
         await highlight(page, tdRow.getByRole('button', { name: /^kill touchdesigner\.exe$/ }), 1500);
-        await narrate(page, 'b07 restart and kill', 6);
+        await narrate(page, 'b08 restart and kill', 6);
         // The pencil is icon-only with no accessible name; the lucide class is
         // the repo's standard fallback for that case.
         await highlight(page, tdRow.locator('button:has(svg.lucide-pencil)').first(), 1500);
         await highlight(page, tdRow.getByRole('button', { name: /^duplicate touchdesigner\.exe$/ }), 1500);
-        await narrate(page, 'b07 edit and duplicate', 6);
+        await narrate(page, 'b08 edit and duplicate', 6);
       },
     );
   } finally {

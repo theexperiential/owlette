@@ -1,6 +1,6 @@
 # assembly — episode 04: the dashboard, end to end
 
-Narration: **2:15.2** across 6 spoken beats.
+Narration: **2:37.9** across 6 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

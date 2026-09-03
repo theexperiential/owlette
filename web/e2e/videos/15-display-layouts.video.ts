@@ -46,6 +46,7 @@ import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   centerInView,
   clickWithCursor,
@@ -162,7 +163,11 @@ test('episode 15 — display layouts: capture a wall, put it back', async ({ bro
         await expect(wallCard).toBeVisible();
         await centerInView(page, wallCard);
         await highlight(page, wallCard, 2600);
-        await narrate(page, 'b01 cut from the wall to the dashboard', 20);
+        await narrate(page, 'b01 cut from the wall to the dashboard', 6.0);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 48, seconds: 4.0 });
+        await narrate(page, 'b01 cut from the wall to the dashboard - close', 6.0);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b01 cut from the wall to the dashboard - settle', 1.0);
 
         // [b02] the display panel (~22.2s). The small monitor button in the card
         // header (tooltip "view displays") opens on the `live` tab: the canvas
@@ -173,7 +178,11 @@ test('episode 15 — display layouts: capture a wall, put it back', async ({ bro
         const panel = page.getByTestId('display-layout-panel');
         await expect(panel).toBeVisible();
         await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
-        await narrate(page, 'b02 the live tab — canvas + monitor table', 15);
+        await narrate(page, 'b02 the live tab — canvas + monitor table', 4.5);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 42, seconds: 4.0 });
+        await narrate(page, 'b02 the live tab — canvas + monitor table - close', 2.5);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b02 the live tab — canvas + monitor table - settle', 1.0);
         // The same panel opens from the machine ⋮ → "view displays" — worth a
         // second of b-roll, framed here rather than clicked.
         await highlight(page, panel.getByRole('button', { name: 'live' }), 2200);
@@ -246,7 +255,11 @@ test('episode 15 — display layouts: capture a wall, put it back', async ({ bro
         // The tab's accessible name gains ", N display changes from stored"
         // once drift lands, which is also the badge on screen.
         await highlight(page, panel.getByRole('button', { name: /^stored/ }), 2600);
-        await narrate(page, 'b04 the stored tab picks up its amber badge', 13);
+        await narrate(page, 'b04 the stored tab picks up its amber badge', 3.9);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 3.5 });
+        await narrate(page, 'b04 the stored tab picks up its amber badge - close', 2.1);
+        await slowPush(page, { scale: 1.0, seconds: 2.5 });
+        await narrate(page, 'b04 the stored tab picks up its amber badge - settle', 1.0);
         await centerInView(page, panel);
         await narrate(page, 'b04 identity includes the port it is plugged into', 12);
 
@@ -345,7 +358,11 @@ test('episode 15 — display layouts: capture a wall, put it back', async ({ bro
         // [b08] the events tab (~26.2s).
         await clickWithCursor(page, panel.getByRole('button', { name: 'events' }));
         await expect(panel.getByTestId('display-events-table')).toBeVisible();
-        await narrate(page, 'b08 added, removed, drift, apply failed, auto-reverted', 14);
+        await narrate(page, 'b08 added, removed, drift, apply failed, auto-reverted', 4.2);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 4.0 });
+        await narrate(page, 'b08 added, removed, drift, apply failed, auto-reverted - close', 1.8);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b08 added, removed, drift, apply failed, auto-reverted - settle', 1.0);
         await openForCapture(page, '/dashboard');
         await clickWithCursor(page, page.getByTestId('user-menu-trigger'));
         await clickWithCursor(page, page.getByRole('menuitem', { name: /account settings/i }));

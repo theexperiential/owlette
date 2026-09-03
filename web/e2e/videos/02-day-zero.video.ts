@@ -9,8 +9,9 @@
  * creates a real site.
  *
  * Rendered VO (voiceover/out/02-day-zero/, ffprobe):
- *   b01 20.7s · b02 21.9s · b03 24.5s · b04 27.1s · b05 18.2s
- *   b06 18.4s · b07 20.9s · b08 26.7s · b09 26.7s
+ *   b01 18.6s · b02 18.6s · b03 16.7s · b04 24.7s · b05 17.5s
+ *   b06 17.8s · b07 17.1s · b08 22.8s · b09 22.0s  (2026-08-31 evening
+ *   re-voice — the care-led b01 opening)
  *
  * ── THREE PRECONDITIONS ─────────────────────────────────────────────────────
  *
@@ -66,6 +67,7 @@ import {
   VIDEO_OUT_DIR,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   centerInView,
   clickWithCursor,
@@ -174,6 +176,15 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
       try {
         // ── [b02] signing up (~21.9s) ────────────────────────────────────────
         await openForCapture(page, '/register');
+        // [b01] cold open (2026-08-31 rewrite): a clean hold on the sign-up
+        // page, where a new account actually begins. The old cold open
+        // bounced /dashboard -> /setup-2fa, which showed the setup screen
+        // before b02 ever reached the sign-up form - rosco flagged it.
+        await narrate(page, 'b01 the sign-up page, held', 5.7);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 48, seconds: 4.0 });
+        await narrate(page, 'b01 the sign-up page, held - close', 5.3);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b01 the sign-up page, held - settle', 1.0);
 
         // Google first — framed, never clicked (see precondition 3).
         const googleButton = page.getByRole('button', { name: /continue with google/i });
@@ -204,17 +215,6 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         });
         await narrate(page, 'b02 lands on setup, not the dashboard', 8);
 
-        // ── [b01] cold open — SHOT OUT OF ORDER (~20.7s) ─────────────────────
-        // An unauthenticated visitor typing /dashboard goes to /login
-        // (proxy.ts:148-158). The setup bounce this beat is about only fires for
-        // a signed-in session with ZERO factors — which is exactly what we have
-        // for the next few seconds, and never again once b04 enrolls.
-        await page.goto(url('/dashboard'), { waitUntil: 'domcontentloaded' });
-        await expect(page).toHaveURL(/\/setup-2fa/, { timeout: 20_000 });
-        await expect(
-          page.getByText('set up two-factor authentication', { exact: false }),
-        ).toBeVisible();
-        await narrate(page, 'b01 /dashboard bounces to /setup-2fa', 21);
 
         // ── [b03] passkey or authenticator (~24.5s) ──────────────────────────
         await expect(page.getByText(/choose your second factor/i)).toBeVisible();
@@ -225,7 +225,11 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         await narrate(page, 'b03 passkey card', 12);
         await centerInView(page, authenticatorCard);
         await highlight(page, authenticatorCard, 3000);
-        await narrate(page, 'b03 authenticator card', 13);
+        await narrate(page, 'b03 authenticator card', 3.9);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 42, seconds: 4.0 });
+        await narrate(page, 'b03 authenticator card - close', 1.1);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b03 authenticator card - settle', 1.0);
 
         // ── [b04a] enroll the passkey (~27.1s, first half) ───────────────────
         await clickWithCursor(page, passkeyCard);
@@ -302,7 +306,11 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         await narrate(page, 'b08 timezone column, before', 8);
         await clickWithCursor(page, editSiteButton);
         await page.waitForTimeout(600);
-        await narrate(page, 'b08 timezone picker open', 18);
+        await narrate(page, 'b08 timezone picker open', 5.4);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 4.0 });
+        await narrate(page, 'b08 timezone picker open - close', 4.6);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b08 timezone picker open - settle', 1.0);
         // ManageSitesDialog's Esc is a ladder (ManageSitesDialog.tsx:241-250):
         // cancel edit → clear filter → close. The inline editor is open, so one
         // Esc only cancels it; a second closes the dialog. Assert it, or
@@ -369,7 +377,11 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         await clickWithCursor(page, resetItem);
         const confirmDialog = page.getByRole('dialog');
         await expect(confirmDialog).toBeVisible();
-        await narrate(page, 'b09 confirm dialog — never confirmed on camera', 15);
+        await narrate(page, 'b09 confirm dialog — never confirmed on camera', 4.5);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 4.0 });
+        await narrate(page, 'b09 confirm dialog — never confirmed on camera - close', 2.5);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b09 confirm dialog — never confirmed on camera - settle', 1.0);
         await page.keyboard.press('Escape');
       } finally {
         // A leaked authenticator would answer the next scene's ceremonies.

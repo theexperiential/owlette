@@ -7,7 +7,12 @@
   "scenario": "dashboard-mixed-states",
   "script": "scripts/07-reading-machine-health.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 141.35,
+  "narration_s": 170.417,
+  "main_card": {
+    "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\07-reading-machine-health-main.mp4",
+    "frames": 361,
+    "duration_s": 6.017
+  },
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,7 +25,7 @@
       "rel": "dev/video-tutorials/footage/web/07-reading-machine-health.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\07-reading-machine-health.mp4",
       "exists": true,
-      "duration_s": 157.6,
+      "duration_s": 158.083,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -35,8 +40,8 @@
         "SCREEN": "the \"media-server-stage\" card with cpu / ram / disk / gpu tiles and sparklines.",
         "NOTE": "the memory tile is labelled \"ram\" on screen (and in the list-view column header). The spoken \"memory\" is plain english and stays."
       },
-      "start_s": 0.0,
-      "start_frame": 0,
+      "start_s": 6.017,
+      "start_frame": 361,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b01.mp3",
       "mp3_name": "ep07-b01.mp3",
@@ -52,8 +57,13 @@
       "direction": {
         "SCREEN": "point across cards at different usage levels; overlay the band key: <30 green, 30–50 violet, 50–70 sky blue, 70–85 amber, ≥85 red."
       },
-      "start_s": 19.733,
-      "start_frame": 1184,
+      "start_s": 29.167,
+      "start_frame": 1750,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\07-reading-machine-health-b02.mp4",
+        "frames": 205,
+        "duration_s": 3.433
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b02.mp3",
       "mp3_name": "ep07-b02.mp3",
@@ -70,8 +80,13 @@
         "SCREEN": "a card showing cpu / gpu temperature; overlay: under 70°C normal, 70 to under 85°C warning, 85°C and above critical. Note the °C / °F toggle in account settings. Then cut to a machine whose cpu temperature slot is empty.",
         "NOTE": "since 3.2.0 temperatures come from the PawnIO driver — a machine without it reads a BLANK cpu temperature (gpu temps still arrive via vendor APIs), and reads can be switched off per machine with `\"temperature\": { \"enabled\": false }` in config.json. Seed or pick a machine with no cpuTemp for the second half of the shot."
       },
-      "start_s": 40.017,
-      "start_frame": 2401,
+      "start_s": 53.367,
+      "start_frame": 3202,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\07-reading-machine-health-b03.mp4",
+        "frames": 235,
+        "duration_s": 3.933
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b03.mp3",
       "mp3_name": "ep07-b03.mp3",
@@ -88,8 +103,13 @@
         "SCREEN": "the card's COLLAPSED metrics summary row — the \"ping 12ms\" chip and, beside it, the \"% loss\" chip. Collapse the stats section (or seed statsExpanded false) to bring the row on screen.",
         "NOTE": "latency and packet loss render ONLY in the collapsed summary row; the expanded \"network\" tile shows the NIC id and ↑tx / ↓rx throughput, neither of which is narrated here. statsExpanded defaults to true and the harness seeds it true, so this beat needs the toggle shut. Seed a degraded machine — latencyMs above 50 for yellow, above 100 for red, and packetLossPct above 0, since the loss chip is hidden at zero."
       },
-      "start_s": 67.45,
-      "start_frame": 4047,
+      "start_s": 84.217,
+      "start_frame": 5053,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\07-reading-machine-health-b04.mp4",
+        "frames": 205,
+        "duration_s": 3.433
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b04.mp3",
       "mp3_name": "ep07-b04.mp3",
@@ -105,8 +125,13 @@
       "direction": {
         "SCREEN": "click the \"cpu\" tile; the MetricsDetailPanel slides open with a full line chart. Note cpu temperature appears alongside."
       },
-      "start_s": 84.85,
-      "start_frame": 5091,
+      "start_s": 105.533,
+      "start_frame": 6332,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\07-reading-machine-health-b05.mp4",
+        "frames": 235,
+        "duration_s": 3.933
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b05.mp3",
       "mp3_name": "ep07-b05.mp3",
@@ -123,8 +148,13 @@
         "SCREEN": "in the panel, show tabs for each disk, gpu, and network adapter; the time-range selector; and the machine switcher in the title bar.",
         "NOTE": "two-fixture beat. dashboard-mixed-states seeds 10 machines, which trips the >5 threshold for the title-bar machine switcher — but it writes no per-device history, so the panel shows one disk, one gpu, one nic. Only monitor-single-machine's focus machine has 2 disks + 2 nics; it seeds 4 machines, so no switcher. Record the per-device-tabs half there and the switcher half here, or add disks/gpus/nics history to media-server-stage in seedDashboardMixedStates and shoot it in one take."
       },
-      "start_s": 101.183,
-      "start_frame": 6071,
+      "start_s": 126.333,
+      "start_frame": 7580,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\07-reading-machine-health-b06.mp4",
+        "frames": 268,
+        "duration_s": 4.483
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b06.mp3",
       "mp3_name": "ep07-b06.mp3",
@@ -141,8 +171,13 @@
         "SCREEN": "the offline \"touring-rig-04\" card — red \"offline\" pill, stale heartbeat (the row dims in list view).",
         "NOTE": "touring-rig-04 is seeded offline in this scenario (600s stale heartbeat). A machine flips to offline once its heartbeat is older than five minutes."
       },
-      "start_s": 121.333,
-      "start_frame": 7280,
+      "start_s": 150.4,
+      "start_frame": 9024,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\07-reading-machine-health-b07.mp4",
+        "frames": 235,
+        "duration_s": 3.933
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\07-reading-machine-health\\ep07-b07.mp3",
       "mp3_name": "ep07-b07.mp3",

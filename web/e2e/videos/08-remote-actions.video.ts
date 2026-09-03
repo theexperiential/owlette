@@ -42,6 +42,7 @@ import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   centerInView,
   clickWithCursor,
@@ -136,7 +137,11 @@ test('episode 8 — remote actions: restart, screenshot, live view', async ({ br
         const screenshotItem = page.getByRole('menuitem', { name: 'screenshot' });
         await clickWithCursor(page, screenshotItem);
         await page.waitForTimeout(900);
-        await narrate(page, 'b02 screenshot dialog', 16);
+        await narrate(page, 'b02 screenshot dialog', 2.5);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 50, seconds: 4.0 });
+        await narrate(page, 'b02 screenshot dialog — close', 4.0);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b02 screenshot dialog — settle', 2.5);
 
         // [b03] live view (~16.2s). No `exact: true`: the item renders
         // `<Eye/>\n live view`, so its accessible name carries leading space.
@@ -145,7 +150,11 @@ test('episode 8 — remote actions: restart, screenshot, live view', async ({ br
         const liveViewItem = page.getByRole('menuitem', { name: 'live view' });
         await clickWithCursor(page, liveViewItem);
         await page.waitForTimeout(900);
-        await narrate(page, 'b03 live view modal', 17);
+        await narrate(page, 'b03 live view modal', 2.5);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 50, seconds: 4.5 });
+        await narrate(page, 'b03 live view modal — close', 4.5);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b03 live view modal — settle', 2.5);
 
         // [b04] restart (~20.0s). RestartDialog with the 30s countdown copy. Not
         // confirmed on camera: the countdown only starts after confirm, and the
@@ -157,7 +166,11 @@ test('episode 8 — remote actions: restart, screenshot, live view', async ({ br
         const rebootItem = page.getByTestId('machine-context-menu-reboot');
         await clickWithCursor(page, rebootItem);
         await page.waitForTimeout(700);
-        await narrate(page, 'b04 restart confirm + 30s copy', 21);
+        await narrate(page, 'b04 restart confirm + 30s copy', 3.0);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 50, seconds: 5.0 });
+        await narrate(page, 'b04 restart confirm + 30s copy — close', 6.0);
+        await slowPush(page, { scale: 1.0, seconds: 3.5 });
+        await narrate(page, 'b04 restart confirm + 30s copy — settle', 3.5);
 
         // [b05] shutdown, and restarts on a timer (~20.5s).
         await reopenMachineMenu(page, menuTrigger);
@@ -254,7 +267,11 @@ test('episode 8 — remote actions: restart, screenshot, live view', async ({ br
         await expect(page.getByTestId('machine-context-menu-shutdown')).toHaveCount(0);
         await expect(page.getByTestId('machine-context-menu-revoke-token')).toHaveCount(0);
         await expect(page.getByTestId('machine-context-menu-remove')).toHaveCount(0);
-        await narrate(page, 'b08 the member menu — admin block absent', 16);
+        await narrate(page, 'b08 the member menu — admin block absent', 2.5);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 50, seconds: 4.0 });
+        await narrate(page, 'b08 the member menu — admin block absent — close', 4.0);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b08 the member menu — admin block absent — settle', 2.5);
       },
     );
   } finally {

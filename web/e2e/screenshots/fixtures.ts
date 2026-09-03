@@ -417,9 +417,12 @@ async function writeMachineProcesses(
  * CPU/mem hand-tuned so it reads as a real operations view.
  *
  * Counts every consumer depends on, and which must not drift: 10 machines, of
- * which exactly one (`touring-rig-04`) is offline. Five machines carry managed
- * processes — nine in total, so the dashboard's "processes" stat tile reads 9;
- * `lobby-display` deliberately carries none.
+ * which exactly one (`touring-rig-04`) is offline. Eight machines carry managed
+ * processes — twelve in total, so the dashboard's "processes" stat tile reads
+ * 12; `lobby-display` (bare card for the docs stills) and offline
+ * `touring-rig-04` deliberately carry none. Displays vary per venue role
+ * (portrait kiosks, 4K signage, triple operator walls) — the uniform dual
+ * "Test Monitor" fleet read as fake on camera.
  */
 async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
   const siteId = 'site-A';
@@ -453,16 +456,58 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
   // 10 machines: 5 running, 4 alerting, 1 offline.
   const specs: Spec[] = [
     { machineId: 'lobby-display', state: 'running',
-      sample: { cpuPct: 22, memPct: 38, memUsedGb: 12.1, gpuPct: 18, diskPct: 41 } },
-    { machineId: 'museum-kiosk-1', state: 'running',
-      sample: { cpuPct: 31, memPct: 44, memUsedGb: 14.0, gpuPct: 26, diskPct: 52 } },
-    { machineId: 'museum-kiosk-2', state: 'running',
-      sample: { cpuPct: 27, memPct: 40, memUsedGb: 12.7, gpuPct: 21, diskPct: 49 } },
+      sample: { cpuPct: 22, memPct: 38, memUsedGb: 12.1, gpuPct: 18, diskPct: 41 },
+      seedOpts: { monitors: [
+        { widthPx: 3840, heightPx: 2160, friendlyName: 'LG UH5F-H 86' },
+      ] } },
+    {
+      machineId: 'museum-kiosk-1',
+      state: 'running',
+      sample: { cpuPct: 31, memPct: 44, memUsedGb: 14.0, gpuPct: 26, diskPct: 52 },
+      seedOpts: { monitors: [
+        { widthPx: 1920, heightPx: 1080, rotation: 90, friendlyName: 'ELO 2270L Touch' },
+      ] },
+      processes: [
+        {
+          id: 'proc-kiosk-shell-1',
+          name: 'kiosk-shell.exe',
+          status: 'RUNNING',
+          pid: 2210,
+          exe_path: 'C:\Owlette\kiosk\kiosk-shell.exe',
+          cwd: 'C:\Owlette\kiosk',
+          last_updated_offset: 22,
+        },
+      ],
+    },
+    {
+      machineId: 'museum-kiosk-2',
+      state: 'running',
+      sample: { cpuPct: 27, memPct: 40, memUsedGb: 12.7, gpuPct: 21, diskPct: 49 },
+      seedOpts: { monitors: [
+        { widthPx: 1920, heightPx: 1080, rotation: 90, friendlyName: 'ELO 2270L Touch' },
+      ] },
+      processes: [
+        {
+          id: 'proc-kiosk-shell-2',
+          name: 'kiosk-shell.exe',
+          status: 'RUNNING',
+          pid: 2214,
+          exe_path: 'C:\Owlette\kiosk\kiosk-shell.exe',
+          cwd: 'C:\Owlette\kiosk',
+          last_updated_offset: 31,
+        },
+      ],
+    },
 
     {
       machineId: 'media-server-stage',
       state: 'alerting',
       sample: { cpuPct: 86, memPct: 78, memUsedGb: 49.8, gpuPct: 71, diskPct: 88 },
+      seedOpts: { monitors: [
+        { widthPx: 3840, heightPx: 2160, friendlyName: 'Novastar MX40 A' },
+        { widthPx: 3840, heightPx: 2160, friendlyName: 'Novastar MX40 B' },
+        { widthPx: 1920, heightPx: 1080, friendlyName: 'Operator GUI' },
+      ] },
       processes: [
         {
           id: 'proc-mediaserver-main',
@@ -510,6 +555,10 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
     {
       machineId: 'nyc-signage-01',
       state: 'alerting',
+      seedOpts: { monitors: [
+        { widthPx: 3840, heightPx: 2160, friendlyName: 'Samsung QM85R' },
+        { widthPx: 3840, heightPx: 2160, friendlyName: 'Samsung QM85R' },
+      ] },
       // The network-degraded machine: >100ms reads red on the collapsed row's
       // ping chip, and the loss chip only renders above zero. ep07 b04 films it.
       sample: {
@@ -531,6 +580,9 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
     {
       machineId: 'unreal-render-1',
       state: 'alerting',
+      seedOpts: { monitors: [
+        { widthPx: 2560, heightPx: 1440, friendlyName: 'Dell U2723QE' },
+      ] },
       sample: { cpuPct: 91, memPct: 65, memUsedGb: 41.4, gpuPct: 94, diskPct: 58 },
       processes: [
         {
@@ -557,6 +609,11 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
     {
       machineId: 'td-control-room',
       state: 'alerting',
+      seedOpts: { monitors: [
+        { widthPx: 2560, heightPx: 1440, friendlyName: 'Dell U2520D' },
+        { widthPx: 2560, heightPx: 1440, friendlyName: 'Dell U2520D' },
+        { widthPx: 2560, heightPx: 1440, friendlyName: 'Dell U2520D' },
+      ] },
       sample: { cpuPct: 79, memPct: 70, memUsedGb: 22.4, gpuPct: 55, diskPct: 67 },
       processes: [
         {
@@ -584,11 +641,33 @@ async function seedDashboardMixedStates(): Promise<ScreenshotFixture> {
     { machineId: 'touring-rig-04', state: 'offline',
       sample: { cpuPct: 0, memPct: 0, memUsedGb: 0, gpuPct: 0, diskPct: 0 } },
 
-    { machineId: 'lobby-2', state: 'running',
-      sample: { cpuPct: 12, memPct: 22, memUsedGb: 7.0, gpuPct: 8, diskPct: 33 } },
+    {
+      machineId: 'lobby-2',
+      state: 'running',
+      sample: { cpuPct: 12, memPct: 22, memUsedGb: 7.0, gpuPct: 8, diskPct: 33 },
+      seedOpts: { monitors: [
+        { widthPx: 3840, heightPx: 2160, friendlyName: 'Samsung QM50B' },
+      ] },
+      processes: [
+        {
+          id: 'proc-lobby-wall',
+          name: 'TouchDesigner.exe',
+          status: 'RUNNING',
+          pid: 3812,
+          exe_path: 'C:\Program Files\Derivative\TouchDesigner\bin\TouchDesigner.exe',
+          file_path: 'C:\Owlette\projects\lobby\lobby-wall.toe',
+          cwd: 'C:\Owlette\projects\lobby',
+          last_updated_offset: 26,
+        },
+      ],
+    },
     {
       machineId: 'mainstage-led',
       state: 'running',
+      seedOpts: { monitors: [
+        { widthPx: 1920, heightPx: 1080, friendlyName: 'LED Processor A' },
+        { widthPx: 1920, heightPx: 1080, friendlyName: 'LED Processor B' },
+      ] },
       sample: { cpuPct: 18, memPct: 29, memUsedGb: 9.2, gpuPct: 14, diskPct: 38 },
       processes: [
         {

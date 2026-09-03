@@ -56,15 +56,19 @@ for mpath in sorted(MANIFESTS.glob("*.json")):
         placed.append((beat["id"], start + lo, start + hi))
 
     # 1 + 2: adjacency of consecutive PLACED segments
+    beat_by_id = {b["id"]: b for b in beats}
     for (aid, a0, a1), (bid, b0, b1) in zip(placed, placed[1:]):
         if a1 > b0:
             print("  %s: COLLISION %s ends %d > %s starts %d" % (m["stem"], aid, a1, bid, b0))
             problems += 1
         elif a1 < b0:
-            # a hole is only expected when a gap beat sits between them
+            # a hole is expected when a gap beat sits between them, or when
+            # the gap is exactly the next beat's title card (the card clip
+            # fills it — see build_episode.card_slots).
             ids = [b["id"] for b in beats]
             between = ids[ids.index(aid) + 1:ids.index(bid)]
-            if not between:
+            card_frames = int((beat_by_id[bid].get("card") or {}).get("frames") or 0)
+            if not between and (b0 - a1) != card_frames:
                 print("  %s: HOLE of %d frame(s) between %s and %s"
                       % (m["stem"], b0 - a1, aid, bid))
                 problems += 1

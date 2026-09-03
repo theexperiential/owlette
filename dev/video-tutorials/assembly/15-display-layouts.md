@@ -1,6 +1,6 @@
 # assembly — episode 15: display layouts: capture a wall, put it back
 
-Narration: **3:09.7** across 9 spoken beats.
+Narration: **3:42.6** across 9 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

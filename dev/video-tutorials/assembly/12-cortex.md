@@ -1,6 +1,6 @@
 # assembly — episode 12: hoot: manage machines by chat
 
-Narration: **2:51.0** across 8 spoken beats.
+Narration: **3:21.1** across 8 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

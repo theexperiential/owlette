@@ -48,6 +48,7 @@ import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   clickWithCursor,
   typewrite,
@@ -182,7 +183,11 @@ test('episode 10 — deploy software to many machines', async ({ browser }) => {
         await expect(
           page.getByRole('option', { name: /stage machines — standard build/ }),
         ).toBeVisible();
-        await narrate(page, 'b02 presets + saved templates', 14);
+        await narrate(page, 'b02 presets + saved templates', 4.2);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 4.0 });
+        await narrate(page, 'b02 presets + saved templates - close', 1.8);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b02 presets + saved templates - settle', 1.0);
         // Close it — the beat ends on "let's build one from scratch".
         await page.keyboard.press('Escape');
         await page.waitForTimeout(300);
@@ -255,7 +260,11 @@ test('episode 10 — deploy software to many machines', async ({ browser }) => {
         await expect(
           page.getByText('media-server-stage', { exact: false }).first(),
         ).toBeVisible();
-        await narrate(page, 'b06 progress board', 17);
+        await narrate(page, 'b06 progress board', 5.1);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 4.0 });
+        await narrate(page, 'b06 progress board - close', 3.9);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b06 progress board - settle', 1.0);
         await highlight(
           page,
           page.getByRole('button', { name: /cancel deployment to nyc-signage-01/i }),

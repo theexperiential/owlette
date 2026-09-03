@@ -288,6 +288,33 @@ def mmss(t: float) -> str:
 BREATH_S = 0.6
 SAFETY_S = 0.1
 
+# Title cards (rosco, 2026-09-01): a MAIN card opens every episode and a
+# SECTION card announces each beat from the second onward, rendered by
+# web/e2e/videos/title-cards.video.ts into footage/cards/. Cards live ON the
+# beat grid: a beat's start_frame already includes every card before it, and
+# the beat carries its own preceding card's length so the conform can subtract
+# it (see build_episode.beat_segments). A missing card file simply means no
+# slot — episodes render fine before the card batch exists.
+CARDS_DIR = VT / "footage" / "cards"
+
+
+def card_record(stem: str) -> Optional[Dict[str, object]]:
+    """{path, frames, duration_s} for a rendered card, or None if not on disk.
+
+    Frames are FLOORED: the timeline slot must never exceed the card's actual
+    picture (a ceil slot leaves a black flash frame between card and beat)."""
+    path = CARDS_DIR / f"{stem}.mp4"
+    if not path.is_file():
+        return None
+    d = probe(path)
+    if d <= 0:
+        return None
+    return {
+        "path": str(path.resolve()),
+        "frames": int(d * TIMELINE_FPS),
+        "duration_s": round(d, 3),
+    }
+
 
 def sidecar_coverage(sources: List[Dict[str, object]]) -> Dict[str, float]:
     """{beat_id: videoSec} from the episode's sidecars, scene takes claiming
@@ -363,12 +390,21 @@ def build_episode_record(
     beats: List[Dict[str, object]] = []
     cursor = 0.0
     frame_cursor = 0
+    # The main card opens the episode: every beat shifts right by its length.
+    main_card = card_record(f"{ep.out_name}-main")
+    if main_card:
+        frame_cursor = int(main_card["frames"])
     for b in ep.beats:
         directions = parse_directions(blocks.get(b.id, ""))
         screen = next(
             (directions[lbl.strip("*:")] for lbl in SCREEN_PRIORITY if directions.get(lbl.strip("*:"))),
             "",
         )
+        # Section card BEFORE this beat (never before the first — the main
+        # card just announced the episode; a second interstitial would stutter).
+        card = card_record(f"{ep.out_name}-{b.id}") if beats else None
+        if card:
+            frame_cursor += int(card["frames"])
         rec: Dict[str, object] = {
             "id": b.id,
             "title": b.title,
@@ -377,6 +413,8 @@ def build_episode_record(
             "start_s": round(frame_cursor / TIMELINE_FPS, 3),
             "start_frame": frame_cursor,
         }
+        if card:
+            rec["card"] = card
         text = b.resolved(strip_tags=strip)
         if not text:
             # A b-roll beat: no MP3, no time on the A1 track, but it still earns
@@ -436,6 +474,7 @@ def build_episode_record(
         "script": path.resolve().relative_to(VT).as_posix(),
         "media_root": str(media_root),
         "narration_s": round(cursor, 3),
+        "main_card": main_card,
         "timeline": {
             "width": TIMELINE_WIDTH,
             "height": TIMELINE_HEIGHT,

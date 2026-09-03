@@ -7,7 +7,12 @@
   "scenario": "dashboard-mixed-states",
   "script": "scripts/01-what-is-owlette.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 110.367,
+  "narration_s": 129.6,
+  "main_card": {
+    "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\01-what-is-owlette-main.mp4",
+    "frames": 330,
+    "duration_s": 5.5
+  },
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,7 +25,7 @@
       "rel": "dev/video-tutorials/footage/web/01-what-is-owlette.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\01-what-is-owlette.mp4",
       "exists": true,
-      "duration_s": 81.833,
+      "duration_s": 82.8,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -57,8 +62,8 @@
         "B-ROLL": "three shots, ~4.5s each, of the viewer's own world after hours — a museum kiosk, a lobby video wall, an AV control room — each dark, empty, and showing one screen that should be running the show and isn't. Generated/licensed, not captured: see `b-roll/01-b01-cold-open.md` for the shot briefs and the grade that makes the three cut together. Deliberately NOT one specific venue: \"installation\" spans exhibits, signage, kiosks and control rooms, and the beat has to land whichever one the viewer runs.",
         "NOTE": "the screen content is composited in Resolve, not generated — a generative model renders UI text as garbled glyphs, and a fake-looking error dialog undercuts the one beat that has to feel real. Generate the ROOMS; drop the frozen frame and the dialog on the screen in post."
       },
-      "start_s": 0.0,
-      "start_frame": 0,
+      "start_s": 5.5,
+      "start_frame": 330,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\01-what-is-owlette\\ep01-b01.mp3",
       "mp3_name": "ep01-b01.mp3",
@@ -74,8 +79,13 @@
       "direction": {
         "B-ROLL": "owlette wordmark; then cut to the dashboard fleet view loading."
       },
-      "start_s": 15.0,
-      "start_frame": 900,
+      "start_s": 23.95,
+      "start_frame": 1437,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\01-what-is-owlette-b02.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\01-what-is-owlette\\ep01-b02.mp3",
       "mp3_name": "ep01-b02.mp3",
@@ -92,8 +102,13 @@
         "SCREEN": "dashboard at /dashboard — the seeded fleet (lobby-display, museum-kiosk-1/2, media-server-stage, nyc-signage-01, unreal-render-1, td-control-room, lobby-2, mainstage-led, plus the offline touring-rig-04) scrolling slowly. Green \"online\" pills, one red \"offline\" pill.",
         "NOTE": "the left accent bar on each metric tile is a FIVE-band scale (emerald <30, violet <50, sky <70, amber <85, red ≥85 — web/lib/usageColorUtils.ts:8-20), so this fleet legitimately shows violet and sky bars on camera. Don't grade or re-time the shot to force a green-to-red look; the revoiced line describes headroom vs pinned, not a hue ramp."
       },
-      "start_s": 39.167,
-      "start_frame": 2350,
+      "start_s": 51.533,
+      "start_frame": 3092,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\01-what-is-owlette-b03.mp4",
+        "frames": 205,
+        "duration_s": 3.417
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\01-what-is-owlette\\ep01-b03.mp3",
       "mp3_name": "ep01-b03.mp3",
@@ -110,8 +125,13 @@
         "SCREEN": "slow zoom into one machine card — status pill and last heartbeat, then the metric tiles in their real order (cpu, ram, disk, gpu, network) with sparklines behind them, then the displays section, then the process list.",
         "NOTE": "the spoken word \"memory\" here maps to the tile the UI labels \"ram\" (MachineCardView.tsx:506) — audio is unchanged, so frame the zoom on the card as a whole rather than resting on that one label. Also: `dashboard-mixed-states` seeds NO processes (fixtures.ts writeMachineMetrics has no `metrics.processes`), so a card renders the empty \"add process\" button instead of a process list. Seed processes on the focus machine before recording, or the last clause of this beat has nothing on screen."
       },
-      "start_s": 68.4,
-      "start_frame": 4104,
+      "start_s": 84.183,
+      "start_frame": 5051,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\01-what-is-owlette-b04.mp4",
+        "frames": 205,
+        "duration_s": 3.433
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\01-what-is-owlette\\ep01-b04.mp3",
       "mp3_name": "ep01-b04.mp3",
@@ -127,8 +147,13 @@
       "direction": {
         "B-ROLL": "quick montage, roughly one second each — the inno installer wizard; the \"add process\" dialog; the schedule editor; a deployment rolling out on /deployments; a roost version list on /roosts; a talons rule on /talons; the display layout panel on a machine card; and last, the hoot chat frame at /hoot (the nav label and the screen are \"hoot\" — nothing in the UI says cortex any more)."
       },
-      "start_s": 85.05,
-      "start_frame": 5103,
+      "start_s": 104.283,
+      "start_frame": 6257,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\01-what-is-owlette-b05.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\01-what-is-owlette\\ep01-b05.mp3",
       "mp3_name": "ep01-b05.mp3",

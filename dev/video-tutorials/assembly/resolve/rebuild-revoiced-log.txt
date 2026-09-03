@@ -7,11 +7,12 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 01-what-is-owlette v1
 fresh: deleted bin "01-what-is-owlette" - media will re-import
 created bin "01-what-is-owlette"
-imported 8 of 8 file(s)
+imported 13 of 13 file(s)
 timeline "01-what-is-owlette v1"
 timeline starts at frame 216000
   !! b01: sidecar narration 15.10s != manifest 14.39s - the footage predates a re-voice; re-record it before trusting this cut
-V1 conform: 6 segment(s) placed across 5 beat(s), ends at frame 6586
+V1 conform: 5 segment(s) placed across 5 beat(s), ends at frame 7740
+V1 cards: 5 of 5 placed
 2 insert/alt clip(s) imported; 2 feed the conform
 A1: 5 narration clip(s) placed
 markers: 5 of 5 beat(s)
@@ -23,10 +24,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 02-day-zero v1
 fresh: deleted bin "02-day-zero" - media will re-import
 created bin "02-day-zero"
-imported 10 of 10 file(s)
+imported 19 of 19 file(s)
 timeline "02-day-zero v1"
 timeline starts at frame 216000
-V1 conform: 9 segment(s) placed across 9 beat(s), ends at frame 10862
+V1 conform: 9 segment(s) placed across 9 beat(s), ends at frame 14730
+V1 cards: 9 of 9 placed
 A1: 9 narration clip(s) placed
 markers: 9 of 9 beat(s)
 
@@ -37,7 +39,7 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 03-install-and-pair v1
 fresh: deleted bin "03-install-and-pair" - media will re-import
 created bin "03-install-and-pair"
-imported 14 of 14 file(s)
+imported 24 of 24 file(s)
 timeline "03-install-and-pair v1"
 timeline starts at frame 216000
   !! b01: sidecar narration 13.79s != manifest 16.46s - the footage predates a re-voice; re-record it before trusting this cut
@@ -50,7 +52,8 @@ timeline starts at frame 216000
   !! b08: sidecar narration 19.57s != manifest 17.74s - the footage predates a re-voice; re-record it before trusting this cut
   !! b09: sidecar narration 26.70s != manifest 21.50s - the footage predates a re-voice; re-record it before trusting this cut
   !! b10: sidecar narration 21.55s != manifest 17.50s - the footage predates a re-voice; re-record it before trusting this cut
-V1 conform: 10 segment(s) placed across 10 beat(s), ends at frame 10779
+V1 conform: 10 segment(s) placed across 10 beat(s), ends at frame 13176
+V1 cards: 10 of 10 placed
 A1: 10 narration clip(s) placed
 markers: 10 of 10 beat(s)
 
@@ -61,10 +64,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 04-dashboard-tour v1
 fresh: deleted bin "04-dashboard-tour" - media will re-import
 created bin "04-dashboard-tour"
-imported 7 of 7 file(s)
+imported 13 of 13 file(s)
 timeline "04-dashboard-tour v1"
 timeline starts at frame 216000
-V1 conform: 6 segment(s) placed across 6 beat(s), ends at frame 8181
+V1 conform: 6 segment(s) placed across 6 beat(s), ends at frame 9440
+V1 cards: 6 of 6 placed
 A1: 6 narration clip(s) placed
 markers: 6 of 6 beat(s)
 
@@ -75,10 +79,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 05-keep-a-process-alive v1
 fresh: deleted bin "05-keep-a-process-alive" - media will re-import
 created bin "05-keep-a-process-alive"
-imported 10 of 10 file(s)
+imported 18 of 18 file(s)
 timeline "05-keep-a-process-alive v1"
 timeline starts at frame 216000
-V1 conform: 8 segment(s) placed across 8 beat(s), ends at frame 8081
+V1 conform: 8 segment(s) placed across 8 beat(s), ends at frame 9913
+V1 cards: 8 of 8 placed
 1 insert/alt clip(s) imported; 1 feed the conform
 A1: 8 narration clip(s) placed
 markers: 8 of 8 beat(s)
@@ -90,10 +95,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 06-run-on-a-schedule v1
 fresh: deleted bin "06-run-on-a-schedule" - media will re-import
 created bin "06-run-on-a-schedule"
-imported 8 of 8 file(s)
+imported 15 of 15 file(s)
 timeline "06-run-on-a-schedule v1"
 timeline starts at frame 216000
-V1 conform: 7 segment(s) placed across 7 beat(s), ends at frame 7299
+V1 conform: 7 segment(s) placed across 7 beat(s), ends at frame 8923
+V1 cards: 7 of 7 placed
 A1: 7 narration clip(s) placed
 markers: 7 of 7 beat(s)
 
@@ -104,10 +110,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 07-reading-machine-health v1
 fresh: deleted bin "07-reading-machine-health" - media will re-import
 created bin "07-reading-machine-health"
-imported 8 of 8 file(s)
+imported 15 of 15 file(s)
 timeline "07-reading-machine-health v1"
 timeline starts at frame 216000
-V1 conform: 7 segment(s) placed across 7 beat(s), ends at frame 8570
+V1 conform: 7 segment(s) placed across 7 beat(s), ends at frame 10189
+V1 cards: 7 of 7 placed
 A1: 7 narration clip(s) placed
 markers: 7 of 7 beat(s)
 
@@ -118,10 +125,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 08-remote-actions v1
 fresh: deleted bin "08-remote-actions" - media will re-import
 created bin "08-remote-actions"
-imported 10 of 10 file(s)
+imported 18 of 18 file(s)
 timeline "08-remote-actions v1"
 timeline starts at frame 216000
-V1 conform: 8 segment(s) placed across 8 beat(s), ends at frame 8397
+V1 conform: 8 segment(s) placed across 8 beat(s), ends at frame 10324
+V1 cards: 8 of 8 placed
 1 insert/alt clip(s) imported; 1 feed the conform
 A1: 8 narration clip(s) placed
 markers: 8 of 8 beat(s)
@@ -133,7 +141,7 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 09-the-owlette-app v1
 fresh: deleted bin "09-the-owlette-app" - media will re-import
 created bin "09-the-owlette-app"
-imported 12 of 12 file(s)
+imported 20 of 20 file(s)
 timeline "09-the-owlette-app v1"
 timeline starts at frame 216000
   !! b01: sidecar narration 21.66s != manifest 22.05s - the footage predates a re-voice; re-record it before trusting this cut
@@ -144,7 +152,8 @@ timeline starts at frame 216000
   !! b06: sidecar narration 20.53s != manifest 19.38s - the footage predates a re-voice; re-record it before trusting this cut
   !! b07: sidecar narration 25.34s != manifest 24.87s - the footage predates a re-voice; re-record it before trusting this cut
   !! b08: sidecar narration 33.88s != manifest 25.16s - the footage predates a re-voice; re-record it before trusting this cut
-V1 conform: 9 segment(s) placed across 8 beat(s), ends at frame 11481
+V1 conform: 9 segment(s) placed across 8 beat(s), ends at frame 13370
+V1 cards: 8 of 8 placed
 2 insert/alt clip(s) imported; 1 feed the conform
   !! insert 09-the-owlette-app-unpaired.mp4: every beat in its sidecar is already claimed by a scene take - not placed
 A1: 8 narration clip(s) placed
@@ -157,10 +166,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 10-deploy-software v1
 fresh: deleted bin "10-deploy-software" - media will re-import
 created bin "10-deploy-software"
-imported 8 of 8 file(s)
+imported 15 of 15 file(s)
 timeline "10-deploy-software v1"
 timeline starts at frame 216000
-V1 conform: 7 segment(s) placed across 7 beat(s), ends at frame 9630
+V1 conform: 7 segment(s) placed across 7 beat(s), ends at frame 11194
+V1 cards: 7 of 7 placed
 A1: 7 narration clip(s) placed
 markers: 7 of 7 beat(s)
 
@@ -171,10 +181,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 11-distribute-with-roost v1
 fresh: deleted bin "11-distribute-with-roost" - media will re-import
 created bin "11-distribute-with-roost"
-imported 7 of 7 file(s)
+imported 13 of 13 file(s)
 timeline "11-distribute-with-roost v1"
 timeline starts at frame 216000
-V1 conform: 6 segment(s) placed across 6 beat(s), ends at frame 8746
+V1 conform: 6 segment(s) placed across 6 beat(s), ends at frame 10107
+V1 cards: 6 of 6 placed
 A1: 6 narration clip(s) placed
 markers: 6 of 6 beat(s)
 
@@ -185,10 +196,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 12-cortex v1
 fresh: deleted bin "12-cortex" - media will re-import
 created bin "12-cortex"
-imported 9 of 9 file(s)
+imported 17 of 17 file(s)
 timeline "12-cortex v1"
 timeline starts at frame 216000
-V1 conform: 8 segment(s) placed across 8 beat(s), ends at frame 10223
+V1 conform: 8 segment(s) placed across 8 beat(s), ends at frame 12031
+V1 cards: 8 of 8 placed
 A1: 8 narration clip(s) placed
 markers: 8 of 8 beat(s)
 
@@ -199,10 +211,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 13-talons v1
 fresh: deleted bin "13-talons" - media will re-import
 created bin "13-talons"
-imported 9 of 9 file(s)
+imported 17 of 17 file(s)
 timeline "13-talons v1"
 timeline starts at frame 216000
-V1 conform: 8 segment(s) placed across 8 beat(s), ends at frame 11969
+V1 conform: 8 segment(s) placed across 8 beat(s), ends at frame 13768
+V1 cards: 8 of 8 placed
 A1: 8 narration clip(s) placed
 markers: 8 of 8 beat(s)
 
@@ -213,10 +226,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 14-team-and-alerts v1
 fresh: deleted bin "14-team-and-alerts" - media will re-import
 created bin "14-team-and-alerts"
-imported 8 of 8 file(s)
+imported 15 of 15 file(s)
 timeline "14-team-and-alerts v1"
 timeline starts at frame 216000
-V1 conform: 7 segment(s) placed across 7 beat(s), ends at frame 9962
+V1 conform: 7 segment(s) placed across 7 beat(s), ends at frame 11282
+V1 cards: 7 of 7 placed
 A1: 7 narration clip(s) placed
 markers: 7 of 7 beat(s)
 
@@ -227,10 +241,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 15-display-layouts v1
 fresh: deleted bin "15-display-layouts" - media will re-import
 created bin "15-display-layouts"
-imported 10 of 10 file(s)
+imported 19 of 19 file(s)
 timeline "15-display-layouts v1"
 timeline starts at frame 216000
-V1 conform: 9 segment(s) placed across 9 beat(s), ends at frame 11343
+V1 conform: 9 segment(s) placed across 9 beat(s), ends at frame 13322
+V1 cards: 9 of 9 placed
 A1: 9 narration clip(s) placed
 markers: 9 of 9 beat(s)
 
@@ -241,10 +256,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 16-logs-and-troubleshooting v1
 fresh: deleted bin "16-logs-and-troubleshooting" - media will re-import
 created bin "16-logs-and-troubleshooting"
-imported 9 of 9 file(s)
+imported 16 of 16 file(s)
 timeline "16-logs-and-troubleshooting v1"
 timeline starts at frame 216000
-V1 conform: 7 segment(s) placed across 7 beat(s), ends at frame 9718
+V1 conform: 7 segment(s) placed across 7 beat(s), ends at frame 11320
+V1 cards: 7 of 7 placed
 1 insert/alt clip(s) imported; 0 feed the conform
   !! insert 16-report-issue-desktop.mp4: every beat in its sidecar is already claimed by a scene take - not placed
 A1: 7 narration clip(s) placed
@@ -257,10 +273,11 @@ format: 1920x1080 @ 60.0fps timeline, 60fps playback (read back)
 fresh: deleted 1 old timeline(s) - 17-fleet-maintenance v1
 fresh: deleted bin "17-fleet-maintenance" - media will re-import
 created bin "17-fleet-maintenance"
-imported 11 of 11 file(s)
+imported 20 of 20 file(s)
 timeline "17-fleet-maintenance v1"
 timeline starts at frame 216000
-V1 conform: 9 segment(s) placed across 9 beat(s), ends at frame 10879
+V1 conform: 9 segment(s) placed across 9 beat(s), ends at frame 13370
+V1 cards: 9 of 9 placed
 1 insert/alt clip(s) imported; 1 feed the conform
 A1: 9 narration clip(s) placed
 markers: 9 of 9 beat(s)

@@ -1,6 +1,6 @@
 # assembly — episode 10: deploy software to many machines
 
-Narration: **2:41.1** across 7 spoken beats.
+Narration: **3:07.2** across 7 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

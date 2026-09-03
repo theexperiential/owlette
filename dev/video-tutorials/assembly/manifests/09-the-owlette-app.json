@@ -7,7 +7,12 @@
   "scenario": null,
   "script": "scripts/09-the-owlette-app.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 191.967,
+  "narration_s": 223.45,
+  "main_card": {
+    "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\09-the-owlette-app-main.mp4",
+    "frames": 330,
+    "duration_s": 5.5
+  },
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -68,8 +73,8 @@
         "SCREEN": "native capture. The Windows taskbar; expand the overflow arrow; hover the owlette icon — a small amber owl eye — and show the tooltip (owlette v3.2.0 / hostname / service / status).",
         "B-ROLL": "the three icon states side by side: amber (connected), dim/muted (running but offline), red (flashing, service stopped) + the \"owlette — service stopped\" toast."
       },
-      "start_s": 0.0,
-      "start_frame": 0,
+      "start_s": 5.5,
+      "start_frame": 330,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\09-the-owlette-app\\ep09-b01.mp3",
       "mp3_name": "ep09-b01.mp3",
@@ -86,8 +91,13 @@
         "SCREEN": "right-click the tray icon. Header rows first (owlette v<version>, hostname: <name>, service: running, status: connected to <site>; a fifth health row appears only on a failed probe), then the clickable items in this order: open owlette, restart service, start on login (a checkbox), exit.",
         "NOTE": "don't actually click exit on camera unless you want the UAC prompt and a stopped service in the shot — shoot it as a hover."
       },
-      "start_s": 22.65,
-      "start_frame": 1359,
+      "start_s": 32.6,
+      "start_frame": 1956,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\09-the-owlette-app-b02.mp4",
+        "frames": 267,
+        "duration_s": 4.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\09-the-owlette-app\\ep09-b02.mp3",
       "mp3_name": "ep09-b02.mp3",
@@ -103,8 +113,13 @@
       "direction": {
         "SCREEN": "click \"open owlette\" (or left-click the icon). The window opens: custom dark titlebar with the owl eye, the \"owlette\" wordmark, the hamburger menu and window controls; a \"processes\" sidebar on the left with a + button and a status dot per row; the detail pane on the right with the name, live status word and the restart / kill buttons; the one-line footer at the bottom. Then close the window and show it hiding back to the tray."
       },
-      "start_s": 47.1,
-      "start_frame": 2826,
+      "start_s": 60.467,
+      "start_frame": 3628,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\09-the-owlette-app-b03.mp4",
+        "frames": 205,
+        "duration_s": 3.417
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\09-the-owlette-app\\ep09-b03.mp3",
       "mp3_name": "ep09-b03.mp3",
@@ -121,8 +136,13 @@
         "SCREEN": "click the + above the list — a new \"untitled process\" appears and is selected. Then drag a .toe file from Explorer onto the window: the drop overlay lights up, the \"add process\" confirm card shows name / exe (the newest TouchDesigner) / path / cwd, and the line \"it is added with its launch mode off\". Confirm; the toast reads \"<name> was added\".",
         "B-ROLL": "the same drop with a .bat, a .py, and a Unity player-build folder."
       },
-      "start_s": 67.533,
-      "start_frame": 4052,
+      "start_s": 84.317,
+      "start_frame": 5059,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\09-the-owlette-app-b04.mp4",
+        "frames": 205,
+        "duration_s": 3.417
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\09-the-owlette-app\\ep09-b04.mp3",
       "mp3_name": "ep09-b04.mp3",
@@ -138,8 +158,13 @@
       "direction": {
         "SCREEN": "the detail pane, group by group: \"what to run\" (exe, path / args, cwd — each with a browse button), \"when to run\" (the off / always on / scheduled segmented control). Expand the collapsed \"how to run\" disclosure to reveal relaunch attempts, priority and visibility — dimmed while the mode is off. Type in a field, tab away, and cut to config.json changing on disk — no save button anywhere in the pane."
       },
-      "start_s": 90.4,
-      "start_frame": 5424,
+      "start_s": 111.1,
+      "start_frame": 6666,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\09-the-owlette-app-b05.mp4",
+        "frames": 235,
+        "duration_s": 3.933
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\09-the-owlette-app\\ep09-b05.mp3",
       "mp3_name": "ep09-b05.mp3",
@@ -155,8 +180,13 @@
       "direction": {
         "SCREEN": "the pencil button next to the launch-mode control; click it with the mode still on \"off\" to show it is not gated. The schedule editor opens — week summary bar, day pills, time blocks — identical to the dashboard's. Add a block, save, then flip the mode to \"scheduled\" and show the summary line beside the control."
       },
-      "start_s": 120.733,
-      "start_frame": 7244,
+      "start_s": 145.383,
+      "start_frame": 8723,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\09-the-owlette-app-b06.mp4",
+        "frames": 237,
+        "duration_s": 3.95
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\09-the-owlette-app\\ep09-b06.mp3",
       "mp3_name": "ep09-b06.mp3",
@@ -172,8 +202,13 @@
       "direction": {
         "SCREEN": "hover a row so the grip appears; drag it up two places — the blue drop indicator tracks the gap — and release. Then right-click a row: restart process, kill process, separator, duplicate, separator, delete. Pick restart on a live entry and read the confirm text aloud on screen; then right-click a stopped entry to show restart and kill greyed out — run controls follow liveness, not the launch mode."
       },
-      "start_s": 140.717,
-      "start_frame": 8443,
+      "start_s": 168.783,
+      "start_frame": 10127,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\09-the-owlette-app-b07.mp4",
+        "frames": 205,
+        "duration_s": 3.417
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\09-the-owlette-app\\ep09-b07.mp3",
       "mp3_name": "ep09-b07.mp3",
@@ -189,8 +224,13 @@
       "direction": {
         "SCREEN": "the footer sentence with its tone dot (\"<HOSTNAME> is connected to <site>\") and the service version on the right; cut to a machine with the service stopped to show the \"start service\" button, and an unpaired one to show \"join site\". Open the hamburger: join or leave site, config, logs, docs, submit bug report, start on login, restart service, reload window. Split screen: edit a launch mode in the app, and the dashboard's machine card updating about a second later."
       },
-      "start_s": 166.2,
-      "start_frame": 9972,
+      "start_s": 197.683,
+      "start_frame": 11861,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\09-the-owlette-app-b08.mp4",
+        "frames": 205,
+        "duration_s": 3.433
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\09-the-owlette-app\\ep09-b08.mp3",
       "mp3_name": "ep09-b08.mp3",

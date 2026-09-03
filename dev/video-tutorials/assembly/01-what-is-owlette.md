@@ -1,6 +1,6 @@
 # assembly — episode 01: what is owlette?
 
-Narration: **1:50.4** across 5 spoken beats.
+Narration: **2:09.6** across 5 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

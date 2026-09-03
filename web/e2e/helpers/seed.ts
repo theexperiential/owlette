@@ -149,6 +149,18 @@ export interface SeedMachineOptions {
   /** Monitors in the display profile. Default 2; 0 writes no display subdoc. */
   monitorCount?: number;
   /**
+   * Explicit per-monitor specs — overrides `monitorCount`'s uniform dual
+   * 1920×1080. Added when the mixed-states fleet read as fake: every machine
+   * carried the same two "Test Monitor" screens on camera. Positions are
+   * computed left-to-right; rotation 90/270 swaps the footprint.
+   */
+  monitors?: Array<{
+    widthPx: number;
+    heightPx: number;
+    rotation?: 0 | 90 | 180 | 270;
+    friendlyName?: string;
+  }>;
+  /**
    * Seconds until an in-flight reboot fires. Writes `rebooting` +
    * `rebootScheduledAt` so MachineStatusPill renders its countdown variant.
    */
@@ -234,24 +246,40 @@ export async function seedMachine(
   // Offset positions so DisplayCanvas has something non-trivial to render.
   // `edidHash` is the drift-matching identity key — synthetic but stable, so
   // re-runs are deterministic.
-  if (monitorCount > 0) {
-    const monitors = Array.from({ length: monitorCount }, (_, i) => ({
-      id: `MONITOR\\TEST${i}`,
-      edidHash: `hash-${machineId}-${i}`,
-      manufacturerId: 'TST',
-      productCode: `000${i}`,
-      serialNumber: `SN${i}`,
-      friendlyName: `Test Monitor ${i + 1}`,
-      position: { x: i * 1920, y: 0 },
-      resolution: { width: 1920, height: 1080 },
-      refreshHz: 60,
-      rotation: 0,
-      scalePct: 100,
-      primary: i === 0,
-      connectionType: 'dp',
-      adapterLuid: '0:0',
-      targetId: i,
-    }));
+  const monitorSpecs =
+    opts.monitors ??
+    (monitorCount > 0
+      ? Array.from({ length: monitorCount }, () => ({
+          widthPx: 1920,
+          heightPx: 1080,
+          rotation: 0 as const,
+          friendlyName: undefined,
+        }))
+      : []);
+  if (monitorSpecs.length > 0) {
+    let cursorX = 0;
+    const monitors = monitorSpecs.map((m, i) => {
+      const rotated = m.rotation === 90 || m.rotation === 270;
+      const rec = {
+        id: `MONITOR\\TEST${i}`,
+        edidHash: `hash-${machineId}-${i}`,
+        manufacturerId: 'TST',
+        productCode: `000${i}`,
+        serialNumber: `SN${i}`,
+        friendlyName: m.friendlyName ?? `Test Monitor ${i + 1}`,
+        position: { x: cursorX, y: 0 },
+        resolution: { width: m.widthPx, height: m.heightPx },
+        refreshHz: 60,
+        rotation: m.rotation ?? 0,
+        scalePct: 100,
+        primary: i === 0,
+        connectionType: 'dp',
+        adapterLuid: '0:0',
+        targetId: i,
+      };
+      cursorX += rotated ? m.heightPx : m.widthPx;
+      return rec;
+    });
 
     await db
       .collection('sites')

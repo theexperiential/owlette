@@ -12,20 +12,20 @@ its SCREEN direction.
 
 | ep | title | sheet | narration |
 |---|---|---|---|
-| 01 | what is owlette? | [01-what-is-owlette.md](01-what-is-owlette.md) | 1:50.4 |
-| 02 | day zero: sign up, 2fa, and your first site | [02-day-zero.md](02-day-zero.md) | 3:01.7 |
-| 03 | install owlette & pair your first machine | [03-install-and-pair.md](03-install-and-pair.md) | 3:00.3 |
-| 04 | the dashboard, end to end | [04-dashboard-tour.md](04-dashboard-tour.md) | 2:15.2 |
-| 05 | keep a process alive | [05-keep-a-process-alive.md](05-keep-a-process-alive.md) | 2:15.3 |
-| 06 | run apps on a schedule | [06-run-on-a-schedule.md](06-run-on-a-schedule.md) | 2:02.3 |
-| 07 | reading machine health | [07-reading-machine-health.md](07-reading-machine-health.md) | 2:21.3 |
-| 08 | remote actions: restart, screenshot, live view | [08-remote-actions.md](08-remote-actions.md) | 2:20.6 |
-| 09 | the owlette app on the machine | [09-the-owlette-app.md](09-the-owlette-app.md) | 3:12.0 |
-| 10 | deploy software to many machines | [10-deploy-software.md](10-deploy-software.md) | 2:41.1 |
-| 11 | distribute project folders with roost | [11-distribute-with-roost.md](11-distribute-with-roost.md) | 2:26.4 |
-| 12 | hoot: manage machines by chat | [12-cortex.md](12-cortex.md) | 2:51.0 |
-| 13 | talons: rules that watch and act | [13-talons.md](13-talons.md) | 3:20.1 |
-| 14 | team & alerts | [14-team-and-alerts.md](14-team-and-alerts.md) | 2:46.7 |
-| 15 | display layouts: capture a wall, put it back | [15-display-layouts.md](15-display-layouts.md) | 3:09.7 |
-| 16 | logs & troubleshooting | [16-logs-and-troubleshooting.md](16-logs-and-troubleshooting.md) | 2:43.2 |
-| 17 | keeping the fleet current | [17-fleet-maintenance.md](17-fleet-maintenance.md) | 3:01.9 |
+| 01 | what is owlette? | [01-what-is-owlette.md](01-what-is-owlette.md) | 2:09.6 |
+| 02 | day zero: sign up, 2fa, and your first site | [02-day-zero.md](02-day-zero.md) | 4:06.1 |
+| 03 | install owlette & pair your first machine | [03-install-and-pair.md](03-install-and-pair.md) | 3:40.2 |
+| 04 | the dashboard, end to end | [04-dashboard-tour.md](04-dashboard-tour.md) | 2:37.9 |
+| 05 | keep a process alive | [05-keep-a-process-alive.md](05-keep-a-process-alive.md) | 2:45.8 |
+| 06 | run apps on a schedule | [06-run-on-a-schedule.md](06-run-on-a-schedule.md) | 2:29.3 |
+| 07 | reading machine health | [07-reading-machine-health.md](07-reading-machine-health.md) | 2:50.4 |
+| 08 | remote actions: restart, screenshot, live view | [08-remote-actions.md](08-remote-actions.md) | 2:52.7 |
+| 09 | the owlette app on the machine | [09-the-owlette-app.md](09-the-owlette-app.md) | 3:43.4 |
+| 10 | deploy software to many machines | [10-deploy-software.md](10-deploy-software.md) | 3:07.2 |
+| 11 | distribute project folders with roost | [11-distribute-with-roost.md](11-distribute-with-roost.md) | 2:49.1 |
+| 12 | hoot: manage machines by chat | [12-cortex.md](12-cortex.md) | 3:21.1 |
+| 13 | talons: rules that watch and act | [13-talons.md](13-talons.md) | 3:50.1 |
+| 14 | team & alerts | [14-team-and-alerts.md](14-team-and-alerts.md) | 3:08.6 |
+| 15 | display layouts: capture a wall, put it back | [15-display-layouts.md](15-display-layouts.md) | 3:42.6 |
+| 16 | logs & troubleshooting | [16-logs-and-troubleshooting.md](16-logs-and-troubleshooting.md) | 3:09.3 |
+| 17 | keeping the fleet current | [17-fleet-maintenance.md](17-fleet-maintenance.md) | 3:43.4 |

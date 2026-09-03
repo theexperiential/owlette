@@ -47,6 +47,7 @@ import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   slowScrollToBottom,
   centerInView,
@@ -159,7 +160,11 @@ test('episode 13 — talons: rules that watch and act', async ({ browser }) => {
         await expect(page.getByRole('option', { name: 'on a schedule' })).toBeVisible();
         await expect(page.getByRole('option', { name: 'when a metric crosses' })).toBeVisible();
         await expect(page.getByRole('option', { name: 'when an event happens' })).toBeVisible();
-        await narrate(page, 'b02 the three triggers', 12);
+        await narrate(page, 'b02 the three triggers', 3.6);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 48, seconds: 3.5 });
+        await narrate(page, 'b02 the three triggers - close', 1.4);
+        await slowPush(page, { scale: 1.0, seconds: 2.5 });
+        await narrate(page, 'b02 the three triggers - settle', 1.0);
         // Close the select before the next two highlights: the Radix popover and
         // its modal overlay sit on top of the condition and output cards, so
         // outlining them with it open frames a covered card for 12s.
@@ -224,7 +229,11 @@ test('episode 13 — talons: rules that watch and act', async ({ browser }) => {
         await narrate(page, 'b04 six presets, grouped by readiness', 12);
         await clickWithCursor(page, page.getByRole('option', { name: 'morning wall check' }));
         await page.waitForTimeout(600);
-        await narrate(page, 'b04 every field fills in', 13);
+        await narrate(page, 'b04 every field fills in', 3.9);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 42, seconds: 3.5 });
+        await narrate(page, 'b04 every field fills in - close', 2.1);
+        await slowPush(page, { scale: 1.0, seconds: 2.5 });
+        await narrate(page, 'b04 every field fills in - settle', 1.0);
 
         // [b05] the visual check (~27.6s).
         await clickWithCursor(
@@ -235,7 +244,11 @@ test('episode 13 — talons: rules that watch and act', async ({ browser }) => {
         await expect(visualCheck).toBeVisible();
         await centerInView(page, visualCheck);
         await highlight(page, visualCheck.locator('#talon-condition-expectation'), 2600);
-        await narrate(page, 'b05 what should be on screen, in plain english', 13);
+        await narrate(page, 'b05 what should be on screen, in plain english', 3.9);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 3.5 });
+        await narrate(page, 'b05 what should be on screen, in plain english - close', 2.1);
+        await slowPush(page, { scale: 1.0, seconds: 2.5 });
+        await narrate(page, 'b05 what should be on screen, in plain english - settle', 1.0);
         await highlight(page, visualCheck.locator('#talon-condition-monitor'), 2200);
         await highlight(
           page,
@@ -245,7 +258,11 @@ test('episode 13 — talons: rules that watch and act', async ({ browser }) => {
         // `highlight` returns as soon as it schedules the outline, so the three
         // above contribute nothing to the beat's length; 13 + 15 is what covers
         // the 27.6s MP3.
-        await narrate(page, 'b05 monitor + outputs-fire-on-fail', 15);
+        await narrate(page, 'b05 monitor + outputs-fire-on-fail', 4.5);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 4.0 });
+        await narrate(page, 'b05 monitor + outputs-fire-on-fail - close', 2.5);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b05 monitor + outputs-fire-on-fail - settle', 1.0);
 
         // [b06] let hoot act (~26.5s) — change an output to hoot, show the
         // directive box and the switch, toggle on, hold, toggle back off.

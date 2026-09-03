@@ -614,6 +614,12 @@ export async function highlight(page: Page, locator: Locator, ms = 1400): Promis
  * 60Hz paces every frame — a per-step CDP scrollBy staircases. Imperative
  * `scrollTo` because the harness globally disables CSS animation, which kills
  * `behavior: 'smooth'`. Dwells for `seconds` if the content already fits.
+ *
+ * CONSTANT SPEED, on purpose. This used easeInOutCubic, whose middle runs ~3x
+ * the average velocity — over a long pan that reads as crawl → whoosh → crawl
+ * ("speeds up, slows down"; flagged on the ep04 grid pan). Now the body of the
+ * pan is linear with only an 8% ramp at each end so it does not jolt on
+ * start/stop. Camera moves should be boring.
  */
 export async function slowScrollToBottom(page: Page, seconds: number): Promise<void> {
   await page.evaluate(
@@ -628,8 +634,18 @@ export async function slowScrollToBottom(page: Page, seconds: number): Promise<v
         return;
       }
       const t0 = performance.now();
-      const ease = (t: number): number =>
-        t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      // Linear with short smooth ramps: accelerate over the first `RAMP` of
+      // progress, hold constant, decelerate over the last `RAMP`.
+      const RAMP = 0.08;
+      const ease = (t: number): number => {
+        const flat = 1 - RAMP; // integral normalizer: ramps average half speed
+        if (t < RAMP) return (t * t) / (2 * RAMP) / flat;
+        if (t > 1 - RAMP) {
+          const u = 1 - t;
+          return (flat - (u * u) / (2 * RAMP)) / flat;
+        }
+        return (t - RAMP / 2) / flat;
+      };
       function step(now: number): void {
         const p = Math.min(1, (now - t0) / duration);
         window.scrollTo(0, startY + (targetY - startY) * ease(p));
@@ -642,6 +658,89 @@ export async function slowScrollToBottom(page: Page, seconds: number): Promise<v
       requestAnimationFrame(step);
     }),
     { duration: seconds * 1000 },
+  );
+}
+
+/**
+ * Slow camera push: animate a scale transform on <body> toward a focus point,
+ * from ONE in-page rAF loop (CSS animations are disabled in the harness).
+ * The "camera" language is real — a static dashboard hold reads dead on
+ * camera, and a 1.00→1.06 drift over a beat is the difference between a
+ * screenshot and a shot. Scale must stay >= 1 (pushing OUT would expose the
+ * page edge to the recording). Playwright clicks remain accurate mid-push:
+ * locator geometry is read post-transform. State survives navigations only
+ * until the next load; push after the page you're framing is up.
+ *
+ * originXPct/originYPct place the push target as viewport percentages (50/50
+ * = dead center). Successive calls animate from the current state, so a beat
+ * can push in 1.06 toward a card and the next ease back to 1.0.
+ */
+export async function slowPush(
+  page: Page,
+  opts: { scale: number; originXPct?: number; originYPct?: number; seconds: number },
+): Promise<void> {
+  const { scale, originXPct = 50, originYPct = 50, seconds } = opts;
+  await page.evaluate(
+    ({ scale: target, ox, oy, duration }) =>
+      new Promise<void>((resolve) => {
+        // NEVER push while a portaled overlay is open. A transform on <body>
+        // becomes the containing block for position:fixed descendants, so an
+        // open Radix dialog/dropdown re-anchors to the document and JUMPS to
+        // the top of the frame the instant the push starts (ep05 b04, on
+        // camera). Skipping keeps such holds static, which is what they were
+        // before motion existed. Dwell for the duration anyway so the beat's
+        // time budget is unchanged.
+        const overlayOpen = document.querySelector(
+          '[role="dialog"][data-state="open"], [data-radix-popper-content-wrapper], [role="menu"][data-state="open"]',
+        );
+        const w = window as unknown as {
+          __owlettePush?: { scale: number; ox: number; oy: number };
+        };
+        if (overlayOpen) {
+          console.log('[slowPush] overlay open — skipping the move, dwelling instead');
+          setTimeout(resolve, duration);
+          return;
+        }
+        const from = w.__owlettePush ?? { scale: 1, ox: 50, oy: 50 };
+        const t0 = performance.now();
+        const RAMP = 0.2; // gentler ramps than the scroll: moves are tiny
+        const flat = 1 - RAMP;
+        const ease = (t: number): number => {
+          if (t < RAMP) return (t * t) / (2 * RAMP) / flat;
+          if (t > 1 - RAMP) {
+            const u = 1 - t;
+            return (flat - (u * u) / (2 * RAMP)) / flat;
+          }
+          return (t - RAMP / 2) / flat;
+        };
+        // Composited, or it steps: an un-promoted body layer re-rasters and
+        // snaps to device pixels each frame — "walking down stairs instead of
+        // gliding down a slide" (rosco, on every early take). will-change +
+        // translateZ keep the layer on the GPU so each frame is a smooth
+        // interpolation; at rest (scale exactly 1) everything is cleared so
+        // the page re-rasters pixel-sharp.
+        document.body.style.willChange = 'transform';
+        function step(now: number): void {
+          const p = Math.min(1, (now - t0) / duration);
+          const k = ease(p);
+          const s = from.scale + (target - from.scale) * k;
+          const cx = from.ox + (ox - from.ox) * k;
+          const cy = from.oy + (oy - from.oy) * k;
+          document.body.style.transformOrigin = `${cx}% ${cy}%`;
+          document.body.style.transform =
+            p >= 1 && target === 1
+              ? ''
+              : `scale(${s.toFixed(6)}) translateZ(0)`;
+          if (p < 1) requestAnimationFrame(step);
+          else {
+            if (target === 1) document.body.style.willChange = '';
+            w.__owlettePush = { scale: target, ox, oy };
+            resolve();
+          }
+        }
+        requestAnimationFrame(step);
+      }),
+    { scale, ox: originXPct, oy: originYPct, duration: seconds * 1000 },
   );
 }
 

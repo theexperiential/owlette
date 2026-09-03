@@ -166,6 +166,64 @@ Status of the items below, after working the suggested order:
   Resolve backups preference, VM leftovers (lobby-wall process on
   OWLETTE-E2E-01/prod; §3.7+§3.8 native re-shoots via the runner — they
   REVERT the guest, coordinate first).
+- **2026-09-01 smoothing + cards + superadmin wave:**
+  * TITLE CARDS built (`web/e2e/videos/title-cards.video.ts` + own config —
+    no app server): main card (4.2s, eye + wordmark + "episode NN" + title)
+    and section cards (2.6s, per titled beat), rAF fade+slow-scale.
+    THE STEPPING LESSON, twice-learned: an animated scale on a normal layer
+    re-rasters and snaps to device pixels — "stairs, not a slide" (rosco).
+    Cards fix = author at 2×, base `scale(.4925) translateZ(0)`,
+    `will-change: transform, opacity` → GPU downsample per frame. The app's
+    dot grid added to the card stage (rosco: brighter — now
+    `oklch(0.55 .1 250 / .5)` 1.5px dots + vignette). Preview approved in
+    motion ("much smoother!"); brighter-dots render pending his eyeball.
+    Batch RENDERED 2026-09-02 (146 cards: 17 main + 129 section, 11.4 min)
+    after two more banding rounds: QP 18→12 alone didn't fix the vignette
+    ring — the real culprit was ffmpeg's RGB→limited-YUV conversion crushing
+    near-black steps, so the recorder now dithers with uniform temporal
+    noise on planar RGB BEFORE yuv420p (`noise=alls=6:allf=t+u`, both
+    capture paths; CSS grain can't reach near-black — blend modes scale
+    with luminance). NOTE: the 17 episode scenes were shot on the OLD
+    chain (QP 18, no dither) — busier UI hides it, but a full re-record
+    batch is the consistency fix if banding shows in review.
+    ASSEMBLY INTEGRATION SHIPPED: cards live ON the beat grid.
+    gen-assembly bakes `main_card` (episode head) + per-beat `card`
+    (section card butted before every beat except the first) into
+    start_frames; build_episode.card_slots() places them on V1 (silent),
+    beat_segments subtracts the next beat's card from grid_len, and
+    simulate-conform treats a gap equal to the next beat's card as filled.
+    A missing card file = no slot, so the pipeline is card-optional.
+    Conform: 0 problems, 17/17 with cards. Installed Resolve copies synced.
+  * SAME FIX APPLIED TO `slowPush` (video-helpers.ts): `will-change:
+    transform` on body for the animation, every frame `scale(s) translateZ(0)`
+    (composited), cleared at rest so the page re-rasters sharp. All 16
+    push-bearing scenes (every scene except 03) re-recorded on rosco's order.
+  * NEW TRAP — RE-VOICE ⇒ GEN-ASSEMBLY ⇒ ONLY THEN RECORD: the recorder's
+    narrate()/hold enforcement reads beat durations from the ASSEMBLY
+    MANIFESTS (video-helpers `beatDurationsFor`), not the mp3s. Recording
+    ep14 right after re-rendering its VO but before `gen-assembly.py`
+    enforced the OLD durations — a beat ended short (conform HOLE) and
+    another held 13s of dead slack. Order is: render → normalize →
+    gen-assembly → record.
+  * NEW TRAP — OTHER CLAUDE SESSIONS POISON TAKES: a concurrent Embody
+    session's TouchDesigner smoke test took the foreground mid-take and
+    replaced ep15 with a TD window. The idle guard can't catch it (window
+    launches aren't user input) and the vet edge gate can't reliably flag a
+    full-window overlay with dark edges — it only WARNed. Detection was a
+    VISUAL frame sample (contact sheet of every take recorded near the event);
+    fix was ListAgents → SendMessage asking the Embody sessions to hold
+    foreground windows, then re-record. Before any future batch: check
+    ListAgents for live sessions that might launch windows, and ask first.
+  * SUPERADMIN DE-SCOPED from public-facing narration (his rule: superadmin is
+    internal-only; orgs only ever see admin). ep02 b09 + ep17 b06 rewritten to
+    "your platform operator's view" framing, re-rendered (~5,700 credits,
+    approved), normalized, re-recorded. ep17 b07 audited: already correct
+    (site-admin revoke). ep14 RESOLVED as a PRODUCT decision (2026-09-01):
+    rosco ruled site admins absolutely need admin-panel access — the
+    superadmin-only gate on /admin/* is an app gap, not a script problem.
+    Gap report for the implementing agent:
+    `dev/active/site-admin-panel-access/REPORT.md`. ep14 stays on hold until
+    that ships, then films against the real site-admin UI.
 
 ---
 
@@ -513,6 +571,16 @@ three argv entries and the emulators never start.
 cd dev/video-tutorials/assembly
 python gen-assembly.py && python simulate-conform.py
 ```
+
+### 6.5b Export deliverables from Resolve
+**Workspace → Scripts → owlette render all** (repo: `assembly/resolve/render_all.py`,
+installed by scratchpad `sync_installed`-style copy). Renders each episode's
+NEWEST `{stem} vN` timeline as H.264 MP4 (1080p60, 30 Mb/s — keeps the
+de-banding dither) into `OWLETTE_RENDER_DIR` (default: the TEC Dropbox
+`x/owlette-video-tutorials` folder), single-clip, video+audio. Skips unbuilt
+stems, leaves any existing render queue alone, and writes per-job results to
+`assembly/resolve/render-log.txt` for the orchestrator to read. Build first —
+render second.
 
 ### 6.6 Build in Resolve
 Open the `owlette tutorials` project → **Workspace → Scripts → owlette build

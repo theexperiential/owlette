@@ -1,6 +1,6 @@
 # assembly — episode 06: run apps on a schedule
 
-Narration: **2:02.3** across 7 spoken beats.
+Narration: **2:29.3** across 7 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

@@ -342,10 +342,19 @@ export function buildPrimaryFfmpegArgs(region: CaptureRegion): string[] {
     // ddagrab-vs-kiosk regression untriageable.
     '-y', '-hide_banner', '-loglevel', 'warning', '-stats',
     '-filter_complex',
-    `ddagrab=output_idx=0:framerate=60:draw_mouse=0:offset_x=${region.offsetX}:offset_y=${region.offsetY}:video_size=${region.width}x${region.height},hwdownload,format=bgra,format=yuv420p`,
+    // The `noise` stage dithers BEFORE the yuv420p conversion (on planar RGB):
+    // dark radial gradients banded visibly even at QP 12 because the RGB→
+    // limited-range-YUV squeeze quantizes near-black steps before the encoder
+    // sees them; uniform temporal noise (strength 6) breaks the contours up.
+    // CSS-side grain can't do this job — blend modes scale with luminance, so
+    // near black it contributes almost nothing.
+    `ddagrab=output_idx=0:framerate=60:draw_mouse=0:offset_x=${region.offsetX}:offset_y=${region.offsetY}:video_size=${region.width}x${region.height},hwdownload,format=bgra,format=gbrp,noise=alls=6:allf=t+u,format=yuv420p`,
     '-c:v', 'h264_nvenc',
     '-preset', 'p5', '-tune', 'hq',
-    '-rc', 'constqp', '-qp', '18',
+    // QP 12, not 18: the title cards' dark radial gradients banded visibly at
+    // 18 even under animated grain — the live render was clean, so the
+    // quantizer was crushing the near-black steps. 12 keeps them.
+    '-rc', 'constqp', '-qp', '12',
     '-bf', '2',
     '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
     '-color_range', 'tv',
@@ -371,7 +380,10 @@ export function buildFallbackFfmpegArgs(region: CaptureRegion): string[] {
     '-video_size', `${region.width}x${region.height}`,
     '-offset_x', String(region.offsetX), '-offset_y', String(region.offsetY),
     '-i', 'desktop',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+    // CRF 14 mirrors the primary path's QP drop, and the same pre-conversion
+    // dither (see buildPrimaryFfmpegArgs for why).
+    '-vf', 'format=gbrp,noise=alls=6:allf=t+u,format=yuv420p',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '14',
     '-pix_fmt', 'yuv420p', '-profile:v', 'high',
     '-bf', '2',
     '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',

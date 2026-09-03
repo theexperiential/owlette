@@ -40,6 +40,7 @@ import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   centerInView,
   clickWithCursor,
@@ -140,7 +141,11 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
         await expect(lobbyCard).toBeVisible();
         await centerInView(page, lobbyCard);
         await highlight(page, lobbyCard, 2600);
-        await narrate(page, 'b01 why schedule', 21);
+        await narrate(page, 'b01 why schedule', 6.3);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 48, seconds: 4.0 });
+        await narrate(page, 'b01 why schedule - close', 6.7);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b01 why schedule - settle', 1.0);
 
         // [b02] switch to scheduled (~12.8s). The process list is EXPANDED by
         // default (seed.ts user prefs + the AuthContext default), so the single
@@ -181,7 +186,11 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
         await centerInView(page, rowGear);
         await clickWithCursor(page, rowGear);
         await expect(page.getByText('configure schedule', { exact: true })).toBeVisible();
-        await narrate(page, 'b03 day pills + time range', 20);
+        await narrate(page, 'b03 day pills + time range', 6.0);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 42, seconds: 4.0 });
+        await narrate(page, 'b03 day pills + time range - close', 6.0);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b03 day pills + time range - settle', 1.0);
 
         // [b04] overnight windows (~15.9s). The seeded admin preference is 12h
         // and the default block ends 17:00, so a bare "06:00" parses as 6 PM and
@@ -197,7 +206,11 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
         const plusOneDay = page.getByText('+1 day', { exact: true });
         await expect(plusOneDay).toBeVisible();
         await highlight(page, plusOneDay, 2400);
-        await narrate(page, 'b04 crosses midnight, +1 day badge', 17);
+        await narrate(page, 'b04 crosses midnight, +1 day badge', 5.1);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 4.0 });
+        await narrate(page, 'b04 crosses midnight, +1 day badge - close', 3.9);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b04 crosses midnight, +1 day badge - settle', 1.0);
 
         // [b05] presets (~21.2s).
         const businessHoursPill = page.getByRole('button', { name: 'business hours' });
@@ -244,7 +257,11 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
           .filter({ hasText: 'lobby-display' });
         await centerInView(page, lobbyCardFinal);
         await highlight(page, lobbyCardFinal, 2600);
-        await narrate(page, 'b07 cover — the native insert goes here', 12);
+        await narrate(page, 'b07 cover — the native insert goes here', 3.6);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 3.5 });
+        await narrate(page, 'b07 cover — the native insert goes here - close', 1.4);
+        await slowPush(page, { scale: 1.0, seconds: 2.5 });
+        await narrate(page, 'b07 cover — the native insert goes here - settle', 1.0);
         // Reopen the editor so the pills — the thing the local app lacks — land
         // the closing contrast.
         await clickWithCursor(

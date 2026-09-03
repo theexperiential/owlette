@@ -45,6 +45,7 @@ import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   slowScrollToBottom,
   centerInView,
@@ -171,7 +172,11 @@ test('episode 17 — keeping the fleet current', async ({ browser }) => {
         await expect(updateButton).toBeVisible({ timeout: 20_000 });
         await centerInView(page, updateButton);
         await highlight(page, updateButton, 3000);
-        await narrate(page, 'b02 orange button, version + count badge', 19);
+        await narrate(page, 'b02 orange button, version + count badge', 5.7);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 48, seconds: 4.0 });
+        await narrate(page, 'b02 orange button, version + count badge - close', 5.3);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b02 orange button, version + count badge - settle', 1.0);
 
         // [b03] why three-point-oh is a wall (~22.4s). Manage sites → expand the
         // site → the per-machine list with its agent version column.
@@ -187,7 +192,11 @@ test('episode 17 — keeping the fleet current', async ({ browser }) => {
         );
         await page.waitForTimeout(1000);
         await expect(manageDialog.getByText('v2.12.21', { exact: false }).first()).toBeVisible();
-        await narrate(page, 'b03 every machine lists the version it is on', 15);
+        await narrate(page, 'b03 every machine lists the version it is on', 4.5);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 42, seconds: 4.0 });
+        await narrate(page, 'b03 every machine lists the version it is on - close', 2.5);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b03 every machine lists the version it is on - settle', 1.0);
         await page.keyboard.press('Escape');
         await page.waitForTimeout(500);
 
@@ -221,7 +230,11 @@ test('episode 17 — keeping the fleet current', async ({ browser }) => {
           .first();
         await centerInView(page, offlineRow);
         await highlight(page, offlineRow, 2800);
-        await narrate(page, 'b05 select all; offline rows stay disabled', 15);
+        await narrate(page, 'b05 select all; offline rows stay disabled', 4.5);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 4.0 });
+        await narrate(page, 'b05 select all; offline rows stay disabled - close', 2.5);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b05 select all; offline rows stay disabled - settle', 1.0);
         await narrate(page, 'b05 fifteen minutes on updating → may have failed', 8);
         await clickWithCursor(page, updateDialog.getByRole('button', { name: /^cancel$/i }));
         await expect(updateDialog).not.toBeVisible();
@@ -279,7 +292,11 @@ test('episode 17 — keeping the fleet current', async ({ browser }) => {
         const removeDialog = page.getByRole('dialog');
         await expect(removeDialog).toBeVisible();
         await centerInView(page, removeDialog);
-        await narrate(page, 'b08 remove machine — what actually gets deleted', 16);
+        await narrate(page, 'b08 remove machine — what actually gets deleted', 4.8);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 4.0 });
+        await narrate(page, 'b08 remove machine — what actually gets deleted - close', 3.2);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b08 remove machine — what actually gets deleted - settle', 1.0);
         await page.keyboard.press('Escape');
         await page.waitForTimeout(500);
 

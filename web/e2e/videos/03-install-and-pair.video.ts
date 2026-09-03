@@ -121,7 +121,7 @@ test.setTimeout(8 * 60_000);
 const EP03_PAIR_PHRASE = DEMO_PAIR_PHRASE;
 
 /** Matches /VERSION and agent/VERSION, so b02's tooltip reads the real number. */
-const LATEST_VERSION = '3.2.0';
+const LATEST_VERSION = '3.2.3';
 
 /** The machine b08 pairs. Hostname-shaped, and it belongs to "main gallery". */
 const MACHINE_ID = 'gallery-pc-01';
@@ -226,7 +226,7 @@ test('episode 3 — install owlette & pair your first machine', async ({ browser
         await expect(page.getByTestId('machine-card')).toHaveCount(0);
 
         // aria-labels, so these are unique against the getting-started card's
-        // own "download v3.2.0" / "copy link" buttons (dashboard/page.tsx:1179,
+        // own "download v3.2.3" / "copy link" buttons (dashboard/page.tsx:1179,
         // :1204), which carry text and no label.
         const downloadButton = page.getByLabel('download owlette agent');
         const copyLinkButton = page.getByLabel('copy owlette agent download link');
@@ -265,7 +265,7 @@ test('episode 3 — install owlette & pair your first machine', async ({ browser
         await expect(
           page.getByText(`download owlette agent v${LATEST_VERSION}`).first(),
         ).toBeVisible();
-        await narrate(page, 'b02 tooltip — download owlette agent v3.2.0', 4);
+        await narrate(page, 'b02 tooltip — download owlette agent v3.2.3', 4);
 
         // Already on target from moveCursorTo; clickWithCursor would re-glide.
         await downloadButton.click();
@@ -394,7 +394,7 @@ test('episode 3 — install owlette & pair your first machine', async ({ browser
           3,
         );
         // writeMachineMetrics stamps the fixture fleet's 3.0.0; a machine that
-        // just installed 3.2.0 reports 3.2.0. Invisible on the card, wrong in
+        // just installed 3.2.3 reports 3.2.3. Invisible on the card, wrong in
         // the data.
         await machinesRef.doc(MACHINE_ID).set({ agent_version: LATEST_VERSION }, { merge: true });
 

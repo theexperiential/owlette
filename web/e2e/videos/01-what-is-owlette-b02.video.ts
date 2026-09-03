@@ -49,6 +49,7 @@ import {
   openForCapture,
   openTitleCard,
   narrate,
+  slowPush,
   slowScrollToBottom,
 } from './video-helpers';
 
@@ -84,7 +85,11 @@ test('episode 1 — b02: the wordmark, then the fleet', async ({ browser }) => {
         await expect(page.locator('.tagline')).toHaveText(
           'keeps your installations running 24/7',
         );
-        await narrate(page, 'b02 the wordmark and the promise', 9);
+        await narrate(page, 'b02 the wordmark and the promise', 1.5);
+        // Slow settle into the wordmark; the navigation to /dashboard resets
+        // the transform, so the move needs no explicit ease-back here.
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 42, seconds: 4.0 });
+        await narrate(page, 'b02 wordmark hold', 3.5);
 
         // "then cut to the dashboard fleet view loading" — a cut, per the
         // direction, not a click through the header. openForCapture navigates

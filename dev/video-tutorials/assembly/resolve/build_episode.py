@@ -362,6 +362,9 @@ def expected_layout(manifest, conform, fps):
     """
     beats = manifest["beats"]
     v1, a1 = [], []
+    for at, card in card_slots(manifest):
+        if os.path.isfile(card["path"]):
+            v1.append((at, int(card["frames"]), os.path.basename(card["path"])))
     for i, beat in enumerate(beats):
         cut = conform.get(beat["id"])
         dur_s = float(beat.get("duration_s") or 0)
@@ -375,6 +378,22 @@ def expected_layout(manifest, conform, fps):
             v1.append((int(beat["start_frame"]) + rec_off, tl_len,
                        os.path.basename(over or cut["path"])))
     return {"V1": v1, "A1": a1}
+
+
+def card_slots(manifest):
+    """[(timeline_offset, card_record)] for every title card the manifest
+    carries: the main card at frame 0, each beat's section card butted
+    immediately before that beat's start_frame (gen-assembly bakes the card
+    lengths into the grid, so the subtraction lands exactly)."""
+    slots = []
+    mc = manifest.get("main_card")
+    if mc:
+        slots.append((0, mc))
+    for beat in manifest["beats"]:
+        card = beat.get("card")
+        if card:
+            slots.append((int(beat["start_frame"]) - int(card["frames"]), card))
+    return slots
 
 
 def timeline_matches_generated(tl, expected, report):
@@ -658,7 +677,12 @@ def beat_segments(beats, i, cut, fps, src_fps):
     beat = beats[i]
     warnings = []
     if i + 1 < len(beats):
-        grid_len = int(beats[i + 1]["start_frame"]) - int(beat["start_frame"])
+        # A title card sitting before the NEXT beat occupies the tail of this
+        # gap on the grid — the beat's own picture must stop where the card
+        # starts, not stretch underneath it.
+        nxt = beats[i + 1]
+        nxt_card = int((nxt.get("card") or {}).get("frames") or 0)
+        grid_len = int(nxt["start_frame"]) - nxt_card - int(beat["start_frame"])
     else:
         grid_len = int(round(float(beat.get("duration_s") or 0) * fps))
 
@@ -840,7 +864,15 @@ def build(manifest, report):
             report.warn("%s: no narration rendered (%s)"
                         % (beat["id"], beat.get("mp3_name")))
 
-    to_import = [s["path"] for s in scenes] + [s["path"] for s in extras] + audio_paths
+    cards = card_slots(manifest)
+    for _at, c in cards:
+        if not os.path.isfile(c["path"]):
+            report.warn("title card gone since the manifest was generated: %s "
+                        "- re-run gen-assembly.py" % c["path"])
+    cards = [(at, c) for at, c in cards if os.path.isfile(c["path"])]
+
+    to_import = ([s["path"] for s in scenes] + [s["path"] for s in extras]
+                 + [c["path"] for _at, c in cards] + audio_paths)
     for path in [p for p in to_import if not os.path.isfile(p)]:
         report.warn("file vanished since the manifest was generated: %s" % path)
     to_import = [p for p in to_import if os.path.isfile(p)]
@@ -942,6 +974,24 @@ def build(manifest, report):
             except Exception:
                 cursor += int(round(float(src.get("duration_s") or 0) * fps))
         report.say("V1: %d scene clip(s), %d frames" % (len(scenes), cursor))
+    # --- V1: title cards --------------------------------------------------
+    # Full-frame interstitials on the same track: the main card at frame 0,
+    # each section card butted against its beat. Silent clips — nothing on A1.
+    if cards:
+        placed_cards = 0
+        for at, c in cards:
+            item = items.get(c["path"])
+            if item is None:
+                report.warn("card not in imported media: %s"
+                            % os.path.basename(c["path"]))
+                continue
+            placed = append_clip(media_pool, item, start + at, VIDEO_ONLY, 1,
+                                 report, "card <- %s" % os.path.basename(c["path"]),
+                                 src_in=0, src_out=int(c["frames"]) - 1)
+            if placed is not None:
+                placed_cards += 1
+        report.say("V1 cards: %d of %d placed" % (placed_cards, len(cards)))
+
     if extras:
         if conform:
             used = set(c["path"] for c in conform.values())

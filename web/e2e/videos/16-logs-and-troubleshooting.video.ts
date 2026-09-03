@@ -31,6 +31,7 @@ import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   clickWithCursor,
   centerInView,
@@ -186,7 +187,11 @@ test('episode 16 — logs & troubleshooting', async ({ browser }) => {
         await expect(
           page.getByText('access violation', { exact: false }).first(),
         ).toBeVisible();
-        await narrate(page, 'b01 logs timeline — settle', 21);
+        await narrate(page, 'b01 logs timeline — settle', 6.3);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 48, seconds: 4.0 });
+        await narrate(page, 'b01 logs timeline — settle - close', 6.7);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b01 logs timeline — settle - settle', 1.0);
 
         // [b02] reading an entry — the crash row's six columns, then a second
         // error row so "your eye goes straight to the red" has two on screen
@@ -194,7 +199,11 @@ test('episode 16 — logs & troubleshooting', async ({ browser }) => {
         const crashRow = page.getByTestId('log-row-log-crash-touchdesigner');
         await centerInView(page, crashRow);
         await highlight(page, crashRow, 2200);
-        await narrate(page, 'b02 row anatomy', 12);
+        await narrate(page, 'b02 row anatomy', 3.6);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 42, seconds: 3.5 });
+        await narrate(page, 'b02 row anatomy - close', 1.4);
+        await slowPush(page, { scale: 1.0, seconds: 2.5 });
+        await narrate(page, 'b02 row anatomy - settle', 1.0);
         const deployFailedRow = page.getByTestId('log-row-log-deploy-failed');
         await centerInView(page, deployFailedRow);
         await highlight(page, deployFailedRow, 1800);
@@ -267,7 +276,11 @@ test('episode 16 — logs & troubleshooting', async ({ browser }) => {
         const expandedDetails = page.getByText('machine id', { exact: true }).first();
         await centerInView(page, expandedDetails);
         await highlight(page, expandedDetails, 1800);
-        await narrate(page, 'b05 machine id, exact timestamp, raw details', 14);
+        await narrate(page, 'b05 machine id, exact timestamp, raw details', 4.2);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 4.0 });
+        await narrate(page, 'b05 machine id, exact timestamp, raw details - close', 1.8);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b05 machine id, exact timestamp, raw details - settle', 1.0);
 
         // [b06] clearing up, safely (~19.8s). The dialog carries its OWN from/to
         // pickers and builds a live scope list above them; the page's date
@@ -318,7 +331,11 @@ test('episode 16 — logs & troubleshooting', async ({ browser }) => {
         await clickWithCursor(page, docsItem);
         await page.waitForURL(/\/docs/, { timeout: 20_000 });
         await page.waitForTimeout(1500);
-        await narrate(page, 'b07 docs, in the app — then cut to the native insert', 17);
+        await narrate(page, 'b07 docs, in the app — then cut to the native insert', 5.1);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 4.0 });
+        await narrate(page, 'b07 docs, in the app — then cut to the native insert - close', 3.9);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b07 docs, in the app — then cut to the native insert - settle', 1.0);
       },
     );
   } finally {

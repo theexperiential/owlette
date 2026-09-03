@@ -41,9 +41,9 @@ roll it to one machine first. click the button, deselect all, tick a single box,
 
 ## [b06] the token ledger
 **SCREEN:** admin → `agent tokens`. site selector, then the table: machine ID, version, status, created, last used. show the search box, the version filter, the `duplicates` toggle, and the `N live` count.
-**NOTE:** superadmin-only surface — capture with a superadmin session.
+**NOTE:** superadmin-only surface — capture with a superadmin session, and the narration frames it explicitly as the OPERATOR'S view (superadmin is internal-only, never a public feature).
 **VOICEOVER:**
-now the credentials. every paired machine holds a refresh token, and the agent tokens page under admin is the ledger — superadmin only. pick a site and you see every live token, the version it registered with, and when it was last used. the duplicates filter flags hostnames holding more than one.
+now the credentials. every paired machine holds a refresh token, and your platform operator keeps the ledger — every live token per site, the version it registered with, and when it was last used. a duplicates filter flags hostnames holding more than one — this is their view, and it's how a stray credential gets spotted.
 
 ## [b07] revoke the right one
 **SCREEN:** dashboard → machine row menu → `revoke token` → the dialog, holding on both buttons: `revoke current token` (amber) and `revoke all for hostname` (red).

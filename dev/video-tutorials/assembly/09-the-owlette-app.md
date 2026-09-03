@@ -1,6 +1,6 @@
 # assembly — episode 09: the owlette app on the machine
 
-Narration: **3:12.0** across 8 spoken beats.
+Narration: **3:43.4** across 8 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 

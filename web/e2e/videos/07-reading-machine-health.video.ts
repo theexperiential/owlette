@@ -32,6 +32,7 @@ import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   centerInView,
   clickWithCursor,
@@ -76,7 +77,11 @@ test('episode 7 — reading machine health', async ({ browser }) => {
           .filter({ hasText: 'media-server-stage' });
         await centerInView(page, focusCard);
         await highlight(page, focusCard, 2600);
-        await narrate(page, 'b01 card at a glance', 19);
+        await narrate(page, 'b01 card at a glance', 2.0);
+        await slowPush(page, { scale: 1.06, originXPct: 50, originYPct: 45, seconds: 5.0 });
+        await narrate(page, 'b01 card — reading it', 5.5);
+        await slowPush(page, { scale: 1.0, seconds: 3.5 });
+        await narrate(page, 'b01 card — hold', 3.0);
 
         // [b02] the color language (~19.2s) — the calm card and the hot one sit
         // far apart in the fleet, so moving between them reads as a sweep.
@@ -88,7 +93,11 @@ test('episode 7 — reading machine health', async ({ browser }) => {
         await narrate(page, 'b02 colors — headroom', 9);
         await centerInView(page, focusCard);
         await highlight(page, focusCard, 2200);
-        await narrate(page, 'b02 colors — pinned', 11);
+        await narrate(page, 'b02 colors — pinned', 2.0);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 4.0 });
+        await narrate(page, 'b02 colors — pinned, close', 2.0);
+        await slowPush(page, { scale: 1.0, seconds: 2.5 });
+        await narrate(page, 'b02 colors — settle', 0.5);
 
         // [b03] temperatures (~27.2s) — cpu, then gpu, then the machine whose
         // cpu temperature slot is empty.
@@ -99,7 +108,11 @@ test('episode 7 — reading machine health', async ({ browser }) => {
         const gpuTile = focusCard.getByText('gpu', { exact: true }).first();
         await centerInView(page, gpuTile);
         await highlight(page, gpuTile, 2400);
-        await narrate(page, 'b03 temps — gpu + the °C/°F preference', 10);
+        await narrate(page, 'b03 temps — gpu', 1.5);
+        await slowPush(page, { scale: 1.05, originXPct: 55, originYPct: 45, seconds: 3.5 });
+        await narrate(page, 'b03 temps — the °C/°F preference', 2.0);
+        await slowPush(page, { scale: 1.0, seconds: 2.5 });
+        await narrate(page, 'b03 temps — settle', 0.5);
         const noSensorCard = page
           .getByTestId('machine-card')
           .filter({ hasText: 'museum-kiosk-2' });
