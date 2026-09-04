@@ -20,6 +20,7 @@ import type { InferUIMessageChunk, UIMessage } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import { Timestamp } from 'firebase-admin/firestore';
 import {
+  APPROVAL_ALREADY_CONSUMED_ERROR,
   LOST_RESULT_ERROR,
   STILL_RUNNING_ERROR,
 } from '@/lib/hoot/repairMessages';
@@ -185,6 +186,7 @@ interface FakeDocRef {
   _path: string;
   get: () => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>;
   set: (data: Record<string, unknown>, opts?: { merge?: boolean }) => Promise<void>;
+  create: (data: Record<string, unknown>) => Promise<void>;
   update: (...args: unknown[]) => Promise<void>;
   collection: (name: string) => { doc: (id: string) => FakeDocRef };
 }
@@ -206,6 +208,13 @@ function docRef(path: string): FakeDocRef {
     set: async (data, opts) => {
       const next = materializeTop(data);
       store[path] = opts?.merge ? { ...(store[path] ?? {}), ...next } : next;
+    },
+    // Real firestore create(): atomic, ALREADY_EXISTS (gRPC code 6) on conflict.
+    create: async (data) => {
+      if (store[path] !== undefined) {
+        throw Object.assign(new Error(`already exists: ${path}`), { code: 6 });
+      }
+      store[path] = materializeTop(data);
     },
     update: async (...args: unknown[]) => {
       if (!store[path]) throw new Error(`update on missing doc: ${path}`);
@@ -809,6 +818,83 @@ describe('tier-3 approval round-trip through the runner', () => {
       expect(serialized).toContain('scan finished clean');
     },
     15_000,
+  );
+
+  /**
+   * OWL-47 pin: a DUPLICATE resume of the same approval (reload / second tab
+   * re-posting the approval-responded history) must not dispatch the tool a
+   * second time. The approval ledger's create() is the gate; the duplicate
+   * turn recovers the real result via priorToolCommands instead of executing.
+   * Negative control: pre-ledger, this exact flow dispatched a second command
+   * (pending doc would hold 2 command ids).
+   */
+  it(
+    'duplicate approval resume: exactly one dispatch, duplicate turn recovers the result',
+    async () => {
+      await runTurn1();
+
+      const prompts: unknown[] = [];
+      const { commandId, streamError } = await runTurn2(prompts);
+      expect(streamError).toBeNull();
+      await waitFor(
+        () => (streamDoc(chatId)?.status ?? 'running') !== 'running',
+        'turn 2 terminal status',
+        8000,
+      );
+
+      // The duplicate: same approved history, fresh turn — as a reloaded tab
+      // whose approval buttons were still armed would send it.
+      const history = JSON.parse(JSON.stringify(chatMessages(chatId))) as UIMessage[];
+      // Re-arm the persisted part back to approval-responded, as the stale
+      // client's in-memory copy would carry it.
+      const toolPart = (history[1].parts as Array<Record<string, unknown>>).find(
+        (p) => p.type === 'tool-execute_script',
+      )!;
+      toolPart.state = 'approval-responded';
+      toolPart.approval = { ...(toolPart.approval as Record<string, unknown>), approved: true };
+      delete toolPart.output;
+
+      currentModel = new MockLanguageModelV3({
+        doStream: async () => ({
+          stream: simulateReadableStream({ chunks: textChunks('already handled') }),
+        }),
+      });
+
+      const stream = await beginTurn(
+        baseParams({
+          chatId,
+          turnId: 'turn_appr_dup',
+          machineId: MACHINE_APPR,
+          messages: history,
+          priorToolCommands: { toolu_appr_1: { [MACHINE_APPR]: { commandId } } },
+        }),
+        { supersede: true },
+      );
+      const dup = await collectChunks(stream);
+      expect(dup.streamError).toBeNull();
+      await waitFor(
+        () => (streamDoc(chatId)?.status ?? 'running') !== 'running',
+        'duplicate turn terminal status',
+        8000,
+      );
+
+      // THE pin: still exactly one command ever dispatched to the machine.
+      expect(Object.keys(store[pendingPath(MACHINE_APPR)])).toEqual([commandId]);
+
+      // The duplicate turn's persisted part is terminal — never a re-armed
+      // approval. The raw output is NOT recoverable here (turn 2's poll loop
+      // consumed and deleted the commands/completed entry), so the honest
+      // outcome is the consumed-approval error; turn 2's assistant narrative
+      // of the result survives in the same message.
+      const parts = chatMessages(chatId)[1].parts as Array<Record<string, unknown>>;
+      const persisted = parts.find((p) => p.type === 'tool-execute_script')!;
+      expect(persisted).toMatchObject({
+        state: 'output-error',
+        errorText: APPROVAL_ALREADY_CONSUMED_ERROR,
+      });
+      expect(JSON.stringify(chatMessages(chatId))).toContain('scan finished clean');
+    },
+    20_000,
   );
 });
 

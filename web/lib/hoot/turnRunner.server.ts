@@ -56,10 +56,14 @@ import {
   type SiteAccessLevel,
 } from '@/lib/hoot-utils.server';
 import {
+  applyApprovalConsumption,
+  reapplyConsumedParts,
   repairDanglingToolParts,
   STILL_RUNNING_ERROR,
+  type ApprovalConsumptionResult,
   type LostResultResolution,
 } from '@/lib/hoot/repairMessages';
+import { claimApproval } from '@/lib/hoot/approvalLedger.server';
 import {
   finishTurn,
   recordToolCommand,
@@ -333,6 +337,11 @@ export function startTurn(
   // The repaired history (not the raw client history) is what gets persisted.
   let repairedHistory: UIMessage[] | null = null;
 
+  // Consumed-approval rewrites (one-shot ledger). The SDK's final message is
+  // seeded from the RAW history, so these must be re-applied before the final
+  // persist or a consumed part resurfaces as a dangling approval.
+  let consumedParts: ApprovalConsumptionResult['consumedParts'] = new Map();
+
   // Drives new-conversation semantics. Captured before the turn-start persist
   // creates the doc.
   let chatExistedAtStart = false;
@@ -381,20 +390,35 @@ export function startTurn(
         chatExistedAtStart = true;
       }
 
-      const { messages: repairedMessages, repairedToolCallIds } =
-        await repairDanglingToolParts(params.messages, {
-          resolveLostResult: buildResolveLostResult(
-            db,
-            params.siteId,
-            params.priorToolCommands ?? null,
-            params.machineId === SITE_TARGET_ID,
-          ),
-        });
+      const resolveLostResult = buildResolveLostResult(
+        db,
+        params.siteId,
+        params.priorToolCommands ?? null,
+        params.machineId === SITE_TARGET_ID,
+      );
+      const { messages: danglingRepaired, repairedToolCallIds } =
+        await repairDanglingToolParts(params.messages, { resolveLostResult });
       if (repairedToolCallIds.length > 0) {
         console.warn(
           `[hoot] repaired ${repairedToolCallIds.length} dangling tool part(s) in chat ${sanitizeForLog(chatId)}: ${sanitizeForLog(repairedToolCallIds.join(', '))}`,
         );
       }
+
+      // One-shot approval enforcement: claim every answered approval on the
+      // in-flight segment BEFORE any dispatch. A duplicate resume (reload,
+      // second tab) loses the claim and gets a terminal part instead of a
+      // second execution of an already-approved tier-3 tool.
+      const consumption = await applyApprovalConsumption(danglingRepaired, {
+        claim: (toolCallId) => claimApproval(db, chatId, toolCallId, { turnId }),
+        resolveLostResult,
+      });
+      consumedParts = consumption.consumedParts;
+      if (consumedParts.size > 0) {
+        console.warn(
+          `[hoot] blocked re-execution of ${consumedParts.size} already-consumed approval(s) in chat ${sanitizeForLog(chatId)}: ${sanitizeForLog([...consumedParts.keys()].join(', '))}`,
+        );
+      }
+      const repairedMessages = consumption.messages;
       repairedHistory = repairedMessages;
 
       // Persist the repaired history now so the user's just-sent message is
@@ -475,11 +499,17 @@ export function startTurn(
       const baseHistory = repairedHistory ?? params.messages;
       const hasResponseParts =
         Array.isArray(responseMessage?.parts) && responseMessage.parts.length > 0;
-      const mergedMessages = !hasResponseParts
-        ? baseHistory
-        : baseHistory.length > 0 && baseHistory[baseHistory.length - 1].id === responseMessage.id
-          ? [...baseHistory.slice(0, -1), responseMessage]
-          : [...baseHistory, responseMessage];
+      // The SDK seeds its state from the RAW history (`originalMessages`), so a
+      // consumed approval can resurface on the response message as a dangling
+      // `approval-responded` part — re-apply the terminal rewrites.
+      const mergedMessages = reapplyConsumedParts(
+        !hasResponseParts
+          ? baseHistory
+          : baseHistory.length > 0 && baseHistory[baseHistory.length - 1].id === responseMessage.id
+            ? [...baseHistory.slice(0, -1), responseMessage]
+            : [...baseHistory, responseMessage],
+        consumedParts,
+      );
 
       try {
         if (turnError !== null) {

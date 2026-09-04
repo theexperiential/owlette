@@ -41,9 +41,16 @@ interface ChatWindowProps {
   cancelPendingCommandIds?: Set<string>;
   /** The active turn's runner died (server restarted) — show the interrupted notice. */
   turnStale?: boolean;
+  /**
+   * A turn is live per the stream doc. Approve/deny is suppressed while set: after a
+   * reload during an approval-resume, the persisted part can still read
+   * `approval-requested` although the approved tool is already executing — re-arming
+   * the buttons there is the OWL-47 double-execution window.
+   */
+  turnRunning?: boolean;
 }
 
-export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage, approvalTargetLabel, toolCommands, onCancelTool, cancelPendingCommandIds, turnStale }: ChatWindowProps) {
+export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage, approvalTargetLabel, toolCommands, onCancelTool, cancelPendingCommandIds, turnStale, turnRunning }: ChatWindowProps) {
   const { user } = useAuth();
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -351,7 +358,10 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                 //   approval-requested            → show approve/deny
                 //   approval-responded (denied) / output-denied → declined
                 //   approval-responded (approved) → resuming → loading until output
-                const awaitingApproval = state === 'approval-requested';
+                // With a live turn, an `approval-requested` part is stale UI state
+                // (the resume is already executing server-side) — render it as
+                // running instead of re-arming approve/deny.
+                const awaitingApproval = state === 'approval-requested' && !turnRunning;
                 const denied = state === 'output-denied'
                   || (state === 'approval-responded' && toolPart.approval?.approved === false);
                 const approvalId = toolPart.approval?.id;

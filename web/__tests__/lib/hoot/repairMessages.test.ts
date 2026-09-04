@@ -14,7 +14,11 @@
 import { convertToModelMessages, streamText, type UIMessage } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import {
+  applyApprovalConsumption,
+  reapplyConsumedParts,
   repairDanglingToolParts,
+  APPROVAL_ALREADY_CONSUMED_ERROR,
+  LATE_DENIAL_ERROR,
   LOST_RESULT_ERROR,
   SUPERSEDED_APPROVAL_ERROR,
   STILL_RUNNING_ERROR,
@@ -407,5 +411,163 @@ describe('repairDanglingToolParts with resolveLostResult (async overload)', () =
 
     expect(result).not.toBeInstanceOf(Promise);
     expect(result.repairedToolCallIds).toEqual(['toolu_dangling_1']);
+  });
+});
+
+// One-shot approval consumption (OWL-47): the IN-FLIGHT assistant segment's answered
+// approvals are claimed atomically; a lost claim rewrites the part terminal so the SDK
+// never re-executes an already-dispatched tier-3 tool.
+describe('applyApprovalConsumption', () => {
+  const approvedPart = (toolCallId: string) => ({
+    type: 'tool-reboot_machine',
+    toolCallId,
+    state: 'approval-responded',
+    input: {},
+    approval: { id: `appr_${toolCallId}`, approved: true },
+  });
+  const deniedPart = (toolCallId: string) => ({
+    type: 'tool-reboot_machine',
+    toolCallId,
+    state: 'approval-responded',
+    input: {},
+    approval: { id: `appr_${toolCallId}`, approved: false },
+  });
+
+  const claimed = jest.fn().mockResolvedValue('claimed');
+  const consumed = jest.fn().mockResolvedValue('already-consumed');
+  const noResolution = jest.fn().mockResolvedValue(null);
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it('leaves a freshly-claimed approval untouched (this turn owns the dispatch)', async () => {
+    const messages = [userMsg('u1', 'reboot it'), assistantMsg('a1', [approvedPart('tc1')])];
+
+    const { messages: out, consumedParts } = await applyApprovalConsumption(messages, {
+      claim: claimed,
+      resolveLostResult: noResolution,
+    });
+
+    expect(claimed).toHaveBeenCalledWith('tc1');
+    expect(consumedParts.size).toBe(0);
+    expect(out[1]).toBe(messages[1]);
+    expect(noResolution).not.toHaveBeenCalled();
+  });
+
+  it('rewrites an already-consumed approval to APPROVAL_ALREADY_CONSUMED_ERROR', async () => {
+    const messages = [userMsg('u1', 'reboot it'), assistantMsg('a1', [approvedPart('tc1')])];
+
+    const { messages: out, consumedParts } = await applyApprovalConsumption(messages, {
+      claim: consumed,
+      resolveLostResult: noResolution,
+    });
+
+    const part = (out[1].parts as Array<Record<string, unknown>>)[0];
+    expect(part).toMatchObject({
+      state: 'output-error',
+      toolCallId: 'tc1',
+      errorText: APPROVAL_ALREADY_CONSUMED_ERROR,
+    });
+    expect(part.approval).toBeUndefined();
+    expect(consumedParts.get('tc1')).toBe(part);
+  });
+
+  it('splices in the real result when the resolver recovers one', async () => {
+    const messages = [userMsg('u1', 'reboot it'), assistantMsg('a1', [approvedPart('tc1')])];
+    const resolver = jest.fn().mockResolvedValue({ output: { exit_code: 0 } });
+
+    const { messages: out } = await applyApprovalConsumption(messages, {
+      claim: consumed,
+      resolveLostResult: resolver,
+    });
+
+    expect((out[1].parts as Array<Record<string, unknown>>)[0]).toMatchObject({
+      state: 'output-available',
+      output: { exit_code: 0 },
+    });
+  });
+
+  it('rewrites a late denial (approval consumed elsewhere) to LATE_DENIAL_ERROR', async () => {
+    const messages = [userMsg('u1', 'reboot it'), assistantMsg('a1', [deniedPart('tc1')])];
+
+    const { messages: out } = await applyApprovalConsumption(messages, {
+      claim: consumed,
+      resolveLostResult: noResolution,
+    });
+
+    expect((out[1].parts as Array<Record<string, unknown>>)[0]).toMatchObject({
+      state: 'output-error',
+      errorText: LATE_DENIAL_ERROR,
+    });
+    expect(noResolution).not.toHaveBeenCalled(); // denials never dispatched from here
+  });
+
+  it('leaves a normally-denied approval untouched when the claim succeeds', async () => {
+    const messages = [userMsg('u1', 'reboot it'), assistantMsg('a1', [deniedPart('tc1')])];
+
+    const { messages: out, consumedParts } = await applyApprovalConsumption(messages, {
+      claim: claimed,
+      resolveLostResult: noResolution,
+    });
+
+    expect(out[1]).toBe(messages[1]);
+    expect(consumedParts.size).toBe(0);
+  });
+
+  it('never touches assistant turns at or before the last user message', async () => {
+    const messages = [
+      userMsg('u1', 'first'),
+      assistantMsg('a1', [approvedPart('tc_old')]),
+      userMsg('u2', 'second'),
+      assistantMsg('a2', [{ type: 'text', text: 'ok' }]),
+    ];
+
+    const { messages: out } = await applyApprovalConsumption(messages, {
+      claim: consumed,
+      resolveLostResult: noResolution,
+    });
+
+    expect(claimed).not.toHaveBeenCalled();
+    expect(consumed).not.toHaveBeenCalled();
+    expect(out[1]).toBe(messages[1]);
+  });
+});
+
+describe('reapplyConsumedParts', () => {
+  it('replaces a resurfaced approval-responded part and leaves terminal parts alone', () => {
+    const rewritten = {
+      type: 'tool-reboot_machine',
+      toolCallId: 'tc1',
+      state: 'output-error',
+      input: {},
+      errorText: APPROVAL_ALREADY_CONSUMED_ERROR,
+    };
+    const consumedParts = new Map([['tc1', rewritten as never]]);
+
+    const resurfaced = assistantMsg('a1', [
+      {
+        type: 'tool-reboot_machine',
+        toolCallId: 'tc1',
+        state: 'approval-responded',
+        input: {},
+        approval: { id: 'appr_tc1', approved: true },
+      },
+      completedToolPart,
+    ]);
+    const out = reapplyConsumedParts([userMsg('u1', 'go'), resurfaced], consumedParts);
+
+    expect((out[1].parts as Array<Record<string, unknown>>)[0]).toBe(rewritten);
+    expect((out[1].parts as Array<Record<string, unknown>>)[1]).toBe(completedToolPart);
+
+    // A part the SDK actually finished is NOT clobbered.
+    const finished = assistantMsg('a2', [
+      { type: 'tool-reboot_machine', toolCallId: 'tc1', state: 'output-available', input: {}, output: { ok: true } },
+    ]);
+    const out2 = reapplyConsumedParts([finished], consumedParts);
+    expect(out2[0]).toBe(finished);
+  });
+
+  it('is a no-op passthrough for an empty map', () => {
+    const messages = [userMsg('u1', 'go')];
+    expect(reapplyConsumedParts(messages, new Map())).toBe(messages);
   });
 });

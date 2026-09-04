@@ -34,6 +34,10 @@ import { SITE_TARGET_ID } from '@/app/hoot/components/MachineSelector';
 import { uploadChatImage } from '@/lib/chatImageUtils';
 import type { PendingImage } from '@/app/hoot/components/ChatInput';
 import { UNTITLED_CHAT_TITLE } from '@/lib/hoot/untitledChat';
+import {
+  buildHootRequestBody,
+  type HootChatContext,
+} from '@/lib/hoot/requestBody';
 
 export interface ChatConversation {
   id: string;
@@ -117,6 +121,10 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
   // Async turn state mirrored from `chats/{chatId}/stream/current`.
   const [toolCommands, setToolCommands] = useState<TurnToolCommands>({});
   const [turnStale, setTurnStale] = useState(false);
+  // True while `stream/current` reports a running turn — the UI suppresses
+  // approve/deny then, so a reload during an approval-resume can't re-arm the
+  // buttons for a tool that is already executing (OWL-47 companion guard).
+  const [turnRunning, setTurnRunning] = useState(false);
   // Bumped to resubscribe after a listener error (Firestore kills it on error).
   const [streamSubAttempt, setStreamSubAttempt] = useState(0);
 
@@ -134,6 +142,10 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
 
   // Live "a turn is running" flag — read in the transport closure, where state is stale.
   const streamRunningRef = useRef(false);
+  // Per-chat site/machine pin, written when a chat is started or loaded. The transport
+  // reads the ISSUING chat's pin (by transport id), never the live UI refs, so an
+  // orphaned instance's send cannot be retargeted by a chat/site switch (OWL-48).
+  const chatContextRef = useRef(new Map<string, HootChatContext>());
   // Latest toolCommands; cancelTool reads a call's per-machine commandIds from it.
   const toolCommandsRef = useRef<TurnToolCommands>({});
   // One-shot supersede flag, consumed per request in prepareSendMessagesRequest.
@@ -152,22 +164,27 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         api: '/api/hoot',
         // Send full UIMessages; the server rebuilds ModelMessages via convertToModelMessages,
         // which is what lets a tier-3 approval round-trip resume streamText.
-        prepareSendMessagesRequest: ({ messages }) => {
+        prepareSendMessagesRequest: ({ id, messages }) => {
           // Supersede when this send races an in-flight turn: our own live stream, the 409
           // auto-retry, or a reattached client. The one-shot flag is consumed per request so an
           // automatic approval re-send doesn't inherit it.
           const supersede = forceSupersedeRef.current || streamRunningRef.current;
           forceSupersedeRef.current = false;
-          return {
-            body: {
-              messages,
+          // Throws StaleChatInstanceError for an orphaned instance (chat switched while
+          // its response was in flight) — the send dies here instead of retargeting the
+          // new conversation. The error lands on the unrendered old instance.
+          return buildHootRequestBody({
+            transportChatId: id,
+            activeChatId: chatIdRef.current,
+            pinnedContext: (id && chatContextRef.current.get(id)) || null,
+            liveContext: {
               siteId: siteIdRef.current,
               machineId: machineIdRef.current,
               machineName: machineNameRef.current,
-              chatId: chatIdRef.current,
-              ...(supersede ? { supersede: true } : {}),
             },
-          };
+            messages,
+            supersede,
+          });
         },
       }),
     []
@@ -182,7 +199,9 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       // The server-side runner is the persist authority (turnRunner.server.ts) — persisting
       // here would race it, and used to persist aborted turns.
       turnActiveRetriedRef.current = false; // turn completed — re-arm the 409 auto-retry
-      onChatPersistedRef.current?.(chatIdRef.current);
+      // onChatPersisted deliberately NOT fired here: an orphaned instance finishing after
+      // a chat switch would route the URL to the *current* chat via the live ref. It fires
+      // from mergeAndSet when the draft's real doc lands (derived from actual persistence).
     },
   });
 
@@ -224,6 +243,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     toolCommandsRef.current = {};
     setToolCommands({});
     setTurnStale(false);
+    setTurnRunning(false);
 
     if (!user || !db) return;
 
@@ -281,6 +301,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         const running = data?.status === 'running';
 
         streamRunningRef.current = running;
+        setTurnRunning(running);
         // Track the running turn id for stop(); clear the user-stop guard once terminal.
         currentTurnIdRef.current =
           running && typeof data?.turnId === 'string' ? data.turnId : null;
@@ -343,6 +364,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
           console.error('Failed to subscribe to turn stream:', error);
         }
         streamRunningRef.current = false;
+        setTurnRunning(false);
         currentTurnIdRef.current = null;
         userStoppedRef.current = false;
         runningUpdatedAtMs = null;
@@ -471,6 +493,11 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       if (draft) {
         if (seen.has(draft.id)) {
           draftConvoRef.current = null; // persisted now — the real doc supersedes it
+          // Fire the persisted callback from actual persistence, and only for the
+          // chat that is still active — never from an orphaned turn's live ref.
+          if (draft.id === chatIdRef.current) {
+            onChatPersistedRef.current?.(draft.id);
+          }
         } else {
           deduped.unshift(draft);
         }
@@ -541,7 +568,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     };
   }, [user, siteId]);
 
-  const startNewChat = useCallback((overrides?: { machineId?: string; machineName?: string }) => {
+  const startNewChat = useCallback((overrides?: { siteId?: string; machineId?: string; machineName?: string }) => {
     loadChatRequestRef.current += 1;
     const newId = generateChatId();
     setChatId(newId);
@@ -550,10 +577,20 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     setPendingImages([]);
     setChatLoadError(null);
 
-    // Overrides cover the machine-selector-changed-in-the-same-handler race.
+    // Overrides cover the selector-changed-in-the-same-handler race (machine
+    // selector, and site switch — both update state and start a chat in one
+    // handler, before the refs re-render).
+    const effectiveSiteId = overrides?.siteId ?? siteIdRef.current;
     const effectiveMachineId = overrides?.machineId ?? machineIdRef.current;
     const effectiveMachineName = overrides?.machineName ?? machineNameRef.current;
     const isSiteMode = effectiveMachineId === SITE_TARGET_ID;
+
+    // Pin the new chat's context for the transport (OWL-48).
+    chatContextRef.current.set(newId, {
+      siteId: effectiveSiteId,
+      machineId: effectiveMachineId,
+      machineName: effectiveMachineName,
+    });
 
     // Optimistic sidebar entry tracked by id so the snapshot listener preserves it; drop
     // only the previous draft by id, not every row titled "new conversation".
@@ -561,7 +598,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     const draft: ChatConversation = {
       id: newId,
       title: UNTITLED_CHAT_TITLE,
-      siteId: siteIdRef.current,
+      siteId: effectiveSiteId,
       targetType: isSiteMode ? 'site' : 'machine',
       targetMachineId: isSiteMode ? null : effectiveMachineId,
       machineName: isSiteMode ? 'All Machines' : effectiveMachineName,
@@ -691,6 +728,23 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
 
           const data = chatDoc.data();
           setChatLoadError(null);
+          // Pin the loaded chat's own context for the transport (OWL-48) — a
+          // send into this conversation must target ITS site/machine, not
+          // whatever the selectors show by the time the request fires.
+          if (typeof data?.siteId === 'string') {
+            chatContextRef.current.set(conversationId, {
+              siteId: data.siteId,
+              machineId:
+                data.targetType === 'site'
+                  ? SITE_TARGET_ID
+                  : (typeof data.targetMachineId === 'string' && data.targetMachineId) ||
+                    SITE_TARGET_ID,
+              machineName:
+                typeof data.machineName === 'string' && data.machineName
+                  ? data.machineName
+                  : 'All Machines',
+            });
+          }
           if (data?.messages && Array.isArray(data.messages)) {
             chat.setMessages(data.messages as UIMessage[]);
           } else {
@@ -912,6 +966,8 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     cancelTool,
     // Running turn whose heartbeat is >45s old — runner likely killed by a deploy.
     turnStale,
+    // A turn is live per the stream doc — the UI suppresses approve/deny while set.
+    turnRunning,
 
     input: inputValue,
     setInput: setInputValue,

@@ -41,6 +41,16 @@ export const SUPERSEDED_APPROVAL_ERROR =
   'approval request superseded: the user sent a new message before approving or denying, ' +
   'so the tool was never executed. Ask again if it is still needed.';
 
+export const APPROVAL_ALREADY_CONSUMED_ERROR =
+  'approval already consumed: another turn (a reload or second tab) already resumed this ' +
+  'approval and dispatched the tool. Do not run it again — check that turn for the result, ' +
+  'or verify the effect on the machine.';
+
+export const LATE_DENIAL_ERROR =
+  'denial arrived too late: an earlier turn had already consumed this approval and ' +
+  'dispatched the tool, so the denial could not stop it. Verify the effect on the machine ' +
+  'if needed.';
+
 /**
  * Passed as `{ errorText: STILL_RUNNING_ERROR }` when the command's completed-doc
  * entry shows `status:'running'` — the honest state is "in progress", not "lost".
@@ -207,6 +217,121 @@ function collectResolverEligibleIds(messages: UIMessage[]): string[] {
   });
 
   return ids;
+}
+
+export interface ApprovalConsumptionOptions {
+  /**
+   * Atomic one-shot claim for a tool call's approval (approvalLedger.server.ts
+   * on the server; injectable for tests). 'claimed' → this turn owns the
+   * dispatch; 'already-consumed' → another turn got there first.
+   */
+  claim: (toolCallId: string) => Promise<'claimed' | 'already-consumed'>;
+  /** Same recovery lookup as RepairOptions — consulted for consumed approvals. */
+  resolveLostResult: (toolCallId: string) => Promise<LostResultResolution | null>;
+}
+
+export interface ApprovalConsumptionResult {
+  messages: UIMessage[];
+  /** Rewritten replacement parts by tool call id — empty when nothing was consumed. */
+  consumedParts: Map<string, UIMessagePart>;
+}
+
+/**
+ * One-shot enforcement for tier-3 approvals on the IN-FLIGHT assistant segment
+ * (the messages `applyRepairs` deliberately skips: index > last user message).
+ *
+ * An `approval-responded` part there is what this turn is about to act on:
+ * - approved + claim 'claimed' → left untouched; this turn owns the dispatch.
+ * - approved + claim 'already-consumed' → a duplicate resume (reload, second
+ *   tab, double-send): recover the real result via `resolveLostResult`, else
+ *   rewrite to `APPROVAL_ALREADY_CONSUMED_ERROR` — the SDK then sees a
+ *   terminal part and never re-executes the tool.
+ * - denied + claim 'already-consumed' → the denial lost the race to a turn
+ *   that already dispatched: rewrite to `LATE_DENIAL_ERROR` so the model is
+ *   not told the tool was stopped when it wasn't.
+ * - denied + claim 'claimed' → normal denial, left untouched (self-contained).
+ *
+ * Callers should apply this AFTER `repairDanglingToolParts` and persist the
+ * resulting array, and re-apply `consumedParts` to the SDK's final merged
+ * message (which is seeded from the raw history) before the final persist.
+ */
+export async function applyApprovalConsumption(
+  messages: UIMessage[],
+  opts: ApprovalConsumptionOptions,
+): Promise<ApprovalConsumptionResult> {
+  const consumedParts = new Map<string, UIMessagePart>();
+  const lastUserIndex = findLastUserIndex(messages);
+
+  const result: UIMessage[] = [];
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index];
+    if (message.role !== 'assistant' || index <= lastUserIndex) {
+      result.push(message);
+      continue;
+    }
+
+    let changed = false;
+    const parts: UIMessagePart[] = [];
+    for (const part of message.parts) {
+      if (!isToolPart(part) || part.state !== 'approval-responded') {
+        parts.push(part);
+        continue;
+      }
+
+      const claim = await opts.claim(part.toolCallId);
+      if (claim === 'claimed') {
+        parts.push(part);
+        continue;
+      }
+
+      changed = true;
+      let replacement: UIMessagePart;
+      if (isApprovalApproved(part)) {
+        const resolution = await opts.resolveLostResult(part.toolCallId);
+        replacement =
+          resolution && 'output' in resolution
+            ? toOutputPart(part, resolution.output)
+            : toErrorPart(part, resolution?.errorText ?? APPROVAL_ALREADY_CONSUMED_ERROR);
+      } else {
+        replacement = toErrorPart(part, LATE_DENIAL_ERROR);
+      }
+      consumedParts.set(part.toolCallId, replacement);
+      parts.push(replacement);
+    }
+
+    result.push(changed ? { ...message, parts } : message);
+  }
+
+  return { messages: result, consumedParts };
+}
+
+/**
+ * Re-apply consumption outcomes to a message array whose trailing assistant
+ * message came from the SDK (seeded from the RAW history, so a consumed part
+ * can resurface as `approval-responded`). Only non-terminal occurrences are
+ * replaced — a part the SDK finished for real is left alone.
+ */
+export function reapplyConsumedParts(
+  messages: UIMessage[],
+  consumedParts: ReadonlyMap<string, UIMessagePart>,
+): UIMessage[] {
+  if (consumedParts.size === 0) return messages;
+  return messages.map((message) => {
+    if (message.role !== 'assistant') return message;
+    let changed = false;
+    const parts = message.parts.map((part) => {
+      if (
+        isToolPart(part) &&
+        part.state === 'approval-responded' &&
+        consumedParts.has(part.toolCallId)
+      ) {
+        changed = true;
+        return consumedParts.get(part.toolCallId)!;
+      }
+      return part;
+    });
+    return changed ? { ...message, parts } : message;
+  });
 }
 
 export function repairDanglingToolParts(messages: UIMessage[]): RepairResult;

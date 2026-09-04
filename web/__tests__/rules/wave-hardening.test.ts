@@ -387,7 +387,7 @@ describe('hoot/{docId} — per-machine agent writes', () => {
   });
 });
 
-describe('cortex-events/{eventId} — agent create only, update/delete server-only', () => {
+describe('cortex-events/{eventId} — agent create + own-event update, delete server-only', () => {
   test('agent CAN create a hoot event in its own site', async () => {
     const db = asAgent(SITE_A, MACHINE_X);
     await assertSucceeds(
@@ -410,11 +410,53 @@ describe('cortex-events/{eventId} — agent create only, update/delete server-on
     );
   });
 
-  test('agent CANNOT update an existing hoot event (server-only)', async () => {
+  // The local cortex process rewrites its own event as the investigation
+  // progresses (investigating -> resolved/escalated/failed) and sets the
+  // escalationPending flag the /api/hoot/escalation sweep polls on
+  // (agent/src/owlette_cortex.py:348-414, cortex_firestore.py:271,284).
+  // Update was deliberately opened to own-machine events in 09e2880e after
+  // server-only rules left events stuck at their initial status.
+  test('agent CAN update its own hoot event', async () => {
     await seedAsAdmin(async (adminDb) => {
       await setDoc(doc(adminDb, 'sites', SITE_A, 'cortex-events', 'evt-existing'), {
         machineId: MACHINE_X,
-        eventType: 'foo',
+        eventType: 'autonomous_investigation_start',
+        status: 'investigating',
+        timestamp: Date.now(),
+      });
+    });
+
+    const db = asAgent(SITE_A, MACHINE_X);
+    await assertSucceeds(
+      updateDoc(doc(db, 'sites', SITE_A, 'cortex-events', 'evt-existing'), {
+        status: 'escalated',
+        escalationPending: true,
+      }),
+    );
+  });
+
+  test("agent CANNOT update another machine's hoot event", async () => {
+    await seedAsAdmin(async (adminDb) => {
+      await setDoc(doc(adminDb, 'sites', SITE_A, 'cortex-events', 'evt-other'), {
+        machineId: MACHINE_Y,
+        eventType: 'autonomous_investigation_start',
+        timestamp: Date.now(),
+      });
+    });
+
+    const db = asAgent(SITE_A, MACHINE_X);
+    await assertFails(
+      updateDoc(doc(db, 'sites', SITE_A, 'cortex-events', 'evt-other'), {
+        status: 'tampered',
+      }),
+    );
+  });
+
+  test('agent CANNOT reassign machineId on its own hoot event', async () => {
+    await seedAsAdmin(async (adminDb) => {
+      await setDoc(doc(adminDb, 'sites', SITE_A, 'cortex-events', 'evt-existing'), {
+        machineId: MACHINE_X,
+        eventType: 'autonomous_investigation_start',
         timestamp: Date.now(),
       });
     });
@@ -422,7 +464,7 @@ describe('cortex-events/{eventId} — agent create only, update/delete server-on
     const db = asAgent(SITE_A, MACHINE_X);
     await assertFails(
       updateDoc(doc(db, 'sites', SITE_A, 'cortex-events', 'evt-existing'), {
-        eventType: 'tampered',
+        machineId: MACHINE_Y,
       }),
     );
   });

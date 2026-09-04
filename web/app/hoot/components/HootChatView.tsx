@@ -122,9 +122,18 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   }, [sites, currentSiteId, lastSiteId, lastMachineIds]);
 
   const handleSiteChange = (siteId: string) => {
+    const nextMachineId = lastMachineIds[siteId] || SITE_TARGET_ID;
     setCurrentSiteId(siteId);
-    setSelectedMachineId(lastMachineIds[siteId] || SITE_TARGET_ID);
+    setSelectedMachineId(nextMachineId);
     updateLastSite(siteId);
+    // Start a fresh chat, mirroring the machine selector: the active chat is
+    // bound to the OLD site (it already left the sidebar and can't be sent to),
+    // so keeping it in front only invites a cross-site send (OWL-48).
+    handleNewChat({
+      siteId,
+      machineId: nextMachineId,
+      machineName: nextMachineId === SITE_TARGET_ID ? 'All Machines' : nextMachineId,
+    });
   };
 
   // Reset to "All Machines" if the saved machine no longer exists on this site
@@ -242,7 +251,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
-  const handleNewChat = useCallback((overrides?: { machineId?: string; machineName?: string }) => {
+  const handleNewChat = useCallback((overrides?: { siteId?: string; machineId?: string; machineName?: string }) => {
     // The sheet is the only route to "new conversation" on mobile, so starting one
     // must dismiss it. No-op on desktop, where the flag is never set.
     setMobileConversationsOpen(false);
@@ -765,6 +774,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
               onCancelTool={handleCancelTool}
               cancelPendingCommandIds={cancelPendingCommandIds}
               turnStale={chat.turnStale}
+              turnRunning={chat.turnRunning}
             />
           )}
 
