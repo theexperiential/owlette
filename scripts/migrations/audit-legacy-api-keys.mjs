@@ -14,9 +14,9 @@
  * reports mismatches between them.
  *
  * Usage:
- *   node scripts/audit-legacy-api-keys.mjs --env=dev
- *   node scripts/audit-legacy-api-keys.mjs --env=prod --output=dev/scratch/key-audit.csv
- * Credentials follow scripts/migrate-roles.mjs.
+ *   node scripts/migrations/audit-legacy-api-keys.mjs --env=dev
+ *   node scripts/migrations/audit-legacy-api-keys.mjs --env=prod --output=dev/scratch/key-audit.csv
+ * Credentials follow scripts/migrations/migrate-roles.mjs.
  */
 
 import { createRequire } from 'module';
@@ -25,7 +25,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+const ROOT = join(__dirname, '..', '..');
 
 // firebase-admin lives in web/node_modules — resolve it from there so the
 // script runs without a root-level package.json.
@@ -47,7 +47,7 @@ const env = getFlag('env');
 const outputPath = getFlag('output'); // optional override; defaults to dev/scratch/...
 
 if (env !== 'dev' && env !== 'prod') {
-  console.error('Usage: node scripts/audit-legacy-api-keys.mjs --env=dev|prod [--output=path.csv]');
+  console.error('Usage: node scripts/migrations/audit-legacy-api-keys.mjs --env=dev|prod [--output=path.csv]');
   process.exit(1);
 }
 

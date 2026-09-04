@@ -1,123 +1,56 @@
-# Owlette Scripts
+# Scripts
 
-Utility scripts for managing the Owlette monorepo.
+Operational tooling for the Owlette monorepo. Everything here runs from the
+repo root (`node scripts/<name>.mjs`) unless noted. One-shot migrations that
+have already been executed live in `migrations/`; the Hyper-V capture/e2e VM
+pipeline lives in `vm/`.
 
-## Version Sync
+## Live tooling (recurring use)
 
-Keep component versions synchronized across the monorepo.
+| script | purpose |
+|---|---|
+| `sync-versions.js` | Bump all 9 version surfaces at once (`node scripts/sync-versions.js X.Y.Z`). The only version-sync script — see `docs/internal/version-management.md`. |
+| `sync-env.mjs` | Reconcile Railway/Vercel env vars against `env-manifest.json` (`status` / `check` / `diff` / `sync <target>`). See `.claude/skills/env-management.md`. |
+| `env-manifest.json` | Canonical env-key registry (keys + metadata, never values). Data file — must stay beside `sync-env.mjs`. |
+| `sync-repo-refs.mjs` | Propagate the GitHub owner/repo from root `package.json` into Cargo.toml, the installer, and docs. |
+| `provision-r2.mjs` | Create the roost R2 buckets + CORS (idempotent). Sole source of truth for R2 CORS; bucket policy lives at `infra/r2/r2-bucket-policy.json`. |
+| `upload-cortex-cli.mjs` | Publish the pinned Claude CLI blob + `installer_metadata/cortex_cli`. Re-run on every claude-agent-sdk bump. |
+| `bootstrap-windows.ps1` | Validate the Windows dev toolchain on a new machine. |
+| `bootstrap-gui-automation.ps1` | Validate/apply GUI-automation rig config (capture rig + e2e runner). Also executed inside guests by `vm/05-prep-guest.ps1`. |
 
-### Usage
+## CI / hook-wired gates (do not move or rename)
 
-**Check current versions:**
-```bash
-node sync-versions.js
-# or
-python sync_versions.py
-```
+| script | wired into |
+|---|---|
+| `check-no-token-logs.mjs` | `.github/workflows/no-token-logs.yml` |
+| `scan-firestore-writes.mjs` | `web/package.json` → `npm run scan:firestore-writes`; also invoked by `checks/check-lockdown-ready.mjs` |
+| `check-system-invoker-callers.mjs` | `web/eslint.config.mjs` + a jest twin (`web/__tests__/eslint/system-invoker-allowlist.test.ts`) |
+| `check-status-page-ready.mjs` | Deploy runbooks + `infra/cron-jobs.json` (Instatus status-page readiness) |
 
-**Output:**
-```
-📦 Current Versions:
+## checks/ — on-demand verification
 
-  Product:  2.0.4
-  Agent:    2.0.4
-  Web:      2.0.4
+| script | purpose |
+|---|---|
+| `checks/smoke-r2-roundtrip.mjs` | R2 chunk-pipeline round-trip against a deployed env (used in deploy runbooks). |
+| `checks/check-lockdown-ready.mjs` | Pre-lockdown gate for Firestore rules (security-boundary wave 9 — prod lockdown still pending). |
+| `checks/security-boundary-probe.mjs` | 60s synthetic privileged-read probe against dev (`docs/ops/security-boundary-monitoring.md`). |
+| `checks/test-rules.mjs` | Firestore rules matrix under the emulator (the jest twin is `web` → `npm run test:rules`). |
+| `checks/sentinel-emulator.mjs` | Prove Admin SDK writes hit the emulator, not prod. |
 
-  Note: Firestore rules version is independent (tracks schema changes)
-```
+## migrations/ — one-shot, already executed
 
-**Bump to new version:**
-```bash
-node sync-versions.js 2.1.0
-# or
-python sync_versions.py 2.1.0
-```
+Historical Firestore/auth migrations and backfills, kept for their `--rollback`
+paths and as references. Do not re-run against prod without reading the script
+header and `docs/runbooks/upgrade-2.12.0.md` first. Their gitignored
+`*.log.json` execution logs (the only rollback input) sit alongside them.
 
-This updates:
-- `/VERSION` - Product release version
-- `agent/VERSION` - Agent binary version
-- `web/package.json` - Web app version
+`migrate-roles` · `migrate-profiles` · `migrate-synced-folders-to-roosts` ·
+`migrate-manifest-to-version` · `backfill-mfa-factors` ·
+`backfill-site-owner-membership` · `audit-legacy-api-keys` ·
+`replace-legacy-api-key`
 
-**The script will remind you to:**
-1. Update docs/changelog.md with release notes
-2. Commit changes: `git commit -am "chore: Bump version to X.Y.Z"`
-3. Create tag: `git tag vX.Y.Z`
-4. Push with tags: `git push origin main --tags`
+## vm/ — Hyper-V capture & e2e VM pipeline
 
-### Files Updated
-
-| File | Component | Read By |
-|------|-----------|---------|
-| `/VERSION` | Product release | Documentation, releases |
-| `agent/VERSION` | Agent binary | `agent/src/shared_utils.py` |
-| `web/package.json` | Web app | npm, Next.js build |
-
-### Firestore Rules Version
-
-**NOT** automatically updated by this script.
-
-Firestore rules track security schema changes independently:
-- Current: 2.2.0 - Multi-User Site Access Control
-- Update manually in `firestore.rules` header
-- Only bump when authentication model or data structure changes
-
-### Examples
-
-**Normal release (sync all components):**
-```bash
-node sync-versions.js 2.1.0
-# Update docs/changelog.md
-git add VERSION agent/VERSION web/package.json docs/changelog.md
-git commit -m "chore: Bump version to 2.1.0"
-git tag v2.1.0
-git push origin main --tags
-```
-
-**Pre-release version:**
-```bash
-node sync-versions.js 2.1.0-rc.1
-```
-
-**Check versions only:**
-```bash
-node sync-versions.js
-```
-
-## Role Migration
-
-One-off data migration for the two-role → three-role permission model split. See [dev/active/permission-model-split/plan.md](../dev/active/permission-model-split/plan.md) for context.
-
-### Usage
-
-```bash
-# Preview changes against dev (read-only)
-node scripts/migrate-roles.mjs --env=dev --dry-run
-
-# Apply to dev
-node scripts/migrate-roles.mjs --env=dev
-
-# Preview against prod (prompts for confirmation on live runs)
-node scripts/migrate-roles.mjs --env=prod --dry-run
-```
-
-Flips `role: 'user'` → `'member'` and `role: 'admin'` → `'superadmin'` on the `users` collection. Idempotent — re-running after migration is a no-op because the three terminal values (`member`/`admin`/`superadmin`) are left untouched.
-
-### Credentials
-
-Reads `FIREBASE_PROJECT_ID_{DEV|PROD}`, `FIREBASE_CLIENT_EMAIL_{DEV|PROD}`, `FIREBASE_PRIVATE_KEY_{DEV|PROD}` from the environment. Falls back to the unsuffixed `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` / `FIREBASE_PRIVATE_KEY` (web/.env.local vars) with a warning — verify those point at the intended project before live runs.
-
-Auto-loads `web/.env.local`, `.claude/.env.local`, and `scripts/.env.local` (in that order; later files don't override earlier values).
-
-### Deploy order
-
-Run migration **before** pushing the updated `firestore.rules`. Reverse order would transiently lock existing admins out of their sites during the window between the rules deploy and the data migration.
-
-## Related Documentation
-
-- [docs/version-management.md](../docs/version-management.md) - Complete version management guide
-- [.claude/CLAUDE.md](../.claude/CLAUDE.md#version-management) - Developer workflow
-- [docs/changelog.md](../docs/changelog.md) - Release history
-
----
-
-**Last Updated:** 2026-04-19
+22 numbered PS1 stages (create → provision → golden checkpoint → drive
+installer → record). See `docs/internal/hyper-v-capture-vm.md` and
+`e2e-machine/RUNBOOK.md`.

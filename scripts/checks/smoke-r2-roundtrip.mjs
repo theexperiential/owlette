@@ -8,7 +8,7 @@
  * Run before promoting roost beyond the design-partner cohort.
  *
  * Usage:
- *   node scripts/smoke-r2-roundtrip.mjs \
+ *   node scripts/checks/smoke-r2-roundtrip.mjs \
  *     --base-url https://dev.owlette.app --site <siteId> --api-key owk_<key>
  *
  * The api key must carry `site=<siteId>:write` scope.
@@ -51,13 +51,13 @@ function parseArgs() {
 function printUsage() {
   console.error(`
 usage:
-  node scripts/smoke-r2-roundtrip.mjs --base-url <url> --site <id> --api-key <key>
+  node scripts/checks/smoke-r2-roundtrip.mjs --base-url <url> --site <id> --api-key <key>
 
 env fallbacks:
   OWLETTE_BASE_URL, OWLETTE_SITE_ID, OWLETTE_API_KEY
 
 example:
-  node scripts/smoke-r2-roundtrip.mjs \\
+  node scripts/checks/smoke-r2-roundtrip.mjs \\
     --base-url https://dev.owlette.app \\
     --site demo-site \\
     --api-key owk_test_xxxxxxxxxxxxxxxx

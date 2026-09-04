@@ -16,10 +16,10 @@
  * `users/{owner}.sites[]`. Idempotent. Prints the blast radius before writing.
  *
  * Usage:
- *   node scripts/backfill-site-owner-membership.mjs --env=prod --dry-run
- *   node scripts/backfill-site-owner-membership.mjs --env=prod            (interactive confirm)
- *   node scripts/backfill-site-owner-membership.mjs --env=prod --confirm-project=owlette-prod-90a12
- *   node scripts/backfill-site-owner-membership.mjs --env=prod --rollback --log-file=<path>
+ *   node scripts/migrations/backfill-site-owner-membership.mjs --env=prod --dry-run
+ *   node scripts/migrations/backfill-site-owner-membership.mjs --env=prod            (interactive confirm)
+ *   node scripts/migrations/backfill-site-owner-membership.mjs --env=prod --confirm-project=owlette-prod-90a12
+ *   node scripts/migrations/backfill-site-owner-membership.mjs --env=prod --rollback --log-file=<path>
  *
  * Every live run writes a change log and prints the `--rollback` command that
  * reverses it. arrayUnion is not self-identifying, so without that log a blind
@@ -38,7 +38,7 @@ import { dirname, join } from 'path';
 import readline from 'readline';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+const ROOT = join(__dirname, '..', '..');
 
 // firebase-admin lives in web/node_modules — resolve it from there so the
 // script runs without a root-level package.json.
@@ -88,8 +88,8 @@ const confirmProject = getFlag('confirm-project');
 
 if (env !== 'dev' && env !== 'prod') {
   console.error(
-    'Usage: node scripts/backfill-site-owner-membership.mjs --env=dev|prod [--dry-run]\n' +
-      '       node scripts/backfill-site-owner-membership.mjs --env=dev|prod --rollback --log-file=<path>'
+    'Usage: node scripts/migrations/backfill-site-owner-membership.mjs --env=dev|prod [--dry-run]\n' +
+      '       node scripts/migrations/backfill-site-owner-membership.mjs --env=dev|prod --rollback --log-file=<path>'
   );
   process.exit(1);
 }
@@ -392,7 +392,7 @@ async function main() {
   // marked applied as batches land.
   const logPath =
     logFileArg ||
-    join(ROOT, 'scripts', `backfill-site-owner-membership.${projectId}.log.json`);
+    join(ROOT, 'scripts', 'migrations', `backfill-site-owner-membership.${projectId}.log.json`);
   const logDoc = {
     script: 'backfill-site-owner-membership',
     projectId,

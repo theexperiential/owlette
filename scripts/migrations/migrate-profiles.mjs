@@ -15,7 +15,7 @@
  * write-once per machine — existing profile docs are skipped.
  *
  * Usage:
- *   node scripts/migrate-profiles.mjs --env=dev|prod [--site=<id|all>]
+ *   node scripts/migrations/migrate-profiles.mjs --env=dev|prod [--site=<id|all>]
  *                                     [--dry-run] [--force]
  *
  *   --env      required, target Firebase project
@@ -36,7 +36,7 @@ import { createHash } from 'crypto';
 import readline from 'readline';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+const ROOT = join(__dirname, '..', '..');
 
 // firebase-admin lives in web/node_modules; resolve from there so this runs
 // without a root-level package.json.
@@ -59,7 +59,7 @@ const siteFilter = getFlag('site') === true ? 'all' : (getFlag('site') || 'all')
 
 if (env !== 'dev' && env !== 'prod') {
   console.error(
-    'Usage: node scripts/migrate-profiles.mjs --env=dev|prod [--site=<id|all>] [--dry-run] [--force]'
+    'Usage: node scripts/migrations/migrate-profiles.mjs --env=dev|prod [--site=<id|all>] [--dry-run] [--force]'
   );
   process.exit(1);
 }

@@ -25,7 +25,7 @@ import { readFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+const ROOT = join(__dirname, '..', '..');
 
 // firebase-admin lives in web/node_modules; the repo root has no package.json.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
@@ -49,7 +49,7 @@ const siteFilter = getFlag('site') === true ? undefined : getFlag('site');
 
 if (env !== 'dev' && env !== 'prod') {
   console.error(
-    'Usage: node scripts/migrate-synced-folders-to-roosts.mjs --env=dev|prod [--apply] [--site=<id>] [--keep-source]',
+    'Usage: node scripts/migrations/migrate-synced-folders-to-roosts.mjs --env=dev|prod [--apply] [--site=<id>] [--keep-source]',
   );
   process.exit(1);
 }

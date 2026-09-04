@@ -1,7 +1,7 @@
 #!/bin/sh
 # MinIO bucket initialization for roost local/CI infra (wave 1.6).
 #
-# Mirrors storage/r2-bucket-policy.json — the same default-deny posture
+# Mirrors infra/r2/r2-bucket-policy.json — the same default-deny posture
 # applied to production Cloudflare R2. Anonymous requests get 403;
 # signed URLs minted by the web API (which has root credentials here,
 # R2 IAM creds in production) are the only path to read/write objects.

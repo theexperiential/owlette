@@ -18,7 +18,7 @@ export interface TestUser {
 }
 
 /**
- * Canonical test-user fleet; mirrors scripts/test-rules.mjs. admin-uid is a
+ * Canonical test-user fleet; mirrors scripts/checks/test-rules.mjs. admin-uid is a
  * site-admin on site-A, not a platform superadmin. super-uid has empty sites[]
  * and reaches everything via the canAccessSite fall-through.
  */

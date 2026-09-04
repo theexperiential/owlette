@@ -97,10 +97,9 @@ node scripts/sync-versions.js
 node scripts/sync-versions.js 2.1.0
 ```
 
-> **Use the .js script only.** `scripts/sync_versions.py` predates the desktop
-> app and writes just 3 of the 9 version surfaces — it misses
-> `desktop/package.json`, `tauri.conf.json`, `Cargo.toml`, `README.md`, and
-> the docs, so the shipped desktop binary would report the old version.
+> `sync-versions.js` is the only version-sync script. (A legacy
+> `sync_versions.py` that wrote just 3 of the 9 surfaces was removed in the
+> 2026-09 repo cleanup — if instructions elsewhere mention it, use the .js.)
 
 ### option 2: manual update (discouraged — see the file list sync-versions.js maintains)
 

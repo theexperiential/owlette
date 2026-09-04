@@ -146,7 +146,7 @@ Export source:
 
 Config:
 
-- `monitoring/security-boundary-audit-export.yaml`
+- `infra/monitoring/security-boundary-audit-export.yaml`
 
 Provisioning outline:
 

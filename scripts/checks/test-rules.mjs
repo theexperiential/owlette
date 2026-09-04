@@ -14,7 +14,7 @@
  * Needs a managed emulator lifecycle:
  *
  *   firebase emulators:exec --only firestore --project demo-permission-split \
- *     'node scripts/test-rules.mjs'
+ *     'node scripts/checks/test-rules.mjs'
  *
  * Exits non-zero on any divergence.
  */
@@ -25,7 +25,7 @@ import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+const ROOT = join(__dirname, '..', '..');
 
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 const rulesUnit = require('@firebase/rules-unit-testing');

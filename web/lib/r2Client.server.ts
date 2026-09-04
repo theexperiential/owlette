@@ -51,7 +51,7 @@ export function bucketFor(env: RoostEnv, kind: R2BucketKind): string {
 
 /**
  * Per-tenant chunk key, sharded by the first two hash chars so R2 listings
- * don't bottleneck on one prefix. Matches `storage/r2-bucket-policy.json`.
+ * don't bottleneck on one prefix. Matches `infra/r2/r2-bucket-policy.json`.
  */
 export function chunkKey(siteId: string, hash: string): string {
   if (!isValidHash(hash)) throw new Error(`invalid chunk hash: ${hash}`);

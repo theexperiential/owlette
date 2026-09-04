@@ -8,7 +8,7 @@ W8.2 adds the scaffolding required before wave 9.1 enforcement/prod work. The we
 - Sentry: error and warning metric events from `web/lib/securityBoundaryMetrics.server.ts`.
 - Railway: service CPU, memory, restart, deployment status.
 - Firestore: Cloud Monitoring QPS for `audit_log`, `rate_limits/*/shards`, `rate_limit_observations`, and `chat_conversations`.
-- Synthetic probe: `node scripts/security-boundary-probe.mjs` every 60s from outside Railway.
+- Synthetic probe: `node scripts/checks/security-boundary-probe.mjs` every 60s from outside Railway.
 
 ## Metrics
 
@@ -27,7 +27,7 @@ W8.2 adds the scaffolding required before wave 9.1 enforcement/prod work. The we
 
 ## Alert Wiring
 
-The alert definitions live in `monitoring/security-boundary-alerts.yaml`. Wire them into the active backend as follows:
+The alert definitions live in `infra/monitoring/security-boundary-alerts.yaml`. Wire them into the active backend as follows:
 
 1. Attach a Railway log drain for `owlette-dev` and parse JSON payloads following `[security-boundary-metric]`.
 2. Configure Sentry issue alerts for `security_boundary.audit_write_failures_total`, `security_boundary.authorization_enforcement_bypass_total`, `security_boundary.kill_switch_state`, and `security_boundary.system_invoker_unexpected_caller_total`.
@@ -40,7 +40,7 @@ $env:OWLETTE_PROBE_BASE_URL='https://dev.owlette.app'
 $env:OWLETTE_PROBE_TOKEN='<read-only token>'
 $env:OWLETTE_PROBE_SITE_ID='<site id>'
 $env:OWLETTE_PROBE_MACHINE_ID='<machine id>'
-node scripts/security-boundary-probe.mjs
+node scripts/checks/security-boundary-probe.mjs
 ```
 
 For one-shot CI/smoke use, add `OWLETTE_PROBE_ONCE=1`.

@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+const ROOT = join(__dirname, '..', '..');
 const WEB_DIR = join(ROOT, 'web');
 const FUNCTIONS_DIR = join(ROOT, 'functions');
 const REPORT_PATH = join(

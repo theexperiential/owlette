@@ -81,8 +81,8 @@ Run the audit against both environments to see the full picture:
 
 ```bash
 cd c:/Users/admin/Documents/Git/Owlette
-node scripts/audit-legacy-api-keys.mjs --env=dev
-node scripts/audit-legacy-api-keys.mjs --env=prod
+node scripts/migrations/audit-legacy-api-keys.mjs --env=dev
+node scripts/migrations/audit-legacy-api-keys.mjs --env=prod
 ```
 
 Output: console summary + CSV at `dev/scratch/key-audit-{env}-{ts}.csv`.
@@ -95,7 +95,7 @@ Any key with `status=will_be_rejected` needs handling **before** the
 ```bash
 # Dry-run first:
 OWLETTE_API_KEY=$(grep '^OWLETTE_API_KEY=' .claude/.env.local | head -1 | cut -d= -f2-) \
-node scripts/replace-legacy-api-key.mjs \
+node scripts/migrations/replace-legacy-api-key.mjs \
   --env=dev \
   --old-key="$OWLETTE_API_KEY" \
   --scopes='installer=*:write,installer=*:read,installer=*:admin' \
@@ -103,7 +103,7 @@ node scripts/replace-legacy-api-key.mjs \
 
 # When the dry-run looks right, re-run with --apply:
 OWLETTE_API_KEY=$(grep '^OWLETTE_API_KEY=' .claude/.env.local | head -1 | cut -d= -f2-) \
-node scripts/replace-legacy-api-key.mjs \
+node scripts/migrations/replace-legacy-api-key.mjs \
   --env=dev \
   --old-key="$OWLETTE_API_KEY" \
   --scopes='installer=*:write,installer=*:read,installer=*:admin' \
@@ -244,10 +244,10 @@ script — this export is your only recovery path if something goes wrong.
 ```bash
 # Dry-run — use bare --dry-run (NOT --dry-run=true; the parser bug
 # rejects =true and would silently write live):
-node scripts/migrate-roles.mjs --env=prod --dry-run
+node scripts/migrations/migrate-roles.mjs --env=prod --dry-run
 
 # Review the printed counts. Then live:
-node scripts/migrate-roles.mjs --env=prod
+node scripts/migrations/migrate-roles.mjs --env=prod
 ```
 
 Maps `role: 'user' → 'member'` and `role: 'admin' → 'superadmin'`.
@@ -257,7 +257,7 @@ Idempotent — re-running after success is a no-op.
 
 ```bash
 # Default IS dry-run for this script. Inspect output, then:
-node scripts/migrate-synced-folders-to-roosts.mjs --env=prod --apply --keep-source
+node scripts/migrations/migrate-synced-folders-to-roosts.mjs --env=prod --apply --keep-source
 ```
 
 `--keep-source` preserves the original `synced_folders/*` docs for a
@@ -267,8 +267,8 @@ soak period. Delete them later when you're confident.
 
 ```bash
 # This script defaults to APPLY mode — pass --dry-run explicitly first:
-node scripts/migrate-manifest-to-version.mjs --project prod --dry-run
-node scripts/migrate-manifest-to-version.mjs --project prod
+node scripts/migrations/migrate-manifest-to-version.mjs --project prod --dry-run
+node scripts/migrations/migrate-manifest-to-version.mjs --project prod
 ```
 
 Has `--rollback` if needed (uses `scripts/migration-log.json`).
@@ -276,8 +276,8 @@ Has `--rollback` if needed (uses `scripts/migration-log.json`).
 ### 2.5 Profile bootstrap (optional but recommended)
 
 ```bash
-node scripts/migrate-profiles.mjs --env=prod --dry-run
-node scripts/migrate-profiles.mjs --env=prod
+node scripts/migrations/migrate-profiles.mjs --env=prod --dry-run
+node scripts/migrations/migrate-profiles.mjs --env=prod
 ```
 
 Backfills `hardware/profile` from legacy `metrics.*` so the dashboard
@@ -476,7 +476,7 @@ Watch Firebase Console → Functions → Logs for ~10 min:
 node scripts/check-status-page-ready.mjs --base-url https://owlette.app
 # Only run if Instatus is configured; otherwise skip
 
-node scripts/smoke-r2-roundtrip.mjs \
+node scripts/checks/smoke-r2-roundtrip.mjs \
   --base-url https://owlette.app \
   --site <site-id> \
   --api-key $OWLETTE_API_KEY_PROD
@@ -644,14 +644,14 @@ Items not addressed in this release but worth tracking:
 
 | Script | Purpose |
 |---|---|
-| `scripts/audit-legacy-api-keys.mjs` | Inventory API keys, flag empty-scope keys that will be rejected |
-| `scripts/replace-legacy-api-key.mjs` | Replace one empty-scope key with a fresh scoped key |
-| `scripts/migrate-roles.mjs` | (existing) `user → member`, `admin → superadmin` |
-| `scripts/migrate-synced-folders-to-roosts.mjs` | (existing) Rename collection |
-| `scripts/migrate-manifest-to-version.mjs` | (existing) Subcollection rename |
-| `scripts/migrate-profiles.mjs` | (existing) Hardware profile backfill |
+| `scripts/migrations/audit-legacy-api-keys.mjs` | Inventory API keys, flag empty-scope keys that will be rejected |
+| `scripts/migrations/replace-legacy-api-key.mjs` | Replace one empty-scope key with a fresh scoped key |
+| `scripts/migrations/migrate-roles.mjs` | (existing) `user → member`, `admin → superadmin` |
+| `scripts/migrations/migrate-synced-folders-to-roosts.mjs` | (existing) Rename collection |
+| `scripts/migrations/migrate-manifest-to-version.mjs` | (existing) Subcollection rename |
+| `scripts/migrations/migrate-profiles.mjs` | (existing) Hardware profile backfill |
 | `scripts/provision-r2.mjs` | (existing) R2 bucket setup |
-| `scripts/smoke-r2-roundtrip.mjs` | (existing) R2 roundtrip smoke |
+| `scripts/checks/smoke-r2-roundtrip.mjs` | (existing) R2 roundtrip smoke |
 | `scripts/check-status-page-ready.mjs` | (existing) Instatus readiness |
 
 ### File paths for verification

@@ -46,7 +46,7 @@ work simply never happens. Those are the rows that bite.
 | R2 S3-compatible access keys | one-time bootstrap | dashboard only: R2 → Manage R2 API Tokens → Object Read & Write over the four buckets; then set `R2_S3_ACCESS_KEY_ID`, `R2_S3_SECRET_ACCESS_KEY`, `R2_S3_ENDPOINT` | yes (env vars) | LOUD at runtime (uploads fail) with a **SILENT** variant: if `ROOST_ENV` is not explicitly `prod` on the prod service, `r2Client.server.ts:44-60` defaults to dev and prod writes land in the **dev bucket** with no error. |
 | R2 object lifecycle rules | not implemented | none — no script, no terraform, no wrangler config in this repo | account-wide | **SILENT** — the buckets have no lifecycle policy, so abandoned staged uploads accumulate and there is no deleted-object recovery window. `docs/internal/threat-model.md:350` and `:518` call for both; nothing implements them. |
 | GCS bucket + SA for the security-boundary audit export | one-time bootstrap | five `gcloud` commands — see [per-environment bootstrap](#per-environment-bootstrap) | yes | **SILENT, and silent right now in prod** — `functions/src/securityBoundaryAuditExport.ts:135-140` guards on project id, logs `skipping — prod export infra not yet provisioned`, and returns success. The daily 06:30 UTC job (`:121-122`) reports green while exporting nothing. |
-| Cloud Monitoring uptime check + alert policies | one-time bootstrap | console only: GCP → Monitoring → Uptime checks / Alerting. The dev resource ids are recorded in `monitoring/security-boundary-alerts.yaml:20-23` and `:136` — record the prod ones the same way | yes | **SILENT** — that file is `environment: dev` at `:3` and every id in it names a dev project. There is no prod synthetic probe and no prod alert policy; those pages never fire for production. |
+| Cloud Monitoring uptime check + alert policies | one-time bootstrap | console only: GCP → Monitoring → Uptime checks / Alerting. The dev resource ids are recorded in `infra/monitoring/security-boundary-alerts.yaml:20-23` and `:136` — record the prod ones the same way | yes | **SILENT** — that file is `environment: dev` at `:3` and every id in it names a dev project. There is no prod synthetic probe and no prod alert policy; those pages never fire for production. |
 | Railway env vars (dev + prod services) | manual | `node scripts/sync-env.mjs check` (exit 1 on drift), writes via Railway UI/CLI | yes | MIXED — a missing `NEXT_PUBLIC_*` is **silent** (inlined at build time; redeploy after adding it). A missing server secret is loud at boot or first use. A missing `ROOST_ENV` is the silent one — R2 writes go to dev. |
 | Vercel env mirror (failover origin) | manual | `node scripts/sync-env.mjs diff railway-prod vercel-prod`, then `node scripts/sync-env.mjs sync vercel-prod --apply` | mirror of prod | **CATASTROPHICALLY SILENT** — Vercel stores sensitive vars write-only, so `check` proves a key exists, never that its value matches. `SESSION_SECRET` mismatch logs every user out on failover; `MFA_ENCRYPTION_KEY` locks out every 2FA user; `LLM_ENCRYPTION_KEY` breaks stored-key decryption; `TURNSTILE_SECRET` breaks register + forgot-password. None of it shows until Railway actually fails over. |
 | Firebase Auth authorized domains | one-time bootstrap | console only: Authentication → Settings → Authorized Domains | yes | LOUD for users, invisible to the deploy — the app deploys clean and then nobody can sign in. Add the Vercel standby alias too, or failover breaks login. |
@@ -91,7 +91,7 @@ curl -s -X PUT "$BASE_URL/api/installer/upload" \
 ```
 
 **GCS bucket + service account for the security-boundary audit export** (prod, currently
-unprovisioned — the `<placeholder>` values in `monitoring/security-boundary-audit-export.yaml:32-45`
+unprovisioned — the `<placeholder>` values in `infra/monitoring/security-boundary-audit-export.yaml:32-45`
 are the evidence). The bucket name below is not canonical: only dev's exists (`:27`), and the prod
 field is still a placeholder. Pick a name that mirrors dev's, then write it back into that file's
 `prod:` block so the placeholders stop being the signal.
@@ -102,7 +102,7 @@ BUCKET=gs://owlette-prod-security-boundary-audit-exports   # your choice; mirror
 gcloud storage buckets create $BUCKET \
   --project=owlette-prod-90a12 --location=us-central1 --uniform-bucket-level-access
 gcloud storage buckets update $BUCKET \
-  --lifecycle-file=monitoring/security-boundary-audit-export-lifecycle.json
+  --lifecycle-file=infra/monitoring/security-boundary-audit-export-lifecycle.json
 gcloud iam service-accounts create security-boundary-audit-export \
   --project=owlette-prod-90a12 --display-name='Security boundary audit export'
 gcloud projects add-iam-policy-binding owlette-prod-90a12 \
@@ -292,7 +292,7 @@ fail silent rather than loud.
 ```bash
 node scripts/sync-env.mjs check
 node scripts/check-status-page-ready.mjs --base-url https://owlette.app
-node scripts/smoke-r2-roundtrip.mjs --base-url https://owlette.app --site <siteId> --api-key owk_...
+node scripts/checks/smoke-r2-roundtrip.mjs --base-url https://owlette.app --site <siteId> --api-key owk_...
 curl -si https://owlette.app/api/health
 ```
 
@@ -345,7 +345,7 @@ deploys the web app before the Firestore indexes it queries and collapses rules 
 10. **Post-deploy.** `node scripts/sync-env.mjs check`; re-run `node scripts/sync-env.mjs sync
     vercel-prod --apply` if any prod secret was rotated; then
     `node scripts/check-status-page-ready.mjs --base-url https://owlette.app` and
-    `node scripts/smoke-r2-roundtrip.mjs --base-url https://owlette.app --site <id> --api-key owk_...`.
+    `node scripts/checks/smoke-r2-roundtrip.mjs --base-url https://owlette.app --site <id> --api-key owk_...`.
     Tag the release.
 
 Agent installer releases run on their own track and are **not** part of this sequence — see

@@ -6,7 +6,7 @@
  *
  * Reads top-level `rate_limit_observations` docs written under
  * RATE_LIMIT_OBSERVE_ONLY=true and writes the markdown that
- * scripts/check-lockdown-ready.mjs consumes. Exits non-zero while the report is
+ * scripts/checks/check-lockdown-ready.mjs consumes. Exits non-zero while the report is
  * incomplete, so it is automation-safe.
  */
 

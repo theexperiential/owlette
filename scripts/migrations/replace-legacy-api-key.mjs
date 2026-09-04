@@ -5,7 +5,7 @@
  * set revokedAt on both ends of the old key. The raw key prints ONCE.
  *
  * READ-ONLY unless --apply is passed:
- *   node scripts/replace-legacy-api-key.mjs --env=dev --old-key=$OWLETTE_API_KEY \
+ *   node scripts/migrations/replace-legacy-api-key.mjs --env=dev --old-key=$OWLETTE_API_KEY \
  *     --scopes=installer=*:write,installer=*:read,installer=*:admin [--apply]
  */
 
@@ -17,7 +17,7 @@ import crypto from 'crypto';
 import readline from 'readline';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+const ROOT = join(__dirname, '..', '..');
 
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 const admin = require('firebase-admin');
@@ -38,7 +38,7 @@ const apply = getFlag('apply') === true;
 const newKeyName = getFlag('name') || 'Replacement key (auto)';
 
 if (env !== 'dev' && env !== 'prod') {
-  console.error('Usage: node scripts/replace-legacy-api-key.mjs --env=dev|prod --old-key=owk_... --scopes=resource=id:permission[,...] [--apply] [--name="..."]');
+  console.error('Usage: node scripts/migrations/replace-legacy-api-key.mjs --env=dev|prod --old-key=owk_... --scopes=resource=id:permission[,...] [--apply] [--name="..."]');
   process.exit(1);
 }
 if (!oldKey || typeof oldKey !== 'string' || !oldKey.startsWith('owk_')) {

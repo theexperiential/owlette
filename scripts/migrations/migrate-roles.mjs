@@ -7,7 +7,7 @@
  * The new site-scoped `admin` tier starts empty; superadmins promote members
  * by hand. Idempotent — member/admin/superadmin are left untouched.
  *
- *   node scripts/migrate-roles.mjs --env=dev|prod [--dry-run]
+ *   node scripts/migrations/migrate-roles.mjs --env=dev|prod [--dry-run]
  *
  * Reads FIREBASE_{PROJECT_ID,CLIENT_EMAIL,PRIVATE_KEY}_{DEV|PROD}, auto-loading
  * web/.env.local, .claude/.env.local, scripts/.env.local. CAUTION: falls back
@@ -22,7 +22,7 @@ import { dirname, join } from 'path';
 import readline from 'readline';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+const ROOT = join(__dirname, '..', '..');
 
 // firebase-admin lives in web/node_modules — no root-level package.json.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
@@ -42,7 +42,7 @@ const dryRun = getFlag('dry-run') === true;
 const env = getFlag('env');
 
 if (env !== 'dev' && env !== 'prod') {
-  console.error('Usage: node scripts/migrate-roles.mjs --env=dev|prod [--dry-run]');
+  console.error('Usage: node scripts/migrations/migrate-roles.mjs --env=dev|prod [--dry-run]');
   process.exit(1);
 }
 

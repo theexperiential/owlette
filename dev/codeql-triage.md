@@ -120,8 +120,8 @@ open as a known-low backlog.
 
 | rule | count | where | why it is low |
 |---|---|---|---|
-| `js/incomplete-sanitization` | 4 | `scripts/sync-versions.js`, `scripts/check-lockdown-ready.mjs` | build/ops tooling, run by a maintainer on a trusted checkout; never bundled |
-| `js/insecure-temporary-file` | 3 | `scripts/check-lockdown-ready.mjs` | same; local temp files on a dev machine |
+| `js/incomplete-sanitization` | 4 | `scripts/sync-versions.js`, `scripts/checks/check-lockdown-ready.mjs` | build/ops tooling, run by a maintainer on a trusted checkout; never bundled |
+| `js/insecure-temporary-file` | 3 | `scripts/checks/check-lockdown-ready.mjs` | same; local temp files on a dev machine |
 | `js/file-system-race` | 2 | incl. `web/e2e/desktop-screenshots/harness.ts:237` | Playwright harness, never shipped; TOCTOU against local files it created |
 
 ### `js/polynomial-redos` (2) — dismiss
@@ -139,7 +139,7 @@ a server the SDK caller chose to talk to. Neither is remote-attacker input.
 
 ### `js/clear-text-logging` (2) — dismiss, verified
 
-Checked rather than assumed. `scripts/smoke-r2-roundtrip.mjs` passes `apiKey`
+Checked rather than assumed. `scripts/checks/smoke-r2-roundtrip.mjs` passes `apiKey`
 into `postJson`, which places it in an `Authorization: Bearer` header and never
 logs it. `scripts/provision-r2.mjs` prints bucket names and progress only. No
 credential is written to output by either.

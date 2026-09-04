@@ -23,14 +23,14 @@
  *     web/lib/mfaFactors.server.ts, not a bulk migration.
  *
  * Usage:
- *   node scripts/backfill-mfa-factors.mjs --project owlette-dev-3838a
- *   node scripts/backfill-mfa-factors.mjs --project owlette-dev-3838a --commit
- *   node scripts/backfill-mfa-factors.mjs --project owlette-prod-90a12 --mode=full --commit \
+ *   node scripts/migrations/backfill-mfa-factors.mjs --project owlette-dev-3838a
+ *   node scripts/migrations/backfill-mfa-factors.mjs --project owlette-dev-3838a --commit
+ *   node scripts/migrations/backfill-mfa-factors.mjs --project owlette-prod-90a12 --mode=full --commit \
  *        --confirm-project=owlette-prod-90a12
  *
  * DRY RUN IS THE DEFAULT — nothing is written without `--commit`.
  *
- * Every run logs to `scripts/backfill-mfa-factors.<projectId>.log.json`: per-outcome counts,
+ * Every run logs to `scripts/migrations/backfill-mfa-factors.<projectId>.log.json`: per-outcome counts,
  * skipped uids with reasons, and the pre-image of every field changed. These are scalar
  * overwrites, so that pre-image is the only route to a manual reversal.
  *
@@ -49,7 +49,7 @@ import { dirname, join } from 'path';
 import readline from 'readline';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+const ROOT = join(__dirname, '..', '..');
 
 // firebase-admin lives in web/node_modules — no root-level dependency on it.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
@@ -120,13 +120,13 @@ function parseArgs() {
 
 function usage() {
   console.error(
-    '\nUsage: node scripts/backfill-mfa-factors.mjs --project <projectId> [--mode=inventory-only|full] [--commit]\n' +
+    '\nUsage: node scripts/migrations/backfill-mfa-factors.mjs --project <projectId> [--mode=inventory-only|full] [--commit]\n' +
       `       projects: ${[...PROJECT_ENVS.keys()].join(', ')}\n` +
       '       --mode      inventory-only (default) writes mfaFactors only;\n' +
       '                   full also derives mfaEnrolled (lockout risk — read the header).\n' +
       '       --commit    perform the writes. Without it this is a DRY RUN.\n' +
       '       --dry-run   explicit no-op affirmation of the default; refuses to combine with --commit.\n' +
-      '       --log-file  override the log path (default scripts/backfill-mfa-factors.<projectId>.log.json)\n' +
+      '       --log-file  override the log path (default scripts/migrations/backfill-mfa-factors.<projectId>.log.json)\n' +
       '       --confirm-project=<projectId>  non-interactive confirmation for protected projects\n'
   );
 }
@@ -565,7 +565,7 @@ async function main() {
   console.log(`firestore rules review: ${rulesReview.ruleChangeRequired ? 'CHANGE REQUIRED' : 'no rule change required'} (details in the log)\n`);
 
   const logPath =
-    logFileArg || join(ROOT, 'scripts', `backfill-mfa-factors.${projectId}.log.json`);
+    logFileArg || join(ROOT, 'scripts', 'migrations', `backfill-mfa-factors.${projectId}.log.json`);
   const logDoc = {
     script: 'backfill-mfa-factors',
     projectId,

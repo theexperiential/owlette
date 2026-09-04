@@ -148,7 +148,7 @@ the docs site.
    upload, manifest, content, API key, storage, or worker-adjacent behavior:
 
    ```sh
-   /scripts/smoke-r2-roundtrip.mjs --base-url https://dev.owlette.app --site <id> --api-key owk_xxx
+   /scripts/checks/smoke-r2-roundtrip.mjs --base-url https://dev.owlette.app --site <id> --api-key owk_xxx
    ```
 
 6. Merge `dev` to `main`.
@@ -310,7 +310,7 @@ the docs site.
 - [ ] R2 round-trip script passed with a real site id and API key:
 
   ```sh
-  /scripts/smoke-r2-roundtrip.mjs --base-url https://owlette.app --site <id> --api-key owk_xxx
+  /scripts/checks/smoke-r2-roundtrip.mjs --base-url https://owlette.app --site <id> --api-key owk_xxx
   ```
 
 - [ ] Login works on `https://owlette.app`.

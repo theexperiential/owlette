@@ -35,7 +35,7 @@ The `@aws-sdk/client-s3` library speaks both R2 and MinIO unchanged — no code 
 
 ### Bucket policy parity
 
-The init script applies **default-deny anonymous access** via `mc anonymous set none`, mirroring the R2 `DenyAnonymousAccess` statement in `storage/r2-bucket-policy.json`. The full R2 policy JSON isn't directly applicable — MinIO uses an AWS IAM subset — but the functional surface (anonymous → 403, signed → allowed) matches.
+The init script applies **default-deny anonymous access** via `mc anonymous set none`, mirroring the R2 `DenyAnonymousAccess` statement in `infra/r2/r2-bucket-policy.json`. The full R2 policy JSON isn't directly applicable — MinIO uses an AWS IAM subset — but the functional surface (anonymous → 403, signed → allowed) matches.
 
 The script also does a smoke-check that anonymous listing returns 403 and exits non-zero if not.
 

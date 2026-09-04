@@ -21,13 +21,13 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+const ROOT = join(__dirname, '..', '..');
 
 // firebase-admin lives in web/node_modules — no root-level package.json.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 
 // CLI parsing
-const USAGE = `Usage: node scripts/migrate-manifest-to-version.mjs [options]
+const USAGE = `Usage: node scripts/migrations/migrate-manifest-to-version.mjs [options]
 
 Migrates \`sites/*/roosts/*/manifests/*\` → \`sites/*/roosts/*/versions/*\`
 and backfills \`versionNumber\` + \`versionCounter\` + renamed pointer fields.
@@ -39,7 +39,7 @@ Options:
   --concurrency <n>      parallel roost migrations (default: 4)
   --rollback             reverse a previous run using migration-log.json
   --log-file <path>      override log file path
-                         (default: scripts/migration-log.json)
+                         (default: scripts/migrations/migration-log.json)
   -h, --help             show this message and exit
 
 Exit codes: 0 = clean, 1 = per-roost failures, 2 = fatal setup error.

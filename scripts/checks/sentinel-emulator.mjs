@@ -5,7 +5,7 @@
  * the emulator while Firestore writes silently hit PRODUCTION.
  *
  *   firebase emulators:exec --only firestore --project demo-playwright-e2e \
- *     'node scripts/sentinel-emulator.mjs'
+ *     'node scripts/checks/sentinel-emulator.mjs'
  *
  * Exit 1 means the sentinel doc never appeared — the env-var branch isn't firing,
  * or prod creds are shadowing it.
@@ -16,7 +16,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+const ROOT = join(__dirname, '..', '..');
 const require = createRequire(join(ROOT, 'web', 'package.json'));
 
 // BEFORE requiring firebase-admin: the SDK reads these at initializeApp.

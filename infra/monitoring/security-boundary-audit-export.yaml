@@ -66,7 +66,7 @@ required_iam_roles:
 
 provisioning_commands:
   create_bucket: "gcloud storage buckets create {bucket} --project={project_id} --location={location} --uniform-bucket-level-access"
-  set_lifecycle: "gcloud storage buckets update {bucket} --lifecycle-file=monitoring/security-boundary-audit-export-lifecycle.json"
+  set_lifecycle: "gcloud storage buckets update {bucket} --lifecycle-file=infra/monitoring/security-boundary-audit-export-lifecycle.json"
   create_service_account: "gcloud iam service-accounts create security-boundary-audit-export --project={project_id} --display-name='Security boundary audit export'"
   grant_firestore_export: "gcloud projects add-iam-policy-binding {project_id} --member=serviceAccount:{service_account} --role=roles/datastore.importExportAdmin"
   grant_bucket_write: "gcloud storage buckets add-iam-policy-binding {bucket} --member=serviceAccount:{service_account} --role=roles/storage.objectAdmin"
