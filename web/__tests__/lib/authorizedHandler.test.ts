@@ -470,6 +470,55 @@ describe('authorizedSiteHandler — denials', () => {
   });
 });
 
+describe('authorizedSiteHandler — site owner short-circuit', () => {
+  // Self-serve owners are role `member` (bootstrapUser) and `/api/sites` POST has
+  // no capability gate, so without the short-circuit the creator of a site is
+  // locked out of every site-scoped route on it — including DELETE, which is how
+  // this surfaced ("capability not granted" on delete site, Davor, 2026-09-04).
+  it('grants a site-scoped capability to a member who owns the site', async () => {
+    userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
+    assertUserHasSiteAccessMock.mockResolvedValue({
+      siteId: 'site-a',
+      siteData: { owner: 'uid_alice' },
+    });
+    const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedSiteHandler({ capability: 'SITE_MEMBER_MANAGE', siteIdParam: 'path' })(handler);
+    const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
+    expect(res.status).toBe(200);
+    expect(handler).toHaveBeenCalled();
+  });
+
+  // Negative control: identical actor, site owned by someone else. Without it a
+  // blanket member-allow would pass the test above just as well.
+  it('still denies the same member on a site they do not own', async () => {
+    userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
+    assertUserHasSiteAccessMock.mockResolvedValue({
+      siteId: 'site-a',
+      siteData: { owner: 'uid_bob' },
+    });
+    const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedSiteHandler({ capability: 'SITE_MEMBER_MANAGE', siteIdParam: 'path' })(handler);
+    const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
+    expect(res.status).toBe(403);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  // Ownership stands in for the role matrix only within the site. A platform
+  // capability must stay unreachable, or owning a site would confer global admin.
+  it('does not let ownership grant a capability that is not site-scoped', async () => {
+    userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
+    assertUserHasSiteAccessMock.mockResolvedValue({
+      siteId: 'site-a',
+      siteData: { owner: 'uid_alice' },
+    });
+    const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedSiteHandler({ capability: 'GLOBAL_SETTINGS_WRITE', siteIdParam: 'path' })(handler);
+    const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
+    expect(res.status).toBe(403);
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
+
 describe('authorizedSiteHandler — handler error path', () => {
   it('writes an error audit and re-throws', async () => {
     const handler = makeSiteHandler(async () => {

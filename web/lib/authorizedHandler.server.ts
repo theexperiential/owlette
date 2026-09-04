@@ -47,6 +47,7 @@ import {
   type Role,
   type UserActor,
   hasCapability,
+  isSiteScopedCapability,
 } from '@/lib/capabilities';
 import {
   generateCorrelationId,
@@ -436,9 +437,11 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         });
       }
 
-      // 3. Site access check.
+      // 3. Site access check. Keep the site document it already read — step 7
+      // needs the `owner` field and re-reading it would double the cost.
+      let siteData: Record<string, unknown> | null = null;
       try {
-        await assertUserHasSiteAccess(auth.userId, siteId);
+        ({ siteData } = await assertUserHasSiteAccess(auth.userId, siteId));
       } catch (err) {
         if (err instanceof ApiAuthError) {
           if (err.code === 'user_inactive') {
@@ -498,7 +501,24 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         ? 'capability'
         : undefined;
       if (config.capability_enforcement) {
-        const ok = hasCapability(actor as Actor, options.capability, siteId);
+        // The site owner short-circuits, mirroring `requireSiteCapability` in
+        // app/api/_shared.ts: self-serve owners are created with global role
+        // `member` (lib/actions/bootstrapUser.server.ts) and any authenticated
+        // user may create a site (`/api/sites` POST), so a strict matrix check
+        // locks an owner out of every route on the site they own — including
+        // renaming and deleting it.
+        //
+        // Site-scoped capabilities only. A platform capability (USER_ROLE_MANAGE,
+        // INSTALLER_MANAGE, GLOBAL_SETTINGS_WRITE …) must never be reachable by
+        // owning a site, so ownership cannot stand in for the matrix there.
+        // `typeof owner === 'string'` is load-bearing: an ownerless site doc and an
+        // absent userId would otherwise compare undefined === undefined and hand out
+        // site-admin on a site nobody owns.
+        const ownsSite =
+          isSiteScopedCapability(options.capability) &&
+          typeof siteData?.owner === 'string' &&
+          siteData.owner === auth.userId;
+        const ok = ownsSite || hasCapability(actor as Actor, options.capability, siteId);
         if (!ok) {
           denyAudit(siteId, {
             correlationId,
