@@ -30,6 +30,26 @@ const subscribeWebAuthnSupport = () => () => {};
 const getWebAuthnSupport = () => browserSupportsWebAuthn();
 const getWebAuthnSupportOnServer = () => false;
 
+/**
+ * Leave the challenge with a document load, NOT `router.push`.
+ *
+ * The proxy redirects a gated destination here whenever the session cookie is
+ * still `mfaVerified: false` — and that includes the *prefetch* next/link fires
+ * for "go to dashboard" on the landing header. The App Router caches that
+ * redirect against the destination segment, so once the gate is satisfied a
+ * client-side push resolves to the cached redirect and lands back on this page:
+ * the screen never changes and only a manual reload gets through (reported by
+ * Davor, 2026-09-04, via the passkey path).
+ *
+ * A document load re-runs the proxy against the freshly-minted cookie and
+ * discards the stale router cache, so it is correct regardless of whether the
+ * cache or the cookie is the straggler. `returnUrl` is already constrained to a
+ * same-origin relative path by the open-redirect guard in the component.
+ */
+function leaveChallenge(returnUrl: string) {
+  window.location.assign(returnUrl);
+}
+
 function Verify2FAContent() {
   const { user, loading, signOut } = useAuth();
   const router = useRouter();
@@ -73,14 +93,14 @@ function Verify2FAContent() {
 
             // Not enrolled: nothing to verify.
             if (!userData.mfaEnrolled) {
-              router.push(returnUrl);
+              leaveChallenge(returnUrl);
               return;
             }
 
             setMfaReady(true);
           } else {
             // No user document: nothing to verify.
-            router.push(returnUrl);
+            leaveChallenge(returnUrl);
           }
         })
         .catch((error) => {
@@ -136,26 +156,15 @@ function Verify2FAContent() {
         return;
       }
 
-      if (data.backupCodeUsed) {
-        toast.success('backup code used', {
-          description: 'this backup code has been removed.',
-        });
-      }
-
-      // /api/mfa/verify-login already flipped the session cookie to mfaVerified=true and,
-      // when "trust this device" was checked, minted the HTTPOnly device-trust cookie. No
-      // client-side flag; only claim trust when the server reports deviceTrusted.
-      if (data.deviceTrusted) {
-        toast.success('verification successful', {
-          description: 'this device has been trusted for 30 days.',
-        });
-      } else {
-        toast.success('verification successful', {
-          description: 'redirecting...',
-        });
-      }
-
-      router.push(returnUrl);
+      // No success toast here. `leaveChallenge` is a document load, which tears the
+      // toaster down before anything renders — a toast on this path is guaranteed
+      // unseen, so the dashboard arriving IS the confirmation. (Failures below keep
+      // theirs: those paths stay on the page.)
+      //
+      // /api/mfa/verify-login has already flipped the session cookie to
+      // mfaVerified=true and, when "trust this device" was checked, minted the
+      // HTTPOnly device-trust cookie.
+      leaveChallenge(returnUrl);
     } catch (error) {
       console.error('Error verifying 2FA:', error);
       toast.error('verification failed');
@@ -222,10 +231,8 @@ function Verify2FAContent() {
         return;
       }
 
-      toast.success('verification successful', {
-        description: 'redirecting...',
-      });
-      router.push(returnUrl);
+      // No success toast — see the note on the code path above.
+      leaveChallenge(returnUrl);
     } catch (error) {
       // Cancel/timeout is a user action, not a fault — don't surface the raw DOMException.
       if (error instanceof Error && error.name === 'NotAllowedError') {

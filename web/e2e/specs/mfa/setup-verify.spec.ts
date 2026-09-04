@@ -110,11 +110,10 @@ test('verify-2fa with trust-device mints a 30-day cookie and skips the challenge
   await fillFreshTotp(page, secret);
   await page.getByRole('button', { name: /^verify$/i }).click();
 
-  // The toast gates on the server's deviceTrusted=true, so its presence proves
-  // the trust record + cookie were actually minted.
-  await expect(
-    page.getByText('this device has been trusted for 30 days.', { exact: true }),
-  ).toBeVisible();
+  // No toast to assert on: leaving the challenge is a document load, which tears
+  // the toaster down before it can paint (see `leaveChallenge` in
+  // app/verify-2fa/page.tsx). Phase B asserts the trust record and cookie
+  // directly, which is what the toast was standing in for anyway.
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
 
   // Phase B: device-trust cookie minted (httpOnly, secure, ~30d).
@@ -279,4 +278,42 @@ test('device trust is user-scoped — a different user on the same browser is st
   } finally {
     await contextB.close();
   }
+});
+
+test('clearing the challenge reached from the landing header lands on the dashboard', async ({
+  page,
+}) => {
+  // The path Davor hit on production 2026-09-04: signed in but unverified, on the
+  // marketing page, clicking "go to dashboard" in the header. next/link PREFETCHES
+  // that href, the proxy answers the prefetch with the /verify-2fa redirect, and the
+  // App Router holds it against the /dashboard segment — so a client-side
+  // router.push after the gate is satisfied resolves to the cached redirect and the
+  // challenge never leaves the screen. Only a manual reload got through.
+  //
+  // Every other spec here enters the challenge from /login, where nothing has
+  // prefetched /dashboard, which is why they stayed green through the bug. The exit
+  // is a document load now (`leaveChallenge` in app/verify-2fa/page.tsx); this test
+  // fails against `router.push`.
+  const { user, secret } = await seedMfaUser(`challenge-exit-${Date.now()}`);
+
+  await signIn(page, user.email, user.password);
+  await expect(page).toHaveURL(/\/verify-2fa/, { timeout: 20_000 });
+
+  // Leave the challenge for the public landing page. The header renders
+  // "go to dashboard" once auth resolves, and prefetching starts from there.
+  await page.goto('/');
+  const dashboardLink = page.getByRole('link', { name: /go to dashboard/i });
+  await expect(dashboardLink).toBeVisible({ timeout: 20_000 });
+  // Hover to force the prefetch even if the link never entered the viewport
+  // observer, then give the redirect a moment to be cached against /dashboard.
+  await dashboardLink.hover();
+  await page.waitForTimeout(1_000);
+
+  await dashboardLink.click();
+  await expect(page).toHaveURL(/\/verify-2fa/, { timeout: 20_000 });
+
+  await fillFreshTotp(page, secret);
+  await page.getByRole('button', { name: /^verify$/i }).click();
+
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
 });
