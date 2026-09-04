@@ -29,9 +29,6 @@
   "private": true,
   "overrides": {
     "protobufjs": "^7.5.5",
-    "websocket-driver": "^0.7.5",
-    "@google-cloud/storage": {
-      "fast-xml-parser": "^4.5.4"
-    }
+    "websocket-driver": "^0.7.5"
   }
 }
