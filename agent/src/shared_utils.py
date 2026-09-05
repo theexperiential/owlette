@@ -2074,31 +2074,50 @@ def update_process_status_in_json(pid, new_status, firebase_client=None, process
         data[str(pid)].update(extra)
     write_json_to_file(data, RESULT_FILE_PATH)
 
-def find_running_process_by_exe(exe_path, file_path=None, strict=False):
-    """Find a running process by its executable path.
+def find_running_process_by_exe(exe_path, file_path=None, strict=False,
+                                expected_cmdline=None):
+    """Find a running process by its executable path -- unambiguously, or not
+    at all.
 
     Matches on exe basename so a file-association launch of a different build
-    still resolves. .bat/.cmd targets run behind cmd.exe, so a script exe_path
-    matches a cmd.exe whose command line references it.
+    still resolves as a candidate. .bat/.cmd targets run behind cmd.exe, so a
+    script exe_path matches a cmd.exe whose command line references it.
 
-    Matching precedence, strongest evidence first:
-      1. file_path found in a candidate's command line — unambiguous even with
-         several instances of the exe (TouchDesigner: one process per .toe).
-      2. an exact exe-path match that is unique on the machine.
-      3. (non-strict only) one of several exe-path or image-name matches.
-         Ambiguous by construction; warns, because the fix is to configure
-         file_path.
+    Only unambiguous evidence returns a pid:
+      1. file_path found in a candidate's command line -- unambiguous even
+         with several instances of the exe (TouchDesigner: one process per
+         .toe).
+      2. an exact exe-path match that is unique on the machine (for scripts:
+         a unique cmd.exe wrapper referencing the script).
+      3. expected_cmdline -- a launch command line the caller RECORDED
+         (space-joined argv) -- equal, after path normalisation, to exactly
+         one candidate's live cmdline. This is the only cmdline tier: with no
+         file_path there is nothing CONFIGURED to compare a live cmdline
+         against, so bare cmdlines are never ranked or guessed from; only
+         recorded launch evidence counts. It is consulted only after tiers
+         1-2 fail, i.e. it disambiguates, it never vetoes.
 
-    strict=True refuses tier 3 and refuses bare basename matches outright.
-    Anything that kills or restarts MUST pass strict=True; only startup
-    adoption, which merely risks watching the wrong instance, may take tier 3.
+    Everything else returns None in BOTH modes: several instances with
+    nothing to tell them apart, several cmd.exe wrappers for one script, or
+    (non-strict) processes sharing only the image name. For the non-strict
+    adoption callers None deliberately means "launch fresh" (D3): a duplicate
+    instance is recoverable and converges once identity is recorded, while
+    adopting -- and later killing -- a stranger is not.
+
+    strict=True additionally refuses bare image-name candidates outright.
+    Anything that kills or restarts MUST pass strict=True.
     """
     try:
         exe_lower = exe_path.replace('/', '\\').lower()
         exe_basename = os.path.basename(exe_lower)
         file_path_lower = file_path.replace('/', '\\').lower() if file_path else None
+        # Same normalisation as the live cmdlines below, so recorded evidence
+        # compares exactly regardless of slash direction or case.
+        expected_lower = (expected_cmdline.replace('/', '\\').lower()
+                          if expected_cmdline else None)
         is_script = exe_lower.endswith(('.bat', '.cmd'))
-        candidates = []
+        candidates = []      # (pid, full_match, cmdline-or-None) -- exe targets
+        script_matches = []  # (pid, cmdline) -- cmd.exe wrappers for a script
         for proc in psutil.process_iter(['pid', 'exe']):
             try:
                 if not proc.info['exe']:
@@ -2116,7 +2135,10 @@ def find_running_process_by_exe(exe_path, file_path=None, strict=False):
                         continue
                     if file_path_lower and file_path_lower not in cmdline:
                         continue
-                    return proc.info['pid']
+                    # Collect instead of returning first: several wrappers for
+                    # one script are ambiguous and must refuse (D3).
+                    script_matches.append((proc.info['pid'], cmdline))
+                    continue
                 full_match = proc_exe == exe_lower
                 basename_match = os.path.basename(proc_exe) == exe_basename
                 if not (full_match or basename_match):
@@ -2130,42 +2152,82 @@ def find_running_process_by_exe(exe_path, file_path=None, strict=False):
                         if file_path_lower not in cmdline:
                             continue  # wrong instance
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        continue  # unverifiable cmdline — don't risk a false match
+                        continue  # unverifiable cmdline -- don't risk a false match
                     return proc.info['pid']  # cmdline-corroborated
-                candidates.append((proc.info['pid'], full_match))
+                cmdline = None
+                if expected_lower:
+                    # Reading a cmdline is a per-process syscall -- only pay
+                    # for it when there is recorded evidence to compare with.
+                    try:
+                        cmdline = ' '.join(proc.cmdline()).replace('/', '\\').lower()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        cmdline = None  # unreadable -> can never corroborate
+                candidates.append((proc.info['pid'], full_match, cmdline))
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-        # No file_path. Rank exact exe-path above bare image-name: several
-        # instances of one image are normal here (every TouchDesigner project is
-        # the same TouchDesigner.exe) and an unranked scan would adopt whichever
-        # psutil yielded first, possibly from a different install.
-        full_matches = [pid for pid, is_full in candidates if is_full]
+        if is_script:
+            if len(script_matches) == 1:
+                return script_matches[0][0]
+            if expected_lower:
+                exact = [pid for pid, cmdline in script_matches
+                         if cmdline == expected_lower]
+                if len(exact) == 1:
+                    return exact[0]
+            if script_matches:
+                # Ambiguous wrappers refuse in BOTH modes: binding one at
+                # random risks watching -- and later killing -- a cmd.exe
+                # owlette never launched (D3).
+                logging.warning(
+                    f"find_running_process_by_exe: {len(script_matches)} "
+                    f"cmd.exe wrappers reference {exe_path} and nothing "
+                    f"distinguishes them -- refusing to guess"
+                    + ("" if strict else "; the caller will launch fresh"))
+            return None
+        # An exact exe-path match that is unique on the machine is the only
+        # self-sufficient evidence left; several instances of one image are
+        # normal here (every TouchDesigner project is the same
+        # TouchDesigner.exe), so uniqueness, not rank order, is what counts.
+        full_matches = [pid for pid, is_full, _ in candidates if is_full]
         if len(full_matches) == 1:
             return full_matches[0]
-        if strict:
-            # Bare basename matches never reach `candidates` under strict and the
-            # unique full-path case already returned, so getting here means
-            # several instances with nothing to tell them apart.
-            if candidates:
-                logging.warning(
-                    f"find_running_process_by_exe: {len(candidates)} instances of "
-                    f"{exe_basename} match with no file_path to disambiguate — refusing"
-                )
-            return None
-        # Non-strict (startup adoption) must still pick one: None makes the
-        # monitor loop launch yet another instance — the duplicate we're avoiding.
-        if full_matches:
-            logging.warning(
-                f"find_running_process_by_exe: {len(full_matches)} instances of "
-                f"{exe_path} running and no file_path configured to tell them "
-                f"apart — adopting PID {full_matches[0]}. Set the file path on "
-                f"this process entry to make adoption unambiguous."
-            )
-            return full_matches[0]
+        # Cmdline tier: exact equality with the RECORDED launch cmdline, and
+        # exactly one winner. Zero exact matches is a mismatch, several is
+        # still ambiguity -- both refuse, because a wrong guess here is
+        # precisely the disease D3 cures.
+        if expected_lower:
+            exact = [pid for pid, _, cmdline in candidates
+                     if cmdline == expected_lower]
+            if len(exact) == 1:
+                return exact[0]
         if candidates:
-            return candidates[0][0]
+            # Ambiguous, so BOTH modes refuse: strict discovery backs kill and
+            # restart and must never touch a stranger; non-strict adoption
+            # falls through to a fresh launch, which is safe by design -- the
+            # duplicate converges once identity is recorded, an adopted
+            # stranger never does (D3). Operators grep these warnings.
+            if full_matches:
+                what = (f"{len(full_matches)} instances of {exe_path} are "
+                        f"running and no file_path is configured to tell "
+                        f"them apart")
+            else:
+                what = (f"{len(candidates)} process(es) match {exe_basename} "
+                        f"only by image name, not the configured path "
+                        f"{exe_path}")
+            logging.warning(
+                "find_running_process_by_exe: " + what + " -- refusing to "
+                "guess"
+                + ("" if strict else "; the caller will launch fresh. Set the "
+                   "file path on this process entry to make matching "
+                   "unambiguous"))
+        return None
     except Exception:
-        pass
+        # The silent pass that lived here hid real psutil/OS faults
+        # (observability sweep finding). Log the traceback; still report
+        # not-found so the monitor loop survives and callers take their
+        # normal launch-fresh path.
+        logging.exception(
+            f"find_running_process_by_exe({exe_path!r}) failed unexpectedly "
+            f"-- treating as not found")
     return None
 
 

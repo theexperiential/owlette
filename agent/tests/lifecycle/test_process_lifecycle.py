@@ -310,12 +310,11 @@ def test_schedule_window_stop_terminates_out_of_window_process(
 # NEW-CONTRACT SET (xfail strict=True; each names the wave that flips it)
 # ==========================================================================
 
-@pytest.mark.xfail(strict=True, reason=(
-    'Wave 4: with several same-image instances and no file_path to '
-    'disambiguate, owlette must launch a FRESH instance instead of adopting '
-    'a stranger. Today handle_process first-start adoption calls '
-    'find_running_process_by_exe non-strict, which warns and adopts '
-    'full_matches[0] - a process owlette never launched.'))
+# Tagged Wave 4 at authoring time but flipped green in Wave 3: what this test
+# exercises is REFUSAL (ambiguous match -> None -> handle_process_launch runs
+# fresh), not inherit-with-record. Once find_running_process_by_exe stopped
+# adopting full_matches[0] on ambiguity, the fresh launch followed with no
+# owlette_service change. Inherit (record-on-adopt) is contract (f), still red.
 def test_contract_a_ambiguous_image_launches_fresh_and_spares_decoys(
         service_factory, spawn_decoy, decoy_env):
     """(a) N unmanaged decoys, entry matches their image, no file_path =>
