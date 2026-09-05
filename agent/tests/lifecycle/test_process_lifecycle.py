@@ -530,3 +530,39 @@ def test_contract_f_inherit_writes_durable_identity_record(
         'inherit did not write a durable identity record on the pid row'
     assert abs(row['create_time'] - decoy_ct) < 1.0, \
         'recorded create_time does not identify the inherited process'
+
+
+# ==========================================================================
+# WAVE 6 ADDITION (Task 6.1, sanctioned: added, no body above modified)
+# ==========================================================================
+
+def test_launch_failure_surfaces_launch_failed_on_dead_generation(
+        service_factory, decoy_env):
+    """A real launch, a real death, then a relaunch that cannot succeed
+    (exe_path now missing) leaves LAUNCH_FAILED on the entry's dead
+    generation row - visible to the desktop within one monitor tick, with
+    every top-level key still a numeric pid string (parseAppStates prunes
+    anything else and persists the pruned document)."""
+    entry = make_entry('proc-fail', 'Fail Surfacing', decoy_env.exe)
+    write_config([entry])
+    svc = service_factory()
+
+    pid, create_time = launch_managed(svc, entry)
+    tick(svc, entry)  # promote to RUNNING
+    reap(pid)
+    assert wait_gone(pid, create_time)
+
+    broken = dict(entry, exe_path=os.path.join(
+        os.path.dirname(decoy_env.exe), 'owlette-e2e-missing.exe'))
+    write_config([broken])
+    svc.first_start = False
+    tick(svc, broken)  # crash detected; the relaunch hits the missing exe
+
+    states = read_app_states()
+    row = states.get(str(pid))
+    assert row is not None, 'the dead generation row was not reused'
+    assert row['status'] == 'LAUNCH_FAILED'
+    assert row['id'] == 'proc-fail'
+    assert all(key.isdigit() for key in states), \
+        'non-numeric top-level key would be pruned by the desktop parser'
+    assert svc.last_started['proc-fail'].get('failed') is True

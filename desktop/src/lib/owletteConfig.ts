@@ -244,8 +244,12 @@ export function setSchedules(process: ProcessEntry, schedules: ScheduleBlock[]):
 
 /**
  * Can this entry leave `off`? Presence only — unlike the legacy GUI we cannot
- * stat the exe (no filesystem command); an unresolvable path surfaces as the
- * service's LAUNCH_FAILED.
+ * stat the exe (no filesystem command). A blank exe path never leaves `off`
+ * (this guard blocks it before the service is ever involved); a path that is
+ * present but unresolvable passes here, fails at launch, and the service
+ * writes LAUNCH_FAILED onto the entry's newest row — visible for any entry
+ * that has ever launched. An entry that never produced a row (broken path
+ * from creation) has no row to reuse and stays INACTIVE.
  */
 export function launchModeBlockedReason(process: ProcessEntry): string | null {
   if (!text(process.name).trim()) return 'name is required before a launch mode can be set'
@@ -376,9 +380,12 @@ export function scheduleSummary(process: ProcessEntry): string {
 
 /**
  * Image names for `terminate_pid`'s identity check, most specific first.
- * `.bat`/`.cmd` run as `cmd.exe` so the configured path can never match —
- * `shared_utils.pid_matches_exe` special-cases it identically. Otherwise full
- * path then bare file name, the fallback python allows for adopted processes.
+ * `.bat`/`.cmd` run as `cmd.exe` so the configured path can never match.
+ * Otherwise full path then bare file name — configured vs actually-running
+ * paths legitimately differ for adopted processes. This name-based check is
+ * the desktop's own; the service's destructive ops instead prove identity
+ * against a recorded pid/create_time/exe snapshot
+ * (`shared_utils.identity_matches`).
  */
 export function expectedImagesFor(process: ProcessEntry): string[] {
   const exe = text(process.exe_path).trim()

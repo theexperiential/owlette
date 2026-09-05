@@ -336,6 +336,105 @@ def _drop_identity_row(pid):
         logging.warning(f"Could not remove stale identity row for PID {pid}: {e}")
 
 
+def _surface_launch_failed(process_list_id, pid=None):
+    """Write LAUNCH_FAILED where the desktop and web will actually show it (D5).
+
+    Both UIs have rendered this status for years (red dot, "failed"); nothing
+    ever wrote it. A failed launch or an identity-refused operation was an
+    Error: string in a log while the entry's dot sat at the hollow INACTIVE
+    ring - indistinguishable from launch-mode-off. Returns True when a row
+    was (or already is) surfaced, False when the entry has nothing to surface
+    on.
+
+    THE NO-PID PROBLEM (WHY a row is REUSED, never fabricated): a failed
+    launch has no live pid to key a fresh row by, and every top-level key in
+    app_states.json must stay a numeric pid string - the desktop parser
+    (parseAppStates) prunes non-numeric keys and persists the pruned document
+    (D2's rule), and a fabricated numeric pid would collide with a real
+    process the moment Windows hands that number out. So the status lands on
+    a row that already exists:
+      - the refused pid's own row, when the caller names one still bound to
+        this entry (an identity refusal marks the row involved; a row bound
+        to a DIFFERENT entry is never touched - defacing it would show
+        "failed" on a healthy neighbour);
+      - otherwise the entry's newest existing row, a dead generation from a
+        previous launch. statusForProcess falls back to INACTIVE only when
+        NO row carries the entry's id (verified against processStatus.ts),
+        so the newest dead row surfaces the failure for every entry that has
+        ever launched.
+    The unreachable case is an entry that has NEVER produced a row: it
+    stays INACTIVE. For a blank exe_path the desktop's
+    launchModeBlockedReason copy explains why next to the entry; a path
+    that is present but broken from creation stays INACTIVE with only the
+    log and the Error: command result to say why - the cost of never
+    fabricating a row (accepted above over colliding with a recycled pid).
+
+    Identity fields are STRIPPED from the reused row: the record described a
+    process that is gone, and a stale record would have the row dropped as
+    recycled at the next service restart or by the gate - while recordless
+    rows are the ones recovery deliberately keeps. Sibling LAUNCH_FAILED
+    rows of the same entry are folded into the target so repeated failures
+    never accumulate rows.
+
+    Clearing is the existing write paths' behaviour (verified, pinned in
+    test_launch_failed.py): a bind to the same pid overwrites the row's
+    status; a bind to a new pid writes a newer-timestamped row that wins the
+    desktop's recency sort immediately, and the stale-row sweep clears the
+    leftover once the entry has a live row again. Module-level for the same
+    descriptor-binding reason as _inherit_identity_extra.
+    """
+    if not process_list_id:
+        return False
+    try:
+        states = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+        if not isinstance(states, dict):
+            states = {}
+        target_key = None
+        if pid is not None:
+            row = states.get(str(pid))
+            if isinstance(row, dict) and row.get('id') == process_list_id:
+                target_key = str(pid)
+        if target_key is None:
+            candidates = []
+            for pid_str, row in states.items():
+                if not isinstance(row, dict) or row.get('id') != process_list_id:
+                    continue
+                try:
+                    row_pid = int(pid_str)
+                except (TypeError, ValueError):
+                    continue
+                candidates.append((row.get('timestamp') or 0, row_pid))
+            if candidates:
+                # Newest generation, ties to the higher pid - the same order
+                # the desktop's recency sort resolves a display winner by.
+                candidates.sort()
+                target_key = str(candidates[-1][1])
+        if target_key is None:
+            return False
+        row = states.get(target_key)
+        row = dict(row) if isinstance(row, dict) else {}
+        new_row = {k: v for k, v in row.items()
+                   if k not in ('create_time', 'exe', 'managed', 'origin')}
+        new_row['status'] = 'LAUNCH_FAILED'
+        new_row['id'] = process_list_id
+        siblings = [k for k, v in states.items()
+                    if k != target_key and isinstance(v, dict)
+                    and v.get('id') == process_list_id
+                    and v.get('status') == 'LAUNCH_FAILED']
+        if new_row == row and not siblings:
+            return True  # already surfaced - repeat failures are a no-op
+        states[target_key] = new_row
+        for key in siblings:
+            del states[key]
+        shared_utils.write_json_to_file(states, shared_utils.RESULT_FILE_PATH)
+        return True
+    except Exception as e:
+        # Surfacing must never turn a failure path into a crash.
+        logging.warning(
+            f"Could not surface LAUNCH_FAILED for entry '{process_list_id}': {e}")
+        return False
+
+
 def _identity_gate(pid, process_list_id):
     """The kill gate (D1): prove `pid` is the process recorded for this entry.
 
@@ -463,6 +562,11 @@ def _resolve_kill_target(service, process):
         if not allowed:
             if service.last_started.get(process_list_id, {}).get('pid') == last_pid:
                 service.last_started.pop(process_list_id, None)
+            # D5: the refusal must be visible locally, not just in the
+            # command's Error: string. The row involved gets the status; a
+            # mismatch already dropped its row, so this falls back to the
+            # entry's newest remaining row (or surfaces nothing).
+            _surface_launch_failed(process_list_id, pid=last_pid)
             return None, '', (f"refusing to kill '{process_name}' "
                               f"(PID {last_pid}): {why}")
         return last_pid, '', None
@@ -476,6 +580,9 @@ def _resolve_kill_target(service, process):
         if exe_path else None)
     if fallback_pid:
         if not _discovered_pid_identity_ok(fallback_pid, process):
+            # D5: a discovered pid has no row, so this lands on the entry's
+            # newest dead generation when one exists.
+            _surface_launch_failed(process_list_id, pid=fallback_pid)
             return None, '', (
                 f"refusing to kill '{process_name}' (PID {fallback_pid}): "
                 f"discovered pid's identity is unreadable or its image is "
@@ -537,6 +644,10 @@ def _stop_process_outside_window(service, process, pid):
     if not allowed:
         logging.warning(
             f"Refusing schedule-window stop of '{process_name}' (PID {pid}): {why}")
+        # D5: with the window closed nothing else will rewrite this entry's
+        # status, so the refusal stays visible until the operator acts or
+        # the window reopens.
+        _surface_launch_failed(process_id, pid=pid)
         service.last_started.pop(process_id, None)
         return
     try:
@@ -1748,6 +1859,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 return
 
             processes = config.get('processes', [])
+            configured_ids = {p.get('id') for p in processes if p.get('id')}
             logging.debug(f"Checking {len(processes)} configured process(es) for recovery")
 
             # Rows that survive the sweep; anything not copied over is dropped
@@ -1774,6 +1886,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         continue
 
                     if not Util.is_pid_running(pid):
+                        # WHY a dead LAUNCH_FAILED row survives the restart
+                        # sweep: same rule as cleanup_stale_tracking_data --
+                        # it is the D5 surfacing row for an entry that cannot
+                        # launch. Dropping it here would restart the service
+                        # into the hollow INACTIVE ring with no row left for
+                        # _surface_launch_failed to reuse. The periodic sweep
+                        # clears it once the entry has a live row again.
+                        if (isinstance(state_info, dict)
+                                and state_info.get('status') == 'LAUNCH_FAILED'
+                                and state_info.get('id') in configured_ids):
+                            cleaned_states[pid_str] = state_info
+                            continue
                         dropped_count += 1
                         logging.debug(f"PID {pid_str} is no longer running (will be removed from state file)")
                         continue
@@ -2151,6 +2275,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     if not allowed:
                         if self.last_started.get(process_list_id, {}).get('pid') == last_pid:
                             self.last_started.pop(process_list_id, None)
+                        # D5: surface the refusal on the row involved.
+                        _surface_launch_failed(process_list_id, pid=last_pid)
                         return {'error': (f"refusing to restart '{process_name}' "
                                           f"(PID {last_pid}): {why}")}
                     new_pid = self.kill_and_relaunch_process(last_pid, target)
@@ -3059,6 +3185,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
             info = self.last_started.get(process.get('id', ''), {})
             if isinstance(info, dict) and info.get('pid') == pid:
                 self.last_started.pop(process.get('id', ''), None)
+            # D5: surface the refusal on the row involved (or the entry's
+            # newest remaining row when the gate dropped it).
+            _surface_launch_failed(process.get('id', ''), pid=pid)
             return None
         if not self.reached_max_relaunch_attempts(process):
             try:
@@ -3175,6 +3304,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
             process_name = Util.get_process_name(process)
             logging.error(f"Cannot launch '{process_name}': Executable path is not set. Please configure a valid exe_path and set launch mode to Always On or Scheduled.")
             self.last_started[process_id] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
+            # D5: make the refusal visible - a never-launched entry has no row
+            # to reuse and stays INACTIVE (see _surface_launch_failed's WHY).
+            _surface_launch_failed(process_id)
             return None
 
         if not os.path.isfile(exe_path):
@@ -3196,6 +3328,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     details=f'executable not found: {exe_path}'
                 )
             self.last_started[process_id] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
+            # D5: reuses the entry's newest dead row so the desktop shows
+            # "failed" instead of the hollow INACTIVE ring.
+            _surface_launch_failed(process_id)
             return None
 
         if not self.reached_max_relaunch_attempts(process):
@@ -3238,6 +3373,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # self.current_time: a blocking launch would otherwise date the
                     # cooldown from the loop start and expire it early.
                     self.last_started[process_list_id] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
+                    # D5: a no-PID launch is a failed launch - surface it.
+                    _surface_launch_failed(process_list_id)
                     return None
 
                 # Update the last started time and PID (use real time, not loop-start time)
@@ -3532,8 +3669,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             # Clean up app_states.json (results file) — remove PIDs that no longer exist
             if self.results:
-                stale_pids = []
-                for pid_str in self.results.keys():
+                # First pass: which entries still have a row whose pid is
+                # alive -- needed so a LAUNCH_FAILED surfacing row is kept
+                # only while it is still the entry's story (see below).
+                live_entry_ids = set()
+                dead_rows = []
+                for pid_str, row in self.results.items():
                     try:
                         pid_int = int(pid_str)
                     except (TypeError, ValueError):
@@ -3542,8 +3683,30 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         # below -- skip just this key and keep sweeping.
                         logging.debug(f"Skipping non-numeric PID key '{pid_str}' in app_states cleanup")
                         continue
-                    if not psutil.pid_exists(pid_int):
-                        stale_pids.append(pid_str)
+                    if psutil.pid_exists(pid_int):
+                        if isinstance(row, dict) and row.get('id'):
+                            live_entry_ids.add(row['id'])
+                    else:
+                        dead_rows.append((pid_str, row))
+                stale_pids = []
+                for pid_str, row in dead_rows:
+                    # WHY a dead LAUNCH_FAILED row survives the sweep: it is
+                    # the D5 surfacing row for an entry that cannot launch,
+                    # and a failed launch has no live pid BY DEFINITION.
+                    # Sweeping it would flip the entry back to the hollow
+                    # INACTIVE ring within one cleanup interval -- the exact
+                    # invisibility the status exists to end -- with no row
+                    # left for _surface_launch_failed to reuse. It is kept
+                    # only while it is still the entry's story: the entry is
+                    # still configured and no live row has superseded it. A
+                    # successful launch or inherit creates a live row, and
+                    # the next sweep clears this leftover.
+                    if (isinstance(row, dict)
+                            and row.get('status') == 'LAUNCH_FAILED'
+                            and row.get('id') in current_process_ids
+                            and row.get('id') not in live_entry_ids):
+                        continue
+                    stale_pids.append(pid_str)
                 if stale_pids:
                     for pid_str in stale_pids:
                         del self.results[pid_str]
@@ -3987,6 +4150,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             # .bat wrapper's payload is reaped with it.
                             allowed, why = _identity_gate(pid, removed_id)
                             if not allowed:
+                                # No LAUNCH_FAILED surfacing here (deliberate):
+                                # the entry is no longer in config, so neither
+                                # UI has a row to show the status on, and the
+                                # stale-row sweep keeps LAUNCH_FAILED only for
+                                # configured entries. The warning is the record.
                                 logging.warning(
                                     f"Refusing to terminate removed process "
                                     f"'{removed_proc.get('name')}' (PID {pid}): {why}")
@@ -4101,6 +4269,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.warning(
                     f"Refusing deployment terminate of '{entry_name}' "
                     f"(PID {pid}): {why}")
+                # D5: surface the refusal on the row involved.
+                _surface_launch_failed(entry_id, pid=pid)
                 return False
             logging.info(f"Terminating managed process '{entry_name}' (PID {pid}) for deployment")
             try:
@@ -4279,6 +4449,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             if not allowed:
                                 if self.last_started.get(process_list_id, {}).get('pid') == last_pid:
                                     self.last_started.pop(process_list_id, None)
+                                # D5: surface the refusal on the row involved.
+                                _surface_launch_failed(process_list_id, pid=last_pid)
                                 return (f"Error: refusing to restart '{process_name}' "
                                         f"(PID {last_pid}): {why}")
                             new_pid = self.kill_and_relaunch_process(last_pid, process)

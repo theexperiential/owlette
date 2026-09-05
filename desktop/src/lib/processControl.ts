@@ -67,10 +67,12 @@ function isIdentityMismatch(error: unknown): boolean {
 }
 
 /**
- * Terminate `pid`, trying each acceptable image in turn: full path first, bare file name second,
- * mirroring `shared_utils.pid_matches_exe`. The host's identity check is the point, but configured
- * vs actually-running legitimately differ for adopted processes. Anything other than an identity
- * mismatch (access denied, an unkillable pid) aborts immediately.
+ * Terminate `pid`, trying each acceptable image in turn: full path first, bare file name second.
+ * The host's identity check is the point — this try-order is the desktop's own (the service's
+ * destructive ops instead prove identity against a recorded pid/create_time/exe snapshot,
+ * `shared_utils.identity_matches`) — but configured vs actually-running legitimately differ for
+ * adopted processes. Anything other than an identity mismatch (access denied, an unkillable pid)
+ * aborts immediately.
  */
 async function terminateAs(pid: number, images: string[]) {
   let lastError: unknown = new Error('no executable to identify the process by')
