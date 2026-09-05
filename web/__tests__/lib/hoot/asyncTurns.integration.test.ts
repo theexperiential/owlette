@@ -898,6 +898,108 @@ describe('tier-3 approval round-trip through the runner', () => {
   );
 });
 
+// 3b. scheduled follow-ups force the tier-3 gate on (plan decision 9)
+
+describe('scheduled follow-up turns never auto-execute tier 3', () => {
+  const MACHINE_FU = 'machine-fu';
+
+  /** The site setting that lets an ATTENDED turn auto-run tier-3 tools. */
+  function seedApprovalGateOff() {
+    store[`sites/${SITE_ID}/settings/cortex`] = { requireTier3Approval: false };
+  }
+
+  /**
+   * One tier-3 call (`execute_script`), then narrate. The second step has to be
+   * text or the unforced control re-dispatches on every loop iteration.
+   */
+  function modelCallsTier3() {
+    let step = 0;
+    currentModel = new MockLanguageModelV3({
+      doStream: async () => {
+        step += 1;
+        if (step > 1) {
+          return { stream: simulateReadableStream({ chunks: textChunks('scan finished clean') }) };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              {
+                type: 'tool-call' as const,
+                toolCallId: 'toolu_fu_1',
+                toolName: 'execute_script',
+                input: JSON.stringify({ script: 'sfc /scannow', timeout_seconds: 5 }),
+              },
+              { ...finishChunk, finishReason: 'tool-calls' as const },
+            ],
+          }),
+        };
+      },
+    });
+  }
+
+  it('parks at approval-requested even where the site allows tier-3 auto-run', async () => {
+    const chatId = 'chat_fu_appr';
+    seedApprovalGateOff();
+    modelCallsTier3();
+
+    const { chunks, streamError } = await collectChunks(
+      await beginTurn(
+        baseParams({
+          chatId,
+          turnId: 'turn_fu_1',
+          machineId: MACHINE_FU,
+          messages: [userMsg('u1', '[scheduled follow-up] did the scan finish?')],
+          source: 'followup',
+          forceTier3Approval: true,
+        }),
+      ),
+    );
+
+    expect(streamError).toBeNull();
+    expect(chunks.some((c) => c.type === 'tool-approval-request')).toBe(true);
+    // Nothing was queued for the agent — the tool never ran.
+    expect(store[pendingPath(MACHINE_FU)]).toBeUndefined();
+
+    await waitFor(() => chatMessages(chatId).length === 2, 'follow-up turn persist');
+    const toolPart = chatMessages(chatId)[1].parts.find((p) => p.type === 'tool-execute_script');
+    expect(toolPart).toMatchObject({ state: 'approval-requested', toolCallId: 'toolu_fu_1' });
+  });
+
+  it(
+    'negative control: the same turn WITHOUT the flag dispatches on that site',
+    async () => {
+      // Proves the gate comes from `forceTier3Approval` and not from the site
+      // setting, the access level, or the tool tier.
+      const chatId = 'chat_fu_noflag';
+      seedApprovalGateOff();
+      modelCallsTier3();
+
+      const stream = await beginTurn(
+        baseParams({
+          chatId,
+          turnId: 'turn_fu_2',
+          machineId: MACHINE_FU,
+          messages: [userMsg('u1', 'run the scan')],
+        }),
+      );
+
+      // The tool dispatches for real — answer it like the agent would.
+      await waitFor(
+        () => store[pendingPath(MACHINE_FU)] !== undefined,
+        'pending write (unforced tier-3)',
+      );
+      const commandId = Object.keys(store[pendingPath(MACHINE_FU)])[0];
+      store[completedPath(MACHINE_FU)] = {
+        [commandId]: { status: 'completed', result: JSON.stringify({ exit_code: 0 }) },
+      };
+
+      const { chunks } = await collectChunks(stream);
+      expect(chunks.some((c) => c.type === 'tool-approval-request')).toBe(false);
+    },
+    20_000,
+  );
+});
+
 // 4. error path
 
 describe('error path', () => {

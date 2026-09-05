@@ -17,6 +17,11 @@ import { deleteProcess } from '@/lib/actions/deleteProcess.server';
 import { ProcessConfigError, type PublicProcessConfig } from '@/lib/processConfig.server';
 import { Capability, hasCapability, type Actor, type Role, type SystemActorName } from '@/lib/capabilities';
 import { timestampToIso } from '@/lib/firestoreTime.server';
+import {
+  cancelFollowup,
+  scheduleFollowup,
+  type CancelFollowupOutcome,
+} from '@/lib/hoot/followupStore.server';
 import type { TalonStoreContext } from '@/lib/talons/store.server';
 
 /**
@@ -35,7 +40,13 @@ export const SERVER_SIDE_TOOLS: ReadonlySet<string> = new Set([
   'create_talon',
   'list_talons',
   'set_talon_enabled',
+  // Follow-ups are chat records; the cron sweep acts on them, never an agent.
+  'schedule_followup',
+  'cancel_followup',
 ]);
+
+/** Sentinel `machineId` for a site-wide chat (mirrors /api/hoot + the runner). */
+const SITE_TARGET_ID = '__site__';
 
 export const COMMAND_POLL_INTERVAL_MS = 1500;
 export const COMMAND_TIMEOUT_MS = 30000;
@@ -46,6 +57,17 @@ export const COMMAND_TIMEOUT_MS = 30000;
  * pending-entry GC so a command can never outlive its pending entry.
  */
 export const MAX_TOOL_TIMEOUT_SECONDS = 3300;
+
+/**
+ * `schedule_followup` horizon — one minute to seven days. Enforced here rather
+ * than in the store, which stores whatever `runAt` it is handed; the tool
+ * description quotes the same numbers.
+ */
+export const MIN_FOLLOWUP_DELAY_MINUTES = 1;
+export const MAX_FOLLOWUP_DELAY_MINUTES = 10080;
+
+/** A follow-up note is an instruction to one future turn, not a document. */
+export const MAX_FOLLOWUP_NOTE_LENGTH = 1000;
 
 /**
  * Dispatch/poll hooks: the turn runner records `toolCallId → commandId` for
@@ -85,6 +107,12 @@ export interface BuildExecutableToolsOptions {
   /** Chat this tool loop belongs to; defaulted from the positional `chatId` so
    *  server-side tools can stamp provenance (talon `createdVia` + `chatId`). */
   chatId?: string;
+  /** The chat's target the way the follow-up store records it: a machine id, or
+   *  `__site__` for a site-wide chat. Defaulted from `buildExecutableTools`'
+   *  positional args — `machineIds` cannot supply it, because site mode passes
+   *  the fanned-out online machines rather than the sentinel. Read only by
+   *  `schedule_followup`. */
+  chatMachineId?: string;
   /** Tier-3 in-chat approval gate; defaults true. Off means tier-3 auto-runs on
    *  the server-side and site-wide paths too, not just local Hoot. */
   requireTier3Approval?: boolean;
@@ -1319,6 +1347,206 @@ async function executeSetTalonEnabledTool(
   }
 }
 
+/**
+ * Refusal for a caller with no chat identity. Unattended hoot (autonomous
+ * dispatch, talon directives) runs as a system actor: there is no chat to
+ * re-open and no user whose access could be re-resolved at fire time, so a
+ * follow-up scheduled there could never legitimately run.
+ */
+function followupUnavailableResult(): ProcessToolResult {
+  return {
+    ok: false,
+    error: 'followup_unavailable',
+    detail: 'follow-ups are only available inside a user chat.',
+    status: 400,
+  };
+}
+
+type FollowupRunAtResult = { ok: true; runAt: Date } | { ok: false; result: ProcessToolResult };
+
+function followupInputError(code: string, detail: string): FollowupRunAtResult {
+  return { ok: false, result: { ok: false, error: code, detail, status: 400 } };
+}
+
+/**
+ * `delay_minutes` or `at` → the absolute fire time. Exactly one of the two:
+ * accepting both would mean silently picking a winner, and accepting neither
+ * would mean inventing a schedule the model did not ask for.
+ */
+function resolveFollowupRunAt(params: Record<string, unknown>, now: number): FollowupRunAtResult {
+  const delay = params.delay_minutes;
+  const hasDelay = delay !== undefined && delay !== null;
+  const at = typeof params.at === 'string' ? params.at.trim() : params.at;
+  const hasAt = at !== undefined && at !== null && at !== '';
+
+  if (hasDelay && hasAt) {
+    return followupInputError(
+      'invalid_schedule',
+      'pass exactly one of delay_minutes or at — both were given.',
+    );
+  }
+  if (!hasDelay && !hasAt) {
+    return followupInputError(
+      'invalid_schedule',
+      'pass exactly one of delay_minutes or at — neither was given.',
+    );
+  }
+
+  if (hasDelay) {
+    if (typeof delay !== 'number' || !Number.isFinite(delay)) {
+      return followupInputError('invalid_delay_minutes', 'delay_minutes must be a number of minutes.');
+    }
+    if (delay < MIN_FOLLOWUP_DELAY_MINUTES || delay > MAX_FOLLOWUP_DELAY_MINUTES) {
+      return followupInputError(
+        'invalid_delay_minutes',
+        `delay_minutes must be between ${MIN_FOLLOWUP_DELAY_MINUTES} and ${MAX_FOLLOWUP_DELAY_MINUTES} (seven days).`,
+      );
+    }
+    return { ok: true, runAt: new Date(now + delay * 60_000) };
+  }
+
+  if (typeof at !== 'string') {
+    return followupInputError('invalid_at', 'at must be an ISO 8601 timestamp string, e.g. 2026-01-31T14:00:00Z.');
+  }
+  const parsed = Date.parse(at);
+  if (Number.isNaN(parsed)) {
+    return followupInputError('invalid_at', `"${at}" is not a timestamp — use ISO 8601, e.g. 2026-01-31T14:00:00Z.`);
+  }
+  if (parsed <= now) {
+    return followupInputError(
+      'at_in_the_past',
+      'at is in the past — pass a future timestamp, or use delay_minutes for a relative time.',
+    );
+  }
+  if (parsed > now + MAX_FOLLOWUP_DELAY_MINUTES * 60_000) {
+    return followupInputError('at_too_far_out', 'at must be within seven days from now.');
+  }
+  return { ok: true, runAt: new Date(parsed) };
+}
+
+async function executeScheduleFollowupTool(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  params: Record<string, unknown>,
+  options: BuildExecutableToolsOptions,
+): Promise<unknown> {
+  const chatId = options.chatId?.trim();
+  const userId = options.userId?.trim();
+  const machineId = options.chatMachineId?.trim();
+  if (!chatId || !userId || !machineId) return followupUnavailableResult();
+
+  const note = typeof params.note === 'string' ? params.note.trim() : '';
+  if (!note) {
+    return {
+      ok: false,
+      error: 'missing_note',
+      detail: 'note is required — say what the follow-up turn should do.',
+      status: 400,
+    };
+  }
+  if (note.length > MAX_FOLLOWUP_NOTE_LENGTH) {
+    return {
+      ok: false,
+      error: 'note_too_long',
+      detail: `note must be ${MAX_FOLLOWUP_NOTE_LENGTH} characters or fewer.`,
+      status: 400,
+    };
+  }
+
+  const schedule = resolveFollowupRunAt(params, Date.now());
+  if (!schedule.ok) return schedule.result;
+
+  const watchCommandId =
+    typeof params.watch_command_id === 'string' ? params.watch_command_id.trim() : '';
+
+  try {
+    const scheduled = await scheduleFollowup(db, {
+      chatId,
+      siteId,
+      machineId,
+      userId,
+      note,
+      runAt: schedule.runAt,
+      ...(watchCommandId ? { watchCommandId } : {}),
+    });
+    const firesAt = scheduled.runAt.toISOString();
+    return {
+      ok: true,
+      followup_id: scheduled.id,
+      fires_at: firesAt,
+      ...(watchCommandId ? { watch_command_id: watchCommandId } : {}),
+      message: `scheduled a follow-up for ${firesAt}.`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: 'internal_error',
+      detail: error instanceof Error ? error.message : 'unknown error',
+    };
+  }
+}
+
+/** Every non-success {@link cancelFollowup} outcome, as something the model can read. */
+const CANCEL_FOLLOWUP_FAILURES: Record<
+  Exclude<CancelFollowupOutcome, 'cancelled'>,
+  { error: string; detail: string; status: number }
+> = {
+  not_found: {
+    error: 'followup_not_found',
+    detail: 'no follow-up has that id — use the followup_id schedule_followup returned.',
+    status: 404,
+  },
+  forbidden: {
+    error: 'followup_forbidden',
+    detail: 'that follow-up belongs to another user.',
+    status: 403,
+  },
+  not_scheduled: {
+    error: 'followup_not_scheduled',
+    detail: 'that follow-up already fired or was cancelled — there is nothing left to cancel.',
+    status: 409,
+  },
+};
+
+async function executeCancelFollowupTool(
+  db: FirebaseFirestore.Firestore,
+  params: Record<string, unknown>,
+  options: BuildExecutableToolsOptions,
+): Promise<unknown> {
+  // Ownership is the only thing that gates a cancel, and the store enforces it
+  // against this userId — an unattended caller has none.
+  const userId = options.userId?.trim();
+  if (!userId) return followupUnavailableResult();
+
+  const followupId = typeof params.followup_id === 'string' ? params.followup_id.trim() : '';
+  if (!followupId) {
+    return {
+      ok: false,
+      error: 'missing_followup_id',
+      detail: 'followup_id is required — schedule_followup returns it.',
+      status: 400,
+    };
+  }
+
+  try {
+    const outcome = await cancelFollowup(db, followupId, { userId });
+    if (outcome === 'cancelled') {
+      return {
+        ok: true,
+        followup_id: followupId,
+        message: `cancelled follow-up ${followupId}.`,
+      };
+    }
+    return { ok: false, followup_id: followupId, ...CANCEL_FOLLOWUP_FAILURES[outcome] };
+  } catch (error) {
+    return {
+      ok: false,
+      error: 'internal_error',
+      detail: error instanceof Error ? error.message : 'unknown error',
+    };
+  }
+}
+
 /** Execute a server-side tool (never relayed to an agent). */
 export async function executeServerSideTool(
   db: FirebaseFirestore.Firestore,
@@ -1347,6 +1575,10 @@ export async function executeServerSideTool(
       return executeListTalonsTool(db, siteId);
     case 'set_talon_enabled':
       return executeSetTalonEnabledTool(db, siteId, params, options);
+    case 'schedule_followup':
+      return executeScheduleFollowupTool(db, siteId, params, options);
+    case 'cancel_followup':
+      return executeCancelFollowupTool(db, params, options);
     default:
       return { error: `Unknown server-side tool: ${toolName}` };
   }
@@ -1368,9 +1600,12 @@ export function buildExecutableTools(
 ) {
   // Server-side tools only see `options`, so fold the positional chatId in. An
   // explicit `options.chatId` wins, attributing the loop to a different chat.
+  // `chatMachineId` is the chat's target as the follow-up store records it —
+  // the sentinel in site mode, where the positional machineId may be blank.
   const serverSideOptions: BuildExecutableToolsOptions = {
     ...options,
     chatId: options.chatId ?? chatId,
+    chatMachineId: options.chatMachineId ?? (siteMode ? SITE_TARGET_ID : machineId),
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

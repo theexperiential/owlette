@@ -68,6 +68,27 @@ export interface TurnToolCommand {
 /** `toolCallId → machineId → { commandId }` — the per-chat cancel index. */
 export type TurnToolCommands = Record<string, Record<string, TurnToolCommand>>;
 
+/**
+ * A `scheduled` follow-up on the open chat, as the composer chip renders it.
+ * Mirrors `FollowupSummary` in web/lib/hoot/followupStore.server.ts (server-only
+ * module — not importable here).
+ */
+export interface ScheduledFollowup {
+  id: string;
+  note: string;
+  /** Null only if the doc landed before its server timestamp resolved. */
+  runAtMs: number | null;
+}
+
+/**
+ * Data at rest keeps its `cortex` spelling (WIRE_NAMES class A) — the same
+ * literal firestore.rules and followupStore.server.ts pin.
+ */
+const FOLLOWUPS_COLLECTION = 'cortex-followups';
+
+// A chat holds 0–2 scheduled follow-ups in practice; the cap is a guard, not a page size.
+const FOLLOWUPS_LIMIT = 10;
+
 // Mirrors TURN_STALE_MS in web/lib/hoot/turnStore.server.ts: a `running` doc whose
 // heartbeat is older is a dead runner (deploy-killed) — surfaced as `turnStale`.
 const TURN_STALE_MS = 45_000;
@@ -127,6 +148,8 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
   const [turnRunning, setTurnRunning] = useState(false);
   // Bumped to resubscribe after a listener error (Firestore kills it on error).
   const [streamSubAttempt, setStreamSubAttempt] = useState(0);
+  // Scheduled follow-ups on the open chat — the chips above the composer.
+  const [followups, setFollowups] = useState<ScheduledFollowup[]>([]);
 
   // Use refs so the transport closure always reads the latest values
   const siteIdRef = useRef(siteId);
@@ -389,6 +412,65 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       if (resubscribeTimeout !== null) clearTimeout(resubscribeTimeout);
     };
   }, [user, chatId, streamSubAttempt]);
+
+  // Scheduled follow-ups for the open chat, live so a fired or cancelled one drops its
+  // chip without a refetch. The `userId` filter is not optional: firestore.rules grant a
+  // read only where `resource.data.userId` is the caller, and a query missing that clause
+  // is rejected wholesale. Composite index: (chatId, status, userId, runAt).
+  useEffect(() => {
+    setFollowups([]);
+    if (!user || !db) return;
+
+    const followupsQuery = query(
+      collection(db, FOLLOWUPS_COLLECTION),
+      where('chatId', '==', chatId),
+      where('userId', '==', user.uid),
+      where('status', '==', 'scheduled'),
+      orderBy('runAt', 'asc'),
+      limit(FOLLOWUPS_LIMIT),
+    );
+
+    return onSnapshot(
+      followupsQuery,
+      (snapshot) => {
+        setFollowups(
+          snapshot.docs.map((docSnap) => {
+            const data = docSnap.data();
+            return {
+              id: docSnap.id,
+              note: typeof data.note === 'string' ? data.note : '',
+              runAtMs:
+                typeof data.runAt?.toMillis === 'function'
+                  ? (data.runAt.toMillis() as number)
+                  : null,
+            };
+          }),
+        );
+      },
+      (error) => {
+        console.error('Failed to subscribe to scheduled follow-ups:', error);
+        setFollowups([]);
+      },
+    );
+  }, [user, chatId]);
+
+  // Cancel a scheduled follow-up. Deliberately not optimistic — the chip clears when the
+  // doc leaves `scheduled` in the subscription above, so a rejected cancel stays visible.
+  // Never throws; the caller owns the in-flight UI state.
+  const cancelFollowup = useCallback(async (followupId: string) => {
+    try {
+      const response = await fetch(
+        `/api/hoot/followups/${encodeURIComponent(followupId)}`,
+        { method: 'DELETE' },
+      );
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        console.error('Failed to cancel follow-up:', response.status, detail);
+      }
+    } catch (error) {
+      console.error('Failed to cancel follow-up:', error);
+    }
+  }, []);
 
   // Cancel a running tool call across every machine it dispatched to (the agent kills each
   // process tree; the card resolves to "cancelled by user"). Per-machine commandIds come
@@ -968,6 +1050,11 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     turnStale,
     // A turn is live per the stream doc — the UI suppresses approve/deny while set.
     turnRunning,
+
+    // Scheduled follow-ups on this chat (`cortex-followups`, owner-read), soonest first.
+    followups,
+    // Cancel one by id — DELETE /api/hoot/followups/{id}.
+    cancelFollowup,
 
     input: inputValue,
     setInput: setInputValue,

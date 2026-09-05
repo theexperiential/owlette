@@ -227,6 +227,50 @@ const tier1Tools: McpToolDefinition[] = [
       properties: {},
     },
   },
+  // Scheduled follow-ups — chat records executed by the cron sweep, never relayed
+  // to a machine. They are how a promise to "check back later" actually happens.
+  {
+    name: 'schedule_followup',
+    description: 'Schedule a follow-up turn on this conversation. At the scheduled time you are re-opened in this same chat with `note` as the instruction, and you act on it and report back. Use this instead of saying you will keep watching something — this turn ends when you stop typing, so nothing else will check. Typical uses: read an install log after a detached job, re-check a metric after a restart, confirm a machine came back online. Pass EXACTLY ONE of delay_minutes (1 to 10080 — one minute to seven days) or at (an absolute ISO 8601 timestamp, in the future and no more than seven days out); passing both, or neither, is an error you must correct. Write `note` as a self-contained instruction to your future self: it arrives without this conversation in view, so name the machine, the path, the process, and what a good result looks like. Returns followup_id and fires_at (ISO) — keep followup_id in case you need cancel_followup.',
+    tier: 1,
+    parameters: {
+      type: 'object',
+      properties: {
+        note: {
+          type: 'string',
+          description: 'What the follow-up turn should do, written as a complete instruction to yourself with no context assumed. 1000 characters or fewer.',
+        },
+        delay_minutes: {
+          type: 'number',
+          description: 'Fire this many minutes from now: 1 to 10080 (one minute to seven days). Mutually exclusive with `at` — pass exactly one of the two.',
+        },
+        at: {
+          type: 'string',
+          description: 'Fire at this absolute time, as an ISO 8601 timestamp WITH a timezone offset (e.g. "2026-01-31T14:00:00Z"). Must be in the future and within seven days. Mutually exclusive with `delay_minutes` — pass exactly one of the two.',
+        },
+        watch_command_id: {
+          type: 'string',
+          description: 'Optional id of a machine command already dispatched in this conversation. The follow-up then fires as soon as that command finishes, or at its scheduled time, whichever comes first — the schedule stays the backstop. Only pass an id you actually hold; it is ignored for site-wide chats, which have no single command to watch.',
+        },
+      },
+      required: ['note'],
+    },
+  },
+  {
+    name: 'cancel_followup',
+    description: 'Cancel a scheduled follow-up before it fires, using the followup_id returned by schedule_followup. Use it when the thing the follow-up was going to check has already been settled in this conversation, or when the operator asks you to drop it. Only the user who scheduled a follow-up can cancel it, and only while it is still pending — one that has already fired or been cancelled cannot be undone.',
+    tier: 1,
+    parameters: {
+      type: 'object',
+      properties: {
+        followup_id: {
+          type: 'string',
+          description: 'The follow-up id returned by schedule_followup. Never guess one.',
+        },
+      },
+      required: ['followup_id'],
+    },
+  },
 ];
 
 // Tier 2: Process Management

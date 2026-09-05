@@ -28,6 +28,9 @@ const EXPECTED_TIER1 = [
   'get_agent_health',
   'get_system_presets',
   'check_pending_reboot',
+  // Scheduled follow-ups — server-side chat records, no machine involved.
+  'schedule_followup',
+  'cancel_followup',
 ] as const;
 
 const EXPECTED_TIER2 = [
@@ -320,12 +323,75 @@ describe('mcp-tools: agent parity', () => {
     'create_talon',
     'list_talons',
     'set_talon_enabled',
+    'schedule_followup',
+    'cancel_followup',
   ];
 
   it('server-side tools have web definitions', () => {
     for (const name of SERVER_SIDE_TOOLS) {
       expect(getToolByName(name)).toBeDefined();
     }
+  });
+});
+
+// Follow-up scheduling schemas. The delay/at exclusivity and the 1–10080 range
+// are enforced in hoot-utils.server.ts; what the DEFINITION owes the model is a
+// schema it can fill and a description that states the constraints, because
+// JSON Schema `oneOf` is not part of McpToolDefinition's shape.
+
+describe('mcp-tools: follow-up scheduling schemas', () => {
+  it('schedule_followup requires only note, and offers both scheduling forms', () => {
+    const tool = getToolByName('schedule_followup')!;
+    expect(tool.parameters.required).toEqual(['note']);
+    expect(Object.keys(tool.parameters.properties)).toEqual(
+      expect.arrayContaining(['note', 'delay_minutes', 'at', 'watch_command_id']),
+    );
+    expect(tool.parameters.properties.delay_minutes.type).toBe('number');
+    expect(tool.parameters.properties.at.type).toBe('string');
+    expect(tool.parameters.properties.watch_command_id.type).toBe('string');
+  });
+
+  it('schedule_followup documents the exactly-one-of constraint and the 1-10080 range', () => {
+    const tool = getToolByName('schedule_followup')!;
+    const description = tool.description.toLowerCase();
+    expect(description).toContain('exactly one');
+    expect(description).toContain('10080');
+    expect(description).toContain('seven days');
+    // The per-field descriptions have to carry it too: a model filling one
+    // argument at a time may never re-read the tool blurb.
+    expect(tool.parameters.properties.delay_minutes.description).toMatch(/exactly one/i);
+    expect(tool.parameters.properties.at.description).toMatch(/exactly one/i);
+  });
+
+  it('schedule_followup documents what watch_command_id does', () => {
+    const tool = getToolByName('schedule_followup')!;
+    const watch = tool.parameters.properties.watch_command_id.description.toLowerCase();
+    // Early fire is the whole point of the field, and the schedule stays as the
+    // backstop — say both, or the model will treat it as a replacement.
+    expect(watch).toContain('finishes');
+    expect(watch).toContain('whichever comes first');
+  });
+
+  it('schedule_followup names its return fields so cancel_followup is reachable', () => {
+    const tool = getToolByName('schedule_followup')!;
+    expect(tool.description).toContain('followup_id');
+    expect(tool.description).toContain('fires_at');
+  });
+
+  it('cancel_followup takes only a followup_id', () => {
+    const tool = getToolByName('cancel_followup')!;
+    expect(tool.parameters.required).toEqual(['followup_id']);
+    expect(Object.keys(tool.parameters.properties)).toEqual(['followup_id']);
+    expect(tool.description).toContain('followup_id');
+  });
+
+  it('both follow-up tools are tier 1 — scheduling one grants no new reach', () => {
+    // The turn a follow-up starts re-resolves the user's own access at fire
+    // time, so the act of scheduling is no more privileged than chatting.
+    expect(getToolByName('schedule_followup')!.tier).toBe(1);
+    expect(getToolByName('cancel_followup')!.tier).toBe(1);
+    expect(requiresConfirmation('schedule_followup')).toBe(false);
+    expect(requiresConfirmation('cancel_followup')).toBe(false);
   });
 });
 

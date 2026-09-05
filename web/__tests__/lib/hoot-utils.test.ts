@@ -59,6 +59,17 @@ jest.mock('@/lib/processConfig.server', () => {
   return { ProcessConfigError };
 });
 
+// The follow-up store has its own suite (and its own transaction semantics);
+// here it is a boundary, so the tool layer's arithmetic and validation are what
+// gets asserted.
+const mockScheduleFollowup = jest.fn();
+const mockCancelFollowup = jest.fn();
+
+jest.mock('@/lib/hoot/followupStore.server', () => ({
+  scheduleFollowup: (...args: unknown[]) => mockScheduleFollowup(...args),
+  cancelFollowup: (...args: unknown[]) => mockCancelFollowup(...args),
+}));
+
 // Mock Firestore
 // Path: sites/{s}/machines/{m}/commands/pending|completed
 
@@ -145,6 +156,9 @@ import {
   getHootRequireTier3Approval,
   COMMAND_TIMEOUT_MS,
   MAX_TOOL_TIMEOUT_SECONDS,
+  MAX_FOLLOWUP_DELAY_MINUTES,
+  MAX_FOLLOWUP_NOTE_LENGTH,
+  type BuildExecutableToolsOptions,
 } from '@/lib/hoot-utils.server';
 
 import { allTools } from '@/lib/mcp-tools';
@@ -154,6 +168,8 @@ beforeEach(() => {
   mockCreateProcess.mockReset();
   mockUpdateProcess.mockReset();
   mockDeleteProcess.mockReset();
+  mockScheduleFollowup.mockReset();
+  mockCancelFollowup.mockReset();
 });
 
 // executeToolOnAgent
@@ -583,6 +599,270 @@ describe('buildExecutableTools', () => {
       expect(queuedIds).toContain(call[1]);
     }
   }, 15000);
+});
+
+// schedule_followup / cancel_followup (server-side, never relayed)
+
+/**
+ * The tool layer owns: the delay/at arithmetic and its bounds, the exactly-one-of
+ * gate, the `__site__` target a site-wide chat is recorded under, the refusal
+ * when there is no chat identity to own the future turn, and the mapping of
+ * every `cancelFollowup` outcome to something the model can read. The store owns
+ * everything past that, so it is mocked.
+ */
+describe('follow-up tools', () => {
+  const NOW = Date.parse('2026-08-20T09:00:00.000Z');
+  const CHAT_OPTIONS: BuildExecutableToolsOptions = { userId: 'uid_alice', userRole: 'admin' };
+
+  /** Sentinel — the executors hand `db` straight to the mocked store. */
+  const storeDb = { __db: 'sentinel' } as unknown as FirebaseFirestore.Firestore;
+
+  function followupTools(
+    options: BuildExecutableToolsOptions = CHAT_OPTIONS,
+    { siteMode = false, db = storeDb }: { siteMode?: boolean; db?: FirebaseFirestore.Firestore } = {},
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ): Record<string, any> {
+    const defs = ['schedule_followup', 'cancel_followup'].map(
+      (name) => allTools.find((tool) => tool.name === name)!,
+    );
+    return buildExecutableTools(
+      db,
+      's1',
+      siteMode ? '__site__' : 'm1',
+      'chat-1',
+      defs,
+      siteMode,
+      siteMode ? ['m1', 'm2'] : [],
+      options,
+    );
+  }
+
+  beforeEach(() => {
+    jest.spyOn(Date, 'now').mockReturnValue(NOW);
+    // Echo the computed runAt so `fires_at` provably comes from the store write.
+    mockScheduleFollowup.mockImplementation(async (_db: unknown, input: { runAt: Date }) => ({
+      id: 'fu_1',
+      runAt: input.runAt,
+    }));
+    mockCancelFollowup.mockResolvedValue('cancelled');
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('schedules from delay_minutes and returns followup_id + fires_at', async () => {
+    const result = await followupTools().schedule_followup.execute({
+      note: 'check whether the TD install finished',
+      delay_minutes: 30,
+    });
+
+    expect(mockScheduleFollowup).toHaveBeenCalledWith(storeDb, {
+      chatId: 'chat-1',
+      siteId: 's1',
+      machineId: 'm1',
+      userId: 'uid_alice',
+      note: 'check whether the TD install finished',
+      runAt: new Date('2026-08-20T09:30:00.000Z'),
+    });
+    expect(result).toEqual({
+      ok: true,
+      followup_id: 'fu_1',
+      fires_at: '2026-08-20T09:30:00.000Z',
+      message: 'scheduled a follow-up for 2026-08-20T09:30:00.000Z.',
+    });
+  });
+
+  it('schedules from an absolute ISO `at`', async () => {
+    const result = await followupTools().schedule_followup.execute({
+      note: 'confirm the wall came back up',
+      at: '2026-08-20T17:45:00.000Z',
+    });
+
+    expect(mockScheduleFollowup.mock.calls[0][1].runAt).toEqual(
+      new Date('2026-08-20T17:45:00.000Z'),
+    );
+    expect(result).toMatchObject({ ok: true, fires_at: '2026-08-20T17:45:00.000Z' });
+  });
+
+  it('threads watch_command_id through to the store and echoes it back', async () => {
+    const result = await followupTools().schedule_followup.execute({
+      note: 'report the install result',
+      delay_minutes: 45,
+      watch_command_id: '  mcp_123_execute_script  ',
+    });
+
+    expect(mockScheduleFollowup.mock.calls[0][1]).toMatchObject({
+      watchCommandId: 'mcp_123_execute_script',
+    });
+    expect(result).toMatchObject({ watch_command_id: 'mcp_123_execute_script' });
+  });
+
+  it('omits watchCommandId entirely when it is blank (Firestore rejects undefined)', async () => {
+    await followupTools().schedule_followup.execute({
+      note: 'check back',
+      delay_minutes: 5,
+      watch_command_id: '   ',
+    });
+
+    expect(mockScheduleFollowup.mock.calls[0][1]).not.toHaveProperty('watchCommandId');
+  });
+
+  it('records a site-wide chat under the `__site__` sentinel, not a fanned-out machine', async () => {
+    // site mode hands executeServerSideTool the online machine list, so the
+    // target has to arrive by its own route or every site chat's follow-up
+    // would be filed against whichever machine happened to be first.
+    await followupTools(CHAT_OPTIONS, { siteMode: true }).schedule_followup.execute({
+      note: 'sweep the fleet again',
+      delay_minutes: 60,
+    });
+
+    expect(mockScheduleFollowup.mock.calls[0][1]).toMatchObject({ machineId: '__site__' });
+  });
+
+  it('never dispatches a command to an agent', async () => {
+    const { db, pendingDoc } = createMockDb();
+
+    await followupTools(CHAT_OPTIONS, { db }).schedule_followup.execute({
+      note: 'check back',
+      delay_minutes: 10,
+    });
+    await followupTools(CHAT_OPTIONS, { db }).cancel_followup.execute({ followup_id: 'fu_1' });
+
+    expect(pendingDoc.set).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'both delay_minutes and at',
+      { note: 'n', delay_minutes: 30, at: '2026-08-20T17:45:00.000Z' },
+      'invalid_schedule',
+    ],
+    ['neither delay_minutes nor at', { note: 'n' }, 'invalid_schedule'],
+    ['a blank at with no delay', { note: 'n', at: '   ' }, 'invalid_schedule'],
+    ['a delay below the floor', { note: 'n', delay_minutes: 0 }, 'invalid_delay_minutes'],
+    [
+      'a delay past seven days',
+      { note: 'n', delay_minutes: MAX_FOLLOWUP_DELAY_MINUTES + 1 },
+      'invalid_delay_minutes',
+    ],
+    ['a non-numeric delay', { note: 'n', delay_minutes: '30' }, 'invalid_delay_minutes'],
+    ['an unparseable at', { note: 'n', at: 'in about two hours' }, 'invalid_at'],
+    ['an at in the past', { note: 'n', at: '2026-08-20T08:59:00.000Z' }, 'at_in_the_past'],
+    ['an at beyond seven days', { note: 'n', at: '2026-09-20T09:00:00.000Z' }, 'at_too_far_out'],
+    ['no note', { delay_minutes: 30 }, 'missing_note'],
+    ['a whitespace-only note', { note: '   ', delay_minutes: 30 }, 'missing_note'],
+    [
+      'an oversized note',
+      { note: 'x'.repeat(MAX_FOLLOWUP_NOTE_LENGTH + 1), delay_minutes: 30 },
+      'note_too_long',
+    ],
+  ])('refuses %s with a readable error and writes nothing', async (_label, params, code) => {
+    const result = await followupTools().schedule_followup.execute(params);
+
+    // A result, never a throw: a throw takes the whole turn down, a result lets
+    // the model correct itself on the next step.
+    expect(result).toMatchObject({ ok: false, error: code, status: 400 });
+    expect((result as { detail: string }).detail.length).toBeGreaterThan(0);
+    expect(mockScheduleFollowup).not.toHaveBeenCalled();
+  });
+
+  it('accepts the exact boundaries of the delay range', async () => {
+    await followupTools().schedule_followup.execute({ note: 'floor', delay_minutes: 1 });
+    await followupTools().schedule_followup.execute({
+      note: 'ceiling',
+      delay_minutes: MAX_FOLLOWUP_DELAY_MINUTES,
+    });
+
+    expect(mockScheduleFollowup).toHaveBeenCalledTimes(2);
+    expect(mockScheduleFollowup.mock.calls[0][1].runAt).toEqual(new Date(NOW + 60_000));
+    expect(mockScheduleFollowup.mock.calls[1][1].runAt).toEqual(
+      new Date(NOW + MAX_FOLLOWUP_DELAY_MINUTES * 60_000),
+    );
+  });
+
+  it('accepts a note at exactly the length cap', async () => {
+    const note = 'x'.repeat(MAX_FOLLOWUP_NOTE_LENGTH);
+    const result = await followupTools().schedule_followup.execute({ note, delay_minutes: 5 });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(mockScheduleFollowup.mock.calls[0][1].note).toBe(note);
+  });
+
+  it('reports a store failure as a tool error instead of rejecting', async () => {
+    mockScheduleFollowup.mockRejectedValue(new Error('firestore down'));
+
+    const result = await followupTools().schedule_followup.execute({
+      note: 'check back',
+      delay_minutes: 10,
+    });
+
+    expect(result).toEqual({ ok: false, error: 'internal_error', detail: 'firestore down' });
+  });
+
+  it('refuses to schedule for an unattended caller with no chat identity', async () => {
+    // Autonomous hoot has no chat to re-open and no user whose access could be
+    // re-resolved at fire time, so the follow-up could never legitimately run.
+    const result = await followupTools({ systemActor: 'cortex_autonomous' }).schedule_followup.execute(
+      { note: 'check back', delay_minutes: 10 },
+    );
+
+    expect(result).toMatchObject({ ok: false, error: 'followup_unavailable', status: 400 });
+    expect(mockScheduleFollowup).not.toHaveBeenCalled();
+  });
+
+  it('cancels on the caller\'s behalf and confirms', async () => {
+    const result = await followupTools().cancel_followup.execute({ followup_id: '  fu_1  ' });
+
+    // Ownership lives in the store; the tool must hand it the caller's uid.
+    expect(mockCancelFollowup).toHaveBeenCalledWith(storeDb, 'fu_1', { userId: 'uid_alice' });
+    expect(result).toEqual({
+      ok: true,
+      followup_id: 'fu_1',
+      message: 'cancelled follow-up fu_1.',
+    });
+  });
+
+  it.each([
+    ['not_found', 'followup_not_found', 404],
+    ['forbidden', 'followup_forbidden', 403],
+    ['not_scheduled', 'followup_not_scheduled', 409],
+  ])('maps the %s outcome to a readable error', async (outcome, code, status) => {
+    mockCancelFollowup.mockResolvedValue(outcome);
+
+    const result = await followupTools().cancel_followup.execute({ followup_id: 'fu_1' });
+
+    expect(result).toMatchObject({ ok: false, followup_id: 'fu_1', error: code, status });
+    expect((result as { detail: string }).detail.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ['a missing followup_id', {}],
+    ['a whitespace-only followup_id', { followup_id: '   ' }],
+    ['a non-string followup_id', { followup_id: 42 }],
+  ])('refuses a cancel with %s', async (_label, params) => {
+    const result = await followupTools().cancel_followup.execute(params);
+
+    expect(result).toMatchObject({ ok: false, error: 'missing_followup_id', status: 400 });
+    expect(mockCancelFollowup).not.toHaveBeenCalled();
+  });
+
+  it('refuses to cancel for an unattended caller with no user identity', async () => {
+    const result = await followupTools({ systemActor: 'cortex_autonomous' }).cancel_followup.execute({
+      followup_id: 'fu_1',
+    });
+
+    expect(result).toMatchObject({ ok: false, error: 'followup_unavailable' });
+    expect(mockCancelFollowup).not.toHaveBeenCalled();
+  });
+
+  it('reports a store failure on cancel as a tool error instead of rejecting', async () => {
+    mockCancelFollowup.mockRejectedValue(new Error('transaction aborted'));
+
+    const result = await followupTools().cancel_followup.execute({ followup_id: 'fu_1' });
+
+    expect(result).toEqual({ ok: false, error: 'internal_error', detail: 'transaction aborted' });
+  });
 });
 
 // resolveLlmConfig

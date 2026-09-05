@@ -32,6 +32,16 @@ export const SITE_TARGET_ID = '__site__';
 const HEARTBEAT_STALE_MS = 30_000;
 const LOCAL_HOOT_TIMEOUT_MS = 60_000;
 
+/** This surface's chatId is a `chat_conversations` id, but the follow-up sweep
+ *  resolves `chats/{chatId}` — a follow-up scheduled from here could never fire
+ *  (it fails closed at fire time as `chat_deleted`). Withhold the tools rather
+ *  than let the model make a promise the sweep silently breaks. */
+const UNSUPPORTED_TOOLS = new Set(['schedule_followup', 'cancel_followup']);
+
+export function conversationsToolDefs(maxToolTier: ToolTier) {
+  return getToolsByTier(maxToolTier).filter((def) => !UNSUPPORTED_TOOLS.has(def.name));
+}
+
 export interface HootStreamRequest {
   db: FirebaseFirestore.Firestore;
   userId: string;
@@ -389,7 +399,7 @@ async function runServerSideLLM(
     getHootRequireTier3Approval(db, siteId),
   ]);
 
-  const toolDefs = getToolsByTier(maxToolTier);
+  const toolDefs = conversationsToolDefs(maxToolTier);
   const executableTools = buildExecutableTools(
     db,
     siteId,
@@ -445,7 +455,7 @@ async function runSiteWideMode(
     resolveLlmConfig(db, userId),
     getHootRequireTier3Approval(db, siteId),
   ]);
-  const toolDefs = getToolsByTier(maxToolTier);
+  const toolDefs = conversationsToolDefs(maxToolTier);
   const executableTools = buildExecutableTools(
     db,
     siteId,

@@ -60,6 +60,14 @@ export function buildSystemPrompt(
 
 RULE #2 — DON'T GIVE UP ON "Unknown" VALUES: If a tool returns "Unknown", "N/A", null, or an empty value for a field the operator cares about (CPU model, GPU name, OS version, disk info, etc.), don't just report it as unknown. Try alternate approaches: call a different tool that might expose the same info, run a shell command (e.g. \`wmic\`, \`systeminfo\`, \`Get-CimInstance\`, \`nvidia-smi\`), read a relevant file, or check registry/config. Only report a value as unavailable after you've genuinely tried to retrieve it another way. Briefly note what you tried so the operator knows it wasn't just a shallow lookup.
 
+RULE #3 — NEVER PROMISE TO KEEP WATCHING: A turn ends when you stop writing. You cannot poll, wait, or "check back in a few minutes" on your own, and \`execute_script\` timeouts are capped at 3300 seconds (55 minutes) — anything still running at the cap is killed. For work that may outlast that cap, launch it detached, return immediately, and schedule a follow-up:
+1. Start it in the background with output redirected to a log file, e.g. \`Start-Process powershell -ArgumentList '-NoProfile','-File','C:\\ProgramData\\Owlette\\tmp\\install.ps1' -RedirectStandardOutput 'C:\\ProgramData\\Owlette\\tmp\\install.log' -RedirectStandardError 'C:\\ProgramData\\Owlette\\tmp\\install.err' -WindowStyle Hidden\`, then confirm it started (the returned PID, or a get_process_list check).
+2. Call \`schedule_followup\` with either \`delay_minutes\` or \`at\`, plus a \`note\` telling your future self exactly what to check — the log path, the process name, what "done" looks like. The note is the only context that carries into that turn.
+3. If what you are waiting on is a tool call you just dispatched, pass its agent command id as \`watch_command_id\`: the follow-up then fires as soon as that command completes instead of waiting out the clock.
+Use \`cancel_followup\` with the follow-up's id when it is no longer needed (the work finished early, or the operator changed direction). Always prefer scheduling a follow-up over telling the operator you will monitor something — you won't be running.
+
+WHEN A FOLLOW-UP WAKES YOU: the turn opens with a \`[scheduled follow-up]\` message carrying your own note. Say so in your first sentence ("following up on the driver install —"), then report what you actually found. Nobody typed that message, and an unlabelled reply reads as a non sequitur hours after the fact.
+
 TIME CONTEXT
 Current time: ${currentTime}
 When reporting events, logs, or timestamps, always contextualize them relative to the current time (e.g. "2 hours ago", "3 days ago", "last month"). Recent events (within the last 24 hours) are far more urgent than old ones. Prioritize your analysis accordingly — an error from 2 months ago is historical context, an error from 10 minutes ago needs immediate attention.`;

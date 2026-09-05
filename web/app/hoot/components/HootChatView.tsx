@@ -10,7 +10,7 @@ import { useHootSidebarPrefs } from '@/hooks/useHootSidebarPrefs';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Button } from '@/components/ui/button';
-import { Plus, MessageSquare, Trash2, KeyRound, Check, X, Zap, Search, Loader2, Pencil, ChevronRight, ChevronsDownUp, ChevronsUpDown, PanelLeftClose, PanelLeftOpen, RotateCw } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, KeyRound, Check, X, Zap, Search, Loader2, Pencil, ChevronRight, ChevronsDownUp, ChevronsUpDown, PanelLeftClose, PanelLeftOpen, RotateCw, Clock } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
 import { doc, getDoc } from 'firebase/firestore';
@@ -41,6 +41,23 @@ function timeAgo(date: Date): string {
   if (months < 12) return `${months}mo`;
   const years = Math.floor(days / 365);
   return `${years}y`;
+}
+
+/**
+ * Forward-looking counterpart to timeAgo, for a follow-up's `runAt`. A due
+ * follow-up reads "any moment": the sweep runs on a one-minute cadence, so a
+ * countdown that hit zero would sit at "in 0s" until it fires.
+ */
+function timeUntil(runAtMs: number, nowMs: number): string {
+  const seconds = Math.floor((runAtMs - nowMs) / 1000);
+  if (seconds <= 0) return 'any moment';
+  if (seconds < 60) return `in ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `in ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `in ${days}d`;
 }
 
 /** Group conversations by category for sidebar display. */
@@ -247,6 +264,37 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
       });
     }
   }, [cancelTool]);
+
+  // Per-followupId cancel-in-flight state, mirroring the tool-cancel pair above.
+  const [cancelPendingFollowupIds, setCancelPendingFollowupIds] = useState<Set<string>>(new Set());
+  const cancelFollowup = chat.cancelFollowup;
+  const handleCancelFollowup = useCallback(async (followupId: string) => {
+    setCancelPendingFollowupIds((prev) => {
+      const next = new Set(prev);
+      next.add(followupId);
+      return next;
+    });
+    try {
+      await cancelFollowup(followupId);
+    } finally {
+      setCancelPendingFollowupIds((prev) => {
+        const next = new Set(prev);
+        next.delete(followupId);
+        return next;
+      });
+    }
+  }, [cancelFollowup]);
+
+  // Clock for the chips' relative time, which would otherwise freeze at the render
+  // that created them. Only ticks while a follow-up is actually scheduled.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const hasFollowups = chat.followups.length > 0;
+  useEffect(() => {
+    if (!hasFollowups) return;
+    setNowMs(Date.now());
+    const interval = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, [hasFollowups]);
 
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
@@ -811,6 +859,40 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Scheduled follow-ups on this chat. The hook's subscription is live, so a
+              chip clears itself the moment the sweep fires or a cancel lands — nothing
+              here is optimistic. */}
+          {!showConversationNotFound && chat.followups.length > 0 && (
+            <div className="px-4 pt-3 flex flex-wrap items-center gap-2">
+              {chat.followups.map((followup) => {
+                const pending = cancelPendingFollowupIds.has(followup.id);
+                const when = followup.runAtMs !== null ? timeUntil(followup.runAtMs, nowMs) : null;
+                return (
+                  <span
+                    key={followup.id}
+                    title={followup.note || undefined}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary px-2.5 py-1 text-xs text-muted-foreground"
+                  >
+                    <Clock className="h-3 w-3 flex-shrink-0" />
+                    <span>
+                      follow-up scheduled{when ? ` · ${when}` : ''} ·{' '}
+                      <button
+                        type="button"
+                        onClick={() => { void handleCancelFollowup(followup.id); }}
+                        disabled={pending}
+                        aria-label={followup.note ? `cancel follow-up: ${followup.note}` : 'cancel follow-up'}
+                        className="inline-flex items-center gap-1 align-middle hover:text-foreground transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {pending && <Loader2 className="h-3 w-3 animate-spin" />}
+                        cancel
+                      </button>
+                    </span>
+                  </span>
+                );
+              })}
             </div>
           )}
 

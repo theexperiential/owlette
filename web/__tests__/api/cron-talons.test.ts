@@ -7,6 +7,8 @@ import { NextRequest } from 'next/server';
 const runTalonMock = jest.fn();
 const getSiteTimezoneMock = jest.fn();
 const getTalonMock = jest.fn();
+/** The hoot follow-up pass; its own behaviour is covered by followupSweep.test.ts. */
+const fireDueFollowupsMock = jest.fn();
 
 /**
  * Talon docs keyed `${siteId}/${talonId}`. The claim transaction reads and
@@ -173,6 +175,10 @@ jest.mock('@/lib/talons/store.server', () => ({
   getTalon: (...args: unknown[]) => getTalonMock(...args),
 }));
 
+jest.mock('@/lib/hoot/followupSweep.server', () => ({
+  fireDueFollowups: (...args: unknown[]) => fireDueFollowupsMock(...args),
+}));
+
 import { GET } from '@/app/api/cron/talons/route';
 
 const MIN = 60_000;
@@ -287,6 +293,14 @@ beforeEach(() => {
     });
     talonRunAdd.mockResolvedValue(undefined);
     staleRunUpdate.mockResolvedValue(undefined);
+    fireDueFollowupsMock.mockReset();
+    fireDueFollowupsMock.mockResolvedValue({
+      due: 0,
+      fired: 0,
+      failed: 0,
+      skipped: 0,
+      turnActive: 0,
+    });
 });
 
 afterAll(() => {
@@ -690,5 +704,43 @@ describe('GET /api/cron/talons — delayed event triggers', () => {
 
     expect(status).toBe(200);
     expect(body).toMatchObject({ executed: 1, deferredDue: 0, deferredFired: 0 });
+  });
+});
+
+describe('GET /api/cron/talons — hoot follow-ups', () => {
+  it('runs the follow-up pass inside the sweep budget and reports its counters', async () => {
+    fireDueFollowupsMock.mockResolvedValue({
+      due: 3,
+      fired: 2,
+      failed: 1,
+      skipped: 0,
+      turnActive: 0,
+    });
+
+    const { status, body } = await sweep();
+
+    expect(status).toBe(200);
+    expect(fireDueFollowupsMock).toHaveBeenCalledWith(mockDb, expect.any(Date), expect.any(Number));
+    expect(body).toMatchObject({
+      followupDue: 3,
+      followupFired: 2,
+      followupFailed: 1,
+      followupSkipped: 0,
+      followupTurnActive: 0,
+    });
+  });
+
+  it('keeps dispatching talons when the follow-up pass fails', async () => {
+    // Usually a still-building `cortex-followups` index — a different feature's
+    // problem must never stop a talon firing.
+    fireDueFollowupsMock.mockRejectedValue(new Error('index not ready'));
+    dueRefs = [
+      seedTalon('node-pa', 'talon-1', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) })),
+    ];
+
+    const { status, body } = await sweep();
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ executed: 1, followupDue: 0, followupFired: 0 });
   });
 });

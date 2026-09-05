@@ -107,6 +107,13 @@ export interface StartTurnParams {
   maxToolTier?: ToolTier;
   /** Prior turn's recovery index: `toolCallId → machineId → { commandId }`. */
   priorToolCommands?: Record<string, Record<string, { commandId: string }>> | null;
+  /**
+   * Force the tier-3 in-chat approval gate on for this turn, whatever the site
+   * setting says. Raises the gate, never lowers it. Scheduled follow-ups set
+   * it: nobody is watching the instant one fires, so a tier-3 tool has to wait
+   * for a person rather than auto-executing.
+   */
+  forceTier3Approval?: boolean;
   source?: 'user' | 'followup' | 'talon';
 }
 
@@ -441,7 +448,11 @@ export function startTurn(
 
       const [llmConfig, requireTier3Approval, processes] = await Promise.all([
         resolveLlmConfig(db, params.userId),
-        getHootRequireTier3Approval(db, params.siteId),
+        // A forced gate needs no site read: the setting could only turn it off,
+        // and this flag exists to say it must not.
+        params.forceTier3Approval === true
+          ? Promise.resolve(true)
+          : getHootRequireTier3Approval(db, params.siteId),
         isSiteMode
           ? Promise.resolve<ProcessSummary[]>([])
           : fetchProcessSummaries(db, params.siteId, params.machineId),

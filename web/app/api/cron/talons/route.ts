@@ -9,6 +9,10 @@
  * `nextRunAt` and is claimed next minute. The deferral pass is fault-isolated
  * because its collection-group index may still be building.
  *
+ * Scheduled hoot follow-ups ride this cron too (decision 2026-08-11), as a
+ * third fault-isolated pass — `fireDueFollowups` dispatches without awaiting
+ * the turns, so it costs the schedule pass little of the budget.
+ *
  * Claiming is transactional: overlapping sweeps (slow run, or both LB origins
  * hit) must never fire a talon twice, so the claim re-reads, re-checks and
  * advances `nextRunAt` in one commit. The loser skips silently.
@@ -26,6 +30,10 @@ import { apiError } from '@/lib/apiErrorResponse';
 import { generateCorrelationId } from '@/lib/auditLog.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { timestampToMs } from '@/lib/firestoreTime.server';
+import {
+  fireDueFollowups,
+  type FollowupSweepCounts,
+} from '@/lib/hoot/followupSweep.server';
 import logger from '@/lib/logger';
 import { runTalon, STALE_RUN_MS } from '@/lib/talons/engine.server';
 import { computeNextRunAt } from '@/lib/talons/schedule.server';
@@ -375,6 +383,25 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  // Follow-ups are a different feature sharing this cadence — isolated so a
+  // hoot failure (or a still-building `cortex-followups` index) cannot stop a
+  // talon from firing.
+  let followups: FollowupSweepCounts = {
+    due: 0,
+    fired: 0,
+    failed: 0,
+    skipped: 0,
+    turnActive: 0,
+  };
+  try {
+    followups = await fireDueFollowups(db, now, deadline);
+  } catch (error) {
+    logger.error('Hoot follow-up dispatch failed', {
+      context: 'cron/talons',
+      data: { error: String(error) },
+    });
+  }
+
   try {
     const dueSnapshot = await db
       .collectionGroup('talons')
@@ -453,6 +480,11 @@ export async function GET(request: NextRequest) {
       deferredFired: deferrals.fired,
       deferredMissed: deferrals.missed,
       deferredSkipped: deferrals.skipped,
+      followupDue: followups.due,
+      followupFired: followups.fired,
+      followupFailed: followups.failed,
+      followupSkipped: followups.skipped,
+      followupTurnActive: followups.turnActive,
     });
   } catch (error) {
     return apiError(error, 'cron/talons');
