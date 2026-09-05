@@ -1,5 +1,27 @@
 # Full-Machine Release E2E Gate — Tasks
 
+> **ARCHIVED 2026-09-05 — MERGED into `dev/active/fleet-e2e-vms/`** (Dylan's call). The file
+> below is preserved as a record; nothing here is tracked anymore. Disposition map:
+>
+> - **Wave 0** (auth spike): DONE 2026-07-03. `e2e-machine/wave0/RESULTS.md` and
+>   `e2e-machine/lib/` remain canonical, shared by both gates.
+> - **Wave 1**: code built 2026-07-03. Task 1.1 (golden image) and the four
+>   "*(awaiting first clean-box run)*" items are discharged by fleet Wave 1 (frozen parent
+>   VHDX + Task 1.6 prototype pairing, which corrects the stale pairing oracle on the way
+>   through). Task 1.2's open Sentry tag/filter TODO carried into fleet Task 1.6.
+> - **Wave 1.5**: 1.5.1–1.5.3 covered by fleet Tasks 2.2 + 4.4 (N-1 checkpoint variants,
+>   remote-upgrade leg; model-B `installed-unpaired` checkpoints dissolve 1.5.3's baked-token
+>   sweep exclusion). 1.5.4 + 1.5.5 carried as fleet **Task 6.2**.
+> - **Wave 2** (GUI tier): **RETIRED** — it drove the CustomTkinter GUI deleted in 3.0.0
+>   (OWL-46). Whether a Tauri desktop-app leg replaces it is fleet plan.md **Decision #8**;
+>   `e2e-machine/wave2/` still needs removal or rewrite (tracked in repo-cleanup-followups).
+> - **Wave 3**: carried as fleet **Task 6.3** (optional, Decision #9).
+> - **Wave 4 + 5.3** (CI runner, release-e2e.yml, runner ops): subsumed by fleet Decision #4
+>   — on-demand release gate only, no CI unless Dylan chooses it.
+> - **Wave 5.1**: covered by fleet Task 5.5 (release-gate wiring). **5.2**: carried as fleet
+>   **Task 6.4** (optional, Decision #9).
+> - **Wave 6.1** (reboot-command leg): carried as fleet **Task 6.1**.
+
 Status legend: [ ] not started · [x] done · [~] in progress
 
 ## Wave 0 — Auth spike ✅ DONE 2026-07-03 (10/10, `e2e-machine/wave0/RESULTS.md`)

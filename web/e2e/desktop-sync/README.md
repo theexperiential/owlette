@@ -268,7 +268,7 @@ Error: agent connected but never seeded config/site-A/machines/TEC-A4D —
 
 ---
 
-## Relationship to `dev/active/full-machine-e2e`
+## Relationship to `dev/completed/full-machine-e2e`
 
 That plan is the **release gate**: a dedicated Windows VM, the signed installer
 artifact, silent install → headless pair → drive the GUI → observe on live dev →

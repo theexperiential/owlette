@@ -4,7 +4,7 @@ How to stand up the harness on your spare Windows box, run what exists (Wave 0 +
 and continue building the remaining waves. Written so either you or an AI coding agent on
 that box can follow it step by step.
 
-> **Where things are**: plan/tasks/context = [`dev/active/full-machine-e2e/`](../dev/active/full-machine-e2e/) ·
+> **Where things are**: plan/tasks/context = [`dev/completed/full-machine-e2e/`](../dev/completed/full-machine-e2e/) ·
 > machine prep = [`docs/internal/gui-automation-machine-setup.md`](../docs/internal/gui-automation-machine-setup.md) ·
 > harness code = this directory (`e2e-machine/`).
 

@@ -10,7 +10,7 @@ gate**, complementary to (not a replacement for) the fast emulator-backed web su
   silent-pairing flow was broken for two months (a placeholder `machine_id` claim → rules
   403'd everything) and no emulator/unit test could catch it — only a real agent with a
   real token against real Firestore rules manifests it. That's what this gate runs.
-- **Plan / tasks / context**: [`dev/active/full-machine-e2e/`](../dev/active/full-machine-e2e/)
+- **Plan / tasks / context**: [`dev/completed/full-machine-e2e/`](../dev/completed/full-machine-e2e/)
   (`plan.md`, `tasks.md`, `context.md`).
 - **Machine prep (canonical)**: [`docs/internal/gui-automation-machine-setup.md`](../docs/internal/gui-automation-machine-setup.md),
   with `scripts/bootstrap-gui-automation.ps1` as its executable validator.

@@ -1,7 +1,7 @@
 /**
  * Wave 0 spike — headless agent pairing against LIVE dev, no human, no browser.
  * The assumption the whole full-machine e2e gate rests on
- * (dev/active/full-machine-e2e/plan.md).
+ * (dev/completed/full-machine-e2e/plan.md).
  *
  * Seed a least-privilege site-owner + e2e site -> mint a __session cookie
  * (Identity Toolkit + /api/auth/session) -> generate a pairing phrase

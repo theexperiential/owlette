@@ -100,10 +100,10 @@ Everything in Profile A, plus:
 - [ ] Secrets (dev e2e-superadmin login, Firebase admin creds) in the runner secret store only.
 - [ ] **Network-isolated from anything that can reach prod.** Treat the box as compromised-by-design (autologon + no lock).
 - [ ] **Golden snapshot** taken after all of the above, with no Owlette installed (empty-machine preflight must pass). State reset between runs is snapshot revert — silent uninstall deliberately preserves user data, so uninstall alone never empties the box.
-- [ ] **Second snapshot for the upgrade leg**: version N-1 installed + paired + heartbeating. Document the rotation procedure when re-baselining (and exclude its baked-in refresh token from cloud teardown sweeps — see `dev/active/full-machine-e2e/plan.md`).
+- [ ] **Second snapshot for the upgrade leg**: version N-1 installed + paired + heartbeating. Document the rotation procedure when re-baselining (and exclude its baked-in refresh token from cloud teardown sweeps — see `dev/completed/full-machine-e2e/plan.md`).
 
 ---
 
 ## Maintenance
 
-Owned by the full-machine-e2e initiative (`dev/active/full-machine-e2e/`) until the harness ships, then by the harness; the location stays. If either rig needs something machine-level that isn't here, **add it here** — never to the capture-native README or the harness README.
+Owned by the fleet-e2e-vms initiative (`dev/active/fleet-e2e-vms/`; it absorbed full-machine-e2e on 2026-09-05 — archive at `dev/completed/full-machine-e2e/`) until the harness ships, then by the harness; the location stays. If either rig needs something machine-level that isn't here, **add it here** — never to the capture-native README or the harness README.

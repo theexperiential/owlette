@@ -906,7 +906,7 @@ Write-Host '  2. RDP: never just disconnect (locks the desktop, kills UIAutomati
 Write-Host '  3. Unblock-File any downloaded installer EXE before launching it (Mark-of-the-Web / SmartScreen).'
 if ($Rig -eq 'E2eRunner') {
     Write-Host '  4. Autologon via Sysinternals Autologon.exe (LSA-stored password; never plaintext registry, never in the image docs).'
-    Write-Host '  5. Golden snapshots are taken host-side (empty baseline + paired N-1 for the upgrade leg) - see dev/active/full-machine-e2e/plan.md.'
+    Write-Host '  5. Golden snapshots are taken host-side (empty baseline + paired N-1 for the upgrade leg) - see dev/completed/full-machine-e2e/plan.md.'
     Write-Host '  6. GitHub runner registration (token) is Wave 4; install it to run interactively at logon, never as a service.'
     Write-Host '  7. Keep the VM network-isolated from anything that can reach prod; secrets live in the runner secret store.'
 }

@@ -1,5 +1,5 @@
 # Full-Machine Release E2E Gate — Plan
-**Created**: 2026-06-10 | **Status**: Wave 0 done (auth spike GREEN); Wave 1 next | **Last revised**: 2026-07-03
+**Created**: 2026-06-10 | **Status**: ARCHIVED 2026-09-05 — MERGED into `dev/active/fleet-e2e-vms/` (disposition map in tasks.md) | **Last revised**: 2026-09-05
 
 > **Harness lives at [`e2e-machine/`](../../../e2e-machine/)** (top-level, so the agent build never sweeps it). Wave 0 spike + results: `e2e-machine/wave0/`.
 
