@@ -319,6 +319,244 @@ def _inherit_identity_extra(pid):
     }
 
 
+def _drop_identity_row(pid):
+    """Remove a pid row whose record no longer describes any live process.
+
+    Called by the identity gate when a recorded (pid, create_time) fails
+    verification: the recorded process is gone and the pid may have been
+    recycled, so the stale row must never survive to feed a later kill.
+    Read-modify-write matches update_process_status_in_json's own pattern.
+    """
+    try:
+        states = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+        if isinstance(states, dict) and str(pid) in states:
+            del states[str(pid)]
+            shared_utils.write_json_to_file(states, shared_utils.RESULT_FILE_PATH)
+    except Exception as e:
+        logging.warning(f"Could not remove stale identity row for PID {pid}: {e}")
+
+
+def _identity_gate(pid, process_list_id):
+    """The kill gate (D1): prove `pid` is the process recorded for this entry.
+
+    Every destructive path calls this before a terminate. The entry's
+    app_states row for the pid must carry the identity record written at bind
+    time (launch or inherit), and identity_matches must prove the live
+    process still IS that record. Returns (True, None) when the terminate may
+    proceed, else (False, why) -- and the caller must not touch the pid.
+
+    On a mismatch the stale row is also removed (see _drop_identity_row). On
+    a missing record the row, if any, is left alone: it is not evidence, but
+    it is also not ours to destroy. Module-level rather than a method for the
+    same reason as _inherit_identity_extra -- descriptor-bound service
+    doubles in the test suites reach it without binding every helper.
+    """
+    states = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+    row = states.get(str(pid)) if isinstance(states, dict) else None
+    if not isinstance(row, dict) or 'create_time' not in row:
+        return False, 'no identity record - not managed by owlette'
+    if process_list_id and row.get('id') != process_list_id:
+        # The pid is recorded, but for another entry: killing it under this
+        # entry's command would cross-target a different managed process.
+        return False, (f"identity record belongs to entry '{row.get('id')}' "
+                       f"- not managed under this entry")
+    record = {'pid': pid, 'create_time': row.get('create_time'),
+              'exe': row.get('exe')}
+    if not shared_utils.identity_matches(record, pid):
+        _drop_identity_row(pid)
+        return False, ('recorded identity does not match the live process '
+                       '(recorded process is gone, pid recycled or dead) - '
+                       'stale row removed')
+    return True, None
+
+
+def _resolve_recorded_pid(process_list_id):
+    """Resolve an entry to a live pid through its durable identity record.
+
+    This is the point of recording identity at bind time: a kill must still
+    find its target after a service restart empties last_started -- the
+    recovered row IS the tracking. Scans app_states rows bound to the entry,
+    keeps only rows whose record identity_matches the live process, and
+    returns the newest by launch timestamp. With duplicates-before-
+    convergence every verified row is provably owlette's own instance of this
+    entry, so preferring the newest is a choice between our own processes,
+    never a guess about a stranger. Returns None when no recorded row
+    survives verification.
+    """
+    states = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+    if not isinstance(states, dict):
+        return None
+    verified = []
+    for pid_str, row in states.items():
+        if not isinstance(row, dict) or row.get('id') != process_list_id:
+            continue
+        if 'create_time' not in row:
+            continue
+        try:
+            pid = int(pid_str)
+        except (TypeError, ValueError):
+            continue
+        record = {'pid': pid, 'create_time': row.get('create_time'),
+                  'exe': row.get('exe')}
+        if shared_utils.identity_matches(record, pid):
+            verified.append((row.get('timestamp') or 0, pid))
+    if not verified:
+        return None
+    verified.sort()
+    return verified[-1][1]
+
+
+def _discovered_pid_identity_ok(pid, process):
+    """Gate a strict-discovery hit on a command kill path.
+
+    A discovered pid has no durable record BY DEFINITION -- a recorded pid
+    would have resolved through _resolve_recorded_pid before discovery ran.
+    Strict-unique-match is the same evidence bar an inherit accepts
+    (_adopt_running_instance), so the kill applies that bar AT THIS MOMENT:
+    read the live identity exactly like _inherit_identity_extra does, and
+    refuse if it cannot be read or the live image is not the one the entry
+    configures. No record is written -- a record exists to re-verify a
+    process LATER, and a pid being terminated has no later; writing one
+    would only leave a stale row behind.
+
+    The image check compares basenames, matching the discovery ladder's own
+    tier-1 semantics (a file-association launch of a different build of the
+    same exe still resolves); a .bat/.cmd entry's discovered pid is its
+    cmd.exe wrapper, so cmd.exe IS the expected image there.
+    """
+    identity = shared_utils.read_process_identity(pid)
+    if identity is None:
+        return False
+    exe_path = (process.get('exe_path') or '').replace('/', '\\').lower()
+    live_basename = os.path.basename(identity['exe'])
+    if exe_path.endswith(('.bat', '.cmd')):
+        return live_basename == 'cmd.exe'
+    return bool(exe_path) and live_basename == os.path.basename(exe_path)
+
+
+def _resolve_kill_target(service, process):
+    """Resolve and identity-gate the pid a kill/stop command acts on.
+
+    Returns (pid, note, refusal):
+      pid     -- a live, identity-verified pid to terminate, or None
+      note    -- provenance suffix for the success message ('' for tracked)
+      refusal -- reason string (naming the entry, the pid and why) when the
+                 command must fail; None with pid=None simply means the
+                 process is not running.
+
+    Resolution order mirrors the strength of the evidence:
+      1. the tracked pid (last_started), proven against its recorded row;
+      2. the durable identity record -- the whole point of the record: a
+         kill still finds its target after a restart emptied tracking;
+      3. strict discovery, gated on identity read at this moment (the same
+         evidence bar an inherit applies) -- _discovered_pid_identity_ok.
+    A tracked pid that fails its gate refuses OUTRIGHT rather than falling
+    through: tracking that lies is a state problem the refusal surfaces, and
+    silently retargeting a kill would hide it. The refusal clears the
+    entry's tracking so the monitor loop re-establishes reality (D3).
+    """
+    process_list_id = process['id']
+    process_name = process.get('name') or process_list_id
+    last_pid = service.last_started.get(process_list_id, {}).get('pid')
+    if last_pid and Util.is_pid_running(last_pid):
+        allowed, why = _identity_gate(last_pid, process_list_id)
+        if not allowed:
+            if service.last_started.get(process_list_id, {}).get('pid') == last_pid:
+                service.last_started.pop(process_list_id, None)
+            return None, '', (f"refusing to kill '{process_name}' "
+                              f"(PID {last_pid}): {why}")
+        return last_pid, '', None
+    recorded_pid = _resolve_recorded_pid(process_list_id)
+    if recorded_pid:
+        return recorded_pid, ' (PID resolved from durable identity record)', None
+    exe_path = process.get('exe_path', '')
+    fallback_pid = (
+        service._find_running_process_by_exe(
+            exe_path, process.get('file_path', ''), strict=True)
+        if exe_path else None)
+    if fallback_pid:
+        if not _discovered_pid_identity_ok(fallback_pid, process):
+            return None, '', (
+                f"refusing to kill '{process_name}' (PID {fallback_pid}): "
+                f"discovered pid's identity is unreadable or its image is "
+                f"not the entry's executable - not managed by owlette")
+        return fallback_pid, ' (PID discovered by exe/file_path lookup)', None
+    return None, '', None
+
+
+def _schedule_stop_allowed(pid, process):
+    """Gate the schedule-window stop. Returns (True, None) or (False, why).
+
+    A recorded row takes the uniform gate (mismatch refuses and cleans). A
+    tracked pid WITHOUT a record cannot arise from any production bind --
+    launch, inherit and recovery all write the record before tracking -- so
+    it is legacy in-memory state from before this release. For that one case
+    the best evidence available is read at this moment: the live image must
+    equal the entry's configured exe_path exactly (normalised); anything
+    less refuses. That keeps a pre-3.3.0 mid-session stop working across the
+    upgrade while still refusing a recycled pid wearing a different image.
+    (A recordless .bat wrapper can never pass -- cmd.exe never equals the
+    script path -- which is deliberate: such a wrapper is unattributable.)
+    """
+    states = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+    row = states.get(str(pid)) if isinstance(states, dict) else None
+    if isinstance(row, dict) and 'create_time' in row:
+        return _identity_gate(pid, process.get('id'))
+    identity = shared_utils.read_process_identity(pid)
+    if identity is None:
+        return False, 'identity unreadable - refusing to stop an unverifiable pid'
+    expected = (process.get('exe_path') or '').replace('/', '\\').lower()
+    if not expected or identity['exe'] != expected:
+        return False, (f"recordless tracked pid runs '{identity['exe']}', not "
+                       f"the entry's configured executable - not managed by owlette")
+    logging.warning(
+        f"Schedule stop of PID {pid} proceeding on live image evidence only "
+        f"(recordless pre-3.3.0 tracking): exe matches '{identity['exe']}'")
+    return True, None
+
+
+def _stop_process_outside_window(service, process, pid):
+    """Stop a scheduled entry whose window closed -- gated, and through
+    graceful_terminate, never a raw psutil terminate.
+
+    graceful_terminate (WM_CLOSE first; exe_path so a .bat wrapper's payload
+    is reaped) replaces the old bare terminate, which skipped both the polite
+    close and the wrapper-child reaping. A refusal clears the entry's
+    tracking: the tracked pid is provably not (or no longer provably) the
+    managed process, repeating the same warning every loop tick helps
+    nobody, and with the window closed the loop cannot relaunch. Module-level
+    for the same descriptor-binding reason as _inherit_identity_extra.
+    """
+    process_id = process.get('id')
+    process_name = process.get('name')
+    if not Util.is_pid_running(pid):
+        # Already gone: same outcome as the old NoSuchProcess arm -- leave
+        # tracking to the loop's normal bookkeeping.
+        return
+    allowed, why = _schedule_stop_allowed(pid, process)
+    if not allowed:
+        logging.warning(
+            f"Refusing schedule-window stop of '{process_name}' (PID {pid}): {why}")
+        service.last_started.pop(process_id, None)
+        return
+    try:
+        shared_utils.graceful_terminate(pid, exe_path=process.get('exe_path'))
+        logging.info(f"Stopped '{process_name}' (PID {pid}) - outside schedule window")
+        if service.firebase_client and service.firebase_client.is_connected():
+            service.firebase_client.log_event(
+                action='process_killed',
+                level='info',
+                process_name=process_name,
+                details=f'Stopped by schedule (outside active window) - PID {pid}'
+            )
+        service.last_started.pop(process_id, None)
+    except psutil.AccessDenied:
+        # Old behaviour: keep tracking and retry on a later tick.
+        logging.warning(
+            f"Access denied stopping '{process_name}' (PID {pid}) outside "
+            f"schedule window")
+
+
 class Util:
 
     @staticmethod
@@ -1740,7 +1978,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
             return False
 
     def terminate_cortex(self):
-        """Terminate the Cortex process if running."""
+        """Terminate the Cortex process if running.
+
+        Not identity-gated on purpose: cortex_pid is the service's OWN helper
+        child, bound in-memory at spawn (_try_launch_cortex) and never
+        persisted, so there is no recorded row to verify against and no
+        restart gap for the pid to be recycled across -- the provenance IS
+        the launch.
+        """
         if self.cortex_pid:
             try:
                 psutil.Process(self.cortex_pid).terminate()
@@ -1852,52 +2097,63 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         try:
             if command_type == 'kill_process':
-                discovered = False
-                if not (last_pid and Util.is_pid_running(last_pid)):
-                    # Untracked-but-alive processes have no PID in last_started, so
-                    # fall back to strict exe/file_path discovery — never a bare
-                    # image-name match.
-                    exe_path = target.get('exe_path', '')
-                    file_path = target.get('file_path', '')
-                    fallback_pid = (
-                        self._find_running_process_by_exe(exe_path, file_path, strict=True)
-                        if exe_path else None
-                    )
-                    if fallback_pid:
-                        last_pid = fallback_pid
-                        discovered = True
-                if last_pid and Util.is_pid_running(last_pid):
+                # The identity gate (D1) lives inside the resolver: tracked
+                # pids are proven against their recorded row, the durable
+                # record substitutes for tracking after a restart, and a
+                # strict-discovery hit is only killable on identity read at
+                # this moment. A refusal names the entry, the pid and why.
+                target_pid, note, refusal = _resolve_kill_target(self, target)
+                if refusal:
+                    return {'error': refusal}
+                if target_pid:
                     shared_utils.graceful_terminate(
-                        last_pid, exe_path=target.get('exe_path'))
+                        target_pid, exe_path=target.get('exe_path'))
                     shared_utils.update_process_status_in_json(
-                        last_pid, 'KILLED', self.firebase_client, process_id=process_list_id)
+                        target_pid, 'KILLED', self.firebase_client, process_id=process_list_id)
                     # Mark as killed (not deleted) so the main loop doesn't treat
                     # an empty last_started as "untracked -> needs launch".
                     self.last_started[process_list_id] = {
                         'killed': True, 'time': datetime.datetime.now()}
-                    note = ' (PID discovered by exe/file_path lookup)' if discovered else ''
                     return {'status': 'completed',
-                            'result': f'Process {process_name} terminated (PID {last_pid}){note}'}
+                            'result': f'Process {process_name} terminated (PID {target_pid}){note}'}
                 return {'status': 'completed',
                         'result': f'Process {process_name} was not running'}
             else:
                 # restart_process (also used for start): relaunch if running, else launch.
-                discovered = False
+                note = ''
                 if not (last_pid and Util.is_pid_running(last_pid)):
                     # As in kill_process: an untracked-but-live instance would be
                     # duplicated. This runs unattended from hoot self-healing, so
-                    # nobody would catch the second copy.
-                    fallback_pid = (
-                        self._find_running_process_by_exe(
-                            target.get('exe_path', ''), target.get('file_path', ''), strict=True)
-                        if target.get('exe_path') else None
-                    )
-                    if fallback_pid:
-                        last_pid = fallback_pid
-                        discovered = True
+                    # nobody would catch the second copy. The durable record is
+                    # consulted first; a discovery hit is INHERITED (recorded at
+                    # bind time, _adopt_running_instance) rather than merely
+                    # read, because the pid must survive the kill-and-relaunch
+                    # gate a moment later -- restart, unlike kill, gives the
+                    # process a future.
+                    recorded_pid = _resolve_recorded_pid(process_list_id)
+                    if recorded_pid:
+                        # Re-track what the record proves is ours so the
+                        # relaunch helper sees consistent state.
+                        self.last_started[process_list_id] = {
+                            'time': datetime.datetime.now(), 'pid': recorded_pid}
+                        last_pid = recorded_pid
+                        note = ' (PID resolved from durable identity record)'
+                    elif target.get('exe_path'):
+                        adopted_pid = self._adopt_running_instance(target)
+                        if adopted_pid:
+                            last_pid = adopted_pid
+                            note = ' (PID discovered by exe/file_path lookup)'
                 if last_pid and Util.is_pid_running(last_pid):
+                    # Same gate as the dashboard restart: refuse HERE so the
+                    # caller gets the reason instead of a silent no-op from
+                    # the relaunch helper's own gate.
+                    allowed, why = _identity_gate(last_pid, process_list_id)
+                    if not allowed:
+                        if self.last_started.get(process_list_id, {}).get('pid') == last_pid:
+                            self.last_started.pop(process_list_id, None)
+                        return {'error': (f"refusing to restart '{process_name}' "
+                                          f"(PID {last_pid}): {why}")}
                     new_pid = self.kill_and_relaunch_process(last_pid, target)
-                    note = ' (PID discovered by exe/file_path lookup)' if discovered else ''
                     return {'status': 'completed',
                             'result': f'Process {process_name} restarted (new PID {new_pid}){note}'}
                 new_pid = self.handle_process_launch(target)
@@ -2791,6 +3047,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     def _kill_and_relaunch_locked(self, pid, process):
         process_name = Util.get_process_name(process)
+        # The identity gate (D1), before anything else -- including the
+        # relaunch-attempt counter, because a refused kill is not an attempt.
+        # Mismatch or no record: do NOT kill; clear this entry's tracking and
+        # let the monitor loop re-establish reality (a fresh launch under D3;
+        # a recycled row was already removed by the gate itself).
+        allowed, why = _identity_gate(pid, process.get('id', ''))
+        if not allowed:
+            logging.warning(
+                f"Refusing to kill-and-relaunch '{process_name}' (PID {pid}): {why}")
+            info = self.last_started.get(process.get('id', ''), {})
+            if isinstance(info, dict) and info.get('pid') == pid:
+                self.last_started.pop(process.get('id', ''), None)
+            return None
         if not self.reached_max_relaunch_attempts(process):
             try:
                 # Mark as KILLED before terminating so crash detection skips the alert
@@ -3712,12 +3981,23 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         pid = pid_info.get('pid')
 
                         if pid and Util.is_pid_running(pid):
-                            try:
-                                shared_utils.graceful_terminate(pid)
-                                shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client, process_id=removed_id)
-                                logging.info(f"[OK] Terminated removed process: {removed_proc.get('name')} (PID {pid})")
-                            except Exception as e:
-                                logging.error(f"Failed to terminate removed process PID {pid}: {e}")
+                            # The identity gate (D1): a removed entry's pid is
+                            # only terminated if it is still provably the
+                            # recorded process. exe_path rides along so a
+                            # .bat wrapper's payload is reaped with it.
+                            allowed, why = _identity_gate(pid, removed_id)
+                            if not allowed:
+                                logging.warning(
+                                    f"Refusing to terminate removed process "
+                                    f"'{removed_proc.get('name')}' (PID {pid}): {why}")
+                            else:
+                                try:
+                                    shared_utils.graceful_terminate(
+                                        pid, exe_path=removed_proc.get('exe_path'))
+                                    shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client, process_id=removed_id)
+                                    logging.info(f"[OK] Terminated removed process: {removed_proc.get('name')} (PID {pid})")
+                                except Exception as e:
+                                    logging.error(f"Failed to terminate removed process PID {pid}: {e}")
 
                         del self.last_started[removed_id]
                     self._last_seen_launch_modes.pop(removed_id, None)
@@ -3785,10 +4065,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self._local_config_mtime = applied_mtime
 
     def _terminate_processes_for_install(self, close_processes, suppress_projects, deployment_id, cmd_id):
-        """Gracefully terminate processes and set install locks before a deployment.
+        """Gracefully terminate MANAGED processes and set install locks before
+        a deployment.
+
+        D4: close_processes names resolve against config entries whose exe
+        basename matches, then against those entries' RECORDED pids (managed
+        or inherited), each identity-verified before the terminate. The old
+        machine-wide psutil name scan is gone -- it killed every process on
+        the box wearing the image name, managed or not. A name matching no
+        managed entry is logged and skipped: owlette has no business
+        terminating processes it does not manage, whatever their image name.
 
         Args:
-            close_processes: List of exe names to kill (e.g., ["TouchDesigner.exe"])
+            close_processes: List of exe names to close (e.g., ["TouchDesigner.exe"])
             suppress_projects: List of owlette project config IDs to lock from relaunching
             deployment_id: Deployment ID for logging and lock tracking
             cmd_id: Command ID for progress reporting
@@ -3803,6 +4092,25 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         config = shared_utils.read_config()
         config_processes = config.get('processes', []) if config else []
+        terminated_any = False
+
+        def _gated_terminate(pid, entry_id, entry_name, exe_path):
+            """Identity-gate then terminate one managed pid; True if killed."""
+            allowed, why = _identity_gate(pid, entry_id)
+            if not allowed:
+                logging.warning(
+                    f"Refusing deployment terminate of '{entry_name}' "
+                    f"(PID {pid}): {why}")
+                return False
+            logging.info(f"Terminating managed process '{entry_name}' (PID {pid}) for deployment")
+            try:
+                # exe_path so a .bat wrapper's payload is reaped with it.
+                shared_utils.graceful_terminate(pid, exe_path=exe_path)
+                shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client, process_id=entry_id)
+                return True
+            except Exception as e:
+                logging.warning(f"Failed to terminate managed process PID {pid}: {e}")
+                return False
 
         for project_id in suppress_projects:
             self.install_locks[project_id] = deployment_id
@@ -3812,38 +4120,62 @@ class OwletteService(win32serviceutil.ServiceFramework):
             last_info = self.last_started.get(project_id, {})
             pid = last_info.get('pid')
             if pid:
-                process_name = next((p.get('name', '?') for p in config_processes if p.get('id') == project_id), '?')
-                logging.info(f"Terminating managed process '{process_name}' (PID {pid}) for deployment")
-                try:
-                    shared_utils.graceful_terminate(pid)
-                    shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client, process_id=project_id)
-                except Exception as e:
-                    logging.warning(f"Failed to terminate managed process PID {pid}: {e}")
-                # Clear tracking so handle_process doesn't see a stale PID after lock release
-                if project_id in self.last_started:
-                    del self.last_started[project_id]
+                entry = next((p for p in config_processes if p.get('id') == project_id), None)
+                if _gated_terminate(pid, project_id, (entry or {}).get('name', '?'),
+                                    (entry or {}).get('exe_path')):
+                    terminated_any = True
+                # Clear tracking so handle_process doesn't see a stale PID after
+                # lock release -- also on a refusal, where tracking was lying.
+                self.last_started.pop(project_id, None)
 
         for exe_name in close_processes:
-            try:
-                for proc in psutil.process_iter(['name', 'pid']):
-                    try:
-                        if proc.info['name'] and proc.info['name'].lower() == exe_name.lower():
-                            logging.info(f"Terminating process '{exe_name}' (PID {proc.info['pid']}) for deployment")
-                            shared_utils.graceful_terminate(proc.info['pid'])
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-            except Exception as e:
-                logging.warning(f"Error scanning for process '{exe_name}': {e}")
+            exe_name_lower = (exe_name or '').lower()
+            matching_entries = [
+                p for p in config_processes
+                if os.path.basename(
+                    (p.get('exe_path') or '').replace('/', '\\').lower()) == exe_name_lower
+            ]
+            if not matching_entries:
+                logging.info(
+                    f"close_processes name '{exe_name}' matches no managed config "
+                    f"entry - skipping (owlette only terminates processes it manages)")
+                continue
+            for entry in matching_entries:
+                entry_id = entry.get('id')
+                # Recorded pids only: the tracked pid plus whatever the durable
+                # identity record proves is still ours (they usually coincide;
+                # after a restart only the record survives).
+                candidate_pids = []
+                tracked_pid = self.last_started.get(entry_id, {}).get('pid')
+                if tracked_pid:
+                    candidate_pids.append(tracked_pid)
+                recorded_pid = _resolve_recorded_pid(entry_id)
+                if recorded_pid and recorded_pid not in candidate_pids:
+                    candidate_pids.append(recorded_pid)
+                if not candidate_pids:
+                    logging.info(
+                        f"No recorded instance of managed entry '{entry.get('name')}' "
+                        f"for close_processes name '{exe_name}' - nothing to terminate")
+                    continue
+                for pid in candidate_pids:
+                    if _gated_terminate(pid, entry_id, entry.get('name', '?'),
+                                        entry.get('exe_path')):
+                        terminated_any = True
+                        # Killing a tracked pid without clearing tracking would
+                        # read as a crash on the next monitor tick.
+                        if self.last_started.get(entry_id, {}).get('pid') == pid:
+                            self.last_started.pop(entry_id, None)
 
-        # Wait for file handles to release after process termination
-        if close_processes or any(self.last_started.get(pid) for pid in suppress_projects):
+        if terminated_any:
+            # Wait for file handles to release after process termination
             time.sleep(2)
 
         killed_summary = []
         if suppress_projects:
             killed_summary.append(f"{len(suppress_projects)} managed project(s) locked")
         if close_processes:
-            killed_summary.append(f"scanned for {', '.join(close_processes)}")
+            killed_summary.append(
+                f"resolved {', '.join(close_processes)} against managed entries")
         logging.info(f"Pre-install process termination complete: {'; '.join(killed_summary)}")
 
         return locked_project_ids
@@ -3937,6 +4269,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 )
                             return f"Process {process_name} started with PID {new_pid}"
                         if last_pid and Util.is_pid_running(last_pid):
+                            # The identity gate (D1): the tracked pid must
+                            # still be the recorded process before it is
+                            # terminated for the relaunch.
+                            # _kill_and_relaunch_locked re-checks, but refusing
+                            # HERE gives the dashboard its Error: string (the
+                            # prefix it parses) with the entry, pid and reason.
+                            allowed, why = _identity_gate(last_pid, process_list_id)
+                            if not allowed:
+                                if self.last_started.get(process_list_id, {}).get('pid') == last_pid:
+                                    self.last_started.pop(process_list_id, None)
+                                return (f"Error: refusing to restart '{process_name}' "
+                                        f"(PID {last_pid}): {why}")
                             new_pid = self.kill_and_relaunch_process(last_pid, process)
                             if self.firebase_client and self.firebase_client.is_connected():
                                 self.firebase_client.log_event(
@@ -3970,34 +4314,27 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     ):
                         process_name = process.get('name') or process_name
                         process_list_id = process['id']
-                        last_info = self.last_started.get(process_list_id, {})
-                        last_pid = last_info.get('pid')
-                        discovered = False
-                        if not (last_pid and Util.is_pid_running(last_pid)):
-                            # Untracked-but-alive processes have no PID in
-                            # last_started, so fall back to strict exe/file_path
-                            # discovery — never a bare image-name match.
-                            exe_path = process.get('exe_path', '')
-                            file_path = process.get('file_path', '')
-                            fallback_pid = (
-                                self._find_running_process_by_exe(exe_path, file_path, strict=True)
-                                if exe_path else None
-                            )
-                            if fallback_pid:
-                                last_pid = fallback_pid
-                                discovered = True
-                        if last_pid and Util.is_pid_running(last_pid):
+                        # The identity gate (D1) lives inside the resolver:
+                        # the tracked pid is proven against its recorded row,
+                        # the durable record substitutes for tracking after a
+                        # service restart, and a strict-discovery hit (never a
+                        # bare image-name match) is only killable on identity
+                        # read at this moment. Refusals come back as Error:
+                        # strings -- the prefix the dashboard parses.
+                        target_pid, note, refusal = _resolve_kill_target(self, process)
+                        if refusal:
+                            return f"Error: {refusal}"
+                        if target_pid:
                             shared_utils.graceful_terminate(
-                                last_pid, exe_path=process.get('exe_path'))
+                                target_pid, exe_path=process.get('exe_path'))
                             status = 'STOPPED' if cmd_type == 'stop_process' else 'KILLED'
                             action = 'process_stopped' if cmd_type == 'stop_process' else 'process_killed'
-                            discovered_note = ' (PID discovered by exe/file_path lookup)' if discovered else ''
                             details = (
-                                f'Manual stop via dashboard - PID: {last_pid}{discovered_note}'
+                                f'Manual stop via dashboard - PID: {target_pid}{note}'
                                 if cmd_type == 'stop_process'
-                                else f'Manual kill via dashboard - PID: {last_pid}{discovered_note}'
+                                else f'Manual kill via dashboard - PID: {target_pid}{note}'
                             )
-                            shared_utils.update_process_status_in_json(last_pid, status, self.firebase_client, process_id=process_list_id)
+                            shared_utils.update_process_status_in_json(target_pid, status, self.firebase_client, process_id=process_list_id)
                             # Killed, NOT deleted: an empty last_started reads as
                             # "untracked, needs launch" if the mode=off config
                             # hasn't synced to disk yet.
@@ -4009,7 +4346,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                     process_name=process_name,
                                     details=details
                                 )
-                            return f"Process {process_name} (PID {last_pid}) terminated"
+                            return f"Process {process_name} (PID {target_pid}) terminated"
                         else:
                             return f"Process {process_name} is not running"
                 target = process_id or process_name
@@ -4535,6 +4872,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         stdout, stderr = process.communicate(timeout=timeout_seconds)
                         exit_code = process.returncode
                     except subprocess.TimeoutExpired:
+                        # Not identity-gated: this Popen handle is the
+                        # uninstaller the service itself just spawned -- the
+                        # handle, not a recyclable pid number, names the
+                        # process, so the provenance is the spawn.
                         process.kill()
                         if uninstall_process_name in self.active_installations:
                             del self.active_installations[uninstall_process_name]
@@ -7360,22 +7701,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 last_info = self.last_started.get(process_id, {})
                                 last_pid = last_info.get('pid')
                                 if last_pid and not last_info.get('failed'):
-                                    try:
-                                        p = psutil.Process(last_pid)
-                                        if p.is_running():
-                                            p.terminate()
-                                            logging.info(f"Stopped '{process.get('name')}' (PID {last_pid}) - outside schedule window")
-                                            if self.firebase_client and self.firebase_client.is_connected():
-                                                self.firebase_client.log_event(
-                                                    action='process_killed',
-                                                    level='info',
-                                                    process_name=process.get('name'),
-                                                    details=f'Stopped by schedule (outside active window) - PID {last_pid}'
-                                                )
-                                            if process_id in self.last_started:
-                                                del self.last_started[process_id]
-                                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                                        pass
+                                    # Identity-gated, and through
+                                    # graceful_terminate with exe_path --
+                                    # never a raw psutil terminate. See
+                                    # _stop_process_outside_window.
+                                    _stop_process_outside_window(self, process, last_pid)
                     else:
                         # Off: not watched, but an operator restart still means
                         # restart. Nothing else here touches an off process.

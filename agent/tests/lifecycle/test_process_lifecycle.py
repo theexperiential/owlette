@@ -393,12 +393,10 @@ def test_contract_b_restart_readopts_own_child_and_refuses_squatter(
     assert is_alive(squatter_pid, squatter_ct)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    'Wave 5: a kill aimed at an entry must resolve the recorded identity '
-    'and terminate exactly that process. Today, with the in-memory tracking '
-    'gone (service restart) and several same-image instances running, '
-    'strict discovery refuses the ambiguity and the kill terminates '
-    'NOTHING - the durable identity record does not exist yet.'))
+# Flipped green in Wave 5: the kill command resolves its target through the
+# durable identity record when tracking is empty (_resolve_kill_target ->
+# _resolve_recorded_pid) - the recorded row IS the tracking after a service
+# restart - and terminates only the pid the record proves is owlette's own.
 def test_contract_c_kill_terminates_only_recorded_pid_among_decoys(
         service_factory, spawn_decoy, decoy_env):
     """(c) Kill on the entry terminates ONLY the recorded pid while
@@ -434,11 +432,11 @@ def test_contract_c_kill_terminates_only_recorded_pid_among_decoys(
             'kill aimed at one entry terminated an unmanaged decoy'
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    'Wave 5: deployment close_processes must resolve against '
-    'managed/inherited processes only. Today '
-    '_terminate_processes_for_install runs a machine-wide psutil name scan '
-    'and kills EVERY process whose image matches - unmanaged decoys die.'))
+# Flipped green in Wave 5 (D4): the machine-wide psutil name scan is deleted.
+# close_processes names now resolve to config entries by exe basename, then to
+# those entries' RECORDED pids only, each identity-verified before an
+# exe_path-carrying graceful_terminate - unmanaged same-image processes are
+# structurally unreachable.
 def test_contract_d_deployment_close_spares_unmanaged_decoys(
         service_factory, spawn_decoy, decoy_env):
     """(d) close_processes=[decoy image]: managed instance dies, unmanaged
@@ -469,11 +467,10 @@ def test_contract_d_deployment_close_spares_unmanaged_decoys(
             'deployment close killed an unmanaged process by bare image name'
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    'Wave 5: destructive paths must verify (pid, create_time) before '
-    'acting. Today the dashboard kill terminates whatever process currently '
-    'owns the recorded pid - here a decoy that got the pid after recycling '
-    '- because no identity is ever re-verified.'))
+# Flipped green in Wave 5: every destructive path re-verifies the recorded
+# (pid, create_time) via _identity_gate before acting. A recycled pid fails
+# identity_matches, the kill is refused with an Error: string, the stale row
+# is removed, and the squatting process is never touched.
 def test_contract_e_pid_reuse_mismatch_refuses_kill(
         service_factory, spawn_decoy, decoy_env):
     """(e) A recorded (pid, create_time) whose pid now belongs to a

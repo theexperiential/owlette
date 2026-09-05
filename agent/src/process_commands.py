@@ -16,6 +16,11 @@ Design notes:
   logical operation and dashboards render it atomically.
 - handle_process_launch paces relaunches off `self.last_started`; an operator
   restart pops the entry and uses `_skip_launch_delay` so it's immediate.
+- Termination is identity-gated (D1 managed-or-inherited): a pid must be
+  proven against its durable app_states.json record -- or, for record-less
+  off-mode processes, an unambiguous strict discovery match with a readable
+  live identity -- before graceful_terminate. Refusals return 'Error:'
+  strings; the command route treats that prefix as failed.
 """
 
 from __future__ import annotations
@@ -33,6 +38,15 @@ logger = logging.getLogger(__name__)
 # Matches shared_utils.graceful_terminate(timeout=5), so an omitted
 # `timeout_seconds` behaves like stop_process followed by start_process.
 DEFAULT_RESTART_TIMEOUT_SECONDS = 5
+
+
+class _IdentityRefusedError(Exception):
+    """A terminate was refused because the identity gate failed.
+
+    The message is the operator-facing reason (entry, pid, why);
+    _handle_restart_process prefixes it with 'Error:' -- the contract that
+    marks the command failed instead of completed.
+    """
 
 
 def register_handlers(router: CommandRouter) -> None:
@@ -62,10 +76,98 @@ def _find_process(cmd_data: dict) -> tuple[Optional[dict], Optional[str]]:
     return None, target
 
 
-def _stop_if_running(service: Any, process: dict, timeout_seconds: int) -> Optional[int]:
-    """Gracefully terminate the tracked PID if it's alive.
+def _drop_state_row(pid: int) -> None:
+    """Remove a pid row from app_states.json.
 
-    Returns the terminated pid, or None if nothing was running.
+    Called only when the gate has proven the row stale (pid recycled): left in
+    place, the record could later resolve into a kill of the stranger now
+    wearing the pid. Fresh read-modify-write -- the same pattern as
+    update_process_status_in_json -- keeps the window against the service's
+    concurrent writers narrow.
+    """
+    states = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+    if isinstance(states, dict) and states.pop(str(pid), None) is not None:
+        shared_utils.write_json_to_file(states, shared_utils.RESULT_FILE_PATH)
+
+
+def _verify_recorded_identity(
+    service: Any,
+    process_list_id: str,
+    process_name: str,
+    pid: int,
+    require_record: bool,
+) -> None:
+    """The identity gate (D1) for one candidate pid; raises on refusal.
+
+    Loads the pid's app_states.json row and returns only when the pid is
+    proven safe to terminate. require_record=True is the tracked-pid rule (no
+    durable proof, no kill). require_record=False is the strict-discovery
+    exception: off-mode processes are never adopted so they cannot carry a
+    record, and an unambiguous strict match plus a readable live identity is
+    the sanctioned inherit-grade evidence -- but a record that DOES exist
+    still binds (another entry's row, or a recycled pid, refuses).
+    """
+    states = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH) or {}
+    row = states.get(str(pid))
+    if not isinstance(row, dict):
+        row = None
+
+    recorded_entry = row.get("id") if row else None
+    if recorded_entry and recorded_entry != process_list_id:
+        # The record binds this pid to a DIFFERENT entry: killing it through
+        # this entry's restart would terminate another entry's managed
+        # process on stale tracking data.
+        raise _IdentityRefusedError(
+            f"PID {pid} is recorded for entry '{recorded_entry}', not for "
+            f"'{process_name}' - refusing to terminate"
+        )
+
+    if row is not None and "create_time" in row:
+        # The row carries the (create_time, exe) half of the record; its key
+        # supplies the pid half (same assembly as recover_running_processes).
+        record = {
+            "pid": pid,
+            "create_time": row.get("create_time"),
+            "exe": row.get("exe"),
+        }
+        if not shared_utils.identity_matches(record, pid):
+            # pid recycled: drop the stale row so the record can never feed a
+            # later kill, and drop the tracking entry so retries converge on
+            # discovery or a fresh launch instead of refusing on the same
+            # stale pid forever.
+            _drop_state_row(pid)
+            service.last_started.pop(process_list_id, None)
+            raise _IdentityRefusedError(
+                f"PID {pid} for '{process_name}' is not the process owlette "
+                f"recorded (pid recycled) - refusing to terminate, stale "
+                f"record removed"
+            )
+        return
+
+    if require_record:
+        raise _IdentityRefusedError(
+            f"PID {pid} for '{process_name}' has no identity record - not "
+            f"managed by owlette, refusing to terminate"
+        )
+
+    if shared_utils.read_process_identity(pid) is None:
+        # Unreadable now means unverifiable forever -- a process the gate can
+        # never re-prove must not be touched.
+        raise _IdentityRefusedError(
+            f"PID {pid} for '{process_name}' matched strict discovery but "
+            f"its identity is unreadable - refusing to terminate"
+        )
+
+
+def _stop_if_running(service: Any, process: dict, timeout_seconds: int) -> Optional[int]:
+    """Gracefully terminate the entry's process -- identity-proven only.
+
+    Returns the terminated pid, or None if nothing was running. Raises
+    _IdentityRefusedError rather than touch a pid that cannot be proven to be
+    the process owlette recorded (D1 managed-or-inherited): last_started and
+    strict discovery both merely NAME a pid; only the durable identity record
+    -- or, for record-less off-mode processes, an unambiguous strict match
+    with a readable live identity -- proves the pid was not recycled.
     """
     process_list_id = process["id"]
     process_name = process.get("name", process_list_id)
@@ -77,19 +179,35 @@ def _stop_if_running(service: Any, process: dict, timeout_seconds: int) -> Optio
     # without pywin32 on the runner.
     from owlette_service import Util
 
-    if not last_pid or not Util.is_pid_running(last_pid):
+    if last_pid and Util.is_pid_running(last_pid):
+        # In-memory tracking is bookkeeping, not proof: the pid may have been
+        # recycled since it was recorded. Gate on the durable record before
+        # any terminate.
+        _verify_recorded_identity(
+            service, process_list_id, process_name, last_pid,
+            require_record=True,
+        )
+    else:
         # The monitor loop never adopts off-mode processes, so last_started has
         # no live PID for them. Fall back to strict exe/file_path discovery or a
         # restart launches a duplicate on top of the live instance. Strict
-        # matching never kills on a bare image name.
+        # matching never kills on a bare image name and returns None on any
+        # ambiguity, so a hit is unambiguous -- but it is still gated
+        # (require_record=False): a row naming another entry, a recycled
+        # record, or an unreadable identity all refuse.
         exe_path = process.get("exe_path", "")
         file_path = process.get("file_path", "")
-        last_pid = (
+        found_pid = (
             service._find_running_process_by_exe(exe_path, file_path, strict=True)
             if exe_path else None
         )
-        if not last_pid or not Util.is_pid_running(last_pid):
+        if not found_pid or not Util.is_pid_running(found_pid):
             return None
+        _verify_recorded_identity(
+            service, process_list_id, process_name, found_pid,
+            require_record=False,
+        )
+        last_pid = found_pid
 
     # KILLED, so handle_process()'s crash detection doesn't alert on the
     # missing PID next tick.
@@ -192,6 +310,12 @@ def _handle_restart_process(cmd_data: dict, cmd_id: str, service: Any) -> str:
 
     try:
         old_pid = _stop_if_running(service, target, timeout_seconds)
+    except _IdentityRefusedError as e:
+        # Policy refusal, not an unexpected failure -- warn without a
+        # traceback. The 'Error:' prefix is what the command route parses as
+        # failed; Wave 6 surfaces these in the UI.
+        logger.warning(f"restart_process: refused for '{process_name}': {e}")
+        return f"Error: {e}"
     except Exception as e:
         logger.exception(f"restart_process: stop phase failed for '{process_name}'")
         return f"Error: failed to stop {process_name}: {e}"
