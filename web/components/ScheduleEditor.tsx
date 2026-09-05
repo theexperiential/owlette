@@ -12,6 +12,8 @@ import { BLOCK_COLORS, BUILT_IN_PRESETS, ensureBlockColors } from '@/lib/schedul
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/lib/toast';
 import DayPillSelector from '@/components/DayPillSelector';
+import { TimezoneChip } from '@/components/TimezoneChip';
+import { compareVersions, SITE_TIME_MIN_AGENT_VERSION } from '@/lib/versionUtils';
 
 // ─── Time Picker ─────────────────────────────────────────────────────────────
 
@@ -408,6 +410,15 @@ interface ScheduleEditorProps {
   initialPresetId?: string | null;
   onChange: (schedules: ScheduleBlock[], presetId: string | null) => void;
   siteTimezone?: string;
+  /**
+   * Whether this site evaluates process windows on the site's clock. Three
+   * states and `undefined` is a real one: `undefined` = the site was never
+   * asked, `false` = it declined, `true` = site time. Only `true` changes the
+   * copy; the other two are the legacy machine-clock wording, byte for byte.
+   */
+  schedulesFollowSiteTime?: boolean;
+  /** `agent_version` of the machine this schedule belongs to; drives the advisory only. */
+  targetMachineAgentVersion?: string;
   currentLaunchMode?: 'off' | 'always' | 'scheduled';
   presets?: SchedulePreset[];
   onCreatePreset?: (name: string, blocks: ScheduleBlock[]) => Promise<void>;
@@ -416,9 +427,18 @@ interface ScheduleEditorProps {
 }
 
 export default function ScheduleEditor({
-  open, onOpenChange, schedules, initialPresetId, onChange, siteTimezone, currentLaunchMode,
+  open, onOpenChange, schedules, initialPresetId, onChange, siteTimezone,
+  schedulesFollowSiteTime, targetMachineAgentVersion, currentLaunchMode,
   presets, onCreatePreset, onDeletePreset, onUpdatePreset,
 }: ScheduleEditorProps) {
+  const followsSiteTime = schedulesFollowSiteTime === true;
+  // Strictly older, never "unknown": an unparseable or missing `agent_version`
+  // yields null from compareVersions and stays quiet. The advisory is copy, not
+  // a gate (plan decision D3) — a spurious "needs a newer agent" on a machine
+  // that already supports the feature costs more than a missed one.
+  const targetBelowMinAgent =
+    followsSiteTime &&
+    compareVersions(targetMachineAgentVersion, SITE_TIME_MIN_AGENT_VERSION) === -1;
   // Built-ins first, then Firestore customs.
   const builtInAsPresets = BUILT_IN_PRESETS.map((bp, i) => ({
     id: `builtin-${i}`, ...bp, isBuiltIn: true, order: i, createdBy: '', createdAt: null,
@@ -489,13 +509,35 @@ export default function ScheduleEditor({
       <DialogContent className="sm:max-w-lg bg-card border-border text-foreground gap-6">
         <DialogHeader>
           <DialogTitle>configure schedule</DialogTitle>
-          {/* Windows are evaluated on each machine's own clock (site-time
-              evaluation is deliberately deferred agent-side — see
-              firebase_client._fetch_site_name_from_api). Don't reintroduce a
-              source="site" chip here: it asserts semantics the agent doesn't
-              ship. The site tz is still the best *predictor* for the
-              outside-window banner below, since machines live at the site. */}
-          <DialogDescription>times run on each machine&rsquo;s own clock</DialogDescription>
+          {/* Which clock evaluates these windows is a per-site setting
+              (`sites/{siteId}.schedulesFollowSiteTime`, agent support since
+              3.2.3 — see firebase_client._fetch_site_metadata_from_api). Only
+              an explicit `true` earns the source="site" chip; absent and false
+              both keep the machine-clock wording BYTE FOR BYTE, because that is
+              the state every recorded tutorial frame was shot in.
+              The outside-window banner below is independent of all this: it
+              stays a *prediction* evaluated in the site tz, which is the best
+              predictor either way, since machines live at the site. */}
+          {followsSiteTime ? (
+            <DialogDescription className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+              <span>times run on the site&rsquo;s clock</span>
+              <span data-testid="schedule-editor-site-tz-chip">
+                <TimezoneChip tz={siteTimezone} source="site" prefix="" />
+              </span>
+            </DialogDescription>
+          ) : (
+            <DialogDescription>times run on each machine&rsquo;s own clock</DialogDescription>
+          )}
+          {targetBelowMinAgent && (
+            <p
+              data-testid="schedule-editor-agent-advisory"
+              className="text-xs text-amber-400/90 bg-amber-400/10 border border-amber-400/20 rounded-md px-3 py-2"
+            >
+              this machine runs agent {targetMachineAgentVersion} — site time needs{' '}
+              {SITE_TIME_MIN_AGENT_VERSION} or newer. until it updates, it keeps evaluating
+              these windows on its own clock.
+            </p>
+          )}
         </DialogHeader>
 
         {/* Preset bar.

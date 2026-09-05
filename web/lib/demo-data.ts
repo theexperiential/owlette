@@ -45,6 +45,13 @@ function generateMetricValue(
 
 export const DEMO_SITE_ID = 'demo-site';
 
+/**
+ * No `schedulesFollowSiteTime` here, deliberately: absence is the legacy
+ * machine-local state, so every schedule string on /demo stays byte-identical to
+ * what a site that has never opted into site time sees — which is what the
+ * screenshots and recorded walkthroughs are showing. Setting it would silently
+ * re-word the demo's schedule copy.
+ */
 export const DEMO_SITE = {
   id: DEMO_SITE_ID,
   name: 'Horizon Museum of Science',

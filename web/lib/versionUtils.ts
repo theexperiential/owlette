@@ -145,3 +145,14 @@ export function getVersionDifference(
 export function isValidVersion(version: string | undefined | null): boolean {
   return parseVersion(version) !== null;
 }
+
+/**
+ * Oldest agent whose schedule evaluation honors a site's opted-in timezone.
+ * COPY ONLY (plan decision D3): older agents get an advisory line in the UI,
+ * never a version block — blocking would strand a fleet over one offline
+ * machine. '3.2.3', not '3.3.0': Wave 2 landed 2026-08-26 and shipped inside
+ * the 3.2.3 installer (site-time-schedules tasks.md, 2026-09-05 gate
+ * correction) — at '3.3.0' every current machine would see a spurious
+ * "needs a newer agent" warning.
+ */
+export const SITE_TIME_MIN_AGENT_VERSION = '3.2.3';

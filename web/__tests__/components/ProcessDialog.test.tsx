@@ -53,9 +53,13 @@ const BASE_FORM: ProcessFormData = {
 function Harness({
   initial,
   onSave,
+  siteTimezone = 'America/New_York',
+  schedulesFollowSiteTime,
 }: {
   initial: ProcessFormData;
   onSave?: (form: ProcessFormData) => void;
+  siteTimezone?: string;
+  schedulesFollowSiteTime?: boolean;
 }) {
   const [form, setForm] = useState<ProcessFormData>(initial);
   return (
@@ -68,7 +72,8 @@ function Harness({
         onClose={() => {}}
         onSave={() => onSave?.(form)}
         onDelete={() => {}}
-        siteTimezone="America/New_York"
+        siteTimezone={siteTimezone}
+        schedulesFollowSiteTime={schedulesFollowSiteTime}
       />
     </TooltipProvider>
   );
@@ -185,5 +190,48 @@ describe('ProcessDialog — schedule edits are decoupled from the launch mode', 
     const saved: ProcessFormData = onSave.mock.calls[0][0];
     expect(saved.launch_mode).toBe('scheduled');
     expect(saved.autolaunch).toBe(true);
+  });
+});
+
+/**
+ * Which clock the schedule section claims. Before this, the label printed
+ * "times in <site tz>" whenever a site timezone existed — asserting site-time
+ * evaluation the agent only performs for a site that opted in via
+ * `sites/{siteId}.schedulesFollowSiteTime`.
+ */
+describe('ProcessDialog — schedule clock label', () => {
+  const scheduled: ProcessFormData = { ...BASE_FORM, launch_mode: 'scheduled' };
+
+  it.each([
+    ['absent (never asked)', undefined],
+    ['false (declined)', false],
+  ])('claims the machine clock when the flag is %s', (_label, flag) => {
+    render(<Harness initial={scheduled} schedulesFollowSiteTime={flag} />);
+
+    expect(
+      screen.getByText("times run on each machine's own clock"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/site's clock/)).not.toBeInTheDocument();
+    // The retired string, which claimed the site's clock unconditionally.
+    expect(screen.queryByText(/times in New York/)).not.toBeInTheDocument();
+  });
+
+  it('claims the site clock once the site has opted in', () => {
+    render(<Harness initial={scheduled} schedulesFollowSiteTime />);
+
+    expect(
+      screen.getByText("times run on the site's clock (New York)"),
+    ).toBeInTheDocument();
+  });
+
+  it('falls back to the machine clock when the opted-in site has no timezone', () => {
+    // Empty, not omitted: the harness defaults an omitted `siteTimezone`, and
+    // updateSite already refuses to set the flag on a site with no timezone —
+    // this is the belt-and-braces render path if one ever slips through.
+    render(<Harness initial={scheduled} siteTimezone="" schedulesFollowSiteTime />);
+
+    expect(
+      screen.getByText("times run on each machine's own clock"),
+    ).toBeInTheDocument();
   });
 });

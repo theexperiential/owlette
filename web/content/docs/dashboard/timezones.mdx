@@ -1,19 +1,21 @@
 ---
 title: "timezones"
-description: "Owlette tracks three independent timezone actors and lets each user choose which one acts as the reference frame when the dashboard renders absolute timestamps."
+description: "Owlette tracks three independent timezone actors: each user picks which one renders absolute timestamps, and each site picks whether process launch windows follow the site's clock or each machine's own."
 ---
 
 ---
 
 ## three actors
 
-| actor | source | written by |
-|-------|--------|-----------|
-| **machine** | The agent's own Windows local timezone | Agent writes `machine_timezone_iana` into the machine's Firestore doc on every heartbeat |
-| **user** | The dashboard viewer's preferred IANA timezone | User sets `timezone` in Preferences (default: browser-detected) |
-| **site** | The site's configured timezone | Site admin sets it in Manage Sites |
+| actor | source | written by | decides when schedules fire |
+|-------|--------|-----------|------------------------------|
+| **machine** | The agent's own Windows local timezone | Agent writes `machine_timezone_iana` into the machine's Firestore doc on every heartbeat | Always for scheduled reboots. For process launch windows too, unless the site has opted into site time |
+| **user** | The dashboard viewer's preferred IANA timezone | User sets `timezone` in Preferences (default: browser-detected) | Never — display only |
+| **site** | The site's configured timezone | Site admin sets it in Manage Sites | Process launch windows, but only once the site turns on `schedulesFollowSiteTime` (see [process schedules](#process-schedules)) |
 
 All three are stored as IANA identifiers (e.g. `America/New_York`, `Europe/Berlin`). There is no "offset" or "abbreviation" field — offsets are resolved from the IANA name so that DST transitions work correctly.
+
+The last column is the part that catches people out: a display mode never moves a schedule. Only the site's opt-in does, and only for process launch windows.
 
 ---
 
@@ -51,10 +53,43 @@ Schedule editors are **unaffected** by the user's display mode, but they do not 
 
 | feature | timezone used | notes |
 |---------|---------------|-------|
-| **process launch windows** | Machine local timezone | The agent evaluates scheduled process windows against each machine's own Windows clock, so "09:00 Mon-Fri" means 09:00 on that machine. The dashboard editor's outside-window hint uses the site's timezone as its best prediction of the machines' clocks, but the machine's clock is what decides. (Evaluating windows in the site's configured timezone fleet-wide is planned but not yet wired.) |
-| **scheduled reboots** | Machine local timezone | The reboot dialog shows a machine timezone chip and the agent resolves each reboot entry against the machine's own Windows local timezone. A "03:00" reboot means 03:00 on that machine, even if the site or dashboard user is in another timezone. |
+| **process launch windows** | The site's timezone if the site has opted into site time; each machine's local timezone otherwise (the default) | Opt-in is per site — see [process schedules](#process-schedules) below. The editor labels which clock a window will be read against. Its outside-window hint is computed in the site's timezone either way: on site time that is exactly what the agents do, on machine time it is a prediction of their clocks and the machine's clock is what decides. |
+| **scheduled reboots** | Machine local timezone, always | The reboot dialog shows a machine timezone chip and the agent resolves each reboot entry against the machine's own Windows local timezone. A "03:00" reboot means 03:00 on that machine, even at a site that runs its process windows on site time. This is deliberate: keeping a box's maintenance window on the box's own clock is a different question from keeping a venue's opening hours on the venue's clock. |
+| **talon schedule triggers** | The site's timezone, always | Automations have always been site-scoped, so a schedule trigger fires on the site's clock (UTC when the site has no timezone set) regardless of `schedulesFollowSiteTime`. |
 
-Both behaviors are wall-clock schedules, not absolute UTC instants. Changing your dashboard display mode affects timestamp rendering only; it does not reinterpret saved schedule entries.
+All three are wall-clock schedules, not absolute UTC instants. Changing your dashboard display mode affects timestamp rendering only; it does not reinterpret saved schedule entries.
+
+---
+
+## process schedules
+
+By default a process window of "09:00-17:00 Mon-Fri" means 09:00 on the machine running it — a fleet spread across five cities opens at five different absolute instants. A site can opt out of that and have every one of its machines evaluate process windows against the site's own timezone instead.
+
+The switch is a single field on the site, `schedulesFollowSiteTime`, and it has three states rather than two:
+
+| state | what the machines do | how a site gets here |
+|-------|----------------------|----------------------|
+| **absent** | Machine-local windows — the original behavior, unchanged | Every site that predates site time. Site admins see a one-time banner on the dashboard asking which clock the site should use; it appears only when the site actually has a scheduled process |
+| **`false`** | Machine-local windows | The site was asked and kept machine clocks. Touring rigs and multi-city fleets usually want this |
+| **`true`** | Every machine evaluates its process windows in the site's timezone | The site was asked and chose site time, or an admin turned it on afterwards |
+
+Absent and `false` behave identically on the machines. They are stored differently so the dashboard can tell whether the site has answered yet — that is the only thing the banner's presence depends on.
+
+<Callout type="warning" title={"a site cannot follow site time without a timezone"}>
+Turning the flag on is rejected unless the site ends the write with a non-empty `timezone`. Set the timezone and the flag together in one edit — the dashboard banner does exactly that, and so should an API caller. Turning it back off never needs a timezone.
+</Callout>
+
+### how the change reaches the machines
+
+Agents ask the API which clock to use (`GET /api/agent/site`) on every connect and every 15 minutes after that, so a flip takes up to about a quarter hour to reach the fleet. Nothing is pushed, and no agent or service restart is involved.
+
+The API returns a timezone only when the flag is exactly `true` and the site has one set; in every other case it returns `null` and the agent clears whatever it had cached. That is how switching site time back off drops the fleet to machine clocks on its own.
+
+Agents older than **3.2.3** ignore the site's timezone and keep evaluating windows on their own clock. The dashboard flags those machines with an advisory note — it never blocks the setting, since one offline machine would otherwise hold an entire site back. Update them and they pick the site's clock up at their next refresh.
+
+### what a flip does not do
+
+It does not rewrite saved schedule entries. The same stored "09:00" is simply read against a different clock, so a fleet that spans timezones will genuinely shift when the flag goes on — check the windows still mean what you want first. Scheduled reboots are not affected at all.
 
 ---
 
@@ -62,4 +97,6 @@ Both behaviors are wall-clock schedules, not absolute UTC instants. Changing you
 
 - `web/lib/timeUtils.ts` — `getDisplayTimezone()`, `getBrowserTimezone()`, `COMMON_TIMEZONES`, searchable picker helpers
 - `web/contexts/AuthContext.tsx` — `UserPreferences.timezone` / `timeDisplayMode` / `timeFormat`
-- Agent-side: `machine_timezone_iana` is written alongside other heartbeat metrics
+- `web/app/api/agent/site/route.ts` — the projection agents read; gates `timezone` on `schedulesFollowSiteTime === true`
+- `web/lib/actions/updateSite.server.ts` — refuses `true` for a site that would end the write without a timezone
+- Agent-side: `machine_timezone_iana` is written alongside other heartbeat metrics; the cached schedule timezone is published in `service_status.json` as `firebase.schedule_timezone`

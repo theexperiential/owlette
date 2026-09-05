@@ -8,6 +8,7 @@ import WeekSummaryBar from '@/components/WeekSummaryBar';
 import type { ScheduleBlock } from '@/hooks/useFirestore';
 import type { SchedulePreset } from '@/hooks/useSchedulePresets';
 import { BUILT_IN_PRESETS, ensureBlockColors } from '@/lib/scheduleDefaults';
+import { scheduleClockLabel } from '@/lib/scheduleClockCopy';
 
 interface SchedulePopoverProps {
   schedules: ScheduleBlock[] | null | undefined;
@@ -17,6 +18,13 @@ interface SchedulePopoverProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   siteTimezone?: string;
+  /**
+   * `sites/{siteId}.schedulesFollowSiteTime`, straight off the Firestore
+   * snapshot (`useCurrentSite` / `useSites`). Three-state: `undefined` = never
+   * asked, `false` = declined, `true` = site time. Do not source it from
+   * `GET /api/sites`, which collapses the first two.
+   */
+  schedulesFollowSiteTime?: boolean;
 }
 
 export default function SchedulePopover({
@@ -27,6 +35,7 @@ export default function SchedulePopover({
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
   siteTimezone,
+  schedulesFollowSiteTime,
 }: SchedulePopoverProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = controlledOpen !== undefined;
@@ -62,6 +71,7 @@ export default function SchedulePopover({
             schedules={schedules}
             presets={presets}
             siteTimezone={siteTimezone}
+            schedulesFollowSiteTime={schedulesFollowSiteTime}
             onApply={onApply}
             onCancel={() => setOpen(false)}
           />
@@ -75,6 +85,7 @@ interface SchedulePopoverBodyProps {
   schedules: ScheduleBlock[] | null | undefined;
   presets?: SchedulePreset[];
   siteTimezone?: string;
+  schedulesFollowSiteTime?: boolean;
   onApply: (schedules: ScheduleBlock[]) => void;
   onCancel: () => void;
 }
@@ -83,6 +94,7 @@ function SchedulePopoverBody({
   schedules,
   presets,
   siteTimezone,
+  schedulesFollowSiteTime,
   onApply,
   onCancel,
 }: SchedulePopoverBodyProps) {
@@ -161,13 +173,15 @@ function SchedulePopoverBody({
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between pt-2 border-t border-border">
-        {siteTimezone ? (
-          <span className="text-[10px] text-muted-foreground">
-            times in {siteTimezone.replace(/_/g, ' ').split('/').pop()}
-          </span>
-        ) : <span />}
-        <div className="flex gap-2">
+      <div className="flex items-center justify-between gap-2 pt-2 border-t border-border">
+        {/* Which clock these windows are read in. This used to print "times in
+            <site tz>" whenever a site timezone was known, which asserted
+            site-time evaluation the agent only performs for an opted-in site —
+            see lib/scheduleClockCopy. */}
+        <span className="text-[10px] text-muted-foreground leading-tight">
+          {scheduleClockLabel(siteTimezone, schedulesFollowSiteTime)}
+        </span>
+        <div className="flex gap-2 shrink-0">
           <Button
             variant="ghost"
             size="sm"

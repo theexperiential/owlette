@@ -68,6 +68,7 @@ create, update, and delete are service-account only.
 | `owner` | string | UID of the user who created or owns the site. |
 | `createdAt` | timestamp | Site creation time. |
 | `timezone` | string | IANA timezone used by site-scoped scheduling surfaces. |
+| `schedulesFollowSiteTime` | boolean | Whether process launch windows are evaluated in `timezone` rather than each machine's own clock. Three-state: missing means the site was never asked, `false` that it declined; both behave as machine-local. See [timezones](/docs/dashboard/timezones#process-schedules). |
 | `tier` / `plan` | string | Pricing or quota tier, depending on caller generation. |
 | `roostEnabled` | boolean | Site-level roost kill switch. Missing or `true` means enabled. |
 

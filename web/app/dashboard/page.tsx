@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites, type LaunchMode, type ScheduleBlock } from '@/hooks/useFirestore';
 import { DEFAULT_SCHEDULE } from '@/lib/scheduleDefaults';
+import { scheduleClockLabel } from '@/lib/scheduleClockCopy';
 import { useSchedulePresets } from '@/hooks/useSchedulePresets';
 import { useDeployments } from '@/hooks/useDeployments';
 import { useMachineOperations } from '@/hooks/useMachineOperations';
@@ -42,6 +43,7 @@ import { useSlidePanel } from '@/hooks/useSlidePanel';
 import { unionIds } from '@/lib/deviceResolvers';
 import { nextDuplicateName } from '@/lib/processNaming';
 import { AddMachineButton } from './components/AddMachineButton';
+import { SiteTimeConfirmBanner } from './components/SiteTimeConfirmBanner';
 import { useDeviceCodeAuthorize } from '@/hooks/useDeviceCodeAuthorize';
 import { LoadingWord } from '@/components/LoadingWord';
 import { FallingFeather } from '@/components/FallingFeather';
@@ -970,6 +972,22 @@ export default function DashboardPage() {
             unmounts), so normal interaction is unaffected. */}
         {machines.length > 0 ? (
           <div className="space-y-6" data-slide-pausing={slideAnimating ? 'true' : undefined}>
+            {/* Renders null — no wrapper, no spacer — on every site that has
+                already answered, has no scheduled processes, or whose viewer
+                isn't a site admin. `space-y-6` keys off real children, so a null
+                render leaves the machines heading exactly where it was. */}
+            <SiteTimeConfirmBanner
+              siteId={currentSiteId}
+              siteTimezone={currentSite?.timezone}
+              // Firestore snapshot, not GET /api/sites/{siteId}: the REST
+              // representation collapses absent into false, which would make
+              // this banner unreachable.
+              schedulesFollowSiteTime={currentSite?.schedulesFollowSiteTime}
+              machines={machines}
+              isSiteAdmin={isSiteAdmin(currentSiteId)}
+              onUpdateSite={updateSite}
+            />
+
             {/* Heading + controls. `flex-wrap` lets the add-machine button and
                 the segmented view toggle drop under the heading at narrow
                 widths instead of squeezing the row past the viewport. */}
@@ -1041,6 +1059,7 @@ export default function DashboardPage() {
               <div className="animate-in fade-in duration-300">
                 <MachineCardView
                   machines={machines}
+                  schedulesFollowSiteTime={currentSite?.schedulesFollowSiteTime}
                   statsExpanded={userPreferences.statsExpanded}
                   processesExpanded={userPreferences.processesExpanded}
                   displaysExpanded={userPreferences.displaysExpanded ?? false}
@@ -1094,6 +1113,7 @@ export default function DashboardPage() {
                       <MachineRow
                         key={machine.machineId}
                         machine={machine}
+                        schedulesFollowSiteTime={currentSite?.schedulesFollowSiteTime}
                         listPref={listPref}
                         isExpanded={expandedMachineIds.has(machine.machineId)}
                         currentSiteId={currentSiteId}
@@ -1512,11 +1532,11 @@ export default function DashboardPage() {
                     <Clock className="h-3.5 w-3.5 text-blue-400" />
                     <span className="text-xs font-medium text-blue-400">schedule configuration</span>
                   </div>
-                  {currentSite?.timezone && (
-                    <span className="text-[10px] text-muted-foreground">
-                      times in {currentSite.timezone.replace(/_/g, ' ').split('/').pop()}
-                    </span>
-                  )}
+                  {/* Kept in sync with ProcessDialog.tsx by convention — the clock
+                      only belongs to the site once it has opted in. */}
+                  <span className="text-[10px] text-muted-foreground">
+                    {scheduleClockLabel(currentSite?.timezone, currentSite?.schedulesFollowSiteTime)}
+                  </span>
                 </div>
                 {editProcessForm.launch_mode !== 'scheduled' && (
                   <p className="text-[11px] text-muted-foreground">
@@ -1692,6 +1712,10 @@ export default function DashboardPage() {
           initialPresetId={scheduleEditorTarget.process._optimisticPresetId ?? scheduleEditorTarget.process.schedulePresetId}
           onChange={handleScheduleApply}
           siteTimezone={currentSite?.timezone}
+          // Firestore snapshot, deliberately: the REST API collapses absent and
+          // false into one `=== true`, and the dialog needs all three states.
+          schedulesFollowSiteTime={currentSite?.schedulesFollowSiteTime}
+          targetMachineAgentVersion={machines.find(m => m.machineId === scheduleEditorTarget.machineId)?.agent_version}
           currentLaunchMode={(scheduleEditorTarget.process._optimisticLaunchMode ?? scheduleEditorTarget.process.launch_mode ?? (scheduleEditorTarget.process.autolaunch ? 'always' : 'off')) as 'off' | 'always' | 'scheduled'}
           presets={schedulePresets}
           onCreatePreset={handleCreatePreset}

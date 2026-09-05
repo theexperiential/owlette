@@ -11,6 +11,7 @@ import { Trash2, Clock, Settings2 } from 'lucide-react';
 import { ScheduleBlocksEditor } from '@/components/ScheduleEditor';
 import WeekSummaryBar from '@/components/WeekSummaryBar';
 import { DEFAULT_SCHEDULE } from '@/lib/scheduleDefaults';
+import { scheduleClockLabel } from '@/lib/scheduleClockCopy';
 import type { LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 
 export interface ProcessFormData {
@@ -37,6 +38,13 @@ interface ProcessDialogProps {
   onSave: () => void;
   onDelete: () => void;
   siteTimezone?: string;
+  /**
+   * `sites/{siteId}.schedulesFollowSiteTime`, straight off the Firestore
+   * snapshot (`useCurrentSite` / `useSites`). Three-state: `undefined` = never
+   * asked, `false` = declined, `true` = site time. Do not source it from
+   * `GET /api/sites`, which collapses the first two.
+   */
+  schedulesFollowSiteTime?: boolean;
 }
 
 export function ProcessDialog({
@@ -48,6 +56,7 @@ export function ProcessDialog({
   onSave,
   onDelete,
   siteTimezone,
+  schedulesFollowSiteTime,
 }: ProcessDialogProps) {
   // Disclosure for the schedule section. The schedule is editable in every launch mode
   // (the same rule the desktop app ships): from `off`/`always on` this pre-configures —
@@ -262,11 +271,13 @@ export function ProcessDialog({
                   <Clock className="h-3.5 w-3.5 text-blue-400" />
                   <span className="text-xs font-medium text-blue-400">schedule configuration</span>
                 </div>
-                {siteTimezone && (
-                  <span className="text-[10px] text-muted-foreground">
-                    times in {siteTimezone.replace(/_/g, ' ').split('/').pop()}
-                  </span>
-                )}
+                {/* Which clock these windows are read in. This used to print
+                    "times in <site tz>" whenever a site timezone was known,
+                    which asserted site-time evaluation the agent only performs
+                    for an opted-in site — see lib/scheduleClockCopy. */}
+                <span className="text-[10px] text-muted-foreground">
+                  {scheduleClockLabel(siteTimezone, schedulesFollowSiteTime)}
+                </span>
               </div>
               {launchMode !== 'scheduled' && (
                 <p className="text-[11px] text-muted-foreground">

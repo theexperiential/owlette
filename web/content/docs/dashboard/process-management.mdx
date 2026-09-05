@@ -22,7 +22,7 @@ description: "Add, configure, and control processes from the web dashboard. Chan
     - **launch delay (sec)**: seconds to wait before launching.
     - **init timeout (sec)**: seconds to wait before responsiveness checks begin.
     - **relaunch attempts**: crash-restart attempts before the process is treated as failed.
-    - **schedule configuration**: always open in `scheduled` mode, and available in `off` or `always` from the **configure schedule** button at the end of the launch-mode control. Edit one or more blocks with days and start/stop ranges in the site's timezone. Blocks saved from `off` or `always` are stored with the process and do not change its launch mode.
+    - **schedule configuration**: always open in `scheduled` mode, and available in `off` or `always` from the **configure schedule** button at the end of the launch-mode control. Edit one or more blocks with days and start/stop ranges. The editor names the clock those times are read against — each machine's own by default, or the site's timezone if the site has opted into site time ([timezones](/docs/dashboard/timezones#process-schedules)). Blocks saved from `off` or `always` are stored with the process and do not change its launch mode.
 4. Click **create process**.
 
 The agent receives the new configuration and begins monitoring the process.

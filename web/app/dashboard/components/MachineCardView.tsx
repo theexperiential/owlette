@@ -18,6 +18,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
+import { machineClockTooltip } from '@/lib/scheduleClockCopy';
 import { formatThroughput } from '@/lib/networkUtils';
 import { DISK_IO_COLORS, formatDiskIO } from '@/lib/diskIOUtils';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
@@ -40,6 +41,14 @@ interface MachineCardViewProps {
   currentSiteId: string;
   siteTimezone?: string;
   siteTimeFormat?: '12h' | '24h';
+  /**
+   * `sites/{siteId}.schedulesFollowSiteTime`, straight off the Firestore
+   * snapshot (`useCurrentSite` / `useSites`). Three-state: `undefined` = never
+   * asked, `false` = declined, `true` = site time. Do not source it from
+   * `GET /api/sites`, which collapses the first two. Left unset, every clock
+   * tooltip renders exactly as it did before the site-time work.
+   */
+  schedulesFollowSiteTime?: boolean;
   onEditProcess: (machineId: string, process: Process) => void;
   onDuplicateProcess?: (machineId: string, process: Process) => void;
   onCreateProcess: (machineId: string) => void;
@@ -66,6 +75,7 @@ interface MachineCardProps {
   currentSiteId: string;
   siteTimezone: string;
   siteTimeFormat: '12h' | '24h';
+  schedulesFollowSiteTime?: boolean;
   userPreferences: { temperatureUnit: 'C' | 'F' };
   isSiteAdmin: boolean;
   cardPref: { cpu?: string; disk?: string; gpu?: string; nic?: string };
@@ -99,6 +109,7 @@ function MachineCard({
   currentSiteId,
   siteTimezone,
   siteTimeFormat,
+  schedulesFollowSiteTime,
   userPreferences,
   isSiteAdmin,
   cardPref,
@@ -156,6 +167,18 @@ function MachineCard({
   useMinuteTick();
   const localClock = formatMachineLocalClock(machine.machineTimezone, siteTimeFormat);
   const localTzShort = formatTimezoneShortName(machine.machineTimezone);
+  // Non-null exactly when the machine has reported a timezone, so it doubles as
+  // the render guard below. One line unless this site evaluates launch windows
+  // in site time, which splits restarts (always machine-local, decision D2)
+  // from the windows that now follow the site.
+  const clockTooltip = machine.machineTimezone
+    ? machineClockTooltip({
+        machineTimezone: machine.machineTimezone,
+        siteTimezone,
+        schedulesFollowSiteTime,
+        agentVersion: machine.agent_version,
+      })
+    : null;
 
   // Resolve per-card device selection (user pref → primary → first).
   const primary = machine.metrics?.primary;
@@ -255,7 +278,7 @@ function MachineCard({
                 {machine.machineId}
                 {isMuted && <span title="alerts muted"><BellOff className="h-3.5 w-3.5 text-muted-foreground" /></span>}
               </CardTitle>
-              {showLocalClock && machine.machineTimezone && localClock && (
+              {showLocalClock && clockTooltip && localClock && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span className="text-xs text-muted-foreground mt-0.5 cursor-help select-none">
@@ -263,7 +286,13 @@ function MachineCard({
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p className="max-w-xs">this machine&apos;s local time ({machine.machineTimezone}). schedule entries are interpreted in this timezone.</p>
+                    <p className="max-w-xs">{clockTooltip.machineLine}</p>
+                    {clockTooltip.scheduleLine && (
+                      <p className="max-w-xs mt-1">{clockTooltip.scheduleLine}</p>
+                    )}
+                    {clockTooltip.advisory && (
+                      <p className="max-w-xs mt-1 text-amber-400">{clockTooltip.advisory}</p>
+                    )}
                   </TooltipContent>
                 </Tooltip>
               )}
@@ -1003,6 +1032,7 @@ export function MachineCardView({
   currentSiteId,
   siteTimezone = 'UTC',
   siteTimeFormat = '12h',
+  schedulesFollowSiteTime,
   onEditProcess,
   onDuplicateProcess,
   onCreateProcess,
@@ -1044,6 +1074,7 @@ export function MachineCardView({
           currentSiteId={currentSiteId}
           siteTimezone={siteTimezone}
           siteTimeFormat={siteTimeFormat}
+          schedulesFollowSiteTime={schedulesFollowSiteTime}
           userPreferences={userPreferences}
           isSiteAdmin={canSiteAdmin}
           cardPref={prefs.cardView[machine.machineId] ?? {}}
