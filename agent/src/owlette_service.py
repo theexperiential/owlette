@@ -1458,9 +1458,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     def recover_running_processes(self):
         """
-        On service restart, check if processes from previous session are still running.
-        If they are, adopt them instead of launching new instances.
-        Also cleans up dead PIDs to prevent unbounded file growth.
+        On service restart, re-adopt processes from the previous session -- on
+        proof only. A row is re-adopted iff the identity recorded at launch
+        (create_time on the pid row) still matches the live process at that
+        pid (identity_matches). Anything less is a guess, and D3 says a guess
+        launches fresh: rows without an identity record (pre-3.3.0 state
+        files) are skipped and the entry relaunches via the normal loop; rows
+        whose pid was recycled are removed so the stale record can never feed
+        a later kill. Also cleans up dead PIDs to prevent unbounded growth.
         """
         try:
             app_states = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
@@ -1471,10 +1476,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             logging.debug(f"Found {len(app_states)} PID(s) in app_states.json")
 
-            # Clean up dead PIDs immediately to prevent unbounded growth
-            cleaned_states = {}
-            dead_pid_count = 0
-
             config = shared_utils.read_config()
             if not config:
                 logging.warning("Could not load config for process recovery")
@@ -1483,77 +1484,98 @@ class OwletteService(win32serviceutil.ServiceFramework):
             processes = config.get('processes', [])
             logging.debug(f"Checking {len(processes)} configured process(es) for recovery")
 
+            # Rows that survive the sweep; anything not copied over is dropped
+            # from the state file (invalid key, dead pid, recycled pid).
+            cleaned_states = {}
+            dropped_count = 0
             recovered_count = 0
+
             for pid_str, state_info in app_states.items():
                 try:
-                    # Skip invalid PID entries (e.g. "None" from failed launches)
+                    # Invalid PID entries (e.g. "None" from failed launches).
                     if pid_str in ('None', 'null', ''):
-                        dead_pid_count += 1
+                        dropped_count += 1
                         logging.debug(f"Removing invalid PID entry: '{pid_str}'")
                         continue
-                    pid = int(pid_str)
-                    process_id = state_info.get('id')
-
-                    logging.debug(f"Checking PID {pid} (process ID: {process_id})")
-
-                    # Validate PID atomically — get process info in one shot to avoid TOCTOU race
-                    # (PID could be reused between an is_running check and exe() call)
-                    if process_id:
-                        process = next((p for p in processes if p.get('id') == process_id), None)
-
-                        if process:
-                            try:
-                                actual_process = psutil.Process(pid)
-                                actual_exe = actual_process.exe().lower()
-                                expected_exe = process.get('exe_path', '').replace('/', '\\').lower()
-                                logging.debug(f"PID {pid} is still running")
-
-                                # Basename match: a file association can launch a
-                                # different version or path than configured.
-                                expected_basename = os.path.basename(expected_exe)
-                                actual_basename = os.path.basename(actual_exe)
-                                if expected_exe and (expected_exe in actual_exe or expected_basename == actual_basename):
-                                    cleaned_states[pid_str] = state_info
-
-                                    mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
-                                    if mode == 'always' or (mode == 'scheduled' and shared_utils.is_within_schedule(process.get('schedules'), self._cached_site_timezone)):
-                                        self.last_started[process_id] = {
-                                            'time': datetime.datetime.now(),
-                                            'pid': pid
-                                        }
-                                        recovered_count += 1
-                                        logging.info(f"[OK] Recovered process '{process.get('name')}' with PID {pid}")
-                                    else:
-                                        logging.info(f"Skipping recovery of '{process.get('name')}' (PID {pid}) - launch_mode is '{mode}'")
-                                else:
-                                    # PID reused for different process - don't recover
-                                    dead_pid_count += 1
-                                    logging.warning(f"PID {pid} is running but executable mismatch (expected: {expected_exe}, actual: {actual_exe}) - likely PID reuse, not recovering")
-                            except psutil.NoSuchProcess:
-                                dead_pid_count += 1
-                                logging.debug(f"PID {pid} is no longer running")
-                            except Exception as e:
-                                # On validation error, keep the PID to be safe
-                                cleaned_states[pid_str] = state_info
-                                logging.warning(f"Could not validate PID {pid}: {e} - keeping in state")
-                        else:
-                            # Process ID not found in config - keep in state but don't recover
-                            cleaned_states[pid_str] = state_info
-                            logging.warning(f"PID {pid} is running but process ID {process_id} not found in config")
-                    elif Util.is_pid_running(pid):
+                    try:
+                        pid = int(pid_str)
+                    except (TypeError, ValueError):
+                        # Unrecognised non-numeric key: it cannot be adopted,
+                        # but deleting data this code does not understand is
+                        # not recovery's job -- keep it and move on.
                         cleaned_states[pid_str] = state_info
-                        logging.warning(f"PID {pid} has no process ID in state file")
-                    else:
-                        dead_pid_count += 1
+                        logging.debug(f"Skipping non-numeric PID key '{pid_str}' in state file")
+                        continue
+
+                    if not Util.is_pid_running(pid):
+                        dropped_count += 1
                         logging.debug(f"PID {pid_str} is no longer running (will be removed from state file)")
+                        continue
+
+                    # The identity gate (D1). The record was written when the
+                    # pid was bound; the row carries the create_time/exe half,
+                    # the row's key supplies the pid half.
+                    has_record = isinstance(state_info, dict) and 'create_time' in state_info
+                    if has_record:
+                        record = {
+                            'pid': pid,
+                            'create_time': state_info.get('create_time'),
+                            'exe': state_info.get('exe'),
+                        }
+                        if not shared_utils.identity_matches(record, pid):
+                            # A different process wears this pid now. Drop the
+                            # row so the stale record can never resolve into a
+                            # kill; the entry relaunches via the normal loop.
+                            dropped_count += 1
+                            logging.warning(
+                                f"PID {pid} refused: pid recycled (recorded create_time "
+                                f"{state_info.get('create_time')} does not match the live "
+                                f"process) - removing stale row, entry will relaunch")
+                            continue
+
+                    # Row survives: the pid is live and any record it carries
+                    # is proven against the live process.
+                    cleaned_states[pid_str] = state_info
+
+                    process_id = state_info.get('id') if isinstance(state_info, dict) else None
+                    if not process_id:
+                        logging.warning(f"PID {pid} has no process ID in state file")
+                        continue
+
+                    process = next((p for p in processes if p.get('id') == process_id), None)
+                    if not process:
+                        logging.warning(f"PID {pid} is running but process ID {process_id} not found in config")
+                        continue
+
+                    if not has_record:
+                        # Pre-3.3.0 state file: the pid is alive but nothing
+                        # proves it is the process owlette launched. D3: never
+                        # adopt on doubt -- the normal loop launches fresh, and
+                        # from then on the entry carries a durable record.
+                        logging.info(
+                            f"PID {pid} ('{process.get('name')}') has "
+                            f"no identity record (pre-3.3.0) - will relaunch "
+                            f"instead of adopting")
+                        continue
+
+                    mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+                    if mode == 'always' or (mode == 'scheduled' and shared_utils.is_within_schedule(process.get('schedules'), self._cached_site_timezone)):
+                        self.last_started[process_id] = {
+                            'time': datetime.datetime.now(),
+                            'pid': pid
+                        }
+                        recovered_count += 1
+                        logging.info(f"[OK] Process '{process.get('name')}' (PID {pid}) re-adopted by identity")
+                    else:
+                        logging.info(f"Skipping recovery of '{process.get('name')}' (PID {pid}) - launch_mode is '{mode}'")
                 except Exception as e:
                     logging.error(f"Error checking PID {pid_str}: {e}")
                     # On error, keep the PID to be safe
                     cleaned_states[pid_str] = state_info
 
-            if dead_pid_count > 0:
+            if dropped_count > 0:
                 shared_utils.write_json_to_file(cleaned_states, shared_utils.RESULT_FILE_PATH)
-                logging.info(f"[OK] Cleaned up {dead_pid_count} dead PID(s) from state file")
+                logging.info(f"[OK] Cleaned up {dropped_count} dead or stale PID(s) from state file")
 
             if recovered_count > 0:
                 logging.info(f"[OK] Successfully recovered {recovered_count} running process(es) from previous session")
@@ -2570,6 +2592,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.error("Launcher helper did not produce a PID file within timeout")
                 # Fallback: process may have launched but psutil couldn't see it in time.
                 # Scan by exe before giving up — prevents spurious failed=True and double-launches.
+                # This is an ADOPTION (non-strict discovery), not a launch, so
+                # it deliberately writes NO identity record this wave -- Wave 4
+                # turns it into an inherit (unambiguous match, then recorded).
                 found_pid = self._find_running_process_by_exe(exe_path, file_path)
                 if found_pid:
                     logging.info(f"Fallback scan found process (PID {found_pid}) after PID file timeout")
@@ -2606,6 +2631,29 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.results[str(pid)]['id'] = process['id']
 
         self.results[str(pid)]['status'] = 'LAUNCHING'
+
+        # Durable identity record (D1/D2): snapshot (create_time, exe) at the
+        # moment the PID is bound, so recovery after a service restart and
+        # every later destructive path can PROVE this exact process is the one
+        # owlette launched instead of trusting a recyclable pid number. For
+        # .bat/.cmd entries `pid` is the cmd.exe WRAPPER, so the wrapper's
+        # identity is what gets recorded -- consistent with graceful_terminate,
+        # which tracks and terminates the wrapper. A single-instance app the
+        # helper resolved via ShellExecuteEx handoff is recorded the same way:
+        # the snapshot describes whichever process we actually bound.
+        identity = shared_utils.read_process_identity(pid)
+        if identity is not None:
+            self.results[str(pid)]['create_time'] = identity['create_time']
+            self.results[str(pid)]['exe'] = identity['exe']
+            self.results[str(pid)]['managed'] = True
+            self.results[str(pid)]['origin'] = 'launched'
+        else:
+            # Died between launch and this read: record nothing. The next
+            # monitor tick sees the dead pid and runs the normal failure path,
+            # and recovery never adopts a recordless row.
+            logging.warning(
+                f"Process (PID {pid}) exited before its identity could be "
+                f"recorded - row left without an identity record")
 
         try:
             shared_utils.write_json_to_file(self.results, shared_utils.RESULT_FILE_PATH)
@@ -3156,8 +3204,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             # Clean up app_states.json (results file) — remove PIDs that no longer exist
             if self.results:
-                stale_pids = [pid_str for pid_str in self.results.keys()
-                              if not psutil.pid_exists(int(pid_str))]
+                stale_pids = []
+                for pid_str in self.results.keys():
+                    try:
+                        pid_int = int(pid_str)
+                    except (TypeError, ValueError):
+                        # A non-numeric key (e.g. "None" from a failed launch)
+                        # must not abort the whole sweep via the broad except
+                        # below -- skip just this key and keep sweeping.
+                        logging.debug(f"Skipping non-numeric PID key '{pid_str}' in app_states cleanup")
+                        continue
+                    if not psutil.pid_exists(pid_int):
+                        stale_pids.append(pid_str)
                 if stale_pids:
                     for pid_str in stale_pids:
                         del self.results[pid_str]

@@ -275,11 +275,20 @@ def leak_check(request, decoy_env):
         except psutil.Error:
             continue
 
+    # Wave 2 ruling (2026-09-05): registered survivors in a PASSING test are
+    # reaped silently, not failed. The contract tests end by ASSERTING that
+    # unmanaged decoys are still alive — that aliveness IS the contract — so a
+    # green contract test and a fail-on-registered-survivors policy are mutually
+    # exclusive by construction. The machine-hygiene property is preserved by
+    # the reap above (by PID, create_time-verified); the discipline signal now
+    # applies only to UNREGISTERED strays, which still mean the code under test
+    # spawned something the harness never authorised — that is the real leak.
     rep = getattr(request.node, 'rep_call', None)
-    if rep is not None and rep.passed and (survivors or strays):
+    if rep is not None and rep.passed and strays:
         pytest.fail(
-            'decoy leak in a passing test: registered survivors=%r '
-            'unregistered strays=%r (all reaped by PID)' % (survivors, strays))
+            'unregistered decoy stray in a passing test: strays=%r '
+            '(reaped by PID; the code under test spawned outside the registry)'
+            % (strays,))
 
 
 # --------------------------------------------------------------------------

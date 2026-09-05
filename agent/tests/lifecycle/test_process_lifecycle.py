@@ -342,11 +342,6 @@ def test_contract_a_ambiguous_image_launches_fresh_and_spares_decoys(
         'the recorded PID is not a live instance owlette launched itself'
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    'Wave 2: recovery must re-adopt only by recorded (pid, create_time). '
-    'Today recover_running_processes matches pid + exe basename, so a decoy '
-    'squatting on a recycled pid with the right image is adopted as if it '
-    'were the child owlette launched.'))
 def test_contract_b_restart_readopts_own_child_and_refuses_squatter(
         service_factory, spawn_decoy, decoy_env):
     """(b) Across simulated service restarts (fresh double, state files
