@@ -4,8 +4,10 @@
  * Seeds two keys via the Admin SDK across both halves of the storage contract
  * (`users/{userId}/api_keys/{keyId}` + the lookup doc `api_keys/{keyHash}`),
  * then drives /settings/api-keys: rotate reveals the new owk_* key once and
- * flips the original to "rotated (grace)"; revoke confirms inline and deletes
- * BOTH docs (no audit-preserved muted state today).
+ * flips the original to "rotated (grace)"; revoke confirms inline and stamps
+ * `revokedAt` on BOTH docs without deleting either — the lookup assertion is the
+ * only end-to-end guard on the mirror write the auth path's revocation check
+ * reads (apiAuth.server.ts).
  *
  * No data plane — pure firestore round-trips through the next.js routes.
  */
@@ -220,7 +222,7 @@ test('rotate issues a new key, reveals it once, and stamps the original as rotat
   expect((newRecord.data() as Partial<ApiKeyRecord>).rotatedFromKeyId).toBe(keyOne.keyId);
 });
 
-test('revoke removes the targeted key from the list and deletes both firestore docs', async ({
+test('revoke moves the targeted key to the revoked group and stamps both firestore docs', async ({
   page,
 }) => {
   await page.goto('/settings/api-keys');
@@ -248,8 +250,14 @@ test('revoke removes the targeted key from the list and deletes both firestore d
   const revokeResponse = await revokeResponsePromise;
   expect(revokeResponse.status()).toBe(200);
 
+  // Gone from the active list, but not gone: soft delete groups it behind the
+  // "show revoked" disclosure rather than dropping it.
   await expect(rowByName(page, 'revoke target')).toHaveCount(0);
   await expect(rowByName(page, 'rotate target')).toBeVisible();
+
+  await page.getByRole('button', { name: /^show revoked \(\d+\)$/ }).click();
+  const revokedRow = rowByName(page, 'revoke target');
+  await expect(revokedRow.getByText('revoked', { exact: true })).toBeVisible();
 
   const recordSnap = await getAdminDb()
     .collection('users')
@@ -257,8 +265,13 @@ test('revoke removes the targeted key from the list and deletes both firestore d
     .collection('api_keys')
     .doc(keyTwo.keyId)
     .get();
-  expect(recordSnap.exists).toBe(false);
+  expect(recordSnap.exists).toBe(true);
+  expect(typeof (recordSnap.data() as Partial<ApiKeyRecord>).revokedAt).toBe('number');
 
+  // The lookup is the doc the auth path actually reads. If the mirror write is
+  // ever dropped the credential keeps authenticating, so this assertion is the
+  // one that must not be softened.
   const lookupSnap = await getAdminDb().collection('api_keys').doc(keyTwo.keyHash).get();
-  expect(lookupSnap.exists).toBe(false);
+  expect(lookupSnap.exists).toBe(true);
+  expect(typeof (lookupSnap.data() as { revokedAt?: unknown }).revokedAt).toBe('number');
 });

@@ -5,6 +5,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
 import { problemNotFound, problemValidation } from '@/lib/apiErrors';
 import { authorizedPlatformHandler } from '@/lib/authorizedHandler.server';
+import type { ApiKeyRecord } from '@/lib/apiKeyTypes';
 
 type RouteParams = {
   keyId: string;
@@ -18,6 +19,11 @@ function auditActor(userId: string, keyId?: string): string {
  * DELETE /api/account/api-keys/{keyId}
  *
  * Revoke an API key owned by the authenticated superadmin user.
+ *
+ * The second copy of the revoke path — it must stay equivalent in effect to
+ * `DELETE /api/keys/{keyId}`, where the reasoning for every line below is written
+ * out: soft delete, merge-set on the lookup so a missing doc cannot fail the
+ * batch, numeric `Date.now()`, and an idempotent second revoke.
  */
 export const DELETE = withRateLimit(
   authorizedPlatformHandler<RouteParams>({
@@ -45,11 +51,18 @@ export const DELETE = withRateLimit(
         return problemNotFound('API key not found');
       }
 
-      const keyHash = keyDoc.data()?.keyHash;
+      const existing = keyDoc.data() as Partial<ApiKeyRecord> | undefined;
+
+      if (existing?.revokedAt) {
+        return NextResponse.json({ success: true });
+      }
+
+      const keyHash = existing?.keyHash;
+      const revokedAt = Date.now();
       const batch = db.batch();
-      batch.delete(keyRef);
-      if (keyHash) {
-        batch.delete(db.collection('api_keys').doc(keyHash));
+      batch.update(keyRef, { revokedAt });
+      if (keyHash && typeof keyHash === 'string') {
+        batch.set(db.collection('api_keys').doc(keyHash), { revokedAt }, { merge: true });
       }
       await batch.commit();
 

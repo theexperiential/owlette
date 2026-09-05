@@ -243,7 +243,10 @@ paths:
       operationId: revokeAccountApiKey
       tags: [API Keys]
       summary: Revoke account API key
-      description: Deletes an API key owned by the authenticated superadmin account.
+      description: |
+        Revokes an API key owned by the authenticated superadmin account. Same
+        semantics as `DELETE /api/keys/{keyId}`: immediate, not a delete — the
+        key is stamped `revokedAt` and kept — and idempotent.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -2521,8 +2524,12 @@ paths:
       tags: [API Keys]
       summary: revoke api key
       description: |
-        Permanently revokes a key. Effective within 60s across all
-        edge caches. Cannot be undone.
+        Revokes a key. Takes effect immediately — there is no cache in front of
+        the credential lookup, so the very next request with this key is
+        rejected. The key is not deleted: the record and its lookup are kept and
+        stamped `revokedAt`, so later reads still return the key with
+        `revoked: true` and a request replayed with it stays attributable.
+        Repeating the call is a no-op that keeps the original revocation time.
       security:
         - firebaseIdToken: []
       responses:
@@ -9026,6 +9033,13 @@ components:
         retired:
           type: boolean
           description: Derived. A rotated key whose grace window has closed.
+        revoked:
+          type: boolean
+          description: |
+            Derived from the presence of `revokedAt`, deliberately not from
+            `revokedAt <= now`: the API rejects a key the instant the field is set,
+            so a future-dated stamp is already dead. Terminal — it outranks
+            `expired` and `retired`, matching the order the API checks them in.
     ApiKeyWithSecret:
       description: |
         Returned **only** on create or rotate — the one and only time

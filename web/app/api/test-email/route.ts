@@ -6,6 +6,7 @@ import {
   wrapEmailLayout,
   emailDataTable,
   emailTimestamp,
+  buildApiKeyExpiryEmail,
   EMAIL_COLORS,
   SEVERITY_COLORS,
   METRIC_LABELS,
@@ -25,6 +26,7 @@ export const EMAIL_TEMPLATES = [
   { id: 'threshold_alert', label: 'threshold alert', description: 'metric breached a configured threshold' },
   { id: 'machines_offline', label: 'machines offline', description: 'stale heartbeat detected by health check' },
   { id: 'cortex_escalation', label: 'hoot escalation', description: 'autonomous investigation could not resolve issue' },
+  { id: 'api_key_expiring', label: 'api key expiring', description: 'daily notice ladder before an api key expires' },
   { id: 'welcome', label: 'welcome email', description: 'sent to new users on signup' },
   { id: 'user_signup', label: 'admin signup notification', description: 'admin notified of new user registration' },
 ] as const;
@@ -193,6 +195,23 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
       return {
         subject: `hoot escalation: TouchDesigner on LOBBY-PC-01`,
         html: wrapEmailLayout(content, { preheader: 'hoot escalation: TouchDesigner on LOBBY-PC-01', unsubscribeUrl: '#unsubscribe-preview' }),
+      };
+    }
+
+    case 'api_key_expiring': {
+      // Renders through the real builder rather than a hand-copied body, so the
+      // preview cannot drift from what the cron actually sends.
+      const day = 24 * 60 * 60 * 1000;
+      return {
+        subject: `2 api keys expiring`,
+        html: buildApiKeyExpiryEmail(
+          [
+            { name: 'ci-deploy', keyPrefix: 'owk_live_9f2c1ab', expiresAt: Date.now() + 3 * day, daysRemaining: 3 },
+            { name: 'grafana-readonly', keyPrefix: 'owk_live_4d80e17', expiresAt: Date.now() + 14 * day, daysRemaining: 14 },
+          ],
+          '#unsubscribe-preview',
+          'America/New_York',
+        ),
       };
     }
 

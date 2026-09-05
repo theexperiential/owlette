@@ -82,6 +82,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [hootAlerts, setHootAlerts] = useState(true);
   const [displayAlerts, setDisplayAlerts] = useState(true);
   const [talonAlerts, setTalonAlerts] = useState(true);
+  const [apiKeyAlerts, setApiKeyAlerts] = useState(true);
   const [alertCcEmails, setAlertCcEmails] = useState<string[]>([]);
   const [newCcEmail, setNewCcEmail] = useState('');
   const [ccEmailError, setCcEmailError] = useState('');
@@ -153,6 +154,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setHootAlerts(userPreferences.cortexAlerts);
       setDisplayAlerts(userPreferences.displayAlerts);
       setTalonAlerts(userPreferences.talonAlerts);
+      setApiKeyAlerts(userPreferences.apiKeyAlerts);
       setAlertCcEmails(userPreferences.alertCcEmails || []);
       setNewCcEmail('');
       setCcEmailError('');
@@ -302,9 +304,10 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         || hootAlerts !== userPreferences.cortexAlerts
         || displayAlerts !== userPreferences.displayAlerts
         || talonAlerts !== userPreferences.talonAlerts
+        || apiKeyAlerts !== userPreferences.apiKeyAlerts
         || JSON.stringify(alertCcEmails) !== JSON.stringify(userPreferences.alertCcEmails || []);
       if (prefsChanged) {
-        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, timeDisplayMode, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts: hootAlerts, displayAlerts, talonAlerts, alertCcEmails });
+        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, timeDisplayMode, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts: hootAlerts, displayAlerts, talonAlerts, apiKeyAlerts, alertCcEmails });
       }
       if (showPasswordSection && (currentPassword || newPassword || confirmPassword)) {
         if (!validatePassword()) {
@@ -658,6 +661,19 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       id="talonAlerts"
                       checked={talonAlerts}
                       onCheckedChange={setTalonAlerts}
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="apiKeyAlerts" className="text-white">api key expiry</Label>
+                      <p className="text-xs text-muted-foreground">emails before an api key expires</p>
+                    </div>
+                    <Switch
+                      id="apiKeyAlerts"
+                      checked={apiKeyAlerts}
+                      onCheckedChange={setApiKeyAlerts}
                       disabled={loading}
                     />
                   </div>

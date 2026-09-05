@@ -55,11 +55,23 @@ function mockDb() {
     batch: () => {
       const ops: Array<() => void> = [];
       return {
-        set: (ref: { path: string }, data: Record<string, unknown>) => {
-          ops.push(() => store.set(ref.path, data));
+        // `{ merge: true }` is modelled, not ignored: revoke relies on merge-set
+        // creating-or-merging the lookup doc, and a mock that always replaced it
+        // would hide a lost userId/keyId mapping.
+        set: (
+          ref: { path: string },
+          data: Record<string, unknown>,
+          options?: { merge?: boolean },
+        ) => {
+          ops.push(() =>
+            store.set(ref.path, options?.merge ? { ...(store.get(ref.path) ?? {}), ...data } : data),
+          );
         },
         delete: (ref: { path: string }) => {
           ops.push(() => store.set(ref.path, null));
+        },
+        update: (ref: { path: string }, data: Record<string, unknown>) => {
+          ops.push(() => store.set(ref.path, { ...(store.get(ref.path) ?? {}), ...data }));
         },
         commit: async () => {
           ops.forEach((op) => op());
@@ -302,22 +314,35 @@ describe('/api/account/api-keys', () => {
 });
 
 describe('/api/account/api-keys/{keyId}', () => {
-  it('revokes a key by path id', async () => {
+  function revoke(keyId: string) {
+    return DELETE(
+      new NextRequest(`http://localhost/api/account/api-keys/${keyId}`, { method: 'DELETE' }),
+      { params: Promise.resolve({ keyId }) },
+    );
+  }
+
+  it('soft-revokes by path id: both docs survive with a numeric revokedAt', async () => {
+    // The forgotten second copy of the revoke path. It must behave identically to
+    // DELETE /api/keys/{keyId} — the two drifted apart once already.
     store.set('users/test-admin/api_keys/key-a', {
       keyHash: 'hash-a',
       name: 'CI',
     });
     store.set('api_keys/hash-a', { userId: 'test-admin', keyId: 'key-a' });
 
-    const res = await DELETE(
-      new NextRequest('http://localhost/api/account/api-keys/key-a', { method: 'DELETE' }),
-      { params: Promise.resolve({ keyId: 'key-a' }) },
-    );
+    const res = await revoke('key-a');
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ success: true });
-    expect(store.get('users/test-admin/api_keys/key-a')).toBeNull();
-    expect(store.get('api_keys/hash-a')).toBeNull();
+
+    const record = store.get('users/test-admin/api_keys/key-a') as Record<string, unknown>;
+    expect(record).not.toBeNull();
+    expect(typeof record.revokedAt).toBe('number');
+
+    const lookup = store.get('api_keys/hash-a') as Record<string, unknown>;
+    expect(typeof lookup.revokedAt).toBe('number');
+    expect(lookup).toMatchObject({ userId: 'test-admin', keyId: 'key-a' });
+
     expect(mockEmitMutation).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'api_key_mutated',
@@ -333,11 +358,45 @@ describe('/api/account/api-keys/{keyId}', () => {
     );
   });
 
-  it('returns problem+json when revoking an unknown key', async () => {
-    const res = await DELETE(
-      new NextRequest('http://localhost/api/account/api-keys/missing-key', { method: 'DELETE' }),
-      { params: Promise.resolve({ keyId: 'missing-key' }) },
+  it('still 200s when the lookup doc is absent — merge-set, never a batched update', async () => {
+    // A batched update() against a missing document fails the ENTIRE commit with
+    // NOT_FOUND, leaving the key neither revoked nor deleted.
+    store.set('users/test-admin/api_keys/key-a', { keyHash: 'hash-gone' });
+
+    const res = await revoke('key-a');
+
+    expect(res.status).toBe(200);
+    expect(
+      typeof (store.get('users/test-admin/api_keys/key-a') as Record<string, unknown>).revokedAt,
+    ).toBe('number');
+    expect(typeof (store.get('api_keys/hash-gone') as Record<string, unknown>).revokedAt).toBe(
+      'number',
     );
+  });
+
+  it('is idempotent — a second revoke keeps the first timestamp and emits nothing', async () => {
+    const firstRevokedAt = 1_700_000_000_000;
+    store.set('users/test-admin/api_keys/key-a', {
+      keyHash: 'hash-a',
+      revokedAt: firstRevokedAt,
+    });
+    store.set('api_keys/hash-a', {
+      userId: 'test-admin',
+      keyId: 'key-a',
+      revokedAt: firstRevokedAt,
+    });
+
+    const res = await revoke('key-a');
+
+    expect(res.status).toBe(200);
+    expect((store.get('users/test-admin/api_keys/key-a') as { revokedAt: number }).revokedAt).toBe(
+      firstRevokedAt,
+    );
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  it('returns problem+json when revoking an unknown key', async () => {
+    const res = await revoke('missing-key');
     const body = await res.json();
 
     expect(res.status).toBe(404);

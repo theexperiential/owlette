@@ -9,6 +9,18 @@
  * Rotated keys carry `retiresAt` and are cleaned up here once that is also past.
  * Idempotent (already-marked keys are skipped), so it is safe to run ad hoc via
  * `firebase functions:shell`.
+ *
+ * The `.where('expiredMarkedAt', '==', null)` filter below only matches documents
+ * where the field EXISTS and is null — a document that omits it is not in the
+ * (expiresAt, expiredMarkedAt) composite index at all. Until every mint path
+ * started writing `expiredMarkedAt: null` (web/lib/apiKeyTypes.ts and the four
+ * routes that build an ApiKeyRecord), no writer ever initialised it and this whole
+ * sweep matched nothing. Keys minted before that fix stay invisible to it; they
+ * age out with their own `expiresAt` and are only reachable by a one-off backfill.
+ *
+ * This is also the retention story for revoked keys: revoke is a soft delete now,
+ * so a revoked key keeps its lookup doc until this sweep reaps it at `expiresAt`
+ * (≤365 days out). No `revokedAt` pass, and so no new index, is needed.
  */
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';

@@ -9,6 +9,13 @@ export interface SiteRecipient {
   mutedMachines: string[];
 }
 
+/** One user, resolved as the recipient of an alert that has no site to scope it to. */
+export interface UserRecipient {
+  userId: string;
+  email: string;
+  ccEmails: string[];
+}
+
 const isProduction =
   process.env.NODE_ENV === 'production' &&
   !process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.includes('dev');
@@ -232,6 +239,40 @@ export async function getSiteAlertRecipients(
   }
 
   return recipients;
+}
+
+/**
+ * The single recipient for a user-scoped alert — one an api key raises, where
+ * there is no site to enumerate members of. Returns null when the user is
+ * deleted, has no email, or opted out; the caller sends nothing.
+ *
+ * Deliberately unlike {@link getSiteAlertRecipients} in two ways. There is no
+ * ADMIN_EMAIL fallback: that exists so an ORPHAN SITE still pages someone, and
+ * applied here it would mail the admin about a stranger's api key. And there is
+ * no `mutedMachines` — a key belongs to no machine, so no mute can apply.
+ *
+ * `userId` comes off the returned snapshot, not the argument, so a caller can
+ * assert the recipient it got back is the owner it asked about.
+ */
+export async function getUserAlertRecipient(
+  userId: string,
+  // Only user-scoped alert preference today; widen the union when another lands.
+  filterPreference: 'apiKeyAlerts'
+): Promise<UserRecipient | null> {
+  try {
+    const userDoc = await getAdminDb().collection('users').doc(userId).get();
+    const data = userDoc.data();
+    if (!data) return null;
+    if (typeof data.deletedAt === 'number') return null;
+    const email = data.email as string | undefined;
+    if (!email) return null;
+    // Opt-out model: absent means enabled.
+    if (data.preferences?.[filterPreference] === false) return null;
+    return { userId: userDoc.id, email, ccEmails: data.preferences?.alertCcEmails || [] };
+  } catch (error) {
+    console.error('[adminUtils] Error fetching user alert recipient:', error);
+    return null;
+  }
 }
 
 /** Deduplicated `to`/`cc` arrays for Resend, filtered by one alert preference. */

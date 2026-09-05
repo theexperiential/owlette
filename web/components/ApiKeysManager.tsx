@@ -5,9 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { CopyButton } from '@/components/CopyButton';
-import { Key, KeyRound, Loader2, Plus, X } from 'lucide-react';
+import { ChevronRight, Key, KeyRound, Loader2, Plus, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useApiKeys, type CreateKeyInput, type UpdateKeyInput } from '@/hooks/useApiKeys';
+import type { ApiKeyListItem } from '@/lib/apiKeyTypes';
 import { ApiKeyCreateForm } from '@/components/ApiKeyCreateForm';
 import { ApiKeyScopeEditor } from '@/components/ApiKeyScopeEditor';
 import { KeyCard } from '@/app/settings/api-keys/KeyCard';
@@ -36,12 +37,19 @@ export function ApiKeysManager({ compact = false }: Props) {
   const [creating, setCreating] = useState(false);
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [showRevoked, setShowRevoked] = useState(false);
   // One clock for the whole list so two rows can't disagree about "expiring soon".
   const [now] = useState(() => Date.now());
 
   // Pre-expand when there is nothing to look at — an empty list with a
   // collapsed form is a dead end.
   const showForm = creating;
+
+  // Revoke became a soft delete, so this list only ever grows. The split is
+  // client-side on purpose: filtering revoked keys out of GET /api/keys would
+  // throw away the auditability the soft delete was made for.
+  const activeKeys = keys.filter((k) => !k.revoked);
+  const revokedKeys = keys.filter((k) => k.revoked);
 
   async function handleCreate(input: CreateKeyInput) {
     try {
@@ -62,6 +70,41 @@ export function ApiKeysManager({ compact = false }: Props) {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'failed to update key');
     }
+  }
+
+  function renderKeyRow(k: ApiKeyListItem) {
+    return (
+      <div key={k.id}>
+        <KeyCard
+          apiKey={k}
+          now={now}
+          editing={editingKeyId === k.id}
+          // KeyCard owns the rotate/revoke requests and hands back the
+          // raw value; the panel only reveals it and resyncs the list.
+          onRotated={(raw) => {
+            setRevealedKey(raw);
+            refresh().catch(() => {});
+          }}
+          onRevoked={() => {
+            if (editingKeyId === k.id) setEditingKeyId(null);
+            refresh().catch(() => {});
+          }}
+          onEditScopes={(target) => {
+            // Only one form open at a time — the create form and an
+            // editor side by side both claim to be "the" scope picker.
+            setCreating(false);
+            setEditingKeyId((current) => (current === target.id ? null : target.id));
+          }}
+        />
+        {editingKeyId === k.id && (
+          <ApiKeyScopeEditor
+            apiKey={k}
+            onSubmit={(input) => handleUpdate(k.id, input)}
+            onCancel={() => setEditingKeyId(null)}
+          />
+        )}
+      </div>
+    );
   }
 
   return (
@@ -155,38 +198,38 @@ export function ApiKeysManager({ compact = false }: Props) {
           </Card>
         ) : (
           <div className="space-y-2">
-            {keys.map((k) => (
-              <div key={k.id}>
-                <KeyCard
-                  apiKey={k}
-                  now={now}
-                  editing={editingKeyId === k.id}
-                  // KeyCard owns the rotate/revoke requests and hands back the
-                  // raw value; the panel only reveals it and resyncs the list.
-                  onRotated={(raw) => {
-                    setRevealedKey(raw);
-                    refresh().catch(() => {});
-                  }}
-                  onRevoked={() => {
-                    if (editingKeyId === k.id) setEditingKeyId(null);
-                    refresh().catch(() => {});
-                  }}
-                  onEditScopes={(target) => {
-                    // Only one form open at a time — the create form and an
-                    // editor side by side both claim to be "the" scope picker.
-                    setCreating(false);
-                    setEditingKeyId((current) => (current === target.id ? null : target.id));
-                  }}
-                />
-                {editingKeyId === k.id && (
-                  <ApiKeyScopeEditor
-                    apiKey={k}
-                    onSubmit={(input) => handleUpdate(k.id, input)}
-                    onCancel={() => setEditingKeyId(null)}
+            {activeKeys.map(renderKeyRow)}
+
+            {activeKeys.length === 0 && (
+              <p className="py-2 text-sm text-muted-foreground">
+                every key on this account has been revoked.
+              </p>
+            )}
+
+            {revokedKeys.length > 0 && (
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowRevoked((v) => !v)}
+                  aria-expanded={showRevoked}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-white cursor-pointer"
+                >
+                  <ChevronRight
+                    className={`h-3.5 w-3.5 transition-transform ${showRevoked ? 'rotate-90' : ''}`}
                   />
+                  {showRevoked ? 'hide' : 'show'} revoked ({revokedKeys.length})
+                </button>
+                {showRevoked && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground/70">
+                      revoked keys stop working immediately. they stay listed so a request made
+                      with one is still traceable to the key it came from.
+                    </p>
+                    {revokedKeys.map(renderKeyRow)}
+                  </div>
                 )}
               </div>
-            ))}
+            )}
           </div>
         )}
       </div>

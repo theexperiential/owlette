@@ -150,6 +150,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         expiresAt,
         createdAt: FieldValue.serverTimestamp(),
         lastUsedAt: null,
+        // Null, never omitted — see the field's note in apiKeyTypes.ts; the
+        // daily sweep's `== null` filter cannot match a document without it.
+        expiredMarkedAt: null,
         rotatedFromKeyId: keyId,
       };
 

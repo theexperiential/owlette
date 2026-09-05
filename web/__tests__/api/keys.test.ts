@@ -70,8 +70,17 @@ function mockDb() {
     batch: () => {
       const ops: Array<() => void> = [];
       return {
-        set: (ref: { path: string }, data: Record<string, unknown>) => {
-          ops.push(() => store.set(ref.path, data));
+        // `{ merge: true }` is modelled, not ignored: revoke relies on merge-set
+        // creating-or-merging the lookup doc, and a mock that always replaced it
+        // would hide a lost userId/keyId mapping.
+        set: (
+          ref: { path: string },
+          data: Record<string, unknown>,
+          options?: { merge?: boolean },
+        ) => {
+          ops.push(() =>
+            store.set(ref.path, options?.merge ? { ...(store.get(ref.path) ?? {}), ...data } : data),
+          );
         },
         delete: (ref: { path: string }) => {
           ops.push(() => store.set(ref.path, null));
@@ -302,7 +311,7 @@ describe('/api/keys POST', () => {
 });
 
 describe('/api/keys/{keyId} DELETE', () => {
-  it('audits successful key revocation', async () => {
+  it('soft-revokes: both docs survive, each stamped with a numeric revokedAt', async () => {
     store.set('users/user-member/api_keys/key-a', {
       keyHash: 'hash-a',
       keyPrefix: 'owk_live_a',
@@ -312,8 +321,18 @@ describe('/api/keys/{keyId} DELETE', () => {
     const res = await makeDelete('key-a');
 
     expect(res.status).toBe(200);
-    expect(store.get('users/user-member/api_keys/key-a')).toBeNull();
-    expect(store.get('api_keys/hash-a')).toBeNull();
+
+    const record = store.get('users/user-member/api_keys/key-a') as Record<string, unknown>;
+    expect(record).not.toBeNull();
+    expect(typeof record.revokedAt).toBe('number');
+
+    // The lookup is the only doc the auth path reads, so the stamp has to reach
+    // it — and its userId/keyId mapping has to survive, which is the whole point
+    // of not deleting: a request replayed with a revoked key stays attributable.
+    const lookup = store.get('api_keys/hash-a') as Record<string, unknown>;
+    expect(typeof lookup.revokedAt).toBe('number');
+    expect(lookup).toMatchObject({ userId: 'user-member', keyId: 'key-a' });
+
     expect(mockEmitMutation).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'api_key_mutated',
@@ -327,6 +346,50 @@ describe('/api/keys/{keyId} DELETE', () => {
         }),
       }),
     );
+  });
+
+  it('still 200s when the lookup doc is absent — merge-set, never a batched update', async () => {
+    // A batched update() against a missing document fails the ENTIRE commit with
+    // NOT_FOUND, and old keys legitimately have no lookup doc. That failure mode
+    // would leave the key neither revoked nor deleted — still authenticating —
+    // while the ui toasted "key revoked".
+    store.set('users/user-member/api_keys/key-a', { keyHash: 'hash-gone' });
+
+    const res = await makeDelete('key-a');
+
+    expect(res.status).toBe(200);
+    const record = store.get('users/user-member/api_keys/key-a') as Record<string, unknown>;
+    expect(typeof record.revokedAt).toBe('number');
+    const lookup = store.get('api_keys/hash-gone') as Record<string, unknown>;
+    expect(typeof lookup.revokedAt).toBe('number');
+  });
+
+  it('is idempotent — a second revoke keeps the first timestamp and emits nothing', async () => {
+    const firstRevokedAt = 1_700_000_000_000;
+    store.set('users/user-member/api_keys/key-a', {
+      keyHash: 'hash-a',
+      revokedAt: firstRevokedAt,
+    });
+    store.set('api_keys/hash-a', {
+      userId: 'user-member',
+      keyId: 'key-a',
+      revokedAt: firstRevokedAt,
+    });
+
+    const res = await makeDelete('key-a');
+
+    expect(res.status).toBe(200);
+    // Re-stamping would rewrite the audit trail's answer to "when did this key
+    // stop working", and nothing mutated, so nothing is emitted either.
+    expect((store.get('users/user-member/api_keys/key-a') as { revokedAt: number }).revokedAt)
+      .toBe(firstRevokedAt);
+    expect((store.get('api_keys/hash-a') as { revokedAt: number }).revokedAt)
+      .toBe(firstRevokedAt);
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  it('404s for a key the caller does not own', async () => {
+    expect((await makeDelete('key-missing')).status).toBe(404);
   });
 });
 

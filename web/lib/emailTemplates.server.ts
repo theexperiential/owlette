@@ -372,3 +372,111 @@ export function buildDisplayDigestEmail(
     unsubscribeUrl,
   });
 }
+
+// api key expiry notices
+
+/**
+ * One expiring key as rendered in the notice email. Metadata ONLY: no `keyHash`
+ * (the stored form of the credential) and no `scopes` (a map of what the key can
+ * reach). An expiry reminder must not make an inbox worth more than it was.
+ */
+export interface ExpiringApiKey {
+  name: string;
+  keyPrefix: string;
+  expiresAt: number;
+  /** Whole days until expiry, floored — NEGATIVE once the key is already past it. */
+  daysRemaining: number;
+}
+
+/**
+ * Lowercase phrase for a key's remaining life. Deliberately avoids "today" and
+ * "tomorrow": those are calendar claims, and the recipient's calendar is not the
+ * one this ran on. Under a day is stated as exactly that.
+ */
+export function apiKeyExpiryPhrase(daysRemaining: number): string {
+  if (daysRemaining < 0) return 'already expired';
+  if (daysRemaining === 0) return 'expires in under a day';
+  return `expires in ${daysRemaining} day(s)`;
+}
+
+function expiringKeyRowsHtml(keys: ExpiringApiKey[], timezone?: string): string {
+  return keys
+    .map((k, i) => {
+      const bg = i % 2 === 1 ? `background:${EMAIL_COLORS.altRow};` : '';
+      const accent = k.daysRemaining < 0 ? EMAIL_COLORS.red : EMAIL_COLORS.amber;
+      return `
+      <tr>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(k.name)}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;font-family:'Courier New',Courier,monospace;">${escapeHtml(k.keyPrefix)}&#8226;&#8226;&#8226;</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(emailTimestamp(new Date(k.expiresAt), timezone))}</td>
+        <td style="padding:10px 14px;${bg}color:${accent};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;font-weight:700;">${apiKeyExpiryPhrase(k.daysRemaining)}</td>
+      </tr>`;
+    })
+    .join('');
+}
+
+/**
+ * Expiry notice for one owner's api keys, sent by `GET /api/cron/api-key-expiry`
+ * on the 14 / 3 / 0 day ladder. A single key gets the focused key/value layout,
+ * several get a table — the same split as the display digest.
+ *
+ * Every key listed belongs to the ONE recipient this is addressed to; the caller
+ * asserts that before rendering, because a collection-group scan returns every
+ * customer's keys flat and a grouping bug would put one in another's inbox.
+ */
+export function buildApiKeyExpiryEmail(
+  keys: ExpiringApiKey[],
+  unsubscribeUrl?: string,
+  timezone?: string,
+): string {
+  const soonest = keys.reduce((min, k) => Math.min(min, k.daysRemaining), Infinity);
+  const heading = soonest < 0 ? EMAIL_COLORS.red : EMAIL_COLORS.amber;
+  const advice = `<p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">rotate a key from account settings &#8594; api keys to get a fresh secret with the same scopes. an expired key stops authenticating — every request with it returns 401.</p>`;
+
+  if (keys.length === 1) {
+    const k = keys[0];
+    const content = `
+      <h2 style="color:${heading};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">api key ${apiKeyExpiryPhrase(k.daysRemaining)}</h2>
+      <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">one of your owlette api keys is at the end of its life.</p>
+      ${emailDataTable([
+        { label: 'key', value: k.name },
+        { label: 'prefix', value: `${k.keyPrefix}•••` },
+        { label: 'expires', value: emailTimestamp(new Date(k.expiresAt), timezone) },
+        {
+          label: 'status',
+          value: apiKeyExpiryPhrase(k.daysRemaining),
+          highlight: k.daysRemaining < 0 ? EMAIL_COLORS.red : EMAIL_COLORS.amber,
+        },
+      ])}
+      ${advice}
+    `;
+    return wrapEmailLayout(content, {
+      preheader: `api key ${k.name} ${apiKeyExpiryPhrase(k.daysRemaining)}`,
+      unsubscribeUrl,
+    });
+  }
+
+  const thStyle = `padding:10px 14px;text-align:left;background:${EMAIL_COLORS.altRow};color:${EMAIL_COLORS.muted};font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid ${EMAIL_COLORS.border};`;
+
+  const content = `
+    <h2 style="color:${heading};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">${keys.length} api keys expiring</h2>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${keys.length} of your owlette api keys are at the end of their life.</p>
+    <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
+      <thead>
+        <tr>
+          <th style="${thStyle}">key</th>
+          <th style="${thStyle}">prefix</th>
+          <th style="${thStyle}">expires</th>
+          <th style="${thStyle}">status</th>
+        </tr>
+      </thead>
+      <tbody>${expiringKeyRowsHtml(keys, timezone)}</tbody>
+    </table>
+    ${advice}
+  `;
+
+  return wrapEmailLayout(content, {
+    preheader: `${keys.length} api keys expiring`,
+    unsubscribeUrl,
+  });
+}

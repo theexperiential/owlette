@@ -40,7 +40,7 @@ test('config card renders provider + from/admin emails + environment', async ({ 
   await expect(page.getByText('admin email', { exact: true })).toBeVisible();
 });
 
-test('template selector shows all 9 templates and updates the description', async ({ page }) => {
+test('template selector shows all 10 templates and updates the description', async ({ page }) => {
   await page.goto('/admin/email');
 
   await expect(
@@ -57,9 +57,14 @@ test('template selector shows all 9 templates and updates the description', asyn
   await select.selectOption('process_crash');
   await expect(page.getByText('monitored process stopped unexpectedly')).toBeVisible();
 
-  // All 9 template options present.
+  // The newest template registers in the selector too (guards the
+  // hand-duplicated preview lists staying in sync).
+  await select.selectOption('api_key_expiring');
+  await expect(page.getByText('daily notice ladder before an api key expires')).toBeVisible();
+
+  // All 10 template options present.
   const optionCount = await select.locator('option').count();
-  expect(optionCount).toBe(9);
+  expect(optionCount).toBe(10);
 });
 
 test('clicking "send test email" with a stubbed success response shows the success panel', async ({ page }) => {

@@ -41,11 +41,12 @@ jest.mock('@/lib/firebase-admin', () => ({
 const ADMIN_EMAIL = 'admin@owlette.test';
 
 let getSiteAlertRecipients: typeof import('@/lib/adminUtils.server').getSiteAlertRecipients;
+let getUserAlertRecipient: typeof import('@/lib/adminUtils.server').getUserAlertRecipient;
 
 beforeAll(async () => {
   // ADMIN_EMAIL is read at module load from ADMIN_EMAIL_DEV — set it first.
   process.env.ADMIN_EMAIL_DEV = ADMIN_EMAIL;
-  ({ getSiteAlertRecipients } = await import('@/lib/adminUtils.server'));
+  ({ getSiteAlertRecipients, getUserAlertRecipient } = await import('@/lib/adminUtils.server'));
 });
 
 beforeEach(() => {
@@ -176,5 +177,80 @@ describe('getSiteAlertRecipients — ADMIN_EMAIL fallback', () => {
     expect(recipients).toEqual([
       { userId: 'fallback', email: ADMIN_EMAIL, ccEmails: [], mutedMachines: ['TEC-A4D'] },
     ]);
+  });
+});
+
+/**
+ * getUserAlertRecipient — the user-scoped resolver behind api key expiry notices.
+ *
+ * Deliberately NOT a copy of the site resolver: an api key belongs to one person
+ * and no site, so there is no membership enumeration, no ADMIN_EMAIL fallback
+ * (which exists for orphan sites and here would mail the admin about a
+ * stranger's credential) and no machine mutes.
+ */
+describe('getUserAlertRecipient', () => {
+  const userDoc = (data: Record<string, unknown>, id = 'u1') => ({ id, data: () => data });
+
+  it('returns the user with their cc list, reading the uid off the snapshot', async () => {
+    mockUserDocGet.mockResolvedValue(
+      userDoc({ email: 'u1@owlette.test', preferences: { alertCcEmails: ['ops@owlette.test'] } })
+    );
+    await expect(getUserAlertRecipient('u1', 'apiKeyAlerts')).resolves.toEqual({
+      userId: 'u1',
+      email: 'u1@owlette.test',
+      ccEmails: ['ops@owlette.test'],
+    });
+    expect(mockUsersDoc).toHaveBeenCalledWith('u1');
+  });
+
+  it('defaults to enabled when the preference is absent (opt-out model)', async () => {
+    mockUserDocGet.mockResolvedValue(userDoc({ email: 'u1@owlette.test' }));
+    await expect(getUserAlertRecipient('u1', 'apiKeyAlerts')).resolves.toEqual({
+      userId: 'u1',
+      email: 'u1@owlette.test',
+      ccEmails: [],
+    });
+  });
+
+  it('returns null when the user opted out', async () => {
+    mockUserDocGet.mockResolvedValue(
+      userDoc({ email: 'u1@owlette.test', preferences: { apiKeyAlerts: false } })
+    );
+    await expect(getUserAlertRecipient('u1', 'apiKeyAlerts')).resolves.toBeNull();
+  });
+
+  it('returns null for a soft-deleted user', async () => {
+    mockUserDocGet.mockResolvedValue(
+      userDoc({ email: 'u1@owlette.test', deletedAt: 1700000000000 })
+    );
+    await expect(getUserAlertRecipient('u1', 'apiKeyAlerts')).resolves.toBeNull();
+  });
+
+  it('returns null when the user has no email, and never reaches for ADMIN_EMAIL', async () => {
+    mockUserDocGet.mockResolvedValue(userDoc({ preferences: {} }));
+    await expect(getUserAlertRecipient('u1', 'apiKeyAlerts')).resolves.toBeNull();
+    expect(mockGetUserByEmail).not.toHaveBeenCalled();
+  });
+
+  it('returns null for a missing user document', async () => {
+    mockUserDocGet.mockResolvedValue({ id: 'u1', data: () => undefined });
+    await expect(getUserAlertRecipient('u1', 'apiKeyAlerts')).resolves.toBeNull();
+  });
+
+  it('returns null (and does not throw) when the read fails', async () => {
+    mockUserDocGet.mockRejectedValue(new Error('firestore unavailable'));
+    await expect(getUserAlertRecipient('u1', 'apiKeyAlerts')).resolves.toBeNull();
+  });
+
+  it('reports the uid it actually read, so a caller can catch a mismatch', async () => {
+    // The cron compares this against the owner uid it derived from the key's
+    // document path; returning the argument verbatim would make that check
+    // tautological and the cross-user leakage guard worthless.
+    mockUserDocGet.mockResolvedValue(userDoc({ email: 'other@owlette.test' }, 'someone-else'));
+    await expect(getUserAlertRecipient('u1', 'apiKeyAlerts')).resolves.toEqual({
+      userId: 'someone-else',
+      email: 'other@owlette.test',
+      ccEmails: [],
+    });
   });
 });

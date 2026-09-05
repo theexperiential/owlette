@@ -64,8 +64,24 @@ export interface ApiKeyRecord {
   rotatedFromKeyId?: string;
   /** When the old key stops working after rotation (rotatedAt + 24 hours). */
   retiresAt?: number;
-  /** Set on revocation. */
+  /** Set on revocation. Revoke is a soft delete — the record and its lookup both survive. */
   revokedAt?: number;
+  /**
+   * Expiry-notice ladder stages (days-before-expiry) already emailed for this key,
+   * written by `GET /api/cron/api-key-expiry` BEFORE each send so a scheduler retry
+   * cannot loop. Lives here and NEVER on {@link ApiKeyLookup}: that doc is read on
+   * every authenticated API request and must not carry notification bookkeeping.
+   */
+  expiryNoticedStages?: number[];
+  /**
+   * Set by the daily `sweepExpiredApiKeys` function once it has reaped this key's
+   * lookup doc. **Every mint path must write it as `null`**, and that is not
+   * cosmetic: the sweep's query is `.where('expiredMarkedAt', '==', null)`, which
+   * only matches documents where the field exists, and a document missing an
+   * indexed field is absent from the composite index entirely. Omitting it makes
+   * the whole sweep inert (it was, until this was added).
+   */
+  expiredMarkedAt?: number | null;
 }
 
 /** Stored in api_keys/{keyHash}: denormalized lookup table for O(1) auth, no join. */
@@ -130,6 +146,13 @@ export const DEFAULT_TTL_DAYS = 90;
 export const MAX_TTL_DAYS = 365;
 export const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * How far ahead of `expiresAt` a key counts as "expiring soon". Shared so the
+ * dashboard badge and the expiry-notice cron cannot drift: it is both the amber
+ * row state and the upper bound of the cron's enumeration window.
+ */
+export const EXPIRATION_WARNING_MS = 14 * 24 * 60 * 60 * 1000;
+
 /** True if any scope matches (resource, id, permission); stored id '*' matches any id. */
 export function scopeMatches(
   scopes: ApiKeyScope[],
@@ -175,6 +198,8 @@ export interface ApiKeyListItem {
   expired: boolean;
   /** Derived: a rotated key whose grace window has closed. */
   retired: boolean;
+  /** Derived: revoked. Terminal — it outranks `expired` and `retired`. */
+  revoked: boolean;
 }
 
 /**
@@ -222,6 +247,7 @@ export function buildApiKeyListItem(
   const expiresAt = toEpochMillis(data.expiresAt);
   const retiresAt = toEpochMillis(data.retiresAt);
   const rotatedAt = toEpochMillis(data.rotatedAt);
+  const revokedAt = toEpochMillis(data.revokedAt);
   return {
     id,
     name: typeof data.name === 'string' ? data.name : null,
@@ -236,10 +262,16 @@ export function buildApiKeyListItem(
     rotatedFromKeyId:
       typeof data.rotatedFromKeyId === 'string' ? data.rotatedFromKeyId : null,
     retiresAt,
-    revokedAt: toEpochMillis(data.revokedAt),
+    revokedAt,
     expiredMarkedAt: toEpochMillis(data.expiredMarkedAt),
     expired: expiresAt !== null && expiresAt <= now,
     // No rotatedAt means no grace window, so the key is simply live.
     retired: rotatedAt !== null && retiresAt !== null && retiresAt <= now,
+    // Presence, NOT `<= now`. The auth path's revocation check is a plain
+    // truthiness test on revokedAt (apiAuth.server.ts), so a future-dated stamp
+    // already 401s every request. Deriving this against `now` would render such a
+    // key "active" in the dashboard while the API rejected it — the exact class of
+    // badge-vs-behaviour divergence `expired` was added to close.
+    revoked: revokedAt !== null,
   };
 }

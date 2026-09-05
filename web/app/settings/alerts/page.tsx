@@ -23,7 +23,8 @@ type AlertKey =
   | 'thresholdAlerts'
   | 'cortexAlerts'
   | 'displayAlerts'
-  | 'talonAlerts';
+  | 'talonAlerts'
+  | 'apiKeyAlerts';
 
 const ALERT_TOGGLES: { key: AlertKey; label: string; desc: string }[] = [
   {
@@ -56,6 +57,11 @@ const ALERT_TOGGLES: { key: AlertKey; label: string; desc: string }[] = [
     label: 'talon alerts',
     desc: 'emails when a talon fires or fails',
   },
+  {
+    key: 'apiKeyAlerts',
+    label: 'api key expiry',
+    desc: 'emails before an api key expires',
+  },
 ];
 
 function pickAlertPrefs(p: UserPreferences): Record<AlertKey, boolean> {
@@ -66,6 +72,7 @@ function pickAlertPrefs(p: UserPreferences): Record<AlertKey, boolean> {
     cortexAlerts: p.cortexAlerts,
     displayAlerts: p.displayAlerts,
     talonAlerts: p.talonAlerts,
+    apiKeyAlerts: p.apiKeyAlerts,
   };
 }
 

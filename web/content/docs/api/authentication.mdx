@@ -201,7 +201,7 @@ Self-service lifecycle endpoints require a signed-in user session or Firebase ID
 
 - `PATCH /api/keys/{keyId}` edits scopes and/or name without reissuing the secret. See [editing key scopes](#editing-key-scopes).
 - `POST /api/keys/{keyId}/rotate` issues a replacement key with the same scopes and environment, returns the new raw key once, and leaves the previous key valid only for the rotation grace window.
-- `DELETE /api/keys/{keyId}` revokes the key immediately by deleting its user record and lookup entry.
+- `DELETE /api/keys/{keyId}` revokes the key immediately. It is not a delete: the key's record and lookup entry are kept and stamped `revokedAt`, so the key still appears in `GET /api/keys` with `revoked: true` and a request replayed with it stays attributable. Repeating the call is a no-op.
 
 ---
 

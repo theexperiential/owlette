@@ -6,9 +6,8 @@
  * Seeded through the Admin SDK (user-subcollection record + top-level
  * api_keys/{keyHash} lookup), not POST /api/keys.
  *
- * The revoked case ships as test.fixme(): keyStatusAt() never inspects
- * revokedAt, so a revoked record still renders as active. It starts failing the
- * moment KeyCard grows that terminal branch — which is the signal we want.
+ * The revoked row lives behind the panel's "show revoked" disclosure: revoke is a
+ * soft delete, so that list only grows and is folded away by default.
  */
 
 import crypto from 'crypto';
@@ -202,19 +201,29 @@ test(
   },
 );
 
-test.fixme(
+test(
   'revoked key row renders a terminal "revoked" badge with muted treatment',
   async ({ page }) => {
-    // GAP: keyStatusAt() never inspects revokedAt, and DELETE hard-deletes today,
-    // so a revoked record still renders as "active". Promote once revoke becomes a
-    // soft-delete and KeyCard grows a terminal "revoked" branch.
+    // Promoted from fixme: revoke is a soft delete now, GET /api/keys derives
+    // `revoked` from the surviving revokedAt stamp, and keyStatusAt() branches on
+    // it first — ahead of expired, mirroring the auth path's own precedence.
     await page.goto('/settings/api-keys');
     await expect(
     page.getByRole('heading', { name: 'api keys', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
 
+    // Revoked keys are grouped behind a disclosure so the list stays readable as
+    // it accumulates; nothing is filtered server-side.
+    await page.getByRole('button', { name: /^show revoked \(\d+\)$/ }).click();
+
     const row = rowFor(page, 'e2e state revoked');
     const badge = row.locator('[data-slot="badge"]', { hasText: /^revoked$/ });
     await expect(badge).toBeVisible();
+    await expect(badge).toHaveClass(/text-muted-foreground/);
+
+    // Terminal in every direction: rotate and edit 409, and revoking again is a
+    // no-op, so the row carries no action control at all.
+    await expect(row.getByRole('button', { name: /^actions for / })).toHaveCount(0);
+    await expect(row.getByRole('button', { name: /^revoke / })).toHaveCount(0);
   },
 );

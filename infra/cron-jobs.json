@@ -150,6 +150,30 @@
       "note": "Against a large first-time backlog, schedule hourly until a run reports truncated:false, then drop back to daily. Any quiet hour works; 04:00 is the documented default."
     },
     {
+      "id": "cron-api-key-expiry",
+      "path": "/api/cron/api-key-expiry",
+      "method": "GET",
+      "authHeader": "X-Cron-Secret",
+      "authScheme": "raw",
+      "authEnvVar": "CRON_SECRET",
+      "schedule": "0 8 * * *",
+      "cadenceLabel": "daily at 08:00",
+      "minTimeoutSeconds": 30,
+      "environments": ["dev", "prod"],
+      "urls": {
+        "dev": "https://dev.owlette.app/api/cron/api-key-expiry",
+        "prod": "https://owlette.app/api/cron/api-key-expiry"
+      },
+      "purpose": "Collection-group scan of every user's api_keys for documents whose expiresAt falls between 24 hours ago and EXPIRATION_WARNING_MS ahead (14 days, web/lib/apiKeyTypes.ts), assigns each the smallest unfired rung of the 14 / 3 / 0 day ladder, skips rotated and revoked keys, then stamps expiryNoticedStages on the owner's own key document BEFORE sending one email per owner listing all their expiring keys.",
+      "failureMode": {
+        "silent": true,
+        "description": "Nobody is ever warned that an api key is about to expire. The first symptom is a 401 in whatever integration held the key — a CI pipeline, an SDK caller, a customer's automation — with nothing in owlette indicating why. The dashboard's amber 'expiring soon' row still renders, so the information exists; it just never leaves the app."
+      },
+      "detectedBy": "nothing — no status component covers this route. Read the response body: keysScanned is non-zero on any fleet with live keys, and usersNotified exceeding emailsSent means recipients opted out, were deleted, or a send failed.",
+      "sourceFile": "web/app/api/cron/api-key-expiry/route.ts",
+      "note": "Any hour works — the ladder is measured in whole days from expiresAt, not against wall-clock time. Each rung is stamped before its email is sent, so a duplicate registration or a scheduler retry cannot re-send a rung; the accepted cost is that a send failing after the stamp loses that one notice, and the next rung down still fires."
+    },
+    {
       "id": "cron-talons",
       "path": "/api/cron/talons",
       "method": "GET",

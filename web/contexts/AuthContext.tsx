@@ -232,6 +232,7 @@ export interface UserPreferences {
   cortexAlerts: boolean; // Receive email alerts when Cortex AI escalates unresolved issues. Default: true
   displayAlerts: boolean; // Receive email alerts when display layout / topology events fire (drift, monitor removed, apply failed, auto-revert, etc). Default: true
   talonAlerts: boolean; // Receive email alerts when a talon (automation) fires or fails. Default: true
+  apiKeyAlerts: boolean; // Receive email notices before one of your api keys expires (14 / 3 / 0 days out). Default: true
   displayAlertsBannerDismissed: boolean; // [B4.3] One-shot dismissal of the "new: display alerts" banner on /admin/alerts. Default: false (banner shows). The banner also auto-hides after 30 days from feature launch regardless of dismissal state.
   mutedMachines: string[]; // Machine IDs to suppress all alerts for. Default: []
   alertCcEmails: string[]; // Additional CC recipients for alert emails. Default: []
@@ -300,7 +301,7 @@ const AuthContext = createContext<AuthContextType>({
   lastMachineIds: {},
   requiresMfaSetup: false,
   mfaFactors: NO_MFA_FACTORS,
-  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
+  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, apiKeyAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
   signIn: async () => {},
   signUp: async () => {},
   signInWithGoogle: async () => ({ isNewUser: false }),
@@ -330,7 +331,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
   const [mfaFactors, setMfaFactors] = useState<MfaFactorInventory>(NO_MFA_FACTORS);
-  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
+  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, apiKeyAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
   // Ref mirror so updateUserPreferences reads current prefs without listing
   // them in its deps — that caused stale closures to clobber rapid stacked
   // updates (cell-click + sparkline-toggle).
@@ -472,6 +473,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   cortexAlerts: preferences.cortexAlerts !== false, // Default: true
                   displayAlerts: preferences.displayAlerts !== false, // Default: true
                   talonAlerts: preferences.talonAlerts !== false, // Default: true
+                  apiKeyAlerts: preferences.apiKeyAlerts !== false, // Default: true
                   displayAlertsBannerDismissed: preferences.displayAlertsBannerDismissed === true, // Default: false (banner shows)
                   mutedMachines: preferences.mutedMachines || [], // Default: []
                   alertCcEmails: preferences.alertCcEmails || [], // Default: []
@@ -506,6 +508,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     prev.cortexAlerts === newPrefs.cortexAlerts &&
                     prev.displayAlerts === newPrefs.displayAlerts &&
                     prev.talonAlerts === newPrefs.talonAlerts &&
+                    prev.apiKeyAlerts === newPrefs.apiKeyAlerts &&
                     prev.displayAlertsBannerDismissed === newPrefs.displayAlertsBannerDismissed &&
                     prev.statsExpanded === newPrefs.statsExpanded &&
                     prev.processesExpanded === newPrefs.processesExpanded &&

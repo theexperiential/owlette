@@ -28,9 +28,26 @@ interface RouteParams {
 }
 
 /**
- * DELETE /api/keys/{keyId} — revoke the authenticated user's own API key. Deletes both
- * the user subcollection doc and the top-level `api_keys/{keyHash}` lookup, so auth
- * resolution fails immediately.
+ * DELETE /api/keys/{keyId} — revoke the authenticated user's own API key.
+ *
+ * A soft delete: both the user subcollection doc and the top-level
+ * `api_keys/{keyHash}` lookup survive, each stamped `revokedAt`. This fails closed
+ * exactly as immediately as the old hard delete — `resolveApiKeyContext` reads the
+ * lookup live with no cache and checks `revokedAt` *before* `retiresAt` and
+ * `expiresAt` (apiAuth.server.ts) — while keeping the keyHash→userId mapping, so a
+ * post-revocation replay is still attributable to the key and the owner it came
+ * from. It is also the state the documented rollback in
+ * docs/runbooks/upgrade-2.12.0.md restores from.
+ *
+ * The lookup write is a merge-set, never `update`: a batched `update()` against a
+ * missing document fails the ENTIRE commit with NOT_FOUND, and the lookup can
+ * legitimately be absent for very old keys (see the tolerated failure at
+ * userDeleteCascade.server.ts). Splitting it out into a fire-and-forget `.catch()`
+ * would be worse still — it can leave a key neither revoked nor deleted, fully
+ * authenticating, while the UI reports success.
+ *
+ * `Date.now()`, not `serverTimestamp()`: `ApiKeyRecord.revokedAt` is a number, and
+ * the auth path compares it as one.
  */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
@@ -53,11 +70,23 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return problemNotFound('api key not found');
     }
 
-    const keyHash = keySnap.data()?.keyHash;
+    const existing = keySnap.data() as Partial<ApiKeyRecord> | undefined;
+
+    // Idempotent: a second revoke is a no-op, not a re-stamp. Truthiness rather
+    // than a `typeof number` check, matching the auth path — anything already
+    // stamped there is already failing closed, and overwriting it would move the
+    // audit trail's answer to "when did this key stop working". No mutation
+    // happened, so no mutation is emitted.
+    if (existing?.revokedAt) {
+      return NextResponse.json({ success: true });
+    }
+
+    const keyHash = existing?.keyHash;
+    const revokedAt = Date.now();
     const batch = db.batch();
-    batch.delete(keyRef);
+    batch.update(keyRef, { revokedAt });
     if (keyHash && typeof keyHash === 'string') {
-      batch.delete(db.collection('api_keys').doc(keyHash));
+      batch.set(db.collection('api_keys').doc(keyHash), { revokedAt }, { merge: true });
     }
     await batch.commit();
 

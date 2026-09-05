@@ -21,6 +21,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { EXPIRATION_WARNING_MS } from '@/lib/apiKeyTypes';
 import type { ApiKeyListItem, ApiKeyScope } from '@/lib/apiKeyTypes';
 
 export type { ApiKeyListItem } from '@/lib/apiKeyTypes';
@@ -35,8 +36,6 @@ export type { ApiKeyListItem } from '@/lib/apiKeyTypes';
  * buttons on an active row versus one on an expired row is an 80px swing, taken
  * out of the only flexible column, so no two rows agreed on column positions.
  */
-
-const EXPIRATION_WARNING_MS = 14 * 24 * 60 * 60 * 1000;
 
 function formatDate(ms: number | null): string {
   if (!ms) return '—';
@@ -63,6 +62,11 @@ function keyStatusAt(
   label: string;
   tone: 'ok' | 'warn' | 'error' | 'muted';
 } {
+  // Revoked first, mirroring the auth path's own precedence: revokedAt is
+  // checked before retiresAt and expiresAt, so a key that is both revoked and
+  // expired is rejected as revoked. Any other order would label a deliberately
+  // killed key by whatever else happened to it since.
+  if (k.revoked) return { label: 'revoked', tone: 'muted' };
   if (k.expired) return { label: 'expired', tone: 'error' };
   if (k.retired) return { label: 'retired', tone: 'muted' };
   if (k.rotatedAt && k.retiresAt && k.retiresAt > now) {
@@ -112,8 +116,10 @@ export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, editing, n
       ? Math.max(1, Math.ceil((apiKey.expiresAt - now) / (24 * 60 * 60 * 1000)))
       : null;
   // The server 409s rotate and edit on a terminal key. Revoke stays, which is
-  // why an expired row still has a menu.
-  const actionable = !apiKey.expired && !apiKey.retired && !apiKey.rotatedAt;
+  // why an expired row still has a menu — but a revoked key has nothing left to
+  // do, so it gets no control at all.
+  const actionable =
+    !apiKey.revoked && !apiKey.expired && !apiKey.retired && !apiKey.rotatedAt;
 
   async function handleRotate() {
     setRotating(true);
@@ -244,7 +250,10 @@ export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, editing, n
           </div>
         </div>
 
-        {confirmRevoke ? (
+        {/* A revoked key is terminal in every direction — rotate and edit 409,
+            and revoking it again is a no-op — so the whole action cell goes
+            away rather than offering a button that cannot change anything. */}
+        {apiKey.revoked ? null : confirmRevoke ? (
           <div className="flex items-center justify-end gap-1.5">
             <span className="text-xs text-red-400">revoke?</span>
             <Button

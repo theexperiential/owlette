@@ -17,6 +17,7 @@ const ALERT_PREFERENCES = {
   cortexAlerts: false,
   displayAlerts: false,
   talonAlerts: false,
+  apiKeyAlerts: false,
 };
 
 function getSecret(): string {

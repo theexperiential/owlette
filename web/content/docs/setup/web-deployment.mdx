@@ -163,6 +163,7 @@ returns 401.
 | `/api/cron/display-alerts` | `*/3 * * * *` | `X-Cron-Secret` | drains `pending_display_alerts` into email |
 | `/api/cron/status-ping` | every 60s | `X-Cron-Secret` | writes status pings, publishes to Instatus |
 | `/api/cron/retention` | daily | `X-Cron-Secret` | deletes metrics, logs + talon run history past 400 days |
+| `/api/cron/api-key-expiry` | `0 8 * * *` | `X-Cron-Secret` | emails api key owners 14 / 3 / 0 days before a key expires |
 | `/api/cron/talons` | every 60s | `X-Cron-Secret` | claims due talons (schedule triggers), missed-fire grace, stale-run recovery, fires due hoot follow-ups |
 | `/api/hoot/escalation` | every 5 min | `Authorization: Bearer` | hoot autonomous-mode backstop poller |
 
@@ -243,7 +244,7 @@ GET https://<your-app>/api/hoot/escalation
 Authorization: Bearer <CRON_SECRET value>
 ```
 
-Note the header: this route reads `Authorization: Bearer`, unlike the six
+Note the header: this route reads `Authorization: Bearer`, unlike the seven
 `X-Cron-Secret` routes. Sending the wrong header shape returns 401 with no other
 symptom, so verify a run returns 200 after scheduling it.
 
@@ -275,6 +276,30 @@ Changing the window means changing **all three** — `METRICS_RETENTION_DAYS`,
 `LOGS_RETENTION_DAYS` and `TALON_RUNS_RETENTION_DAYS` in the route — and the
 stated periods in the privacy policy. They are a set; changing one alone makes
 the policy inaccurate.
+
+### api key expiry notices
+
+Emails each api key's owner once at 14 days, once at 3 days and once at expiry.
+Without it, keys expire with no warning and the first symptom is a 401 in
+production. Schedule daily, in every environment:
+
+```text
+GET https://<your-app>/api/cron/api-key-expiry
+X-Cron-Secret: <CRON_SECRET value>
+```
+
+Use cron expression `0 8 * * *` (any hour; the ladder is measured in whole days,
+not clock time). A successful run returns:
+
+```json
+{"ok":true,"keysScanned":36,"usersNotified":2,"emailsSent":2}
+```
+
+`usersNotified` counts owners with at least one key due a notice; `emailsSent` is
+how many of those Resend accepted. Recipients who turned off **api key expiry**
+in account settings account for the gap. Each rung is stamped on the key document
+*before* the email goes out, so a duplicate schedule or a scheduler retry cannot
+send the same notice twice.
 
 ### public status-page ping
 

@@ -111,6 +111,10 @@ export const POST = withRateLimit(
         expiresAt,
         createdAt: FieldValue.serverTimestamp(),
         lastUsedAt: null,
+        // Written as null, never omitted: sweepExpiredApiKeys queries
+        // `.where('expiredMarkedAt', '==', null)`, and a document missing the
+        // field is not in the composite index at all, so it can never match.
+        expiredMarkedAt: null,
       };
 
       batch.set(

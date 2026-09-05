@@ -43,6 +43,17 @@ async function problemMessage(res: Response, fallback: string): Promise<string> 
   return body.detail || body.error || body.message || fallback;
 }
 
+/**
+ * Sort rank, lowest first. Revoked outranks expired/retired because the list
+ * grows forever now that revoke is a soft delete: revoked rows are the ones the
+ * panel folds away behind a disclosure, so they have to land last as a block.
+ */
+function terminalRank(k: ApiKeyListItem): number {
+  if (k.revoked) return 2;
+  if (k.expired || k.retired) return 1;
+  return 0;
+}
+
 export function useApiKeys() {
   const [keys, setKeys] = useState<ApiKeyListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,13 +64,10 @@ export function useApiKeys() {
       const res = await fetch('/api/keys');
       if (!res.ok) throw new Error(await problemMessage(res, 'failed to load keys'));
       const data = (await res.json()) as { keys?: ApiKeyListItem[] };
-      // Usable keys first; sort is stable so the route's createdAt-desc holds.
+      // Usable keys first, then dead-by-time-passing, then dead-by-decision;
+      // sort is stable so the route's createdAt-desc holds inside each rank.
       const rows = data.keys ?? [];
-      setKeys(
-        [...rows].sort(
-          (a, b) => Number(a.expired || a.retired) - Number(b.expired || b.retired),
-        ),
-      );
+      setKeys([...rows].sort((a, b) => terminalRank(a) - terminalRank(b)));
     } finally {
       setLoading(false);
     }

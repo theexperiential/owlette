@@ -115,6 +115,47 @@ describe('buildApiKeyListItem', () => {
     expect(item.retired).toBe(false);
   });
 
+  it('marks a key with a revokedAt stamp as revoked', () => {
+    const item = buildApiKeyListItem(
+      'k1',
+      { ...base, expiresAt: NOW + 30 * DAY, revokedAt: NOW - DAY },
+      NOW
+    );
+    expect(item.revoked).toBe(true);
+    expect(item.revokedAt).toBe(NOW - DAY);
+  });
+
+  it('does not call an unrevoked key revoked', () => {
+    const item = buildApiKeyListItem('k1', { ...base, expiresAt: NOW + DAY }, NOW);
+    expect(item.revokedAt).toBeNull();
+    expect(item.revoked).toBe(false);
+  });
+
+  it('treats a FUTURE revokedAt as revoked now — presence, not <= now', () => {
+    // The auth path rejects on a truthy revokedAt without comparing it to the
+    // clock (apiAuth.server.ts), so a stamp dated tomorrow already 401s today.
+    // Deriving this against `now` would badge such a key "active" while every
+    // request it made was refused.
+    const item = buildApiKeyListItem(
+      'k1',
+      { ...base, expiresAt: NOW + 30 * DAY, revokedAt: NOW + DAY },
+      NOW
+    );
+    expect(item.revoked).toBe(true);
+  });
+
+  it('reports revoked and expired independently when a key is both', () => {
+    // Both flags are emitted; which one the badge shows is the UI's precedence
+    // call (keyStatusAt puts revoked first, matching the auth path).
+    const item = buildApiKeyListItem(
+      'k1',
+      { ...base, expiresAt: NOW - DAY, revokedAt: NOW - 2 * DAY },
+      NOW
+    );
+    expect(item.revoked).toBe(true);
+    expect(item.expired).toBe(true);
+  });
+
   it('degrades to nulls for a malformed record instead of throwing', () => {
     const item = buildApiKeyListItem('k1', {}, NOW);
     expect(item).toMatchObject({
@@ -127,6 +168,7 @@ describe('buildApiKeyListItem', () => {
       createdAt: null,
       expired: false,
       retired: false,
+      revoked: false,
     });
   });
 

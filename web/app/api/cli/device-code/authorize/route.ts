@@ -246,6 +246,9 @@ export const POST = withRateLimit(
             expiresAt: keyExpiresAt,
             createdAt: FieldValue.serverTimestamp(),
             lastUsedAt: null,
+            // Null, never omitted — see the field's note in apiKeyTypes.ts; the
+            // daily sweep's `== null` filter cannot match a document without it.
+            expiredMarkedAt: null,
           };
           transaction.set(
             db.collection('users').doc(userId).collection('api_keys').doc(keyId),
