@@ -1,6 +1,6 @@
 ---
 title: "hoot tools reference"
-description: "Complete reference for all 46 public web hoot tools from web/lib/mcp-tools.ts, organized by tier."
+description: "Complete reference for all 52 public web hoot tools from web/lib/mcp-tools.ts, organized by tier."
 ---
 
 ---
@@ -9,11 +9,11 @@ description: "Complete reference for all 46 public web hoot tools from web/lib/m
 
 | tier | type | approval | count |
 |------|------|----------|-------|
-| **1** | Read-only | Auto-approved | 14 |
-| **2** | Process & machine management | Auto-approved | 21 |
+| **1** | Read-only | Auto-approved | 16 |
+| **2** | Process & machine management | Auto-approved | 25 |
 | **3** | Privileged | Requires user confirmation | 11 |
 
-> **Server-side tools** (`get_site_logs`, `get_system_presets`, `deploy_software`, `update_process`, `add_process`, `delete_process`) execute in the Next.js server process. They do not route through the agent command queue.
+> **Server-side tools** (`get_site_logs`, `get_system_presets`, `deploy_software`, `update_process`, `add_process`, `delete_process`, `create_talon`, `list_talons`, `set_talon_enabled`, `schedule_followup`, `cancel_followup`) execute in the Next.js server process. They do not route through the agent command queue. Talons are site-level records and follow-ups are chat records, so neither is ever relayed to a machine.
 
 ---
 
@@ -37,6 +37,8 @@ Web hoot chooses an execution path by tool name in `web/lib/hoot-utils.server.ts
 | `get_agent_health` | 1 | Firestore `mcp_tool_call` | Yes, direct |
 | `get_system_presets` | 1 | Server-side | Not exposed |
 | `check_pending_reboot` | 1 | Firestore `mcp_tool_call` | Not exposed |
+| `schedule_followup` | 1 | Server-side | Not exposed |
+| `cancel_followup` | 1 | Server-side | Not exposed |
 | `restart_process` | 2 | Legacy command-mapped | Yes, IPC |
 | `kill_process` | 2 | Legacy command-mapped | Yes, IPC |
 | `start_process` | 2 | Legacy command-mapped | Yes, IPC |
@@ -59,6 +61,9 @@ Web hoot chooses an execution path by tool name in `web/lib/hoot-utils.server.ts
 | `get_event_logs_filtered` | 2 | Firestore `mcp_tool_call` | Not exposed |
 | `manage_windows_feature` | 2 | Firestore `mcp_tool_call` | Not exposed |
 | `show_notification` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `create_talon` | 2 | Server-side | Not exposed |
+| `list_talons` | 2 | Server-side | Not exposed |
+| `set_talon_enabled` | 2 | Server-side | Not exposed |
 | `run_command` | 3 | Firestore `mcp_tool_call` | Yes, direct |
 | `run_powershell` | 3 | Firestore `mcp_tool_call` | Yes, direct |
 | `run_python` | 3 | Firestore `mcp_tool_call` | Not exposed |
@@ -229,9 +234,48 @@ Detect whether a system reboot is currently pending (from Windows Update, Compon
 
 ---
 
+### schedule_followup
+
+Schedule a follow-up turn on this conversation. At the scheduled time hoot is re-opened in the same chat with `note` injected as the instruction, acts on it, and reports back — the way a promise to "check back in ten minutes" actually happens, since a turn ends when the assistant stops typing. **Server-side** — the follow-up is a chat record (`cortex-followups/{id}`, a data-at-rest name), acted on by the cron sweep and never relayed to a machine.
+
+| parameter | type | required | description |
+|-----------|------|----------|-------------|
+| `note` | string | **Yes** | What the follow-up turn should do, written as a self-contained instruction to hoot's future self — the conversation is not in view when it fires. Max 1000 characters |
+| `delay_minutes` | number | Exactly one of `delay_minutes` / `at` | Fire this many minutes from now: 1 to 10080 (one minute to seven days) |
+| `at` | string | Exactly one of `delay_minutes` / `at` | Fire at this absolute ISO 8601 timestamp with a timezone offset (e.g. `2026-01-31T14:00:00Z`). Must be in the future and within seven days |
+| `watch_command_id` | string | No | Id of a machine command already dispatched in this conversation. The follow-up then fires as soon as that command finishes, or at its scheduled time, whichever comes first |
+
+**Returns**: `followup_id`, `fires_at` (ISO), and `watch_command_id` when one was passed. Keep `followup_id` — `cancel_followup` needs it.
+
+Pass **exactly one** of `delay_minutes` and `at` — both, or neither, is rejected with `invalid_schedule` rather than silently picking a winner. Out-of-range values return `invalid_delay_minutes`, `at_in_the_past`, or `at_too_far_out`.
+
+**Early fire.** `watch_command_id` is a shortcut, not a replacement for the schedule — the scheduled time stays the backstop. The sweep resolves the watched command from the machine's `commands/completed` document and treats only the terminal statuses (`completed`, `failed`, `error`, `cancelled`) as finished; the agent's non-terminal `running` marker does not fire it. Site-wide chats have no single command to watch, so the id is ignored there.
+
+**Firing.** The follow-up pass rides the once-a-minute talons cron sweep (`/api/cron/talons`). Each sweep scans the 25 soonest `scheduled` follow-ups and starts at most 10 turns; a backlog drains over the following minutes. An early fire is therefore only found while the follow-up sits inside that scan window — past it, the follow-up still fires at its own scheduled time.
+
+**Tier 3 always waits for a person inside a fired follow-up.** The turn runs with `forceTier3Approval`, which overrides the site's `requireTier3Approval` setting: a site that lets an operator auto-run tier 3 while they watch has not agreed to it running while nobody does. The model may still reach for a tier-3 tool — the turn simply parks at approval-requested until the owner comes back to the chat.
+
+**Other fire-time guarantees.** Site access is re-resolved on every fire and never trusted from scheduling time, so a user removed or demoted in the meantime cannot keep driving tools through a promise they left behind; the chat must still exist and still belong to the same user (`chat_deleted` / `chat_owner_mismatch`). A follow-up never supersedes a live turn — if someone is mid-conversation the doc goes back to `scheduled` and the next sweep retries.
+
+**Where it is not available.** The tool requires a user chat: unattended hoot (autonomous dispatch, talon directives) runs as a system actor with no chat to re-open and no user whose access could be re-resolved, and gets `followup_unavailable`. Both follow-up tools are also **withheld from the public conversations API** — that surface's `chatId` is a `chat_conversations` id while the sweep resolves `chats/{chatId}`, so a follow-up scheduled there could never fire (it would fail closed as `chat_deleted`). Withholding the tools is deliberate: better no promise than one the sweep silently breaks.
+
+---
+
+### cancel_followup
+
+Cancel a scheduled follow-up before it fires. Use it when the thing the follow-up was going to check has already been settled in the conversation, or when the operator asks for it to be dropped. **Server-side** — reaches the same store helper as `DELETE /api/hoot/followups/{followupId}`, which is what the chip above the composer calls.
+
+| parameter | type | required | description |
+|-----------|------|----------|-------------|
+| `followup_id` | string | **Yes** | The id returned by `schedule_followup`. Never guess one |
+
+Ownership is enforced inside the store transaction (the Admin SDK bypasses `firestore.rules`, so that is the only gate every caller passes through): only the user who scheduled a follow-up can cancel it, and only while it is still `scheduled`. Failure results are `followup_not_found` (404), `followup_forbidden` (403, it belongs to another user), and `followup_not_scheduled` (409, it already fired or was cancelled — a cancel that loses the race with the sweep's claim lands here). Like `schedule_followup`, it is unavailable to unattended hoot and withheld from the public conversations API.
+
+---
+
 ## tier 2: process & machine management tools
 
-These execute immediately without user confirmation. Owlette-configured process control tools (`restart_process`, `kill_process`, `start_process`, `set_launch_mode`) wrap existing commands. Process config tools (`update_process`, `add_process`, `delete_process`) run server-side through the same validated action functions as the dashboard. The rest are purpose-built with validated parameters and narrower blast radius than raw shell scripts.
+These execute immediately without user confirmation. Owlette-configured process control tools (`restart_process`, `kill_process`, `start_process`, `set_launch_mode`) wrap existing commands. Process config tools (`update_process`, `add_process`, `delete_process`) run server-side through the same validated action functions as the dashboard, and the talon tools (`create_talon`, `list_talons`, `set_talon_enabled`) run server-side through the same talon store as the talon editor. The rest are purpose-built with validated parameters and narrower blast radius than raw shell scripts.
 
 ### restart_process
 
@@ -540,6 +584,89 @@ Display an on-screen message on the remote machine — useful when a technician 
 
 ---
 
+### create_talon
+
+Create a talon on this site — a saved automation of trigger → optional condition → outputs. See [talons](/docs/dashboard/talons) for the product-level picture. **Server-side** — talons are site-level records written through the same store as the dashboard editor, never relayed to a machine.
+
+**Confirm before calling.** A talon runs unattended against real machines, so hoot is instructed never to call this from a vague request: it states back the exact talon it intends to create — trigger, condition, every output, the machines in scope, the cooldown — and waits for the operator to confirm.
+
+| parameter | type | required | description |
+|-----------|------|----------|-------------|
+| `name` | string | **Yes** | Short lowercase name shown in the dashboard, 80 characters or fewer |
+| `trigger` | object | **Yes** | What makes the talon fire — one of the four shapes below |
+| `outputs` | array | **Yes** | 1 to 5 output entries, executed in order |
+| `description` | string | No | Lowercase note about what the talon is for, 500 characters or fewer |
+| `condition` | object | No | Gate evaluated after the trigger fires. Defaults to `{"type":"none"}` |
+| `scope` | object | No | `{"machineIds":["..."]}`. Omit for every machine in the site |
+| `cooldownMinutes` | number | No | Minimum minutes between runs, 0-1440 (default: 60) |
+| `enabled` | boolean | No | Whether the talon is armed as soon as it is created (default: true) |
+
+**Trigger shapes** (exactly one form):
+
+```json
+{"type": "schedule", "entries": [{"id": "e1", "days": ["mon", "wed"], "time": "09:00"}]}
+{"type": "schedule", "intervalMinutes": 30}
+{"type": "threshold", "metric": "cpu_percent", "operator": ">", "value": 90}
+{"type": "event", "eventTypes": ["process_crash", "machine_offline"], "delayMinutes": 2}
+```
+
+- **schedule / entries** — 24-hour `HH:MM` in the site's timezone, up to 50 entries. `entries` and `intervalMinutes` are mutually exclusive.
+- **schedule / intervalMinutes** — 5 to 1440 minutes, but 15 minutes minimum when the condition is a `visual_check`.
+- **threshold** — metrics `cpu_percent`, `memory_percent`, `disk_percent`, `gpu_percent`, `cpu_temp`, `gpu_temp`, `network_latency`, `network_packet_loss`; operators `>`, `<`, `>=`, `<=`. Threshold talons ride the existing alert pipeline: one fires when an alert rule fires and the breach matches the talon's own metric, operator, and bound — so a threshold talon does nothing until a matching alert rule exists.
+- **event** — `process_crash`, `machine_offline`, `process_start_failed`, `process_restarted`, `exe_missing`, and the `display_*` events. Event triggers only: `delayMinutes` (0-1440) waits that long after the event before running, e.g. letting a restarted app finish booting before a `visual_check` looks at it.
+
+**Condition** — `{"type":"none"}` (default), or `{"type":"visual_check","expectation":"the lobby wall is playing the loop, not showing a desktop","monitor":0}`, which captures a fresh screenshot and asks a vision model whether the expectation holds. `expectation` is 500 characters or fewer; `monitor` is `0` for all displays combined, `1` for primary.
+
+**Output entries** — each entry is an object keyed by `type`:
+
+| field | applies to | description |
+|-------|------------|-------------|
+| `type` | all | `email`, `webhook`, `cortex`, or `command` |
+| `url` | `webhook` | An https URL. Private, loopback, and link-local addresses are rejected (DNS-resolving SSRF check at authoring time, re-validated at send time) |
+| `directive` | `cortex` | What hoot should do when the talon fires, 1000 characters or fewer |
+| `commandType` | `command` | `restart_process`, `start_process`, or `stop_process` |
+| `processName` | `command` | The configured process name to act on |
+| `processId` | `command` | The configured process id, when hoot already holds it |
+
+`type: "cortex"` **is** the hoot output — the wire literal is a deliberate survivor of the cortex → hoot rename (it is persisted on every talon and every talon-run summary, and the MCP tool schema is itself a published contract). Every label a human reads says `hoot`. See `web/lib/hoot/WIRE_NAMES.md` class B.
+
+**Refusals.** A `command` output takes the same privilege as issuing the command by hand — site admins only, refused with `command_output_forbidden` (403) both in the tool and again in the store. A `visual_check` condition or a `cortex` output spends the talon author's own LLM key, so authoring one without a saved key returns `llm_key_required` (400). Exceeding 20 talons on the site returns `talon_limit_reached` (409). Validation rejects unknown top-level fields outright, so the model can never stamp a server-owned field onto the document; field-level failures come back as `invalid_talon` with `field_errors` rather than throwing and taking the turn down.
+
+**Returns**: `talon_id`, `name`, `enabled`, `next_run_at`.
+
+Unattended hoot cannot call this tool: authoring a talon is standing fleet policy that outlives the incident, so `create_talon` is excluded from the autonomous investigator's tool list regardless of tier.
+
+---
+
+### list_talons
+
+List the talons on this site, ordered by name. Call it before `set_talon_enabled` to get a talon id, and before `create_talon` so an existing talon is not duplicated.
+
+| parameter | type | required | description |
+|-----------|------|----------|-------------|
+| _(none)_ | | | |
+
+**Returns**: `count`, plus per talon `talon_id`, `name`, `enabled`, `trigger` (the normalized object, not a prose summary, so the exact metric / interval / event values are available for follow-up calls), `outputs` (types only), `last_run_status`, `last_run_at`, `next_run_at`.
+
+Read-only, so unlike the two writing talon tools this one stays available to unattended hoot.
+
+---
+
+### set_talon_enabled
+
+Arm or disarm an existing talon. Disabling leaves the talon in place — it does not delete it.
+
+| parameter | type | required | description |
+|-----------|------|----------|-------------|
+| `talon_id` | string | **Yes** | As returned by `list_talons` or `create_talon`. Never guessed |
+| `enabled` | boolean | **Yes** | `true` to arm, `false` to disarm |
+
+Enabling recomputes `nextRunAt` from now in the site's timezone, so a talon that sat disabled for a while does not fire the moment it comes back, and re-checks the author's LLM key when the talon has a `visual_check` condition or a hoot output (`llm_key_required` if it is gone). Either edge clears a system-set disable reason, so a re-armed talon does not still claim it was switched off. Like `create_talon`, this tool is excluded from unattended hoot.
+
+**Returns**: `talon_id`, `name`, `enabled`, `next_run_at`.
+
+---
+
 ## tier 3: privileged tools
 
 These require explicit user confirmation before execution.
@@ -717,6 +844,10 @@ LLM decides to call a tool
   |     +-- get_site_logs / get_system_presets query Firestore on the web server
   |     +-- deploy_software creates deployment records and install commands server-side
   |     +-- update_process / add_process / delete_process call process action functions server-side
+  |     +-- create_talon / list_talons / set_talon_enabled call the talon store server-side
+  |     +-- schedule_followup / cancel_followup write the chat's follow-up records;
+  |         the once-a-minute cron sweep fires them, with tier 3 forced to wait
+  |         for approval and site access re-resolved at fire time
   |
   +-- Legacy command-mapped tools
   |     +-- Write existing command types such as restart_process or reboot_machine
@@ -742,8 +873,9 @@ Tier 2 tools enforce per-tool blocklists to prevent self-inflicted outages:
 - `manage_process` — critical system processes (lsass, winlogon, csrss, etc.) cannot be killed
 - `registry_operation` — SAM, SECURITY, and Cryptography hives are unreachable; only an allowlist of safe key prefixes is permitted
 - `manage_windows_feature` — core Windows features Owlette depends on (NetFx4, WMI-\*, PowerShell\*) cannot be removed
+- `create_talon` — `command` outputs are site-admin only, and webhook URLs that resolve to private, loopback, or link-local addresses are rejected
 
-Agent-executed Tier 2 tools emit structured `[MCP-AUDIT]` log entries for each invocation. Server-side process config tools use the process mutation audit path with actor `cortex:user_<userId>`.
+Agent-executed Tier 2 tools emit structured `[MCP-AUDIT]` log entries for each invocation. Server-side process config tools use the process mutation audit path with actor `cortex:user_<userId>`. Talon tools emit `talon_mutated` rows with the same actor, `via: "cortex"`, and the originating chat id. The follow-up tools emit no mutation row of their own — the follow-up document is the record, and the `DELETE /api/hoot/followups/{followupId}` route behind the composer chip audits its own cancels as `chat_mutated` / verb `cancel_followup`.
 
 ### agent-side limits
 

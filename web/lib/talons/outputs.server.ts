@@ -490,8 +490,9 @@ async function executeHootOutput(
     return { type: 'cortex', status: 'sent', detail: result.chatId };
   }
   // Nothing was attempted and nothing is wrong with the talon — the machine is
-  // offline, or hoot is switched off on it. Same class as the command output's
-  // `machine_offline` skip, so it must not reach the auto-disable counter.
+  // offline, hoot is switched off on it, or (site-wide) no machine in the site
+  // is online. Same class as the command output's `machine_offline` skip, so it
+  // must not reach the auto-disable counter.
   if (result.status === 'skipped') {
     return { type: 'cortex', status: 'skipped', detail: result.detail };
   }

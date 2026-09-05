@@ -10,10 +10,11 @@
  * privilege. Terminal by construction, so it carries a
  * {@link TalonDisabledReason} that switches the talon off immediately.
  *
- * Machine pre-flight: a machine-scoped run then checks the same two things
- * `/api/hoot` checks before it commits a turn — the machine is online, and the
- * per-machine hoot kill switch is not engaged. Both refusals are `skipped`
- * (see {@link checkMachineGuards}).
+ * Target pre-flight: the run then checks the same things `/api/hoot` checks
+ * before it commits a turn — a machine-scoped run that its machine is online
+ * and the per-machine hoot kill switch is not engaged
+ * ({@link checkMachineGuards}); a site-wide run that the site has at least one
+ * machine online ({@link checkSiteGuards}). Every refusal is `skipped`.
  *
  * One fresh chat per run (`chats/talon_{ms}_{runId}`): the turn store holds one
  * lock per chat, so two runs sharing a chat would race for it. The chat is also
@@ -43,7 +44,7 @@
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type { UIMessage } from 'ai';
 import type { ToolTier } from '@/lib/mcp-tools';
-import { isHootEnabled, isMachineOnline } from '@/lib/hoot-utils.server';
+import { getOnlineMachines, isHootEnabled, isMachineOnline } from '@/lib/hoot-utils.server';
 import { startTurn } from '@/lib/hoot/turnRunner.server';
 import { acquireTurnLock, generateTurnId } from '@/lib/hoot/turnStore.server';
 import logger from '@/lib/logger';
@@ -149,6 +150,41 @@ async function checkMachineGuards(
 }
 
 /**
+ * Pre-flight a site-wide run the way `/api/hoot` pre-flights site mode: at least
+ * one machine online. Without it the turn runner throws
+ * `No machines are currently online in this site.` INSIDE an already-locked
+ * turn, so a talon firing against a sleeping site leaves an empty chat and a
+ * claimed lock behind on every run while still reporting the turn dispatched.
+ *
+ * `skipped`, matching {@link checkMachineGuards}: an away site is not a talon
+ * fault and must not spend one of the `AUTO_DISABLE_AFTER_FAILURES` lives.
+ *
+ * The kill switch has no site-wide counterpart on purpose: site mode fans tool
+ * calls out to `getOnlineMachines` without consulting `cortexEnabled` anywhere
+ * (`buildExecutableTools`, and `/api/hoot` site mode likewise), so refusing on
+ * it here would make talons stricter than the turn they are pre-flighting —
+ * and cost one read per machine, since `getOnlineMachines` returns ids only.
+ *
+ * @returns the refusal to record, or `null` when the site has somewhere to run.
+ */
+async function checkSiteGuards(
+  db: Firestore,
+  siteId: string,
+): Promise<RunHootOutputResult | null> {
+  try {
+    const onlineMachines = await getOnlineMachines(db, siteId);
+    if (onlineMachines.length === 0) {
+      return { status: 'skipped', detail: 'no_machines_online' };
+    }
+  } catch (error) {
+    // Same classification as the machine guards: a failed read is transient and
+    // decides nothing about the site.
+    return { status: 'failed', detail: 'machine_check_failed', error: errorText(error) };
+  }
+  return null;
+}
+
+/**
  * The synthetic opening user message: directive plus the facts the assistant
  * would otherwise go looking for. The screenshot is a ~1h signed url (fine for
  * a turn starting in seconds); the run doc keeps the durable storage path.
@@ -225,12 +261,10 @@ export async function runHootOutput(
   // After the author checks, before any write: a dead author is terminal and
   // must still disable the talon even when the machine happens to be down, and
   // a refusal here must leave no chat or claimed lock behind either.
-  // Site-wide runs have no single machine to pre-flight — the runner resolves
-  // the online set itself when it fans a tool call out.
-  if (args.machineId) {
-    const refusal = await checkMachineGuards(db, siteId, args.machineId);
-    if (refusal) return refusal;
-  }
+  const refusal = args.machineId
+    ? await checkMachineGuards(db, siteId, args.machineId)
+    : await checkSiteGuards(db, siteId);
+  if (refusal) return refusal;
 
   const access = author.access;
   const isSiteMode = !args.machineId;
