@@ -10,10 +10,12 @@ end against REAL processes: real spawns, real psutil, real state files
 (redirected), real OwletteService method bodies (descriptor-bound).
 
 NEW-CONTRACT SET - the managed-or-inherited rule itself, written before the
-implementation exists. Every test is xfail(strict=True) with the wave that
-flips it; an early pass is itself a failure (a guard that never failed
-proves nothing - repo rule). Each xfail docstring records WHY current code
-fails it, so Task 0.2 can verify the failure is for the contract reason.
+implementation existed. Each landed as xfail(strict=True) tagged with the
+wave that had to flip it; an early pass was itself a failure (a guard that
+never failed proves nothing - repo rule), and every red was verified to fail
+for its contract reason before implementation began. All six flipped green
+across Waves 2-5 (markers removed at each flip, comments record which wave
+and why); the bodies remain frozen as the permanent contract.
 
 All processes are decoy-image copies (owlette-e2e-decoy-<runid>.exe); no
 real-world image name ever appears in a destructive argument. See
@@ -307,7 +309,7 @@ def test_schedule_window_stop_terminates_out_of_window_process(
 
 
 # ==========================================================================
-# NEW-CONTRACT SET (xfail strict=True; each names the wave that flips it)
+# NEW-CONTRACT SET (all green since Wave 5; comments record which wave flipped each)
 # ==========================================================================
 
 # Tagged Wave 4 at authoring time but flipped green in Wave 3: what this test

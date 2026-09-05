@@ -231,6 +231,8 @@ Dashboard writes include `schedulePresetId` only when a schedule preset is suppl
 | `schedule` | object or null | Legacy/API schedule wrapper with `mode` and optional `blocks`; current dashboard writes use `launch_mode` plus `schedules`. |
 | `schedulePresetId` | string or null | Optional site schedule preset id associated with the saved schedule. |
 
+For an executable that commonly runs many instances at once — `node.exe`, `python.exe`, `TouchDesigner.exe` — `file_path` (the desktop app's `path / args` field) does more than pass an argument: because the value appears in the process's command line, it is what lets owlette identify this entry's process among look-alikes before it has ever launched it. With it blank, owlette does not guess between identical instances — it launches its own instance and manages that. See [managed or inherited](/docs/agent/process-monitoring#managed-or-inherited).
+
 ### visibility options
 
 The desktop app exposes `Normal` and `Hidden`. The launcher also accepts `Minimized` and `Maximized` when a process entry is edited manually.
