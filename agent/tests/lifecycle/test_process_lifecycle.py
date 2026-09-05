@@ -505,11 +505,10 @@ def test_contract_e_pid_reuse_mismatch_refuses_kill(
         'of refusing on create_time mismatch')
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    'Wave 4: adoption becomes INHERIT - an unambiguous match must write a '
-    'durable identity record (create_time on the pid row). Today the '
-    'cmdline-corroborated adoption records only {id, status}, so the '
-    'inherited process is untraceable across a restart.'))
+# Flipped green in Wave 4: adoption became INHERIT. Every successful match
+# now records identity (create_time/exe on the pid row, origin='inherited')
+# at the moment of binding, so the inherited process is traceable across a
+# restart exactly like a launched one (D1).
 def test_contract_f_inherit_writes_durable_identity_record(
         service_factory, spawn_decoy, decoy_env):
     """(f) A pre-existing process unambiguously identified by file_path in

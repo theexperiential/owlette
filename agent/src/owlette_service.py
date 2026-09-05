@@ -291,6 +291,34 @@ def _display_error_result(result):
     return f"Error: {err}"
 
 
+def _inherit_identity_extra(pid):
+    """Row fields that turn a successful adoption into an INHERIT (D1).
+
+    Managed-or-inherited is the whole rule: a pid owlette did not launch may
+    be bound to an entry only once its identity is captured, because every
+    later destructive path proves (pid, create_time) before acting -- binding
+    without a record would recreate exactly the unverifiable-kill-target
+    problem this release closes. Returns the extra-fields dict for
+    update_process_status_in_json's row merge (same shape the launch-success
+    write records, origin aside), or None when the identity cannot be read --
+    the process died between the match and this read -- in which case the
+    caller MUST decline the bind and let its normal no-match path continue
+    (typically a fresh launch, per D3).
+    """
+    identity = shared_utils.read_process_identity(pid)
+    if identity is None:
+        logging.info(
+            f"Declining to adopt PID {pid}: process exited between the match "
+            f"and the identity read - treating as no match")
+        return None
+    return {
+        'create_time': identity['create_time'],
+        'exe': identity['exe'],
+        'managed': True,
+        'origin': 'inherited',
+    }
+
+
 class Util:
 
     @staticmethod
@@ -1980,11 +2008,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
             exe_path, process.get('file_path', ''), strict=True)
         if not pid:
             return None
+        # INHERIT (D1): the identity is captured at the moment of binding, so
+        # the adopted process is indistinguishable from a launched one on
+        # every later path. Unreadable identity declines the bind (see
+        # _inherit_identity_extra) and the caller launches fresh.
+        inherit_extra = _inherit_identity_extra(pid)
+        if inherit_extra is None:
+            return None
         process_list_id = process['id']
         self.last_started[process_list_id] = {
             'time': datetime.datetime.now(), 'pid': pid}
         shared_utils.update_process_status_in_json(
-            pid, 'RUNNING', self.firebase_client, process_id=process_list_id)
+            pid, 'RUNNING', self.firebase_client, process_id=process_list_id,
+            extra=inherit_extra)
         logging.info(
             f"[OK] Adopted already-running '{Util.get_process_name(process)}' "
             f"(PID {pid}) instead of launching a duplicate")
@@ -2592,11 +2628,23 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.error("Launcher helper did not produce a PID file within timeout")
                 # Fallback: process may have launched but psutil couldn't see it in time.
                 # Scan by exe before giving up — prevents spurious failed=True and double-launches.
-                # This is an ADOPTION (non-strict discovery), not a launch, so
-                # it deliberately writes NO identity record this wave -- Wave 4
-                # turns it into an inherit (unambiguous match, then recorded).
+                # An unambiguous hit here is an INHERIT (D1): the pid did not
+                # arrive through the launch handshake, so nothing proves it is
+                # our own child -- its identity is captured now, at bind time
+                # (ambiguity already refused inside the matching ladder).
+                # 'LAUNCHING' mirrors what the happy-path write records, and
+                # what the next monitor tick would have written before 3.3.0.
                 found_pid = self._find_running_process_by_exe(exe_path, file_path)
                 if found_pid:
+                    inherit_extra = _inherit_identity_extra(found_pid)
+                    if inherit_extra is None:
+                        # Died between match and read: binding without a
+                        # record is forbidden (D1) -- report launch failure
+                        # and let the normal retry path continue.
+                        return None
+                    shared_utils.update_process_status_in_json(
+                        found_pid, 'LAUNCHING', self.firebase_client,
+                        process_id=process['id'], extra=inherit_extra)
                     logging.info(f"Fallback scan found process (PID {found_pid}) after PID file timeout")
                     return found_pid
                 return None
@@ -3004,12 +3052,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 exe_path = process.get('exe_path', '')
                 file_path = process.get('file_path', '')
                 existing_pid = self._find_running_process_by_exe(exe_path, file_path) if exe_path else None
-                if existing_pid:
+                # INHERIT (D1): a match owlette did not launch binds only with
+                # its identity recorded; unreadable identity (died between
+                # match and read) is a no-match and launches fresh instead.
+                inherit_extra = _inherit_identity_extra(existing_pid) if existing_pid else None
+                if existing_pid and inherit_extra:
                     self.last_started[process_list_id] = {
                         'time': datetime.datetime.now(),
                         'pid': existing_pid
                     }
-                    shared_utils.update_process_status_in_json(existing_pid, 'RUNNING', self.firebase_client, process_id=process_list_id)
+                    shared_utils.update_process_status_in_json(existing_pid, 'RUNNING', self.firebase_client, process_id=process_list_id, extra=inherit_extra)
                     logging.info(f"[OK] Adopted already-running '{process.get('name')}' (PID {existing_pid})")
                     new_pid = None
                 else:
@@ -3026,12 +3078,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 exe_path = process.get('exe_path', '')
                 file_path = process.get('file_path', '')
                 found_pid = self._find_running_process_by_exe(exe_path, file_path) if exe_path else None
-                if found_pid:
+                # INHERIT (D1): same rule as the first-start adoption above --
+                # record identity at bind time or treat the match as absent
+                # (the cooldown/relaunch path below continues either way).
+                inherit_extra = _inherit_identity_extra(found_pid) if found_pid else None
+                if found_pid and inherit_extra:
                     self.last_started[process_list_id] = {
                         'time': datetime.datetime.now(),
                         'pid': found_pid
                     }
-                    shared_utils.update_process_status_in_json(found_pid, 'RUNNING', self.firebase_client, process_id=process_list_id)
+                    shared_utils.update_process_status_in_json(found_pid, 'RUNNING', self.firebase_client, process_id=process_list_id, extra=inherit_extra)
                     logging.info(f"[OK] Adopted '{Util.get_process_name(process)}' after failed PID detection (PID {found_pid})")
                     return
                 # max(time_to_init, 60s). The 60s floor stops slow apps
@@ -3132,12 +3188,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     exe_path = process.get('exe_path', '')
                     file_path = process.get('file_path', '')
                     existing_pid = self._find_running_process_by_exe(exe_path, file_path) if exe_path else None
-                    if existing_pid:
+                    # INHERIT (D1): record identity at bind time, or treat the
+                    # match as absent and fall through to the fresh launch.
+                    inherit_extra = _inherit_identity_extra(existing_pid) if existing_pid else None
+                    if existing_pid and inherit_extra:
                         self.last_started[process_list_id] = {
                             'time': datetime.datetime.now(),
                             'pid': existing_pid
                         }
-                        shared_utils.update_process_status_in_json(existing_pid, 'RUNNING', self.firebase_client, process_id=process_list_id)
+                        shared_utils.update_process_status_in_json(existing_pid, 'RUNNING', self.firebase_client, process_id=process_list_id, extra=inherit_extra)
                         logging.info(f"[OK] Adopted already-running '{Util.get_process_name(process)}' (PID {existing_pid})")
                         new_pid = None
                     else:
