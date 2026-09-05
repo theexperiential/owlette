@@ -1,6 +1,6 @@
 {
   "name": "web",
-  "version": "3.2.4",
+  "version": "3.3.0",
   "private": true,
   "packageManager": "npm@10.9.0",
   "engines": {
