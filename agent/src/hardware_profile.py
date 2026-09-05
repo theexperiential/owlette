@@ -24,12 +24,6 @@ _GPU_TEMP_TTL = 5.0
 
 
 def _agent_version() -> str:
-    getter = getattr(shared_utils, 'get_agent_version', None)
-    if callable(getter):
-        try:
-            return getter()
-        except Exception:
-            pass
     try:
         return shared_utils.get_app_version()
     except Exception:

@@ -32,12 +32,6 @@ def get_app_version():
 
 APP_VERSION = get_app_version()
 CONFIG_VERSION = '1.7.0'  # Added temperature.enabled (PawnIO migration)
-WINDOW_TITLES = {
-    "owlette_gui": "owlette configuration",
-    "prompt_slack_config": "connect to slack",
-    "prompt_restart": "process repeatedly failing!",
-    "report_issue": "feedback"
-}
 SERVICE_NAME = 'OwletteService'
 
 
@@ -823,12 +817,9 @@ def ensure_data_directories():
 
 def get_environment():
     """'production' or 'development' from config; 'production' by default."""
-    try:
-        config = read_config()
-        if config:
-            return config.get('environment', 'production')
-    except (json.JSONDecodeError, OSError, KeyError) as e:
-        logging.debug(f"Could not read environment from config: {e}")
+    config = read_config()
+    if config:
+        return config.get('environment', 'production')
     return 'production'
 
 def get_api_base_url(environment=None):
@@ -1444,23 +1435,18 @@ def add_firebase_log_handler(firebase_client):
 
 # CONFIG JSON
 
-def load_config(emails_to_entry=None):
+def load_config():
     try:
         config = read_json_from_file(CONFIG_PATH)
-        if emails_to_entry is not None:
-            emails_to_entry.insert(0, ', '.join(config['gmail']['to']))
         return config
         
     except FileNotFoundError as e:
         logging.error(f"Failed to load config: {e}")
         return generate_config_file()
 
-def save_config(config=None, emails_to_entry=None):
+def save_config(config=None):
     if config is None:
         config = read_json_from_file(CONFIG_PATH)
-
-    if emails_to_entry is not None:
-        config['gmail']['to'] = [email.strip() for email in emails_to_entry.get().split(',')]
 
     # Strip runtime-only fields before persisting — these belong in app_states.json, not config
     for process in config.get('processes', []):
@@ -1476,10 +1462,6 @@ def upgrade_config():
 
         if version.parse(current_version) < version.parse(CONFIG_VERSION):
             config['version'] = CONFIG_VERSION
-
-            if 'email' in config:
-                config['gmail'] = config.pop('email')
-                config['gmail']['enabled'] = True
 
             for process in config['processes']:
                 if 'autostart_process' in process:
@@ -1764,7 +1746,6 @@ def generate_config_file(existing_config=None):
         "displays": {
             "enabled": True,
             "assigned": None,
-            "auto_enforce": False,
             "remoteApplyEnabled": False
         },
         "temperature": {

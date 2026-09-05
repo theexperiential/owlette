@@ -332,8 +332,7 @@ agent/
 │   ├── configure_site.py          # Site join/leave device-code pairing flow
 │   ├── installer_utils.py         # Remote deployment handler
 │   ├── project_utils.py           # Project distribution handler
-│   ├── registry_utils.py          # Windows registry operations
-│   └── start_service.py           # Service startup helper
+│   └── registry_utils.py          # Windows registry operations
 ├── tests/                         # pytest tests
 ├── config/                        # Configuration (gitignored)
 │   └── config.json                # Main config

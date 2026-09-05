@@ -601,14 +601,6 @@ class AuthManager:
             self._site_id = self.storage.get_site_id()
         return self._site_id
 
-    def clear_credentials(self):
-        """Drop all stored credentials (reconfigure, admin revocation, decommission)."""
-        logger.info("Clearing all credentials")
-        self.storage.clear_tokens()
-        self._access_token = None
-        self._token_expiry = None
-        self._site_id = None
-
     def get_token_info(self) -> Dict[str, Any]:
         """Current token state, for debugging/monitoring."""
         if self._token_expiry:

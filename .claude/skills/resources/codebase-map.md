@@ -240,8 +240,3 @@ The local UI is the Tauri desktop app in `desktop/`, not python. It ships as
 | `session_exec.py` | User-session executor — runs Python/cmd/PowerShell in the desktop session (launched via CreateProcessAsUser) |
 | `owlette_scout.py` | Process responsiveness checker (WM_NULL) |
 | `configure_site.py` | Also the desktop app's CLI back end — pairing, join/leave, report-issue, reboot-now/dismiss (`--json-progress`) |
-
-### Utilities
-| Module | Purpose |
-|--------|---------|
-| `start_service.py` | Simple service start script |

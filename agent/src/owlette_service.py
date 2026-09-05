@@ -28,7 +28,6 @@ import win32process
 import win32profile
 import win32ts
 import win32con
-import win32gui
 import win32security
 import servicemanager
 import logging
@@ -351,8 +350,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # "Unknown command type" until the handlers are loadable.
             logging.warning(f"Failed to register roost handlers: {e}")
 
-        # capture_screenshot now goes through the public signed-URL flow; the
-        # legacy if/elif handler is dead because the router wins dispatch.
+        # capture_screenshot now goes through the public signed-URL flow.
         try:
             from machine_commands import register_handlers as _register_machine_handlers
             _register_machine_handlers(self._command_router)
@@ -1340,9 +1338,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # whichever arrives first does the flush, log and final status write.
         self.graceful_shutdown('svc_stop')
 
-        # The desktop app is deliberately NOT among these — see _is_tray_alive().
-        self.close_owlette_windows()
-
         self.terminate_cortex()
 
         win32event.SetEvent(self.hWaitStop)
@@ -1355,20 +1350,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
             self.main()
         except Exception as e:
             logging.error(f"An unhandled exception occurred: {e}")
-
-    def close_owlette_windows(self):
-        """Close all owlette GUI windows (config, prompts, etc.) when service stops."""
-        try:
-            for key, window_title in shared_utils.WINDOW_TITLES.items():
-                try:
-                    hwnd = win32gui.FindWindow(None, window_title)
-                    if hwnd:
-                        win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-                        logging.info(f"Closed window: {window_title}")
-                except Exception as e:
-                    logging.debug(f"Could not close window '{window_title}': {e}")
-        except Exception as e:
-            logging.error(f"Error closing owlette windows: {e}")
 
     def recover_running_processes(self):
         """
@@ -4532,12 +4513,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # Firestore + the dashboard both want a string, not the dict.
                 return _json.dumps(result)
 
-            elif cmd_type == 'capture_screenshot':
-                result = self._handle_capture_screenshot(cmd_data)
-                if isinstance(result, dict):
-                    return result.get('message') or result.get('error', str(result))
-                return result
-
             elif cmd_type == 'reboot_machine':
                 return self._handle_reboot_machine(cmd_data)
 
@@ -7554,12 +7529,6 @@ with open(out_path, 'wb') as f:
                     )
                 except Exception as e:
                     logging.error(f"[ERROR] Error during cleanup: {e}")
-
-            try:
-                self.close_owlette_windows()
-                logging.info("[OK] owlette windows closed")
-            except Exception as e:
-                logging.error(f"Error closing windows: {e}")
 
             # The desktop app deliberately survives a service stop — its footer is
             # the operator's only way to start the service again.

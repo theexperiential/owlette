@@ -177,8 +177,8 @@ export function restoreState(states: AppStates, pid: number, previous: AppState)
 }
 
 /**
- * Dot colours — the same tailwind steps as `shared_utils.STATUS_COLORS` and the
- * dashboard's process badges. INACTIVE is a hollow ring, as in the legacy GUI.
+ * Dot colours — the same tailwind steps as the dashboard's process badges.
+ * INACTIVE is a hollow ring, as in the legacy GUI.
  */
 export const STATUS_DOT: Record<ProcessStatus, string> = {
   RUNNING: 'bg-green-500',
