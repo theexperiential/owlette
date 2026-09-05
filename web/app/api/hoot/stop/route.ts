@@ -11,12 +11,17 @@
  *
  * Always 200 `{ stopped: true }` — idempotent, so the caller needn't know
  * whether a turn was live.
+ *
+ * Only a `finishTurn` that actually wrote the terminal state audits
+ * (`chat_mutated` / `cancel_turn`, the sibling of `cancel_followup`): a stale or
+ * already-terminal turnId mutates nothing, and a row for it would be a fiction.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { ApiAuthError, resolveAuth } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
+import { emitMutation } from '@/lib/auditLogClient';
 import { verifyUserSiteAccess } from '@/lib/hoot-utils.server';
 import { finishTurn } from '@/lib/hoot/turnStore.server';
 import { getUserIdFromSession, withRateLimit } from '@/lib/withRateLimit';
@@ -73,7 +78,23 @@ async function handleStop(request: NextRequest): Promise<NextResponse> {
     }
 
     // Guarded: a stale turnId or an already-terminal turn no-ops.
-    await finishTurn(db, chatId, turnId, 'cancelled');
+    const cancelled = await finishTurn(db, chatId, turnId, 'cancelled');
+
+    if (cancelled) {
+      emitMutation({
+        kind: 'chat_mutated',
+        siteId,
+        actor: auth.keyContext ? `apiKey:${auth.keyContext.keyId}` : `user:${auth.userId}`,
+        targetId: chatId,
+        attributes: {
+          verb: 'cancel_turn',
+          endpoint: request.nextUrl.pathname,
+          method: 'POST',
+          siteId,
+          turnId,
+        },
+      });
+    }
 
     return NextResponse.json({ stopped: true });
   } catch (error) {

@@ -7,11 +7,15 @@
  * Body: `{ code, name, scopes, ttlDays? (default 90, max 365), environment? }`
  * (`environment` is ignored — every key is minted 'live').
  * Returns `{ success: true, keyId, keyPrefix }`; session cookie required.
+ *
+ * Audits `api_key_mutated` / `create` on the same shape as POST /api/keys — the raw
+ * key, its hash and the pairing phrase never reach the audit row.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
+import { emitMutation } from '@/lib/auditLogClient';
 import {
   ApiAuthError,
   assertActiveUser,
@@ -322,6 +326,27 @@ export const POST = withRateLimit(
       if (!transactionResult.ok) {
         return transactionResult.response;
       }
+
+      // After the commit, never inside it: a retried transaction attempt would
+      // otherwise emit a row for a key that was never persisted.
+      emitMutation({
+        kind: 'api_key_mutated',
+        siteId: '',
+        actor: `user:${userId}`,
+        targetId: transactionResult.keyId,
+        attributes: {
+          verb: 'create',
+          endpoint: request.nextUrl.pathname,
+          method: request.method,
+          environment,
+          keyPrefix: transactionResult.keyPrefix,
+          scopeCount: scopes.length,
+          ttlDays,
+          // Distinguishes this grant from a dashboard-minted key (POST /api/keys):
+          // the holder is a CLI on another machine, authorized over a device code.
+          grant: 'cli_device_code',
+        },
+      });
 
       return NextResponse.json({
         success: true,

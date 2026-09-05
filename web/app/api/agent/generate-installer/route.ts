@@ -3,6 +3,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { ApiAuthError, assertUserHasSiteAccess, requireSession } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
 
 /**
@@ -14,6 +15,10 @@ import logger from '@/lib/logger';
  * Body: { siteId, userId (deprecated — derived from session) }
  * 200:  { registrationCode, expiresAt (ISO 8601, +24h), siteId }
  * Errors: 400 missing fields / 401 no session / 403 no site access / 500.
+ *
+ * Audits `site_mutated` / `agent_token.issue`. The `agent_tokens` doc id IS the
+ * registration code, so the row targets the site and records only the expiry —
+ * never the code itself (same rule as `agent-tokens/revoke`).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -50,6 +55,20 @@ export async function POST(request: NextRequest) {
     });
 
     logger.info(`Registration code generated: site=${siteId}, user=${userId}, expires=${expiresAt.toISOString()}`);
+
+    emitMutation({
+      kind: 'site_mutated',
+      siteId,
+      actor: `user:${userId}`,
+      targetId: siteId,
+      attributes: {
+        verb: 'agent_token.issue',
+        endpoint: '/api/agent/generate-installer',
+        method: 'POST',
+        siteId,
+        expiresAt: expiresAt.toISOString(),
+      },
+    });
 
     return NextResponse.json(
       {

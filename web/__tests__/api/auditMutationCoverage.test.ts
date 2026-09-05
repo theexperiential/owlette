@@ -108,30 +108,11 @@ export const EXEMPT_ROUTES: readonly string[] = [
  * Mutating routes not audited today, pending remediation. Alphabetized, each
  * naming the unrecorded mutation. May only shrink — once a route is audited its
  * entry must go, and this test fails until it does.
+ *
+ * Empty since talons wave 5.4 drained the last ten. Keep it that way: a new
+ * mutating route audits before it ships, rather than parking an entry here.
  */
-export const KNOWN_GAPS: readonly string[] = [
-  // operator (session) binds a pairing machine to a site and mints its agent credentials.
-  'agent/auth/device-code/authorize',
-  // operator (session) mints a single-use agent registration code for a site.
-  'agent/generate-installer',
-  // operator (session) mints an owk_* api key with caller-chosen scopes; POST /api/keys is audited, this path is not.
-  'cli/device-code/authorize',
-  // chat turn: creates turn state and relays tool calls that can reach the fleet.
-  'hoot',
-  // writes an LLM-generated title/category onto the caller's conversation (a rename, per the chat_mutated taxonomy).
-  'hoot/categorize',
-  // queues a machine command that installs an LLM api key into the agent's config.
-  'hoot/provision-key',
-  // cancels an in-flight turn (writes the stream doc terminal state).
-  'hoot/stop',
-  // stores a pending TOTP secret; enrollment completion (`mfa/verify-setup`) and removal
-  // (`mfa/disable`) are audited.
-  'mfa/setup',
-  // stores or removes the caller's encrypted user-level LLM api key.
-  'settings/llm-key',
-  // operator (session) mints an agent registration code for a site.
-  'setup/generate-token',
-];
+export const KNOWN_GAPS: readonly string[] = [];
 
 const MUTATING_METHODS = ['DELETE', 'PATCH', 'POST', 'PUT'] as const;
 

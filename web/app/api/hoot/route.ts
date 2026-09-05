@@ -5,6 +5,10 @@
  * (`chats/{chatId}/stream/current`) and starts a detached turn runner. The runner owns
  * the LLM loop + tool relay and persists to Firestore, so the turn survives a dead HTTP
  * stream; the stream returned here is a best-effort live branch (clients reattach).
+ *
+ * Audits `chat_mutated` / `send`, the same verb the conversations-API send emits, once
+ * the turn lock is held — that write is the committed state change, and `emitMutation`
+ * is fire-and-forget, so the audit adds no failure path to the turn.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -12,6 +16,7 @@ import { createUIMessageStreamResponse, type UIMessage } from 'ai';
 import { resolveAuth, requireScope } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
+import { emitMutation } from '@/lib/auditLogClient';
 import {
   verifyUserSiteAccess,
   isMachineOnline,
@@ -148,6 +153,25 @@ export async function POST(request: NextRequest) {
       }
       throw error;
     }
+
+    // The lock write has committed, so the turn exists whatever the runner does
+    // next. Message CONTENT is deliberately absent — the audit records that a turn
+    // was started against this chat, not what was said.
+    emitMutation({
+      kind: 'chat_mutated',
+      siteId,
+      actor: auth.keyContext ? `apiKey:${auth.keyContext.keyId}` : `user:${userId}`,
+      targetId: chatId,
+      attributes: {
+        verb: 'send',
+        endpoint: request.nextUrl.pathname,
+        method: 'POST',
+        siteId,
+        machineId,
+        turnId,
+        supersede: supersede === true,
+      },
+    });
 
     // Detached runner: returns immediately with the live stream branch; the
     // turn itself keeps running (and persisting to Firestore) even if this

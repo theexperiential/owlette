@@ -323,6 +323,47 @@ describe('POST /api/mfa/verify-setup — backup codes', () => {
   });
 });
 
+describe('POST /api/mfa/setup — audit', () => {
+  it('emits a user_mutated row when a pending secret is minted', async () => {
+    pendingDoc = null;
+
+    const res = await SETUP(setupReq());
+    expect(res.status).toBe(200);
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    const audit = mockEmitMutation.mock.calls[0][0];
+    expect(audit.kind).toBe('user_mutated');
+    expect(audit.siteId).toBe('');
+    expect(audit.actor).toBe(`user:${USER_ID}`);
+    expect(audit.targetId).toBe(USER_ID);
+    expect(audit.attributes).toMatchObject({
+      endpoint: '/api/mfa/setup',
+      method: 'POST',
+      verb: 'mfa_enrollment_started',
+      factor: 'totp',
+      passkeysEnrolled: 0,
+    });
+    // The TOTP secret is the whole factor — it must never be recorded.
+    expect(JSON.stringify(audit)).not.toContain('SECRET');
+  });
+
+  it('emits nothing on the idempotent reuse path — no state changed', async () => {
+    const res = await SETUP(setupReq());
+    expect(res.status).toBe(200);
+    expect(mockPendingSet).not.toHaveBeenCalled();
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  it('emits nothing when the enrollment gate denies', async () => {
+    pendingDoc = null;
+    mockReadMfaFactors.mockResolvedValue({ totp: false, passkeys: 1 });
+
+    const res = await SETUP(setupReq());
+    expect(res.status).toBe(403);
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+});
+
 describe('POST /api/mfa/verify-setup — audit', () => {
   it('emits a user_mutated row recording the added factor', async () => {
     const res = await VERIFY_SETUP(verifySetupReq());

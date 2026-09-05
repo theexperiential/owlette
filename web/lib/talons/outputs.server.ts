@@ -486,15 +486,22 @@ async function executeHootOutput(
     ...(ctx.condition ? { condition: ctx.condition } : {}),
   });
 
-  return result.status === 'sent'
-    ? { type: 'cortex', status: 'sent', detail: result.chatId }
-    : {
-        type: 'cortex',
-        status: 'failed',
-        detail: result.detail,
-        ...(result.error ? { error: result.error } : {}),
-        // Only an unrecoverable author problem sets this; the engine lifts it
-        // onto the run and switches the talon off without waiting for ten.
-        ...(result.disabledReason ? { disabledReason: result.disabledReason } : {}),
-      };
+  if (result.status === 'sent') {
+    return { type: 'cortex', status: 'sent', detail: result.chatId };
+  }
+  // Nothing was attempted and nothing is wrong with the talon — the machine is
+  // offline, or hoot is switched off on it. Same class as the command output's
+  // `machine_offline` skip, so it must not reach the auto-disable counter.
+  if (result.status === 'skipped') {
+    return { type: 'cortex', status: 'skipped', detail: result.detail };
+  }
+  return {
+    type: 'cortex',
+    status: 'failed',
+    detail: result.detail,
+    ...(result.error ? { error: result.error } : {}),
+    // Only an unrecoverable author problem sets this; the engine lifts it
+    // onto the run and switches the talon off without waiting for ten.
+    ...(result.disabledReason ? { disabledReason: result.disabledReason } : {}),
+  };
 }

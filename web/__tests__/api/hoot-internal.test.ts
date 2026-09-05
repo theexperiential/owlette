@@ -27,12 +27,23 @@ jest.mock('ai', () => ({
   generateText: jest.fn(async () => ({ text: 'Generated title\nGeneral' })),
 }));
 
+const mockEmitMutation = jest.fn();
+jest.mock('@/lib/auditLogClient', () => ({
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
+}));
+
+// Both mocks receive the chat id, so batch assertions don't depend on the
+// order `Promise.all` happens to resolve the chunk in.
 const mockChatGet = jest.fn();
+const mockChatUpdate = jest.fn();
 const mockDb = {
   collection: jest.fn((name: string) => {
     if (name !== 'chats') throw new Error(`unexpected collection ${name}`);
     return {
-      doc: jest.fn(() => ({ get: mockChatGet })),
+      doc: jest.fn((chatId: string) => ({
+        get: () => mockChatGet(chatId),
+        update: (patch: unknown) => mockChatUpdate(chatId, patch),
+      })),
     };
   }),
 };
@@ -51,6 +62,7 @@ function req(url: string, init: RequestInit = {}) {
 beforeEach(() => {
   jest.clearAllMocks();
   delete process.env.CRON_SECRET;
+  mockChatUpdate.mockResolvedValue(undefined);
   mockRequireSession.mockResolvedValue('user-1');
   mockVerifyUserSiteAccess.mockResolvedValue({
     role: 'admin',
@@ -92,5 +104,80 @@ describe('/api/hoot/categorize internal access checks', () => {
       }),
     );
     expect(res.status).toBe(404);
+    // Refused before any write, so nothing to record.
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+});
+
+describe('/api/hoot/categorize audit', () => {
+  it('emits chat_mutated/rename for the single-chat title+category write', async () => {
+    mockChatGet.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({ siteId: 'site-1' }),
+    });
+
+    const res = await categorizePOST(
+      req('http://localhost/api/hoot/categorize', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ siteId: 'site-1', chatId: 'chat-1', message: 'hello' }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(mockChatUpdate).toHaveBeenCalledTimes(1);
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    const audit = mockEmitMutation.mock.calls[0][0];
+    expect(audit.kind).toBe('chat_mutated');
+    expect(audit.siteId).toBe('site-1');
+    expect(audit.actor).toBe('user:user-1');
+    expect(audit.targetId).toBe('chat-1');
+    expect(audit.attributes).toMatchObject({
+      verb: 'rename',
+      endpoint: '/api/hoot/categorize',
+      method: 'POST',
+      siteId: 'site-1',
+      category: 'General',
+      retitled: true,
+    });
+  });
+
+  it('emits one row per chat the batch actually rewrites, and none for skips', async () => {
+    // chat-1 and chat-2 are on the site and already titled (category-only
+    // rewrite); chat-3 belongs to another site and is skipped entirely.
+    const bySite: Record<string, string> = {
+      'chat-1': 'site-1',
+      'chat-2': 'site-1',
+      'chat-3': 'other-site',
+    };
+    const order = ['chat-1', 'chat-2', 'chat-3'];
+    mockChatGet.mockImplementation(async (id: string) => ({
+      exists: true,
+      data: () => ({ siteId: bySite[id], title: `title for ${id}` }),
+    }));
+
+    const res = await categorizePOST(
+      req('http://localhost/api/hoot/categorize', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ siteId: 'site-1', chatIds: order }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(mockChatUpdate).toHaveBeenCalledTimes(2);
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(2);
+    const targets = mockEmitMutation.mock.calls.map((c) => c[0].targetId).sort();
+    expect(targets).toEqual(['chat-1', 'chat-2']);
+    for (const [audit] of mockEmitMutation.mock.calls) {
+      expect(audit.kind).toBe('chat_mutated');
+      expect(audit.attributes).toMatchObject({
+        verb: 'rename',
+        siteId: 'site-1',
+        category: 'General',
+        // Category-only rewrite: the title was already the user's.
+        retitled: false,
+      });
+    }
   });
 });

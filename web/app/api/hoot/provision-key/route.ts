@@ -5,6 +5,11 @@
  *
  * Body: `{ siteId, machineId, apiKey (raw LLM key), provider: 'anthropic' | 'openai' }`.
  * Auth: authenticated user with site access.
+ *
+ * Audits `site_mutated` / `llm_key.provision` (machine-targeted, matching
+ * `machine.remove` / `agent_token.revoke`) the moment the command is queued —
+ * that write is the mutation, whatever the subsequent poll returns. The key is
+ * never recorded; only the provider and the command id.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -13,6 +18,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { verifyUserSiteAccess } from '@/lib/hoot-utils.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { emitMutation } from '@/lib/auditLogClient';
 import { getUserIdFromSession, withRateLimit } from '@/lib/withRateLimit';
 
 const COMMAND_TIMEOUT_MS = 15_000;
@@ -75,6 +81,22 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       },
       { merge: true },
     );
+
+    emitMutation({
+      kind: 'site_mutated',
+      siteId,
+      actor: `user:${userId}`,
+      targetId: machineId,
+      attributes: {
+        verb: 'llm_key.provision',
+        endpoint: '/api/hoot/provision-key',
+        method: 'POST',
+        siteId,
+        machineId,
+        provider: provider || 'anthropic',
+        commandId,
+      },
+    });
 
     // Poll for completion
     const completedRef = db

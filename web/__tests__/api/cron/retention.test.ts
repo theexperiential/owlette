@@ -21,6 +21,30 @@ function docRef(id: string) {
   return { id, __ref: true };
 }
 
+/** A backlog document. Timestamp fields carry the mocked `Timestamp` shape. */
+type BacklogDoc = { id: string } & Record<string, unknown>;
+
+/**
+ * Apply a recorded `where(field, op, value)` to a backlog document, so a cutoff
+ * can be tested rather than assumed: a doc still inside its window has to
+ * survive the sweep, which is only observable if the stub filters.
+ *
+ * Documents that don't carry the compared field pass straight through — the
+ * logs and metrics fixtures identify themselves by id alone, and the metrics
+ * query compares `__name__` against a plain string cutoff.
+ */
+function matchesCutoff(doc: BacklogDoc, where: unknown[] | undefined): boolean {
+  if (!where) return true;
+  const [field, op, value] = where as [string, string, { __ts?: number } | string];
+  const fieldValue = doc[field] as { __ts?: number } | undefined;
+  const cutoff = typeof value === 'object' ? value.__ts : undefined;
+  if (fieldValue?.__ts === undefined || cutoff === undefined) return true;
+  // Loud on purpose: retention only ever deletes STRICTLY older than the
+  // cutoff, and a silent pass here would hide a route switched to '<='.
+  if (op !== '<') throw new Error(`unexpected retention operator: ${op}`);
+  return fieldValue.__ts < cutoff;
+}
+
 /**
  * Chainable query stub; terminal `.get()` yields `docs` and every subcollection
  * call is recorded so tests can assert the query shape.
@@ -28,8 +52,10 @@ function docRef(id: string) {
  * `docs` is a live backlog — each `.get()` CONSUMES a page, so repeated queries
  * drain. A stub that re-served the same page made a one-page-per-site
  * implementation indistinguishable from a draining one; that bug reached dev.
+ * Documents the recorded `where` excludes are left in the backlog, so a test
+ * can assert what SURVIVED as well as what went.
  */
-function collectionStub(name: string, backlog: Array<{ id: string }>) {
+function collectionStub(name: string, backlog: BacklogDoc[]) {
   const entry: { collection: string; where?: unknown[]; limit?: number } = { collection: name };
   queryLog.push(entry);
   let pageSize = Number.MAX_SAFE_INTEGER;
@@ -45,7 +71,16 @@ function collectionStub(name: string, backlog: Array<{ id: string }>) {
       return q;
     },
     get: async () => {
-      const page = backlog.splice(0, pageSize);
+      // Compact in place: matched docs move into the page, the rest stay in the
+      // backlog under their original identity (tests hold a reference to it).
+      const page: BacklogDoc[] = [];
+      let kept = 0;
+      for (const doc of backlog) {
+        if (page.length < pageSize && matchesCutoff(doc, entry.where)) page.push(doc);
+        else backlog[kept++] = doc;
+      }
+      backlog.length = kept;
+
       return {
         empty: page.length === 0,
         size: page.length,
@@ -56,9 +91,17 @@ function collectionStub(name: string, backlog: Array<{ id: string }>) {
   return q;
 }
 
-let siteLogs: Array<{ id: string }> = [];
-let machineBuckets: Array<{ id: string }> = [];
+let siteLogs: BacklogDoc[] = [];
+let siteTalonRuns: BacklogDoc[] = [];
+let machineBuckets: BacklogDoc[] = [];
 let machines: Array<{ id: string }> = [];
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A `startedAt` in the mocked `Timestamp` shape, `days` days in the past. */
+function startedDaysAgo(days: number) {
+  return { startedAt: { __ts: Date.now() - days * DAY_MS } };
+}
 
 const mockDb = {
   collection: (name: string) => {
@@ -78,7 +121,12 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => mockDb,
 }));
 
-import { GET, METRICS_RETENTION_DAYS, LOGS_RETENTION_DAYS } from '@/app/api/cron/retention/route';
+import {
+  GET,
+  METRICS_RETENTION_DAYS,
+  LOGS_RETENTION_DAYS,
+  TALON_RUNS_RETENTION_DAYS,
+} from '@/app/api/cron/retention/route';
 
 function siteDoc(id: string) {
   return {
@@ -86,6 +134,7 @@ function siteDoc(id: string) {
     ref: {
       collection: (name: string) => {
         if (name === 'logs') return collectionStub('logs', siteLogs);
+        if (name === 'talon_runs') return collectionStub('talon_runs', siteTalonRuns);
         if (name === 'machines') {
           return {
             get: async () => ({
@@ -117,6 +166,7 @@ describe('GET /api/cron/retention', () => {
     jest.clearAllMocks();
     queryLog.length = 0;
     siteLogs = [];
+    siteTalonRuns = [];
     machineBuckets = [];
     machines = [];
     process.env.CRON_SECRET = 'cron-secret';
@@ -146,7 +196,7 @@ describe('GET /api/cron/retention', () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.deleted).toEqual({ metrics: 0, logs: 0 });
+    expect(body.deleted).toEqual({ metrics: 0, logs: 0, talonRuns: 0 });
     expect(body.truncated).toBe(false);
     expect(mockWriterDelete).not.toHaveBeenCalled();
   });
@@ -161,11 +211,12 @@ describe('GET /api/cron/retention', () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.deleted).toEqual({ metrics: 3, logs: 2 });
+    expect(body.deleted).toEqual({ metrics: 3, logs: 2, talonRuns: 0 });
     expect(mockWriterDelete).toHaveBeenCalledTimes(5);
     expect(body.retentionDays).toEqual({
       metrics: METRICS_RETENTION_DAYS,
       logs: LOGS_RETENTION_DAYS,
+      talonRuns: TALON_RUNS_RETENTION_DAYS,
     });
   });
 
@@ -222,5 +273,69 @@ describe('GET /api/cron/retention', () => {
 
     expect(body.deleted.metrics).toBe(750);
     expect(body.truncated).toBe(false);
+  });
+
+  it('prunes talon runs past the window and leaves one inside it', async () => {
+    // Literal day counts, NOT TALON_RUNS_RETENTION_DAYS ± 1: relative fixtures
+    // slide with the constant, so a window quietly lowered to 100 days would
+    // still pass. 400 is a privacy commitment — pin it here.
+    siteTalonRuns = [
+      { id: 'run-ancient', ...startedDaysAgo(500) },
+      { id: 'run-stale', ...startedDaysAgo(401) },
+      // Negative control: inside the window. A sweep that ignores the cutoff —
+      // or shortens it — deletes this and breaks the retention promise.
+      { id: 'run-young', ...startedDaysAgo(399) },
+    ];
+    mockSitesGet.mockResolvedValue({ docs: [siteDoc('site-a')] });
+
+    const body = await (await GET(request('cron-secret'))).json();
+
+    expect(body.deleted.talonRuns).toBe(2);
+    expect(siteTalonRuns.map(r => r.id)).toEqual(['run-young']);
+    expect(mockWriterDelete).toHaveBeenCalledTimes(2);
+    expect(body.truncated).toBe(false);
+    expect(body.cutoffs.talonRuns).toEqual(expect.any(String));
+  });
+
+  it('prunes talon runs by startedAt', async () => {
+    siteTalonRuns = [{ id: 'run-stale', ...startedDaysAgo(500) }];
+    mockSitesGet.mockResolvedValue({ docs: [siteDoc('site-a')] });
+
+    await GET(request('cron-secret'));
+
+    const runsQuery = queryLog.find(q => q.collection === 'talon_runs');
+    expect(runsQuery?.where?.[0]).toBe('startedAt');
+    expect(runsQuery?.where?.[1]).toBe('<');
+  });
+
+  it('drains talon runs across multiple pages in one run', async () => {
+    // Same shape as the logs page test: more than one 400-doc page, inside the
+    // 2000 budget, so a one-page-per-site loop would under-delete silently.
+    siteTalonRuns = Array.from({ length: 900 }, (_, i) => ({
+      id: `run${i}`,
+      ...startedDaysAgo(500),
+    }));
+    mockSitesGet.mockResolvedValue({ docs: [siteDoc('site-a')] });
+
+    const body = await (await GET(request('cron-secret'))).json();
+
+    expect(body.deleted.talonRuns).toBe(900);
+    expect(body.truncated).toBe(false);
+    expect(siteTalonRuns).toHaveLength(0);
+  });
+
+  it('never sweeps talon config collections', async () => {
+    siteTalonRuns = [{ id: 'run-stale', ...startedDaysAgo(500) }];
+    machines = [{ id: 'm1' }];
+    mockSitesGet.mockResolvedValue({ docs: [siteDoc('site-a')] });
+
+    await GET(request('cron-secret'));
+
+    // `talons` and `talon_secrets` are configuration, not history: an idle talon
+    // is still armed and its signing secret has no expiry.
+    const swept = queryLog.map(q => q.collection);
+    expect(swept).toContain('talon_runs');
+    expect(swept).not.toContain('talons');
+    expect(swept).not.toContain('talon_secrets');
   });
 });

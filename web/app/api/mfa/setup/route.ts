@@ -7,6 +7,11 @@
  * Gated: adding a second factor needs an MFA-verified session, so a stolen
  * session can't enroll its own (see lib/mfaEnrollmentGate.server.ts). Gating at
  * step one fails with an actionable code instead of after a QR scan.
+ *
+ * Audits `user_mutated` / `mfa_enrollment_started` — the sibling that opens the
+ * `mfa_enrolled` (verify-setup) / `mfa_disabled` (disable) pair — but only when a
+ * secret is actually minted; the idempotent reuse path changes no state. The TOTP
+ * secret never reaches the audit row.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -16,6 +21,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, assertActiveUser, requireSessionUser } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { emitMutation } from '@/lib/auditLogClient';
 import { checkMfaEnrollmentGate } from '@/lib/mfaEnrollmentGate.server';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
@@ -99,6 +105,23 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       console.error('[MFA Setup] Firestore write failed:', e);
       throw e;
     }
+
+    // Only the mint path audits: the reuse branch above returns an existing
+    // pending secret and writes nothing. Platform-tenant row (siteId = ''),
+    // matching `mfa_enrolled` / `mfa_disabled`.
+    emitMutation({
+      kind: 'user_mutated',
+      siteId: '',
+      actor: `user:${userId}`,
+      targetId: userId,
+      attributes: {
+        endpoint: '/api/mfa/setup',
+        method: 'POST',
+        verb: 'mfa_enrollment_started',
+        factor: 'totp',
+        passkeysEnrolled: gate.factors.passkeys,
+      },
+    });
 
     return NextResponse.json({
       secret,

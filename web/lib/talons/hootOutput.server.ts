@@ -10,6 +10,11 @@
  * privilege. Terminal by construction, so it carries a
  * {@link TalonDisabledReason} that switches the talon off immediately.
  *
+ * Machine pre-flight: a machine-scoped run then checks the same two things
+ * `/api/hoot` checks before it commits a turn — the machine is online, and the
+ * per-machine hoot kill switch is not engaged. Both refusals are `skipped`
+ * (see {@link checkMachineGuards}).
+ *
  * One fresh chat per run (`chats/talon_{ms}_{runId}`): the turn store holds one
  * lock per chat, so two runs sharing a chat would race for it. The chat is also
  * the artifact the run record points at.
@@ -38,6 +43,7 @@
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type { UIMessage } from 'ai';
 import type { ToolTier } from '@/lib/mcp-tools';
+import { isHootEnabled, isMachineOnline } from '@/lib/hoot-utils.server';
 import { startTurn } from '@/lib/hoot/turnRunner.server';
 import { acquireTurnLock, generateTurnId } from '@/lib/hoot/turnStore.server';
 import logger from '@/lib/logger';
@@ -74,11 +80,16 @@ export interface RunHootOutputArgs {
 }
 
 /**
- * `failed.detail` uses the same machine-readable vocabulary as the other output
+ * `detail` uses the same machine-readable vocabulary as the other output
  * executors; `disabledReason` marks failures retrying can never fix.
+ *
+ * `skipped` mirrors the command executor's benign refusals: the run was
+ * deliberately not attempted, and must not spend one of the ten lives
+ * `AUTO_DISABLE_AFTER_FAILURES` counts.
  */
 export type RunHootOutputResult =
   | { status: 'sent'; chatId: string }
+  | { status: 'skipped'; detail: string }
   | {
       status: 'failed';
       detail: string;
@@ -101,6 +112,40 @@ export const UNATTENDED_MAX_TIER: ToolTier = 2;
 export function unattendedToolTier(allowActions: boolean): ToolTier {
   const requested = allowActions ? UNATTENDED_MAX_TIER : READ_ONLY_TIER;
   return Math.min(UNATTENDED_MAX_TIER, requested) as ToolTier;
+}
+
+/**
+ * Pre-flight the target machine, in the order `/api/hoot` checks it: online
+ * first, then the per-machine hoot kill switch (`machines/{id}.cortexEnabled`,
+ * absent = on). Every tool this turn can call is relayed to that agent, so
+ * without these the turn burns a full tool-timeout per call and then reports
+ * nothing it could actually see.
+ *
+ * Both refusals are `skipped`, never `failed`: nothing is wrong with the talon,
+ * exactly as with the command executor's `machine_offline`. Recording them as
+ * failures would auto-disable a healthy talon after ten runs because a machine
+ * was away for the night or an operator paused hoot on it.
+ *
+ * @returns the refusal to record, or `null` when the machine is dispatchable.
+ */
+async function checkMachineGuards(
+  db: Firestore,
+  siteId: string,
+  machineId: string,
+): Promise<RunHootOutputResult | null> {
+  try {
+    if (!(await isMachineOnline(db, siteId, machineId))) {
+      return { status: 'skipped', detail: 'machine_offline' };
+    }
+    if (!(await isHootEnabled(db, siteId, machineId))) {
+      return { status: 'skipped', detail: 'hoot_disabled' };
+    }
+  } catch (error) {
+    // A read that failed says nothing about the machine — keep the never-throws
+    // contract and leave it on the transient failure counter.
+    return { status: 'failed', detail: 'machine_check_failed', error: errorText(error) };
+  }
+  return null;
 }
 
 /**
@@ -153,6 +198,13 @@ export async function runHootOutput(
 
   // Both pre-flights must precede ANY write, else a creator who can no longer
   // back this talon leaves a chat + turn lock behind on every firing.
+  //
+  // Whose key: the CREATOR's, and there is no alternative to prefer. BYOK is
+  // single-scope since 2026-08-15 — keys live only at `users/{uid}/settings/llm`
+  // and `sites/{siteId}/settings/llm` is gone (`resolveLlmConfig` takes a uid
+  // and no site fallback), so "prefer the site key" has nothing to resolve. It
+  // is also the right payer: the same identity's access is what bounds this
+  // turn's tier below, so who pays and who authorized stay one person.
   let author: TalonAuthor;
   try {
     author = await resolveTalonAuthor(db, siteId, talon);
@@ -168,6 +220,16 @@ export async function runHootOutput(
     }
     // Transient (failed read, missing site) — stays on the failure counter.
     return { status: 'failed', detail: 'author_check_failed', error: errorText(error) };
+  }
+
+  // After the author checks, before any write: a dead author is terminal and
+  // must still disable the talon even when the machine happens to be down, and
+  // a refusal here must leave no chat or claimed lock behind either.
+  // Site-wide runs have no single machine to pre-flight — the runner resolves
+  // the online set itself when it fans a tool call out.
+  if (args.machineId) {
+    const refusal = await checkMachineGuards(db, siteId, args.machineId);
+    if (refusal) return refusal;
   }
 
   const access = author.access;
@@ -222,6 +284,11 @@ export async function runHootOutput(
       messages: [buildDirectiveMessage(args)],
       userId: author.userId,
       access,
+      // Two ceilings and nothing else, on purpose (decided 2026-08-15): the
+      // default is read-only, and the per-talon `let hoot act` opt-in raises it
+      // to tier 2. There is deliberately NO finer per-call cap to thread down
+      // into `getToolsByTier` — an unattended turn either looks, or looks and
+      // acts, and tier 3 stays unreachable either way (see UNATTENDED_MAX_TIER).
       maxToolTier: unattendedToolTier(args.allowActions === true),
       priorToolCommands,
       source: 'talon',

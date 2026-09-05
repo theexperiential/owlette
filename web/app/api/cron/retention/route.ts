@@ -5,7 +5,13 @@
  * Prunes `metrics_history/{bucketId}` by document-id range (bucket ids encode
  * UTC time, so no timestamp field and no composite index needed; the hourly
  * `YYYY-MM-DD-HH` and legacy daily `YYYY-MM-DD` shapes sort correctly against
- * a `YYYY-MM-DD` cutoff), and `sites/{siteId}/logs` by indexed `timestamp`.
+ * a `YYYY-MM-DD` cutoff), `sites/{siteId}/logs` by indexed `timestamp`, and
+ * `sites/{siteId}/talon_runs` by indexed `startedAt`.
+ *
+ * Only HISTORY is swept. `sites/{siteId}/talons` and `sites/{siteId}/talon_secrets`
+ * are configuration — a talon that has not fired in 400 days is still armed, and
+ * deleting its webhook signing secret would silently break the next fire — so
+ * neither is ever touched here.
  *
  * NOT a Firestore TTL policy: TTL needs an `expireAt` on every document, i.e.
  * changing every write path plus a backfill. This runs on cron-job.org.
@@ -33,8 +39,9 @@ import { formatDayBucketId } from '@/lib/metricsHistoryBuckets';
  */
 export const METRICS_RETENTION_DAYS = 400;
 export const LOGS_RETENTION_DAYS = 400;
+export const TALON_RUNS_RETENTION_DAYS = 400;
 
-/** Ceiling on documents removed per invocation, across both collections. */
+/** Ceiling on documents removed per invocation, across every swept collection. */
 const MAX_DELETES_PER_RUN = 2_000;
 /** Documents fetched per query. Not a commit size — see deleteRefs(). */
 const QUERY_PAGE_SIZE = 400;
@@ -90,10 +97,12 @@ export async function GET(request: NextRequest) {
     const db = getAdminDb();
     const metricsCutoffBucket = formatDayBucketId(daysAgo(METRICS_RETENTION_DAYS));
     const logsCutoff = Timestamp.fromDate(daysAgo(LOGS_RETENTION_DAYS));
+    const talonRunsCutoff = Timestamp.fromDate(daysAgo(TALON_RUNS_RETENTION_DAYS));
 
     let budget = MAX_DELETES_PER_RUN;
     let metricsDeleted = 0;
     let logsDeleted = 0;
+    let talonRunsDeleted = 0;
 
     const sites = await db.collection('sites').get();
 
@@ -119,6 +128,27 @@ export async function GET(request: NextRequest) {
 
         // A short page means the collection is drained for this cutoff.
         if (staleLogs.size < pageSize) break;
+      }
+
+      // Talon run history, same drain shape as logs. `startedAt` is present on
+      // every run doc — executions and the `pending` deferral crumbs alike (see
+      // TalonRunDoc) — so nothing escapes the sweep by lacking the field.
+      while (budget > 0) {
+        const pageSize = Math.min(budget, QUERY_PAGE_SIZE);
+        const staleRuns = await site.ref
+          .collection('talon_runs')
+          .where('startedAt', '<', talonRunsCutoff)
+          .orderBy('startedAt', 'asc')
+          .limit(pageSize)
+          .get();
+
+        if (staleRuns.empty) break;
+
+        const removed = await deleteRefs(db, staleRuns.docs.map(d => d.ref));
+        talonRunsDeleted += removed;
+        budget -= removed;
+
+        if (staleRuns.size < pageSize) break;
       }
 
       if (budget <= 0) break;
@@ -149,19 +179,22 @@ export async function GET(request: NextRequest) {
 
     const truncated = budget <= 0;
     console.log(
-      `[retention] metrics=${metricsDeleted} logs=${logsDeleted} truncated=${truncated}`
+      `[retention] metrics=${metricsDeleted} logs=${logsDeleted} ` +
+        `talonRuns=${talonRunsDeleted} truncated=${truncated}`
     );
 
     return NextResponse.json({
       ok: true,
-      deleted: { metrics: metricsDeleted, logs: logsDeleted },
+      deleted: { metrics: metricsDeleted, logs: logsDeleted, talonRuns: talonRunsDeleted },
       cutoffs: {
         metricsBucket: metricsCutoffBucket,
         logs: logsCutoff.toDate().toISOString(),
+        talonRuns: talonRunsCutoff.toDate().toISOString(),
       },
       retentionDays: {
         metrics: METRICS_RETENTION_DAYS,
         logs: LOGS_RETENTION_DAYS,
+        talonRuns: TALON_RUNS_RETENTION_DAYS,
       },
       // true => ceiling hit, older data remains; next run resumes oldest-first.
       truncated,

@@ -9,6 +9,11 @@ jest.mock('@/lib/withRateLimit', () => ({
 const mockRequireSessionOrIdToken = jest.fn();
 const mockAssertActiveUser = jest.fn();
 const mockAssertUserHasSiteAccess = jest.fn();
+const mockEmitMutation = jest.fn();
+
+jest.mock('@/lib/auditLogClient', () => ({
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
+}));
 
 jest.mock('@/lib/apiAuth.server', () => {
   class ApiAuthError extends Error {
@@ -152,6 +157,36 @@ describe('POST /api/cli/device-code/authorize', () => {
     expect(update.rawKey).toEqual({ __op: 'delete' });
     expect(update.deviceCode).toEqual({ __op: 'delete' });
     expect(typeof update.encryptedCredentials).toBe('string');
+
+    // Same row shape as POST /api/keys, plus the grant that distinguishes it.
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    const audit = mockEmitMutation.mock.calls[0]![0] as {
+      kind: string;
+      siteId: string;
+      actor: string;
+      targetId: string;
+      attributes: Record<string, unknown>;
+    };
+    expect(audit.kind).toBe('api_key_mutated');
+    expect(audit.siteId).toBe('');
+    expect(audit.actor).toBe('user:user-1');
+    expect(audit.targetId).toBe(body.keyId);
+    expect(audit.attributes).toMatchObject({
+      verb: 'create',
+      endpoint: '/api/cli/device-code/authorize',
+      method: 'POST',
+      environment: 'live',
+      keyPrefix: body.keyPrefix,
+      scopeCount: 1,
+      ttlDays: 30,
+      grant: 'cli_device_code',
+    });
+    // `keyPrefix` is the public 15-char handle the dashboard lists keys by —
+    // the pairing phrase and the wrapped credentials stay out of the row.
+    expect((audit.attributes.keyPrefix as string)).toHaveLength(15);
+    const serialized = JSON.stringify(audit);
+    expect(serialized).not.toContain(update.encryptedCredentials as string);
+    expect(serialized).not.toContain('pair-123');
   });
 
   it('falls back to plaintext rawKey for legacy (pre-v1) docs', async () => {
@@ -176,6 +211,13 @@ describe('POST /api/cli/device-code/authorize', () => {
     expect(update.rawKey).toMatch(/^owk_live_/);
     expect(update.encryptedCredentials).toBeUndefined();
     expect(update.wrapVersion).toBeUndefined();
+
+    // Negative control with the raw key in hand: it must not appear anywhere in
+    // the audit row, prefix aside.
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(mockEmitMutation.mock.calls[0]![0])).not.toContain(
+      update.rawKey as string,
+    );
   });
 
   it('rejects an already authorised pairing phrase inside the transaction', async () => {
@@ -197,6 +239,7 @@ describe('POST /api/cli/device-code/authorize', () => {
     expect(body.code).toBe('pairing_phrase_already_authorized');
     expect(mockTxSet).not.toHaveBeenCalled();
     expect(mockTxUpdate).not.toHaveBeenCalled();
+    expect(mockEmitMutation).not.toHaveBeenCalled();
   });
 
   it('rejects inactive users before authorizing a device code', async () => {

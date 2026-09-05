@@ -4,6 +4,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, assertUserHasSiteAccess, requireSession } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
 
 /**
@@ -12,6 +13,10 @@ import logger from '@/lib/logger';
  *
  * Body: `{ siteId, userId (deprecated — derived from session) }`.
  * Response: `{ token }` — the registration code, 24h expiry.
+ *
+ * Audits `site_mutated` / `agent_token.issue`, same row shape as
+ * `/api/agent/generate-installer`. The `agent_tokens` doc id IS the registration
+ * code, so the row targets the site and never carries the code.
  */
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -44,6 +49,20 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     });
 
     logger.info(`Generated registration code for site ${siteId} by user ${userId}`);
+
+    emitMutation({
+      kind: 'site_mutated',
+      siteId,
+      actor: `user:${userId}`,
+      targetId: siteId,
+      attributes: {
+        verb: 'agent_token.issue',
+        endpoint: '/api/setup/generate-token',
+        method: 'POST',
+        siteId,
+        expiresAt: expiresAt.toDate().toISOString(),
+      },
+    });
 
     return NextResponse.json(
       {

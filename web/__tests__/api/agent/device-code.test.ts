@@ -20,6 +20,11 @@ jest.mock('@/lib/sessionManager.server', () => ({
   getSessionFromRequest: (...args: unknown[]) => mockGetSession(...args),
 }));
 
+const mockEmitMutation = jest.fn();
+jest.mock('@/lib/auditLogClient', () => ({
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
+}));
+
 jest.mock('firebase-admin/firestore', () => ({
   FieldValue: {
     serverTimestamp: jest.fn().mockReturnValue('SERVER_TIMESTAMP'),
@@ -733,6 +738,30 @@ describe('POST /api/agent/auth/device-code/authorize', () => {
     expect(update.accessToken).toBe('__DELETE__');
     expect(update.refreshToken).toBe('__DELETE__');
     expect(update.deviceCode).toBe('__DELETE__');
+
+    // The machineId IS known on this path, so the audit binds it.
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    const audit = mockEmitMutation.mock.calls[0]![0] as {
+      kind: string;
+      siteId: string;
+      actor: string;
+      targetId: string;
+      attributes: Record<string, unknown>;
+    };
+    expect(audit.kind).toBe('site_mutated');
+    expect(audit.siteId).toBe('site-1');
+    expect(audit.actor).toBe('user:user-123');
+    expect(audit.targetId).toBe('test-machine');
+    expect(audit.attributes).toMatchObject({
+      verb: 'machine.pair',
+      endpoint: '/api/agent/auth/device-code/authorize',
+      method: 'POST',
+      siteId: 'site-1',
+      machineId: 'test-machine',
+      deferredTokenMint: false,
+    });
+    // The pairing phrase is a bearer credential — it must never be recorded.
+    expect(JSON.stringify(audit)).not.toContain('test-pair-phrase');
   });
 
   it('defers token minting for pre-authorised docs', async () => {
@@ -772,6 +801,41 @@ describe('POST /api/agent/auth/device-code/authorize', () => {
     expect(mockSetCustomUserClaims).not.toHaveBeenCalled();
     expect(mockTransactionSet).not.toHaveBeenCalled();
     expect(global.fetch).not.toHaveBeenCalled();
+
+    // Deferred mint: the machine is not bound yet, so the row records the site
+    // it was authorized onto and says so — it does not invent a machineId.
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    const audit = mockEmitMutation.mock.calls[0]![0] as {
+      targetId: string;
+      attributes: Record<string, unknown>;
+    };
+    expect(audit.targetId).toBe('site-1');
+    expect(audit.attributes).toMatchObject({
+      verb: 'machine.pair',
+      siteId: 'site-1',
+      deferredTokenMint: true,
+    });
+    expect(audit.attributes).not.toHaveProperty('machineId');
+  });
+
+  it('emits no audit row when the phrase is already used', async () => {
+    const futureTime = Date.now() + 600_000;
+    mockTransactionGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'authorized',
+        expiresAt: { toMillis: () => futureTime },
+      }),
+    });
+
+    const req = makeRequest('/api/agent/auth/device-code/authorize', {
+      pairPhrase: 'test-pair-phrase',
+      siteId: 'site-1',
+    });
+    const { status } = await parseResponse(await authorizePOST(req));
+
+    expect(status).toBe(409);
+    expect(mockEmitMutation).not.toHaveBeenCalled();
   });
 
   it('rejects pending docs without encryption support as invalid state', async () => {

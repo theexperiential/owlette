@@ -9,6 +9,10 @@
  * play — this module classifies on `instanceof`, and a stand-in would keep
  * passing after the real class moved. `Date.now` is pinned so the chatId is
  * assertable verbatim.
+ *
+ * `hoot-utils.server` is deliberately NOT mocked either: the pre-flight runs
+ * against a seeded machine document, so the defaults it leans on (an absent doc
+ * is offline, an absent `cortexEnabled` is on) are the real ones.
  */
 
 const mockResolveTalonAuthor = jest.fn();
@@ -68,21 +72,46 @@ const EXPECTED_CHAT_ID = `talon_${NOW_MS}_${RUN_ID}`;
 
 type DocData = Record<string, unknown>;
 
-/** Just enough Firestore for `chats/{chatId}.set(...)`. */
+/**
+ * Just enough Firestore for `chats/{chatId}.set(...)` and the machine
+ * pre-flight's `sites/{siteId}/machines/{machineId}.get()`. Seeded docs live in
+ * their own map so `docs` stays a record of what this module WROTE — the
+ * refusal tests assert it never grows.
+ */
 class FakeFirestore {
   readonly docs = new Map<string, DocData>();
+  readonly seeded = new Map<string, DocData>();
   setError: Error | null = null;
+  getError: Error | null = null;
 
   collection(name: string) {
+    return this.collectionAt(name);
+  }
+
+  private collectionAt(path: string) {
     return {
-      doc: (id: string) => ({
-        set: async (data: DocData) => {
-          if (this.setError) throw this.setError;
-          this.docs.set(`${name}/${id}`, { ...data });
-        },
-      }),
+      doc: (id: string) => {
+        const docPath = `${path}/${id}`;
+        return {
+          set: async (data: DocData) => {
+            if (this.setError) throw this.setError;
+            this.docs.set(docPath, { ...data });
+          },
+          get: async () => {
+            if (this.getError) throw this.getError;
+            const data = this.seeded.get(docPath) ?? this.docs.get(docPath);
+            return { exists: data !== undefined, data: () => data };
+          },
+          collection: (sub: string) => this.collectionAt(`${docPath}/${sub}`),
+        };
+      },
     };
   }
+}
+
+/** The presence doc the pre-flight reads for a machine-scoped run. */
+function seedMachine(data: DocData): void {
+  fake.seeded.set(`sites/${SITE}/machines/m1`, data);
 }
 
 let fake: FakeFirestore;
@@ -141,6 +170,8 @@ beforeEach(() => {
   fake = new FakeFirestore();
   db = fake as unknown as Firestore;
   jest.spyOn(Date, 'now').mockReturnValue(NOW_MS);
+  // Online, and no `cortexEnabled` field — the kill switch defaults to on.
+  seedMachine({ online: true });
 
   mockResolveTalonAuthor.mockResolvedValue({
     userId: 'admin-uid',
@@ -224,6 +255,83 @@ describe('fire-time access re-resolution', () => {
     });
     expect(result).not.toHaveProperty('disabledReason');
     expect(mockStartTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe('machine pre-flight', () => {
+  // Every tool the turn can call is relayed to the agent, so an unreachable or
+  // opted-out machine must refuse BEFORE a chat, a lock, or a runner exists.
+  it.each([
+    ['the machine is offline', { online: false }, 'machine_offline'],
+    ['the machine has no presence doc', null, 'machine_offline'],
+    ['hoot is switched off on the machine', { online: true, cortexEnabled: false }, 'hoot_disabled'],
+  ])('skips without dispatching when %s', async (_label, machine, detail) => {
+    if (machine === null) fake.seeded.clear();
+    else seedMachine(machine);
+
+    const result = await runHootOutput(db, args());
+
+    // `skipped`, not `failed`: nothing is wrong with the talon, so this must
+    // never spend one of the ten runs that auto-disable it.
+    expect(result).toEqual({ status: 'skipped', detail });
+    expect(fake.docs.size).toBe(0);
+    expect(mockAcquireTurnLock).not.toHaveBeenCalled();
+    expect(mockStartTurn).not.toHaveBeenCalled();
+  });
+
+  it('dispatches when the machine is online and the kill switch is on', async () => {
+    seedMachine({ online: true, cortexEnabled: true });
+
+    const result = await runHootOutput(db, args());
+
+    expect(result).toEqual({ status: 'sent', chatId: EXPECTED_CHAT_ID });
+    expect(mockStartTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('pre-flights nothing for a site-wide run', async () => {
+    // No single machine to check — the runner resolves the online set itself
+    // when it fans a tool call out, so one offline machine cannot gate the run.
+    seedMachine({ online: false });
+
+    const result = await runHootOutput(
+      db,
+      args({ machineId: undefined, machineName: undefined }),
+    );
+
+    expect(result).toEqual({ status: 'sent', chatId: EXPECTED_CHAT_ID });
+    expect(mockStartTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a failed machine read on the failure counter', async () => {
+    // A read that failed says nothing about the machine, so it is neither a
+    // benign skip nor grounds to disable anything.
+    fake.getError = new Error('DEADLINE_EXCEEDED');
+
+    const result = await runHootOutput(db, args());
+
+    expect(result).toEqual({
+      status: 'failed',
+      detail: 'machine_check_failed',
+      error: 'DEADLINE_EXCEEDED',
+    });
+    expect(mockStartTurn).not.toHaveBeenCalled();
+  });
+
+  it('still disables the talon when the author is gone AND the machine is offline', async () => {
+    // Ordering is deliberate: the author check is terminal and runs first, so a
+    // machine that happens to be down cannot postpone the disable indefinitely.
+    seedMachine({ online: false });
+    mockResolveTalonAuthor.mockRejectedValue(
+      new TalonAuthorError('creator_deleted', 'Talon t1 author admin-uid can no longer run it'),
+    );
+
+    const result = await runHootOutput(db, args());
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      detail: 'creator_deleted',
+      disabledReason: 'creator_deleted',
+    });
   });
 });
 

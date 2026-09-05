@@ -491,6 +491,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   const mutedEqual = arraysEqual(prev.mutedMachines, newPrefs.mutedMachines);
                   const ccEqual = arraysEqual(prev.alertCcEmails, newPrefs.alertCcEmails);
 
+                  // EVERY preference field must be compared here: one left out is
+                  // treated as unchanged forever, so a change made in another tab
+                  // or device never reaches this one (displayAlerts and the banner
+                  // dismissal were both missing).
                   const allEqual =
                     prev.temperatureUnit === newPrefs.temperatureUnit &&
                     prev.timezone === newPrefs.timezone &&
@@ -500,7 +504,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     prev.processAlerts === newPrefs.processAlerts &&
                     prev.thresholdAlerts === newPrefs.thresholdAlerts &&
                     prev.cortexAlerts === newPrefs.cortexAlerts &&
+                    prev.displayAlerts === newPrefs.displayAlerts &&
                     prev.talonAlerts === newPrefs.talonAlerts &&
+                    prev.displayAlertsBannerDismissed === newPrefs.displayAlertsBannerDismissed &&
                     prev.statsExpanded === newPrefs.statsExpanded &&
                     prev.processesExpanded === newPrefs.processesExpanded &&
                     prev.displaysExpanded === newPrefs.displaysExpanded &&

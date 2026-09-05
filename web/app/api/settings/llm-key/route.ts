@@ -4,6 +4,10 @@
  * POST: Store/update encrypted API key
  * GET: Check if key exists (never returns the key itself)
  * DELETE: Remove stored API key
+ *
+ * Both writes audit `user_mutated` on the platform tenant (`llm_key_stored` /
+ * `llm_key_removed`), mirroring the passkey add/remove pair. The row records the
+ * provider and model only — never the key, its ciphertext, or any fragment of it.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -14,6 +18,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { encryptApiKey, isLlmEncryptionConfigured } from '@/lib/llm-encryption.server';
 import { type LlmProvider } from '@/lib/llm';
 import { apiError } from '@/lib/apiErrorResponse';
+import { emitMutation } from '@/lib/auditLogClient';
 
 export const POST = withRateLimit(
   async (request: NextRequest) => {
@@ -66,6 +71,21 @@ export const POST = withRateLimit(
           },
           { merge: true }
         );
+
+      // Platform-tenant mutation (siteId = ''); the key itself is deliberately absent.
+      emitMutation({
+        kind: 'user_mutated',
+        siteId: '',
+        actor: `user:${userId}`,
+        targetId: userId,
+        attributes: {
+          verb: 'llm_key_stored',
+          endpoint: '/api/settings/llm-key',
+          method: 'POST',
+          provider,
+          model: model || null,
+        },
+      });
 
       return NextResponse.json({ success: true });
     } catch (error: unknown) {
@@ -122,6 +142,18 @@ export const DELETE = withRateLimit(
         .collection('settings')
         .doc('llm')
         .delete();
+
+      emitMutation({
+        kind: 'user_mutated',
+        siteId: '',
+        actor: `user:${userId}`,
+        targetId: userId,
+        attributes: {
+          verb: 'llm_key_removed',
+          endpoint: '/api/settings/llm-key',
+          method: 'DELETE',
+        },
+      });
 
       return NextResponse.json({ success: true });
     } catch (error: unknown) {

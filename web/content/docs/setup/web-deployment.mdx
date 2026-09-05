@@ -162,8 +162,8 @@ returns 401.
 | `/api/cron/process-alerts` | `*/3 * * * *` | `X-Cron-Secret` | drains `pending_process_alerts` into email |
 | `/api/cron/display-alerts` | `*/3 * * * *` | `X-Cron-Secret` | drains `pending_display_alerts` into email |
 | `/api/cron/status-ping` | every 60s | `X-Cron-Secret` | writes status pings, publishes to Instatus |
-| `/api/cron/retention` | daily | `X-Cron-Secret` | deletes metrics + logs past 400 days |
-| `/api/cron/talons` | every 60s | `X-Cron-Secret` | claims due talons (schedule triggers), missed-fire grace, stale-run recovery |
+| `/api/cron/retention` | daily | `X-Cron-Secret` | deletes metrics, logs + talon run history past 400 days |
+| `/api/cron/talons` | every 60s | `X-Cron-Secret` | claims due talons (schedule triggers), missed-fire grace, stale-run recovery, fires due hoot follow-ups |
 | `/api/hoot/escalation` | every 5 min | `Authorization: Bearer` | hoot autonomous-mode backstop poller |
 
 <Callout type="warning" title={"Two failure modes that are silent"}>
@@ -249,7 +249,8 @@ symptom, so verify a run returns 200 after scheduling it.
 
 ### data retention sweep
 
-Deletes machine metrics and event logs older than 400 days. This is what backs the
+Deletes machine metrics, event logs and talon run history older than 400 days
+(talon *configuration* is never swept — only run history). This is what backs the
 retention commitment in the privacy policy — without it, that statement is not
 true. Schedule daily, in every environment:
 
@@ -261,8 +262,8 @@ X-Cron-Secret: <CRON_SECRET value>
 Use cron expression `0 4 * * *` (or any quiet hour). A successful run returns:
 
 ```json
-{"ok":true,"deleted":{"metrics":107,"logs":496},
- "retentionDays":{"metrics":400,"logs":400},"truncated":false}
+{"ok":true,"deleted":{"metrics":107,"logs":496,"talonRuns":12},
+ "retentionDays":{"metrics":400,"logs":400,"talonRuns":400},"truncated":false}
 ```
 
 `truncated: true` means the run hit its 2000-document ceiling and older data
@@ -270,9 +271,10 @@ still remains — the next run continues from the same oldest-first position.
 Against a large first-time backlog, schedule it hourly until a run reports
 `truncated: false`, then drop back to daily.
 
-Changing the window means changing **both** `METRICS_RETENTION_DAYS` /
-`LOGS_RETENTION_DAYS` in the route and the stated periods in the privacy policy.
-They are a pair; changing one alone makes the policy inaccurate.
+Changing the window means changing **all three** — `METRICS_RETENTION_DAYS`,
+`LOGS_RETENTION_DAYS` and `TALON_RUNS_RETENTION_DAYS` in the route — and the
+stated periods in the privacy policy. They are a set; changing one alone makes
+the policy inaccurate.
 
 ### public status-page ping
 

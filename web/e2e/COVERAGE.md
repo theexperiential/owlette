@@ -81,7 +81,8 @@ be asserted directly, via `expectFullyWithinViewport` from the same module.
 | Dimension | Owner | Status |
 |---|---|---|
 | Role gates | existing `access-control/route-guards.spec.ts` plus new `/admin/presets` row | Covered |
-| Web↔agent process-config contract (`config/{siteId}/machines/{machineId}.processes[]` — wire field names, wire types, duplicate-name gate) | `dashboard/process-config-roundtrip.spec.ts`, `dashboard/process-duplicate-names.spec.ts` | Covered for the web half. Deferred: the desktop-app half (edits made in the local Tauri UI reaching Firestore — the 3.0.0 regression) needs the full-machine harness at `dev/active/full-machine-e2e/` |
+| Web↔agent process-config contract (`config/{siteId}/machines/{machineId}.processes[]` — wire field names, wire types, duplicate-name gate) | `dashboard/process-config-roundtrip.spec.ts`, `dashboard/process-duplicate-names.spec.ts` | Covered for the web half. Deferred: the desktop-app half (edits made in the local Tauri UI reaching Firestore — the 3.0.0 regression) needs the full-machine harness at `dev/completed/full-machine-e2e/` |
+| Talons — nav entry, list rendering, run-history expansion, create round-trip (normalized doc read-back), enable/disable toggle, empty state without layout shift | `talons/talons.spec.ts` | Covered |
 | Serious/critical a11y smoke | `a11y/route-smoke.spec.ts` | Covered |
 | Visual nonblank smoke | `visual/route-smoke.spec.ts` | Covered |
 | Mobile shells where UI differs | `mobile/targeted-shells.spec.ts` (dashboard/logs/hoot/presets), `mobile/sites-dialogs.spec.ts` (PageHeader nav drawer), `mobile/roosts.spec.ts` (detail sheet) | Covered |
