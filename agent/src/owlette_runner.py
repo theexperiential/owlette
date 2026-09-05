@@ -130,7 +130,6 @@ if __name__ == '__main__':
             self.last_started = {}
             self.config = shared_utils.load_config()
             self.processes = []
-            self.app_states = {}
             self.results = {}
             self.current_time = datetime.datetime.now()
             self.active_installations = {}
@@ -143,7 +142,6 @@ if __name__ == '__main__':
             self._launch_locks = {}
             self._launch_locks_guard = threading.Lock()
             self._cached_site_timezone = None
-            self._last_scheduled_reboot_time = None
             self._reboot_schedule_counter = 0
             self._reboot_attempt_started_monotonic = None
             self._display_check_counter = 0

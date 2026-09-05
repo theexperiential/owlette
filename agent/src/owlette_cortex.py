@@ -1,8 +1,8 @@
 """
 Owlette Cortex — Local AI Agent Process.
 
-The 4th agent process (alongside service, tray, GUI). Runs in the user session,
-launched by the service via CreateProcessAsUser.
+The third agent process (alongside the service and the desktop app). Runs in
+the user session, launched by the service via CreateProcessAsUser.
 
 Handles two modes:
   1. User Chat — polls Firestore for pending messages, runs Agent SDK, streams responses

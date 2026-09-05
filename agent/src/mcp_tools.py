@@ -435,8 +435,8 @@ def _get_gpu_processes(params, config):
         data = json.loads(result.stdout)
     except subprocess.TimeoutExpired:
         return {'error': 'GPU Performance Counter query timed out.'}
-    except (json.JSONDecodeError, Exception) as e:
-        return {'error': f'Failed to parse GPU counter data: {e}'}
+    except Exception as e:
+        return {'error': f'GPU counter query failed: {e}'}
 
     # Step 2: Parse PIDs and aggregate per-process
     pid_pattern = re.compile(r'pid_(\d+)_')

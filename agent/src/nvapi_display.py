@@ -48,7 +48,6 @@ NVAPI_MAX_GSYNC_DEVICES = 4
 _FUNC_NvAPI_Initialize = 0x0150E828
 _FUNC_NvAPI_Mosaic_GetCurrentTopo = 0xCB01E1D5
 _FUNC_NvAPI_Mosaic_EnumDisplayGrids = 0xDF2887AF
-_FUNC_NvAPI_GPU_GetConnectedDisplayIds = 0x0078DBA2
 _FUNC_NvAPI_GSync_EnumSyncDevices = 0xD9639601
 _FUNC_NvAPI_GSync_GetStatusParameters = 0xCDAACBC7
 
@@ -147,16 +146,6 @@ class NV_MOSAIC_GRID_TOPO(Structure):
     ]
 
 
-class NV_GPU_DISPLAYIDS(Structure):
-    """Connected display descriptor for NvAPI_GPU_GetConnectedDisplayIds."""
-    _fields_ = [
-        ('version', c_uint32),
-        ('connectorType', c_uint32),
-        ('displayId', c_uint32),
-        ('flags', c_uint32),
-    ]
-
-
 class NV_GSYNC_STATUS_PARAMS(Structure):
     """Subset of GSync status we care about — matches V1 layout.
 
@@ -183,7 +172,6 @@ NV_MOSAIC_TOPO_BRIEF_VER = _make_version(sizeof(NV_MOSAIC_TOPO_BRIEF), 1)
 NV_MOSAIC_DISPLAY_SETTING_VER_2 = _make_version(sizeof(NV_MOSAIC_DISPLAY_SETTING), 2)
 NV_MOSAIC_GRID_TOPO_DISPLAY_VER = _make_version(sizeof(NV_MOSAIC_GRID_TOPO_DISPLAY), 2)
 NV_MOSAIC_GRID_TOPO_VER = _make_version(sizeof(NV_MOSAIC_GRID_TOPO), 2)
-NV_GPU_DISPLAYIDS_VER = _make_version(sizeof(NV_GPU_DISPLAYIDS), 3)
 NV_GSYNC_STATUS_PARAMS_VER = _make_version(sizeof(NV_GSYNC_STATUS_PARAMS), 1)
 
 

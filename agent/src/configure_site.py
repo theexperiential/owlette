@@ -154,13 +154,14 @@ def _save_config(site_id: str, environment: str, api_base: str, project_id: str)
     # Atomic write: write to temp file, then replace
     tmp_path = CONFIG_PATH.with_suffix('.tmp')
     with open(tmp_path, 'w') as f:
-        # `agent/owlette_installer.iss:483-484` string-searches this file for
-        # '"environment": "development"' — key, colon, ONE space, value — which
-        # depends on json.dump's default ': ' item separator, so never pass a
-        # custom `separators=` here. The indent is *not* part of that contract: it
-        # controls only leading whitespace, and the service rewrites this same
-        # config.json with indent=4 (`shared_utils.write_json_to_file`, :1728)
-        # while those searches still match.
+        # `ShouldConfigureSite` in agent/owlette_installer.iss string-searches
+        # this file for '"environment": "development"' and '"enabled": true' —
+        # key, colon, ONE space, value — which depends on json.dump's default
+        # ': ' item separator, so never pass a custom `separators=` here. The
+        # indent is *not* part of that contract: it controls only leading
+        # whitespace, and the service rewrites this same config.json with
+        # indent=4 (`shared_utils.write_json_to_file`) while those searches
+        # still match.
         json.dump(config, f, indent=2)
     os.replace(tmp_path, CONFIG_PATH)
 
@@ -177,8 +178,8 @@ def run_pairing_flow(api_base: str = None, environment: str = None,
 
     This function can be called from:
     - Command line (configure_site.py main())
-    - GUI Join Site button (owlette_gui.py)
-    - Installer (Inno Setup)
+    - run_json_progress(), the desktop app's spawned subprocess
+    - Installer (Inno Setup), which also goes through main()
 
     Args:
         api_base: API base URL (defaults to the resolved environment's)
@@ -195,8 +196,9 @@ def run_pairing_flow(api_base: str = None, environment: str = None,
             render its own phrase UI. Exceptions raised by it are swallowed.
         should_cancel: Optional predicate polled while waiting for
             authorization; when it returns True the wait is abandoned and the
-            flow returns (False, "Cancelled by user", None). Lets the GUI
-            Cancel button abort without waiting out the code's expiry.
+            flow returns (False, "Cancelled by user", None). The only
+            production value is run_json_progress's status heartbeat, which
+            never returns True; the desktop app cancels by killing this process.
         copy_clipboard: Copy the phrase to the Windows clipboard. True for the
             console/installer flow, where the operator has no other way to get
             it into owlette.app/add. The desktop app owns its own clipboard
@@ -367,8 +369,8 @@ def run_pairing_flow(api_base: str = None, environment: str = None,
             if show_prompts:
                 print(f"  {BOLD}waiting for authorization...{RESET}")
 
-            # Authorization from ANY device ends the wait; should_cancel lets a GUI
-            # Cancel abort promptly.
+            # Authorization from ANY device ends the wait; should_cancel is the
+            # heartbeat hook — no production caller returns True from it.
             success = auth_manager.poll_device_code(
                 device_code=device_code,
                 interval=interval,

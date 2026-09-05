@@ -70,11 +70,6 @@ def get_cache_dir() -> str:
     return shared_utils.get_data_path(CACHE_SUBDIR)
 
 
-def get_cli_cache_path() -> str:
-    """Absolute path the downloaded CLI is installed to."""
-    return os.path.join(get_cache_dir(), CLI_FILENAME)
-
-
 def _sidecar_path() -> str:
     return os.path.join(get_cache_dir(), SIDECAR_FILENAME)
 

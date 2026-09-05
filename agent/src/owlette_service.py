@@ -80,14 +80,6 @@ def _handle_thread_exception(args):
     sentry_utils.capture_exception((args.exc_type, args.exc_value, args.exc_traceback))
 
 
-"""
-To install/run this as a service,
-switch to the current working directory in
-an Administrator Command Prompt & run:
-python owlette_service.py install | start | stop | remove
-"""
-
-LOG_FILE_PATH = shared_utils.get_data_path('logs/service.log')
 MAX_RELAUNCH_ATTEMPTS = 3
 SLEEP_INTERVAL = 5
 TIME_TO_INIT = 60
@@ -1085,7 +1077,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
         Never raises — failures are logged at DEBUG level.
         """
         try:
-            from health_probe import HealthState
             import time as _time
             if self._health_state is None:
                 self._health_state = HealthState(
@@ -2035,7 +2026,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
             session_id = win32ts.WTSGetActiveConsoleSessionId()
             if session_id == 0xFFFFFFFF:
                 logging.warning("No active console session (headless/locked machine)")
-                self.console_session_id = None
                 self.console_user_token = None
                 self.environment = None
                 return False
@@ -2064,7 +2054,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 if self.console_user_token:
                     logging.debug("Falling back to cached user token")
                     return True
-                self.console_session_id = None
                 self.console_user_token = None
                 self.environment = None
                 return False
@@ -2076,7 +2065,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 except Exception as e:
                     logging.debug(f"Could not close old user token: {e}")
 
-            self.console_session_id = session_id
             self.console_user_token = token
             self.environment = environment
 
@@ -2091,7 +2079,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if self.console_user_token:
                 logging.debug("Falling back to cached user token")
                 return True
-            self.console_session_id = None
             self.console_user_token = None
             self.environment = None
             return False
@@ -2335,12 +2322,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 os.remove(job_path)
             except OSError:
                 pass
-
-    def get_session_output_path(self, request_id, filename):
-        """Get the path to an output file from a user session execution."""
-        return os.path.join(
-            shared_utils.get_data_path('ipc'), 'results', request_id, filename
-        )
 
     @staticmethod
     def _validate_path(path, label="Path"):
@@ -2837,10 +2818,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
             process_results = self.results.get(str(pid), {})
             responsive = process_results.get('responsive', True)
             hung_since = process_results.get('hung_since', None)
-        except json.JSONDecodeError:
-            logging.error("Failed to decode JSON from result file")
-            responsive = True
-            hung_since = None
         except Exception:
             logging.error("An unexpected error occurred")
             responsive = True
@@ -3916,7 +3893,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                 # Auto-derive verify_path from /DIR flag if not explicitly provided
                 if not verify_path and silent_flags:
-                    import re
                     dir_match = re.search(r'/DIR="([^"]+)"', silent_flags, re.IGNORECASE)
                     if not dir_match:
                         dir_match = re.search(r'/DIR=(\S+)', silent_flags, re.IGNORECASE)
@@ -4055,7 +4031,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                 target_version = cmd_data.get('target_version')
                 if not target_version:
-                    import re
                     version_match = re.search(r'v(\d+\.\d+\.\d+)', installer_url or '')
                     target_version = version_match.group(1) if version_match else 'unknown'
 
@@ -4067,7 +4042,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     return "Error: No checksum provided for self-update - refusing to install unverified binary"
 
                 # ANTI-FRAGILE: Idempotency guard - prevent concurrent update execution
-                import json
                 update_marker_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'owlette', 'logs', 'update_in_progress.json')
                 if os.path.exists(update_marker_path):
                     try:
@@ -6096,7 +6070,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
         same entry cannot re-fire today on the next scheduler tick.
         """
         try:
-            import subprocess
             cancel_result = subprocess.run(['shutdown', '/a'], capture_output=True, timeout=15)
             os_cancel_ok = (cancel_result.returncode == 0)
 
@@ -6495,7 +6468,6 @@ print(f'monitors={{len(sct.monitors) - 1}}')
             dict with 'url' and 'sizeKB' on success, None on failure.
         """
         try:
-            import requests
             token = self.firebase_client.auth_manager.get_valid_token()
             api_base = shared_utils.get_api_base_url()
             response = requests.post(
@@ -6668,7 +6640,6 @@ with open(out_path, 'wb') as f:
             logging.info("UPDATE STATUS CHECK")
             logging.info("=" * 60)
 
-            import json
             with open(update_marker_path, 'r') as f:
                 marker = json.load(f)
 
@@ -6727,7 +6698,6 @@ with open(out_path, 'wb') as f:
                     capture_output=True, text=True, timeout=10
                 )
                 if result.returncode == 0:
-                    import re
                     for task_match in re.finditer(r'(OwletteUpdate_\d+|OwletteRecovery_\d+)', result.stdout):
                         stale_task = task_match.group(1)
                         logging.info(f"Cleaning up leftover scheduled task: {stale_task}")
@@ -7011,7 +6981,6 @@ with open(out_path, 'wb') as f:
 
         # Refreshed before every launch via _refresh_user_token() to survive
         # logout/login, RDP and user switches.
-        self.console_session_id = None
         self.console_user_token = None
         self.environment = None
         self._last_logged_session_id = None

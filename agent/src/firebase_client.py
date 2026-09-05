@@ -1816,8 +1816,15 @@ class FirebaseClient:
         except Exception as e:
             self.logger.warning(f"Failed to mark command {cmd_id} as running: {e}")
 
-    def _mark_command_completed(self, cmd_id: str, result: Any, deployment_id: Optional[str] = None, cmd_type: Optional[str] = None):
-        """Mark a command as completed in Firestore."""
+    def _mark_command_terminal(self, cmd_id: str, status: str, field: str, value: Any,
+                               deployment_id: Optional[str], cmd_type: Optional[str],
+                               log_line: str, log_as_error: bool = False):
+        """Write a command's terminal status and drop it from pending.
+
+        Shared body for _mark_command_completed / _mark_command_failed /
+        _mark_command_cancelled, which differ only in the payload field, the
+        status literal and the log line.
+        """
         if not self.connected or not self.db:
             return
 
@@ -1827,8 +1834,8 @@ class FirebaseClient:
                 .collection('commands').document('completed')
 
             completed_data = {
-                'result': result,
-                'status': 'completed',
+                field: value,
+                'status': status,
                 'completedAt': SERVER_TIMESTAMP
             }
 
@@ -1852,90 +1859,25 @@ class FirebaseClient:
                 cmd_id: DELETE_FIELD
             })
 
-            self.logger.info(f"Command {cmd_id} marked as completed")
+            (self.logger.error if log_as_error else self.logger.info)(log_line)
 
         except Exception as e:
-            self.logger.error(f"Failed to mark command {cmd_id} as completed: {e}")
+            self.logger.error(f"Failed to mark command {cmd_id} as {status}: {e}")
+
+    def _mark_command_completed(self, cmd_id: str, result: Any, deployment_id: Optional[str] = None, cmd_type: Optional[str] = None):
+        """Mark a command as completed in Firestore."""
+        self._mark_command_terminal(cmd_id, 'completed', 'result', result, deployment_id, cmd_type,
+                                    f"Command {cmd_id} marked as completed")
 
     def _mark_command_failed(self, cmd_id: str, error: str, deployment_id: Optional[str] = None, cmd_type: Optional[str] = None):
         """Mark a command as failed in Firestore."""
-        if not self.connected or not self.db:
-            return
-
-        try:
-            completed_ref = self.db.collection('sites').document(self.site_id)\
-                .collection('machines').document(self.machine_id)\
-                .collection('commands').document('completed')
-
-            failed_data = {
-                'error': error,
-                'status': 'failed',
-                'completedAt': SERVER_TIMESTAMP
-            }
-
-            if deployment_id:
-                failed_data['deployment_id'] = deployment_id
-
-            if cmd_type:
-                failed_data['type'] = cmd_type
-
-            # Write to completed FIRST — see _mark_command_completed for rationale
-            completed_ref.set({
-                cmd_id: failed_data
-            }, merge=True)
-
-            pending_ref = self.db.collection('sites').document(self.site_id)\
-                .collection('machines').document(self.machine_id)\
-                .collection('commands').document('pending')
-
-            pending_ref.update({
-                cmd_id: DELETE_FIELD
-            })
-
-            self.logger.error(f"Command {cmd_id} marked as failed: {error}")
-
-        except Exception as e:
-            self.logger.error(f"Failed to mark command {cmd_id} as failed: {e}")
+        self._mark_command_terminal(cmd_id, 'failed', 'error', error, deployment_id, cmd_type,
+                                    f"Command {cmd_id} marked as failed: {error}", log_as_error=True)
 
     def _mark_command_cancelled(self, cmd_id: str, result: str, deployment_id: Optional[str] = None, cmd_type: Optional[str] = None):
         """Mark a command as cancelled in Firestore."""
-        if not self.connected or not self.db:
-            return
-
-        try:
-            completed_ref = self.db.collection('sites').document(self.site_id)\
-                .collection('machines').document(self.machine_id)\
-                .collection('commands').document('completed')
-
-            cancelled_data = {
-                'result': result,
-                'status': 'cancelled',
-                'completedAt': SERVER_TIMESTAMP
-            }
-
-            if deployment_id:
-                cancelled_data['deployment_id'] = deployment_id
-
-            if cmd_type:
-                cancelled_data['type'] = cmd_type
-
-            # Write to completed FIRST — see _mark_command_completed for rationale
-            completed_ref.set({
-                cmd_id: cancelled_data
-            }, merge=True)
-
-            pending_ref = self.db.collection('sites').document(self.site_id)\
-                .collection('machines').document(self.machine_id)\
-                .collection('commands').document('pending')
-
-            pending_ref.update({
-                cmd_id: DELETE_FIELD
-            })
-
-            self.logger.info(f"Command {cmd_id} marked as cancelled")
-
-        except Exception as e:
-            self.logger.error(f"Failed to mark command {cmd_id} as cancelled: {e}")
+        self._mark_command_terminal(cmd_id, 'cancelled', 'result', result, deployment_id, cmd_type,
+                                    f"Command {cmd_id} marked as cancelled")
 
     def _cleanup_stale_commands(self):
         """Remove stale pending commands (>1h) and old completed commands (>24h).

@@ -50,7 +50,7 @@ from sync_state import SyncState
 logger = logging.getLogger(__name__)
 
 # one global pool for all distributions — chunks are content-addressed, so
-# dedup is automatic. must stay in sync with sync_assembler.DEFAULT_CONTENT_STORE.
+# dedup is automatic. sync_assembler and sync_scrub import this resolver.
 def _default_content_store() -> str:
     """
     default content-store path.
@@ -69,10 +69,6 @@ def _default_content_store() -> str:
         return os.path.join(xdg, 'owlette', 'content')
     return os.path.join(os.path.expanduser('~'), '.local', 'share', 'owlette', 'content')
 
-
-# Eager, for external readers. download_all() re-resolves each call so test env
-# overrides are honored.
-DEFAULT_CONTENT_STORE = _default_content_store()
 
 # tuning constants
 DEFAULT_CONCURRENCY = 4

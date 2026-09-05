@@ -85,7 +85,6 @@ class DisplayErrorCode(str, enum.Enum):
 
     # Preconditions / kill switches
     MOSAIC_ACTIVE = 'mosaic_active'
-    NO_CONSOLE_SESSION = 'no_console_session'
 
     # Auto-restore skip reasons (not failures)
     AUTO_RESTORE_SKIPPED_UNFIXABLE = 'auto_restore_skipped_unfixable'

@@ -357,7 +357,7 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         # does its own has_chunk() check and skips what's present.
         # `chunks_to_fetch` is reporting-only — what's NEW vs the prior
         # version, not what this agent actually needs.
-        url_provider = _make_chunk_url_provider(service, site_id)
+        url_provider = _make_chunk_url_provider(service)
         # Throttled: a firestore write per chunk would be a cost and
         # rate-limit problem on a 3739-chunk upload. At most once per ~2s or
         # per 5% change; the first call always goes through so the UI gets a
@@ -744,7 +744,7 @@ def _report_target_state(
         )
 
 
-def _make_chunk_url_provider(service: Any, site_id: str):
+def _make_chunk_url_provider(service: Any):
     """
     return a BATCH callback that issues fresh signed download urls for
     chunk hashes. signature: `Callable[[list[str]], dict[str, str]]`.

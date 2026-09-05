@@ -116,7 +116,7 @@ def test_chunk_url_provider_calls_firebase_client_with_batch():
         'b' * 64: 'https://r2.example/bbb',
     }
 
-    provider = _make_chunk_url_provider(fake, 'site_test')
+    provider = _make_chunk_url_provider(fake)
     urls = provider(['a' * 64, 'b' * 64])
     assert urls == {
         'a' * 64: 'https://r2.example/aaa',
@@ -137,7 +137,7 @@ def test_chunk_url_provider_with_empty_list_returns_empty_dict():
 
     fake = FakeService()
     fake.firebase_client = MagicMock()
-    provider = _make_chunk_url_provider(fake, 'site_test')
+    provider = _make_chunk_url_provider(fake)
     assert provider([]) == {}
     fake.firebase_client.get_chunk_download_urls.assert_not_called()
 
@@ -149,7 +149,7 @@ def test_chunk_url_provider_without_firebase_client_raises_clear_error():
     class FakeService:
         firebase_client = None
 
-    provider = _make_chunk_url_provider(FakeService(), 'site_test')
+    provider = _make_chunk_url_provider(FakeService())
     with pytest.raises(NotImplementedError, match="firebase_client"):
         provider(['a' * 64])
 

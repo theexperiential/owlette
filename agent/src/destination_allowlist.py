@@ -49,7 +49,6 @@ _WINDOWS_PROFILE_EXCLUDES = frozenset({
 
 # Memoised: the logged-in user doesn't change across a service run on a kiosk, so
 # skip the registry + filesystem scan on every expansion.
-_cached_interactive_home: Optional[str] = None
 _cached_interactive_home_sentinel = object()  # distinguish "not cached" from "cached None"
 _cached_interactive_home_state: Any = _cached_interactive_home_sentinel
 

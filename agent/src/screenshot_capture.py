@@ -37,7 +37,6 @@ UPLOAD_URL_PATH_TMPL = "/sites/{site_id}/machines/{machine_id}/screenshots/uploa
 FINALIZE_PATH_TMPL = "/sites/{site_id}/machines/{machine_id}/screenshots/finalize"
 
 DEFAULT_CONTENT_TYPE = "image/jpeg"
-SCREENSHOT_FILENAME_JPEG = "screenshot.jpg"
 SCREENSHOT_FILENAME_PNG = "screenshot.png"
 
 UPLOAD_TIMEOUT_S = 30

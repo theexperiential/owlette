@@ -2,7 +2,6 @@ import os
 import json
 import logging
 from logging.handlers import RotatingFileHandler
-import ctypes
 import socket
 from packaging import version
 import psutil
@@ -33,29 +32,6 @@ def get_app_version():
 
 APP_VERSION = get_app_version()
 CONFIG_VERSION = '1.7.0'  # Added temperature.enabled (PawnIO migration)
-# Color scheme matching web app dark theme (oklch hue 250 navy + cyan accent)
-WINDOW_COLOR = '#020b16'      # web --background oklch(0.145 0.03 250)
-FRAME_COLOR = '#0d1e2f'       # web --card oklch(0.23 0.04 250)
-BUTTON_COLOR = '#11283e'      # web --muted oklch(0.269 0.05 250)
-BUTTON_HOVER_COLOR = '#143c62' # web --accent/border oklch(0.35 0.08 250)
-BUTTON_IMPORTANT_COLOR = '#00cfd1' # web --accent-cyan oklch(0.75 0.18 195)
-BUTTON_IMPORTANT_HOVER = '#00e2e5' # web --accent-cyan-hover oklch(0.80 0.20 195)
-BUTTON_IMPORTANT_TEXT = '#020b16'  # dark text on cyan buttons (matches background)
-ACCENT_COLOR = '#00cfd1'      # web --accent-cyan oklch(0.75 0.18 195)
-BORDER_COLOR = '#143c62'      # web --border oklch(0.35 0.08 250)
-HIGHLIGHT_COLOR = '#006566'   # web --accent-cyan-muted oklch(0.45 0.10 195)
-TEXT_COLOR = "white"
-CORNER_RADIUS = 6
-STATUS_COLORS = {
-    'RUNNING':       '#4ade80',  # green-400
-    'LAUNCHING':     '#facc15',  # yellow-400
-    'RESTARTING':    '#facc15',  # yellow-400 (operator-initiated, mid-flight)
-    'QUEUED':        '#fb923c',  # orange-400
-    'LAUNCH_FAILED': '#ef4444',  # red-500
-    'KILLED':        '#f87171',  # red-400
-    'STOPPED':       '#f87171',  # red-400
-    'INACTIVE':      '#94a3b8',  # slate-400
-}
 WINDOW_TITLES = {
     "owlette_gui": "owlette configuration",
     "prompt_slack_config": "connect to slack",
@@ -892,33 +868,6 @@ def get_environment_label(environment=None):
 
     return f"{environment} ({get_web_host(environment)})"
 
-# TTL cache: psutil.process_iter() costs 200-500ms on Windows (cmdline parse
-# across all procs) and the metrics thread only needs it to pick a heartbeat
-# cadence. 10s is under the 5s main-loop granularity that matters.
-_script_running_cache = {}  # script_name -> (result, expires_at_monotonic)
-_SCRIPT_RUNNING_TTL = 10.0
-
-def is_script_running(script_name):
-    now = time.monotonic()
-    cached = _script_running_cache.get(script_name)
-    if cached is not None and cached[1] > now:
-        return cached[0]
-    result = _is_script_running_uncached(script_name)
-    _script_running_cache[script_name] = (result, now + _SCRIPT_RUNNING_TTL)
-    return result
-
-def _is_script_running_uncached(script_name):
-    for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
-        try:
-            name = process.info.get('name') or ''
-            if 'python' in name:
-                cmdline = process.info.get('cmdline')
-                if cmdline and script_name in ' '.join(cmdline):
-                    return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-    return False
-
 # PATHS
 CONFIG_PATH = get_data_path('config/config.json')
 RESULT_FILE_PATH = get_data_path('tmp/app_states.json')
@@ -967,7 +916,7 @@ def build_detached_launch_command(exe_path, args=()):
 def read_desktop_pid(pid_path):
     """PID from pid_path, but only if it is a live owlette-desktop.exe.
 
-    is_script_running() can't be used — it only matches "python" image names.
+    A python-image cmdline scan can't be used — it only matches "python" image names.
     Checking the image name as well as the PID is what stops a recycled PID from
     reading as a live UI. None when the marker is absent, stale or foreign.
     """
@@ -1266,7 +1215,7 @@ def initialize_logging(log_file_name, level=logging.INFO):
     logger.setLevel(level)
     logger.addHandler(log_handler)
 
-    _log_startup_banner(log_file_name, level, log_file_path)
+    _log_startup_banner(level, log_file_path)
 
 
 def _get_windows_version_string():
@@ -1284,7 +1233,7 @@ def _get_windows_version_string():
         return platform.version()
 
 
-def _log_startup_banner(log_file_name, level, log_file_path):
+def _log_startup_banner(level, log_file_path):
     """Rich startup banner logged immediately after logging is configured."""
     import sys
     sep = "=" * 70
@@ -2033,23 +1982,6 @@ def graceful_terminate(pid, timeout=5, exe_path=None):
 
 # PROCESSES
 
-def fetch_pid_by_id(target_id):
-    data = read_json_from_file(RESULT_FILE_PATH)
-
-    if data is None:
-        data = {}
-
-    matching_processes = {pid: info for pid, info in data.items() if info['id'] == target_id}
-
-    if not matching_processes:
-        logging.debug(f"No processes found with id: {target_id}")
-        return None
-
-    # Newest timestamp wins.
-    newest_pid = max(matching_processes.keys(), key=lambda pid: matching_processes[pid]['timestamp'])
-    
-    return newest_pid
-
 def update_process_status_in_json(pid, new_status, firebase_client=None, process_id=None):
     """Write a process status to app_states.json; the metrics loop syncs it to
     Firebase. firebase_client is deprecated, kept for signature compatibility.
@@ -2200,39 +2132,9 @@ def pid_matches_exe(pid, exe_path, file_path=None):
         return False
 
 
-def fetch_process_by_id(id, data):
-    return next((process for process in data['processes'] if process['id'] == id), None)
-
-def fetch_process_name_by_id(id, data):
-    process = next((process for process in data['processes'] if process['id'] == id), None)
-    return process['name'] if process else None   
-
 def fetch_process_id_by_name(name, data):
     process = next((process for process in data['processes'] if process['name'] == name), None)
     return process['id'] if process else None
-
-def get_process_index(selected_process_id):
-    return next((i for i, p in enumerate(read_config()['processes']) if p['id'] == selected_process_id), None)
-
-# WINDOWS / UI
-
-def get_scaling_factor():
-    hdc = ctypes.windll.user32.GetDC(0)
-    LOGPIXELSX = 88
-    actual_dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, LOGPIXELSX)
-    ctypes.windll.user32.ReleaseDC(0, hdc)
-    return actual_dpi / 96.0  # 96 DPI == 100% scaling
-
-def center_window(root, width, height):
-    scaling_factor = get_scaling_factor()
-
-    screen_width = root.winfo_screenwidth() * scaling_factor
-    screen_height = root.winfo_screenheight() * scaling_factor
-
-    x = (screen_width / 2) - (width * scaling_factor / 2)
-    y = (screen_height / 2) - (height * scaling_factor / 2)
-    root.geometry(f'{int(width)}x{int(height)}+{int(x)}+{int(y)}')
-    root.minsize(width, height)
 
 # METRICS
 def get_system_info():
@@ -2273,9 +2175,10 @@ def get_system_metrics(skip_gpu=False):
 
 def get_system_metrics_with_config(config=None, skip_gpu=False):
     """Legacy snake_case metrics (cpu/memory/disk/gpu/network/processes) for
-    in-process consumers: mcp_tools, report_issue, the tray GUI. firebase_client
-    reads only `memory` and `processes` — the v2 heartbeat sources per-device
-    metrics from hardware_profile.collect_dynamic_metrics() instead.
+    in-process consumers: mcp_tools and configure_site's feedback report.
+    firebase_client reads only `memory` and `processes` — the v2 heartbeat
+    sources per-device metrics from hardware_profile.collect_dynamic_metrics()
+    instead.
 
     config: reuse a dict to skip a disk read; None goes through the mtime cache.
     skip_gpu: skip the nvidia-smi / sensor probes that flash a console window.

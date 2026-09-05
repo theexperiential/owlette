@@ -268,7 +268,6 @@ class ConnectionManager:
         self._last_success_time_wall: Optional[float] = None
         # Process start anchors the boot-grace and the never-connected fallback
         self._process_start_time_mono: float = time.monotonic()
-        self._process_start_time_wall: float = time.time()
         # Captured by report_error for inclusion in the diagnostic snapshot
         self._last_error_message: Optional[str] = None
         # Last fatal-error fingerprint match — suppresses a self-restart that can't help
@@ -302,11 +301,6 @@ class ConnectionManager:
     def is_connected(self) -> bool:
         """Check if fully connected and operational."""
         return self.state == ConnectionState.CONNECTED
-
-    @property
-    def is_operational(self) -> bool:
-        """True for CONNECTED and RECONNECTING — a reconnect may still succeed."""
-        return self.state in (ConnectionState.CONNECTED, ConnectionState.RECONNECTING)
 
     @property
     def consecutive_failures(self) -> int:

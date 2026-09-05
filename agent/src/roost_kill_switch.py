@@ -112,8 +112,3 @@ def check_enabled(
 def invalidate_cache() -> None:
     """force the next check_enabled() to re-read."""
     _cache.invalidate()
-
-
-class RoostDisabledError(Exception):
-    """raised by gated callers when roost is disabled on this site."""
-    pass

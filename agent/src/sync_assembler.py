@@ -28,6 +28,7 @@ from typing import Iterable, List, Optional, Set, Tuple
 from destination_allowlist import (
     DestinationAllowlist,
     DestinationNotAllowedError,
+    get_interactive_username,
 )
 from sync_downloader import chunk_path, _default_content_store
 from sync_version import VersionFile
@@ -666,11 +667,7 @@ def _harden_acl(path_str: str) -> None:
         dacl.AddAccessAllowedAce(ws.ACL_REVISION, ntcon.GENERIC_ALL, admins_sid)
 
         # Best-effort: an unresolvable username just drops the user ACE.
-        try:
-            from destination_allowlist import get_interactive_username
-            username = get_interactive_username()
-        except ImportError:
-            username = None
+        username = get_interactive_username()
         if username:
             try:
                 user_sid, _, _ = ws.LookupAccountName('', username)

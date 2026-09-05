@@ -174,6 +174,25 @@ class AuthManager:
         except Exception as e:
             logger.warning(f"Failed to load cached tokens: {e}")
 
+    def _persist_credentials(self, access_token: Optional[str], refresh_token: Optional[str],
+                             expires_in: float, site_id: Optional[str]) -> None:
+        """Validate a token triple, write it to encrypted storage, and cache it on self."""
+        if not access_token or not refresh_token or not site_id:
+            raise AuthenticationError("Invalid response from server (missing tokens)")
+
+        expiry_timestamp = time.time() + expires_in
+
+        success_refresh = self.storage.save_refresh_token(refresh_token)
+        success_access = self.storage.save_access_token(access_token, expiry_timestamp)
+        success_site = self.storage.save_site_id(site_id)
+
+        if not success_refresh or not success_access or not success_site:
+            raise AuthenticationError("Failed to save tokens to encrypted file")
+
+        self._access_token = access_token
+        self._token_expiry = expiry_timestamp
+        self._site_id = site_id
+
     def exchange_registration_code(self, registration_code: str, machine_id: Optional[str] = None) -> bool:
         """
         Exchange the installer's single-use registration code for access + refresh tokens.
@@ -230,21 +249,7 @@ class AuthManager:
             expires_in = data.get('expiresIn', 3600)
             site_id = data.get('siteId')
 
-            if not access_token or not refresh_token or not site_id:
-                raise AuthenticationError("Invalid response from server (missing tokens)")
-
-            expiry_timestamp = time.time() + expires_in
-
-            success_refresh = self.storage.save_refresh_token(refresh_token)
-            success_access = self.storage.save_access_token(access_token, expiry_timestamp)
-            success_site = self.storage.save_site_id(site_id)
-
-            if not success_refresh or not success_access or not success_site:
-                raise AuthenticationError("Failed to save tokens to encrypted file")
-
-            self._access_token = access_token
-            self._token_expiry = expiry_timestamp
-            self._site_id = site_id
+            self._persist_credentials(access_token, refresh_token, expires_in, site_id)
 
             # Never log the tokens themselves.
             logger.info(
@@ -360,21 +365,7 @@ class AuthManager:
                         expires_in = data.get('expiresIn', 3600)
                         site_id = data.get('siteId')
 
-                    if not access_token or not refresh_token or not site_id:
-                        raise AuthenticationError("Invalid response (missing tokens)")
-
-                    expiry_timestamp = time.time() + expires_in
-
-                    success_refresh = self.storage.save_refresh_token(refresh_token)
-                    success_access = self.storage.save_access_token(access_token, expiry_timestamp)
-                    success_site = self.storage.save_site_id(site_id)
-
-                    if not success_refresh or not success_access or not success_site:
-                        raise AuthenticationError("Failed to save tokens to encrypted file")
-
-                    self._access_token = access_token
-                    self._token_expiry = expiry_timestamp
-                    self._site_id = site_id
+                    self._persist_credentials(access_token, refresh_token, expires_in, site_id)
 
                     logger.info(f"Device code authorized: site={site_id}")
                     return True

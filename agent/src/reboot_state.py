@@ -25,12 +25,6 @@ import shared_utils
 
 STATE_PATH = shared_utils.get_data_path('tmp/reboot_state.json')
 
-# Default empty state — used when the file doesn't exist yet or is corrupt.
-EMPTY_STATE = {
-    'lastFiredByEntry': {},
-    'attempt': None,
-}
-
 
 def read_state() -> dict:
     """Read reboot state from disk.

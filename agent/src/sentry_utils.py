@@ -87,17 +87,6 @@ def capture_exception(exc_info=None):
         pass  # Never let Sentry break the service
 
 
-def capture_message(message, level="error"):
-    """Capture a message to Sentry if initialized."""
-    if not _sentry_initialized:
-        return
-    try:
-        import sentry_sdk
-        sentry_sdk.capture_message(message, level=level)
-    except Exception:
-        pass
-
-
 def flush(timeout=2):
     """Flush pending Sentry events. Call before process exit."""
     if not _sentry_initialized:

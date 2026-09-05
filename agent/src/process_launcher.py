@@ -44,15 +44,13 @@ def build_hidden_batch_command(exe_path, launch_args):
     return f'cmd.exe /s /c "{inner}"'
 
 
-def write_result(pid_file, pid=None, error=None, adopted=False):
+def write_result(pid_file, pid=None, error=None):
     """Write launch result to PID file as JSON."""
     result = {}
     if error:
         result['error'] = str(error)
     else:
         result['pid'] = pid
-        if adopted:
-            result['adopted'] = True
     with open(pid_file, 'w') as f:
         json.dump(result, f)
 
@@ -136,10 +134,6 @@ def main():
     cwd = args.get('cwd')
     visibility = args.get('visibility', 'Normal')
     pid_file = args['pid_file']
-
-    # Backward compat
-    if args.get('hidden', False) and visibility == 'Normal':
-        visibility = 'Hidden'
 
     try:
         # exe_path is always lpFile, file_path always lpParameters. Passing the

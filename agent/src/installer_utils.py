@@ -295,6 +295,31 @@ def execute_installer(
         return False, -1, error_msg
 
 
+def _finish_installer_run(
+    exit_code: int,
+    installer_name: str,
+    active_processes: Optional[Dict[str, int]],
+    stderr: Optional[str] = None,
+) -> tuple[bool, int, str]:
+    """Untrack the run and map its exit code to ``(success, exit_code, message)``."""
+    if active_processes and installer_name in active_processes:
+        del active_processes[installer_name]
+
+    logging.debug(f"Installer exit code: {exit_code}")
+
+    if exit_code == 0:
+        return True, exit_code, ""
+    elif exit_code == 3010:
+        logging.info("Installer returned 3010 (reboot required) — treating as success")
+        return True, exit_code, ""
+    else:
+        error_msg = f"Installer failed with exit code {exit_code}"
+        if stderr:
+            error_msg += f": {stderr}"
+        logging.error(error_msg)
+        return False, exit_code, error_msg
+
+
 def _execute_as_user(
     command: str,
     user_token,
@@ -350,20 +375,7 @@ def _execute_as_user(
     exit_code = win32process.GetExitCodeProcess(h_process)
     win32api.CloseHandle(h_process)
 
-    if active_processes and installer_name in active_processes:
-        del active_processes[installer_name]
-
-    logging.debug(f"Installer exit code: {exit_code}")
-
-    if exit_code == 0:
-        return True, exit_code, ""
-    elif exit_code == 3010:
-        logging.info("Installer returned 3010 (reboot required) — treating as success")
-        return True, exit_code, ""
-    else:
-        error_msg = f"Installer failed with exit code {exit_code}"
-        logging.error(error_msg)
-        return False, exit_code, error_msg
+    return _finish_installer_run(exit_code, installer_name, active_processes)
 
 
 def _execute_as_system(
@@ -397,22 +409,7 @@ def _execute_as_system(
         logging.error(error_msg)
         return False, -1, error_msg
 
-    if active_processes and installer_name in active_processes:
-        del active_processes[installer_name]
-
-    logging.debug(f"Installer exit code: {exit_code}")
-
-    if exit_code == 0:
-        return True, exit_code, ""
-    elif exit_code == 3010:
-        logging.info("Installer returned 3010 (reboot required) — treating as success")
-        return True, exit_code, ""
-    else:
-        error_msg = f"Installer failed with exit code {exit_code}"
-        if stderr:
-            error_msg += f": {stderr}"
-        logging.error(error_msg)
-        return False, exit_code, error_msg
+    return _finish_installer_run(exit_code, installer_name, active_processes, stderr)
 
 
 def verify_checksum(file_path: str, expected_sha256: str) -> bool:
