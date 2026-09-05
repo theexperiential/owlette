@@ -110,7 +110,13 @@ try {
     try {
       output = execSync('python -m pytest agent/tests/ -x -q --tb=line', {
         cwd: PROJECT_ROOT,
-        timeout: 60000,
+        // 300s, not 60s: tests/lifecycle (added 2026-09-05, process-identity
+        // Wave 0) spawns real processes and takes ~60s by itself, so the whole
+        // suite runs ~75s. At 60s execSync killed pytest mid-run and the gate
+        // reported a bare "pytest failed" with no summary on every agent
+        // commit. The budget is headroom, not a target — a hung suite still
+        // dies here rather than wedging the commit forever.
+        timeout: 300000,
         stdio: 'pipe'
       }).toString()
     } catch (err) {

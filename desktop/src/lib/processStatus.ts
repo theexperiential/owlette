@@ -67,9 +67,26 @@ function entriesFor(states: AppStates, processId: string): [number, AppState][] 
 
 /** Newest first, by the service's timestamp, with the higher pid breaking ties. */
 function byRecency(a: [number, AppState], b: [number, AppState]): number {
-  const at = typeof a[1].timestamp === 'number' ? a[1].timestamp : 0
-  const bt = typeof b[1].timestamp === 'number' ? b[1].timestamp : 0
-  return bt - at || b[0] - a[0]
+  return recencyOf(b[1]) - recencyOf(a[1]) || b[0] - a[0]
+}
+
+/**
+ * What "recent" means for a row with no timestamp. The service stamps
+ * `timestamp` at launch only, so an adopted row never has one. Reading missing
+ * as 0 let a stale KILLED generation outrank a live adopted one (2026-09-04:
+ * pane said "killed", run controls keyed off the displayed status went dead
+ * while the process ran). A live-status row with no timestamp now reads as
+ * "now" - the process observably exists, which is at least as recent as any
+ * recorded launch. A dead row with no timestamp still reads as oldest: it
+ * carries no evidence of recency, and ranking it high would mirror the bug
+ * (a dead adopted row shadowing a live launched one). Among timestamped rows
+ * nothing changes, so an operator's kill still wins on recency.
+ * MAX_SAFE_INTEGER rather than Infinity: Infinity - Infinity is NaN, which
+ * would poison the sort when two adopted live rows meet.
+ */
+function recencyOf(state: AppState): number {
+  if (typeof state.timestamp === 'number') return state.timestamp
+  return isLive(asStatus(state.status) ?? 'INACTIVE') ? Number.MAX_SAFE_INTEGER : 0
 }
 
 function asStatus(value: unknown): ProcessStatus | null {

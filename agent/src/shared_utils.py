@@ -1963,9 +1963,96 @@ def graceful_terminate(pid, timeout=5, exe_path=None):
 
 # PROCESSES
 
-def update_process_status_in_json(pid, new_status, firebase_client=None, process_id=None):
+def read_process_identity(pid):
+    """Snapshot a live process's identity: {pid, create_time, exe}.
+
+    The record half of the managed-or-inherited rule: owlette operations touch
+    only processes owlette launched or deliberately inherited, and both cases
+    are later proven by comparing this snapshot against the live process
+    (identity_matches). The exe is normalised the way the matching code in
+    find_running_process_by_exe normalises paths (forward slashes to back,
+    lowercase) so stored records compare cheaply, without re-normalising on
+    every check.
+
+    Returns None on ANY failure (dead pid, access denied, zombie) -- a caller
+    that cannot read an identity must treat the process as unmanaged.
+    """
+    try:
+        proc = psutil.Process(int(pid))
+        # oneshot caches the underlying process handle/queries so create_time
+        # and exe come from one consistent view of the process.
+        with proc.oneshot():
+            create_time = proc.create_time()
+            exe = proc.exe() or ''
+        return {
+            'pid': int(pid),
+            'create_time': create_time,
+            'exe': exe.replace('/', '\\').lower(),
+        }
+    except Exception as e:
+        logging.debug(f"read_process_identity({pid}) failed: {e}")
+        return None
+
+
+def identity_matches(record, pid):
+    """True iff the live process at `pid` is the one `record` describes.
+
+    Every destructive operation under the managed-or-inherited rule must prove
+    the pid it is about to touch still belongs to the process owlette recorded;
+    anything else is a refusal. create_time is compared EXACTLY, never with a
+    tolerance: psutil returns the kernel-stamped creation time verbatim, two
+    reads of the same process yield the identical float, and the JSON round
+    trip through app_states.json preserves it bit-for-bit (repr-based float
+    serialisation round-trips). Any difference therefore means the pid was
+    recycled -- the same idiom _reap_orphaned_descendants relies on to avoid
+    killing a stranger behind a reused pid. A tolerance window would reopen
+    exactly that hole.
+
+    exe is a sanity check only: with equal (pid, create_time) a differing exe
+    means the record itself is corrupt, which earns a warning -- and is still
+    a refusal. Missing/None/malformed record -> False. Never raises.
+    """
+    if not isinstance(record, dict):
+        return False
+    try:
+        recorded_pid = int(record['pid'])
+        recorded_create_time = record['create_time']
+    except (KeyError, TypeError, ValueError):
+        return False
+    try:
+        if int(pid) != recorded_pid:
+            return False
+    except (TypeError, ValueError):
+        return False
+    live = read_process_identity(pid)
+    if live is None:
+        return False
+    if live['create_time'] != recorded_create_time:
+        return False  # pid recycled -- a different process wears this pid now
+    recorded_exe = record.get('exe')
+    if recorded_exe:
+        # Records written by read_process_identity are already normalised;
+        # normalise again anyway so hand-written or legacy records compare
+        # fairly instead of failing on slash direction or case.
+        recorded_exe_normalised = str(recorded_exe).replace('/', '\\').lower()
+        if recorded_exe_normalised != live['exe']:
+            logging.warning(
+                f"identity_matches: pid {recorded_pid} create_time matches but "
+                f"exe does not (recorded {recorded_exe_normalised!r}, live "
+                f"{live['exe']!r}) -- corrupt record, refusing")
+            return False
+    return True
+
+
+def update_process_status_in_json(pid, new_status, firebase_client=None, process_id=None, extra=None):
     """Write a process status to app_states.json; the metrics loop syncs it to
     Firebase. firebase_client is deprecated, kept for signature compatibility.
+
+    `extra`, when a dict, is merged into the pid's row alongside status/id --
+    row-level only, because the desktop parser prunes non-numeric top-level
+    keys and would persist the pruned document. Per-row extras are established
+    precedent (owlette_scout writes responsive/responsive_prev/hung_since the
+    same way); this is how identity records reach app_states.json.
     """
     # A None pid would be written as the literal key "None" and corrupt the file.
     if pid is None:
@@ -1983,6 +2070,8 @@ def update_process_status_in_json(pid, new_status, firebase_client=None, process
     data[str(pid)]['status'] = new_status
     if process_id:
         data[str(pid)]['id'] = process_id
+    if isinstance(extra, dict):
+        data[str(pid)].update(extra)
     write_json_to_file(data, RESULT_FILE_PATH)
 
 def find_running_process_by_exe(exe_path, file_path=None, strict=False):

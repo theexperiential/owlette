@@ -67,6 +67,41 @@ describe('status for a config entry', () => {
     expect(statusForProcess(killed, 'a')).toBe('KILLED')
   })
 
+  it('does not let a stale kill shadow a live adopted generation (2026-09-04 incident)', () => {
+    // Reproduced live: the service adopted pid 5516 (adopted rows carry no
+    // timestamp) while the KILLED row for pid 1528 kept its launch timestamp.
+    // Missing-as-oldest sorted the dead row first, the pane said "killed", and
+    // the run controls - keyed off the displayed status - went dead while the
+    // process ran.
+    const incident: AppStates = {
+      '1528': { id: 'a', status: 'KILLED', timestamp: 1_786_562_574 },
+      '5516': { id: 'a', status: 'RUNNING' },
+    }
+
+    expect(statusForProcess(incident, 'a')).toBe('RUNNING')
+    expect(isLive(statusForProcess(incident, 'a'))).toBe(true)
+  })
+
+  it('does not let a dead timestamp-less row shadow a live launched one', () => {
+    // The inverse guard: a missing timestamp reads as "now" only when the
+    // status says the process is alive. A dead adopted row carries no evidence
+    // of recency and must not outrank a live launched generation.
+    const mirrored: AppStates = {
+      '1528': { id: 'a', status: 'KILLED' },
+      '5516': { id: 'a', status: 'RUNNING', timestamp: 1_786_562_574 },
+    }
+
+    expect(statusForProcess(mirrored, 'a')).toBe('RUNNING')
+  })
+
+  it('still shows the kill of an adopted row when it is the only generation', () => {
+    // markKilled preserves the row, so an adopted generation stays
+    // timestamp-less after the operator stops it - the kill must show anyway.
+    const killed = markKilled({ '5516': { id: 'a', status: 'RUNNING' } }, 5516, 'a')
+
+    expect(statusForProcess(killed, 'a')).toBe('KILLED')
+  })
+
   it('is inactive for an entry the service has never launched', () => {
     expect(statusForProcess(states, 'never-launched')).toBe('INACTIVE')
   })
@@ -150,6 +185,17 @@ describe('picking a pid to act on', () => {
 
     expect(candidatePidsForProcess(states, 'a')).toEqual([30968, 14128, 25308])
   })
+
+  it('tries a live adopted generation before an older timestamped live row', () => {
+    // The adopted row is what the service manages right now; the timestamped
+    // RUNNING row is an older generation that may be a corpse awaiting sweep.
+    const states: AppStates = {
+      '100': { id: 'a', status: 'RUNNING', timestamp: 10 },
+      '5516': { id: 'a', status: 'RUNNING' },
+    }
+
+    expect(candidatePidsForProcess(states, 'a')).toEqual([5516, 100])
+  })
 })
 
 describe('whether there is a process to act on', () => {
@@ -207,6 +253,19 @@ describe('when the live generation was launched', () => {
     } as unknown as AppStates
 
     expect(launchedAtForProcess(states, 'a')).toBeNull()
+  })
+
+  it('stays honest when a live adopted row outranks a timestamped dead one', () => {
+    // Same newest row statusForProcess reports for the 2026-09-04 incident
+    // shape: the adopted generation, whose launch time is unknown. Showing the
+    // dead row's stamp beside the adopted process would claim a launch time
+    // that is not its own.
+    const incident: AppStates = {
+      '1528': { id: 'a', status: 'KILLED', timestamp: 1_786_562_574 },
+      '5516': { id: 'a', status: 'RUNNING' },
+    }
+
+    expect(launchedAtForProcess(incident, 'a')).toBeNull()
   })
 })
 
