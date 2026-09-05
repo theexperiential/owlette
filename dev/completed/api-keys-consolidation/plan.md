@@ -1,5 +1,5 @@
 # api keys consolidation — Plan
-**Created**: 2026-08-17 | **Status**: Active
+**Created**: 2026-08-17 | **Status**: COMPLETE 2026-09-05 — all five waves shipped (waves 4+5 in `8e5afdcc`). Ops residuals, none blocking: register `/api/cron/api-key-expiry` on cron-job.org (0 8 * * *, dev AND prod, per-env CRON_SECRET); `firebase deploy --only functions` for the revived expiredMarkedAt sweep + decide the one-off backfill for pre-change keys; SDK `ApiKey` types lack the new `revoked` field (release-bearing, deferred deliberately).
 
 ## Summary
 
