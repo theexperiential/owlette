@@ -899,7 +899,7 @@ fn degraded_notification(view: &TrayView) -> (&'static str, String) {
     ),
     _ => (
       "owlette — service stopped",
-      "the service may have crashed or failed to start.\nclick 'restart service' to fix."
+      "the service is not running.\nclick 'restart service' to start it again."
         .to_string(),
     ),
   }
