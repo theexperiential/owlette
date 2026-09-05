@@ -22,7 +22,7 @@ description: "Add, configure, and control processes from the web dashboard. Chan
     - **launch delay (sec)**: seconds to wait before launching.
     - **init timeout (sec)**: seconds to wait before responsiveness checks begin.
     - **relaunch attempts**: crash-restart attempts before the process is treated as failed.
-    - **schedule configuration**: shown only when launch mode is `scheduled`; edit one or more blocks with days and start/stop ranges in the site's timezone.
+    - **schedule configuration**: always open in `scheduled` mode, and available in `off` or `always` from the **configure schedule** button at the end of the launch-mode control. Edit one or more blocks with days and start/stop ranges in the site's timezone. Blocks saved from `off` or `always` are stored with the process and do not change its launch mode.
 4. Click **create process**.
 
 The agent receives the new configuration and begins monitoring the process.
@@ -47,7 +47,7 @@ From the process row, machine card, or edit dialog, the dashboard exposes these 
 | action | description | requires |
 |--------|-------------|----------|
 | **launch mode** | Set `off`, `always`, or `scheduled`. Enabling `always` or `scheduled` requires an executable path. | `MACHINE_CONFIG_WRITE` |
-| **configure schedule** | Edit scheduled-mode blocks, days, time ranges, and overnight windows. | `MACHINE_CONFIG_WRITE` |
+| **configure schedule** | Edit schedule blocks, days, time ranges, and overnight windows. Available in every launch mode; editing from `off` or `always` saves the blocks without changing the mode. | `MACHINE_CONFIG_WRITE` |
 | **edit** | Open the process dialog and update paths, priority, visibility, timing, relaunch attempts, or schedule settings. | `MACHINE_CONFIG_WRITE` |
 | **restart** | Queue a `restart_process` command. The dashboard enables this for `RUNNING`, `LAUNCHING`, or `STALLED` processes. | `MACHINE_EXEC_COMMAND` |
 | **kill** | Queue a `kill_process` command. The dashboard enables this for `RUNNING`, `LAUNCHING`, or `STALLED` processes. | `MACHINE_EXEC_COMMAND` |
@@ -59,7 +59,7 @@ Restart and kill actions send commands to the agent. Create, edit, delete, launc
 
 When a process is changed from `off` to `scheduled`, the agent clears stale killed/cooldown markers immediately. If the current time is outside the schedule window, the process stays stopped until the next matching window, then launches normally.
 
-If the configured executable path no longer exists, the process can show as `INACTIVE` and the dashboard shows an error toast. When the agent finds likely sibling executable paths, the toast lists up to two suggestions and the **use path** action opens the edit dialog with that path pre-filled.
+If the configured executable path no longer exists, the agent aborts the launch and the process shows as `STOPPED` (`INACTIVE` means launch mode is `off`, not a missing file), and the dashboard shows an error toast. When the agent finds likely sibling executable paths, the toast lists up to two suggestions and the **use path** action opens the edit dialog with that path pre-filled.
 
 ---
 

@@ -24,7 +24,9 @@ Download the packaged installer, run it as Administrator, and authorize the mach
 6. The owlette window opens on **join a site**, showing the pairing phrase, the authorization link for the server you installed against, and the environment it belongs to. The agent starts polling immediately. There is no console.
 7. Authorize the machine: click **open owlette.app/add** in that window to pair from this machine — the button names `dev.owlette.app` on a `/SERVER=dev` install — or visit the displayed link from your phone or another computer and enter the phrase. Pairing completes within seconds of approval.
 8. Meanwhile the installer registers and starts the Windows service. This is unconditional — a machine that is never paired still ends up with a running service, it simply has no site to talk to yet.
-9. On the final wizard page, leave **open owlette** checked and click Finish to bring the window back up. That is not a second pairing step, and silent installs skip it entirely.
+9. Click Finish. There is no **open owlette** checkbox on this path — the window it would open is already on screen. The wizard offers that checkbox only when it never handed off to the app: an interactive install that paired on the console instead (the WebView2 runtime is still missing after the bundled bootstrapper runs, or the desktop app is not there to launch), an interactive `/ADD=` install, or an upgrade that skips pairing because the machine is already paired to this server. Silent installs never see it.
+
+![the owlette window on join a site, showing the pairing phrase, the host to approve it on, and the button that opens the pairing page](/docs-screens/agent-join-site.png)
 
 Pairing phrases expire after 10 minutes. Credentials are stored encrypted at `C:\ProgramData\Owlette\.tokens.enc`.
 
@@ -124,7 +126,9 @@ Use this only on a machine that already has the packaged layout under `C:\Progra
 - `C:\ProgramData\Owlette\scripts\install.bat`
 - `C:\ProgramData\Owlette\agent\src\owlette_runner.py`
 
-To re-run pairing, open the owlette window on the machine and choose **join site** — from the app menu, or from the button in the status bar when the machine belongs to no site. A machine that still belongs to a site shows **leave site** there instead: leave first, then join. Both run the same pairing helper the installer does.
+To re-run pairing, open the owlette window on the machine and choose **join site** — from the app menu, or from the button in the status bar when the machine belongs to no site. A machine that still belongs to a site offers **leave site** in the app menu instead: leave first, then join. Both run the same `configure_site.py` helper the installer does.
+
+Leaving is not the mirror of joining. The app stops `OwletteService` before anything is deregistered, and since it runs as the signed-in user, Windows raises an administrator prompt for that stop — decline it and the leave is cancelled with nothing on this machine changed, and the dialog offers **try again**. With the service down the machine is deregistered, then the service is started again; the dialog narrates each step and the whole sequence takes a few seconds. If the service does not come back, the dialog says so and **start service** appears in the status bar.
 
 The console equivalent:
 
@@ -156,18 +160,18 @@ Do not run `agent\scripts\install.bat` directly from a raw clone unless you have
 
 ## how pairing works
 
-The installer chooses a pairing path after copying files, then installs the service. The service install is unconditional: pairing no longer gates it, so an unpaired machine still ends up supervised. Pairing itself is skipped only on an upgrade — a valid site configuration already bound to the requested server.
+The installer chooses a pairing path after copying files, then installs the service. The service install is unconditional: pairing no longer gates it, so an unpaired machine still ends up supervised. Pairing itself is skipped in two cases: an upgrade — a valid site configuration already bound to the requested server — and a silent install with no `/ADD=` phrase, where nobody could read a phrase anyway.
 
 ```mermaid
 flowchart TD
     A["installer copies files"] --> B{"how was it launched?"}
     B -->|"interactive, WebView2 present"| D["hands off to the owlette window,<br/>with --pair and the chosen --server"]
-    B -->|"/ADD= phrase, or interactive<br/>without WebView2"| C["runs configure_site.py<br/>on the console"]
+    B -->|"/ADD= phrase, or interactive<br/>without WebView2"| C["runs configure_site.py on the console<br/>(also prints the 10-minute expiry)"]
     B -->|"silent without /ADD="| Z["pairing skipped: nobody can read<br/>a phrase on this path"]
     D --> S["service installed and started -<br/>unconditional, pairing does not gate it"]
     C --> S
     Z --> S
-    D --> E["phrase, authorization link, environment,<br/>and 10-minute expiry are shown;<br/>polling starts immediately"]
+    D --> E["phrase, authorization link and environment<br/>are shown; polling starts immediately"]
     C --> E
     E --> F["authorize from any device: the button in<br/>the owlette window, a phone, or the link"]
     F --> G["agent polls until authorization<br/>completes or expires"]
@@ -203,6 +207,7 @@ C:\ProgramData\Owlette\logs\service_host.log
 C:\ProgramData\Owlette\logs\service_stdout.log
 C:\ProgramData\Owlette\logs\service_stderr.log
 C:\ProgramData\Owlette\logs\pairing_debug.log
+C:\ProgramData\Owlette\logs\defender_setup.log
 ```
 
 `service_host.log` is owlette-host's own log: service registration, agent spawns, exit codes, restart backoff, and stop escalations. `service_stdout.log` and `service_stderr.log` are the supervised agent's raw output.
@@ -267,6 +272,8 @@ The owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.p
 | Desktop app | `C:\ProgramData\Owlette\app\owlette-desktop.exe` — the local configuration window and the tray icon, in one process |
 | WebView2 runtime | Microsoft's Evergreen bootstrapper, run only on machines that lack the runtime the desktop app renders in (common on LTSC/IoT kiosk images) |
 | PawnIO driver | Signed kernel driver LibreHardwareMonitor uses for CPU temperature sensors, installed only when absent or older than the bundled 2.2.0 (replaced the WinRing0 driver used through 3.1.0) |
+
+Before anything else, every install and upgrade retracts the Windows Defender exclusions earlier versions added for the old WinRing0 driver — the PawnIO stack needs none of them, and an upgrade never runs the old uninstaller that would otherwise have cleared them. The removal, and the exclusions left in place afterwards, are appended to `C:\ProgramData\Owlette\logs\defender_setup.log`.
 
 ---
 

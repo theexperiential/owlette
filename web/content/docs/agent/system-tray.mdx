@@ -15,7 +15,9 @@ The tray icon appears in the Windows notification area (system tray). It's a HAL
 |-------|--------------|---------------|
 | **connected** | the eye lit warm amber | service running and connected to the cloud — everything healthy |
 | **connection issues** | the same eye dimmed almost to black | service running but not reaching the cloud (offline, or still starting up) |
-| **error** | red, alternating with the amber eye about every 0.8 seconds | service stopped or crashed, the health probe reports a failure, the service is running but has stopped publishing its status (*not responding*), or no cloud/site is configured so nothing is being monitored (*disabled*) |
+| **error** | red, alternating with the amber eye about every 0.8 seconds | service stopped or crashed, a health probe reports a failure while the cloud is unreachable, the service is running but has stopped publishing its status (*not responding*), or no cloud/site is configured so nothing is being monitored (*disabled*) |
+
+A live cloud connection outranks a failed health probe: a `network_error` recorded at boot — before Windows finished bringing the network up — does not hold the icon red once the agent connects.
 
 The warm center and dark rim keep the icon legible on both light and dark taskbars.
 
@@ -39,7 +41,7 @@ The four rows at the top are read-only status; the four below the separator are 
 | **status: &lt;cloud status&gt;** | Whether the service is reaching owlette (read-only). A fifth row appears under it when a health probe has something to report. |
 | **open owlette** | Open the desktop app's window |
 | **restart service** | Restart `OwletteService`. A running service is asked to restart itself through `tmp\restart.flag`, so no elevation prompt appears; only starting a *stopped* service can raise one. |
-| **start on login** | Toggle whether owlette starts on user login |
+| **start on login** | Toggle whether the owlette desktop app starts with this user's session. It writes the `Owlette` shortcut in the user's Startup folder, so it needs no elevation — and switching it off leaves `OwletteService` running: the machine stays supervised, you just stop seeing the tray icon at login. |
 | **exit** | Stop `OwletteService` (triggers a UAC prompt), then quit the app — which closes the window and removes the tray icon. Declining the prompt leaves the service running, and it re-launches the tray within 30 seconds. |
 
 ---
@@ -89,13 +91,14 @@ The service attempts status updates from its main loop, but writes are throttled
   "service": {
     "running": true,
     "last_update": 1777053600,
-    "version": "3.0.0"
+    "version": "3.2.3"
   },
   "firebase": {
     "enabled": true,
     "connected": true,
     "site_id": "my-site",
     "site_name": "my site",
+    "schedule_timezone": "America/Los_Angeles",
     "last_heartbeat": 1777053595
   },
   "health": {
@@ -114,6 +117,8 @@ The service attempts status updates from its main loop, but writes are throttled
 ```
 
 `firebase.site_name` is the site's display name, published once the service can resolve it. It is what the tooltip and the `status:` row name in `connected to <site>` — when it is empty, the tray falls back to `site_id`.
+
+`firebase.schedule_timezone` is the site's schedule timezone when the site has opted in to site time, and an empty string when process windows follow each machine's own clock.
 
 ---
 

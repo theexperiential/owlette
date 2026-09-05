@@ -3,6 +3,10 @@ title: "agent"
 description: "The owlette agent is a Python Windows service that runs in the background, monitoring your processes, collecting system metrics, and syncing everything to the cloud. It's the core of the owlette system — every machine you want to manage needs an agent installed."
 ---
 
+Two pieces ship to every machine. The **service** does the supervising — it is what this section is mostly about, and it runs whether or not anyone is signed in. The **desktop app** is how you see and change what that service is doing while standing at the machine; it is the window below, and it is covered in [configuration](/docs/agent/configuration) and [the system tray](/docs/agent/system-tray).
+
+![the owlette desktop app — the process list on the left, the selected process's settings on the right](/docs-screens/agent.png)
+
 ---
 
 ## what the agent does
@@ -11,8 +15,8 @@ description: "The owlette agent is a Python Windows service that runs in the bac
 |----------|-----------|-------------|
 | **Process monitoring** | Every 5s | Checks if configured processes are running, detects crashes and stalls |
 | **Auto-restart** | On crash | Restarts crashed processes by launching a helper in the interactive user session with `CreateProcessAsUser`; the helper starts visible apps with `ShellExecuteEx` and hidden processes with `subprocess.Popen`. |
-| **Heartbeat + metrics** | Adaptive: ~5s while the desktop app's window is open, 30s while processes are active, 120s idle | Marks the machine online and reports CPU, memory, disk, and GPU usage |
-| **Commands** | Event-driven | Listens for and executes commands from the dashboard |
+| **Heartbeat + metrics** | Adaptive: ~5s while the desktop app's window is open, 30s while processes are active, 120s idle | Marks the machine online and reports per-device CPU usage and temperature, memory, per-volume disk usage and I/O, GPU usage, VRAM and temperature, per-NIC throughput, and gateway latency and packet loss |
+| **Commands** | Event-driven | Listens for and executes commands written by the dashboard, the public API, and talons rules |
 | **Config sync** | Event-driven | Syncs configuration changes between the desktop app, the service, and the cloud |
 
 ---
@@ -29,10 +33,18 @@ tools\owlette-host.exe (Service Host)
               │     ├── auth_manager.py (OAuth Tokens)
               │     ├── firestore_rest_client.py (REST API)
               │     └── connection_manager.py (State Machine)
+              ├── command_router.py (Command Dispatch)
+              │     ├── sync_commands.py (roost — sync_pull, cancel_sync, rollback_to_version)
+              │     │     └── sync_downloader.py, sync_assembler.py, sync_state.py
+              │     ├── machine_commands.py (Public-API Commands — capture_screenshot)
+              │     └── process_commands.py (Process Control — restart_process)
+              ├── sync_scrub.py (roost Integrity Scrub + Orphan-Chunk Reap — hourly check)
+              ├── config_sync.py (Config Reconciliation — local, cloud, cached remote)
               ├── shared_utils.py (Config, Logging, Metrics)
+              │     └── temp_sensors.py (CPU/GPU Temperature via PawnIO)
               ├── health_probe.py (Startup Health Checks)
               ├── installer_utils.py (Remote Deployment)
-              ├── project_utils.py (Project Distribution)
+              ├── project_utils.py (Legacy v1 Project Distribution — distribute_project)
               ├── registry_utils.py (Software Inventory)
               └── mcp_tools.py (Remote Command Execution)
 
@@ -60,12 +72,13 @@ See [hoot tools reference](/docs/reference/hoot-tools) for the current tool list
 
 1. Initialize logging (RotatingFileHandler, 10 MB per file, 5 backups)
 2. Upgrade config schema if needed (automatic migration)
-3. Initialize Firebase client (lazy, soft-fail if no credentials)
-4. **Classify the previous session's end** (see below) and emit a warning event if the machine came back up in an unexpected way
-5. Recover running processes (adopt PIDs from previous session)
-6. Launch the desktop app (tray icon) as a user process
-7. Launch hoot process as user process (if enabled)
-8. Enter main loop
+3. Run the startup health probe and publish it to `service_status.json`, so the tray can surface a problem before any cloud call happens
+4. Construct the Firebase client (soft-fail: cloud disabled, no site, or no refresh token each leave the machine in local-only mode)
+5. Acquire the console user token, then **launch the desktop app (tray icon)** — deliberately ahead of the cloud work, so the operator sees the service starting immediately
+6. **Classify the previous session's end** (see below), queueing a warning event that is sent once Firebase connects
+7. Start the Firebase client: sync config with Firestore, then connect
+8. Recover running processes (adopt PIDs from previous session)
+9. Enter the main loop, which launches hoot on its first pass (if enabled)
 
 ### session state classification
 
@@ -91,10 +104,18 @@ The classifier depends only on `shared_utils` and stdlib — no Firebase, no log
 
 ### shutdown
 
-1. Mark machine offline in Firestore
-2. Terminate hoot process
-3. Stop Firebase client and background threads
-4. Clean up resources
+Every operator-initiated stop — console control handler, SCM stop watcher, or `SvcStop` — funnels through one shared path, and whichever trigger arrives first does the work:
+
+1. Record the stop locally as a clean external stop, before anything that can touch the network — this local record is what keeps the next startup classifier from reporting `unexpected_reboot`
+2. Cap the remaining Firestore request timeouts at 3 seconds, so a stalled call cannot eat the whole shutdown window
+3. Log the `agent_stopped` event
+4. Stop the Firebase client — this is the write that marks the machine offline, and it stops the background threads afterwards (offline first, or the write has no transport left)
+5. Write the final status file saying the service is down
+6. Close any open agent windows, then terminate the hoot process
+
+The desktop app is deliberately left running — its footer is where the operator finds `start service` to bring the agent back.
+
+Source: `agent/src/owlette_service.py` → `graceful_shutdown()` and `SvcStop`.
 
 ---
 
@@ -108,5 +129,6 @@ The classifier depends only on `shared_utils` and stdlib — no Firebase, no log
 | `C:\ProgramData\Owlette\config\` | Agent configuration, including `config.json` |
 | `C:\ProgramData\Owlette\logs\` | Service, pairing, and installer log files. The desktop app logs per-user, elsewhere — see [agent troubleshooting](/docs/agent/troubleshooting). |
 | `C:\ProgramData\Owlette\python\` | Embedded Python interpreter |
+| `C:\ProgramData\Owlette\tmp\` | Runtime state — `session_state.json`, `app_states.json`, `service_status.json`, the desktop app's pid files, and the `restart.flag` the app writes to restart the service |
 | `C:\ProgramData\Owlette\.tokens.enc` | Encrypted OAuth tokens |
 | `C:\ProgramData\Owlette\tools\owlette-host.exe` | Service host binary — registers the service and supervises the agent |

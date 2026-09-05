@@ -137,10 +137,16 @@ Each machine card shows its configured processes with status badges:
 | badge | state | meaning |
 |-------|-------|---------|
 | Green | RUNNING | Process is alive and responding |
+| Yellow | LAUNCHING | Launch is in progress |
+| Yellow | QUEUED | Launch is queued or waiting on a start delay |
+| Yellow | RESTARTING | Operator-initiated restart is in flight |
 | Yellow | STALLED | Process exists but not responding |
+| Red | LAUNCH_FAILED | Launch was attempted and failed - the badge reads `failed` |
 | Red | KILLED | Process was terminated |
-| Red | STOPPED | Process not running because launch mode is `off` or scheduled mode is outside its window |
-| Grey | INACTIVE | Executable not found |
+| Red | STOPPED | Launch mode is not `off` but nothing is running - crashed, outside its schedule window, not yet launched, or the executable is missing |
+| Grey | INACTIVE | Launch mode is `off` - owlette is not supervising this process |
+
+When a machine is offline the dashboard cannot know the current state, so every process badge reads `unknown` instead of its last status.
 
 Click a process to open the [Process Dialog](/docs/dashboard/process-management) for management and configuration.
 

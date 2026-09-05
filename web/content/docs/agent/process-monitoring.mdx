@@ -7,14 +7,15 @@ description: "The agent monitors configured processes every 5 seconds, detecting
 
 ## process state machine
 
-The agent reports these process statuses. This diagram shows the common managed-process path:
+The agent reports these process statuses. This diagram shows the common managed-process path. A crash never produces `KILLED` — the service writes no status and logs a `process_crash` event, and once the dead PID is swept out of `app_states.json` the process reports `STOPPED` (launch mode active) or `INACTIVE` (launch mode `off`):
 
 ```mermaid
 flowchart TD
     STOPPED("STOPPED") -->|launch| RUNNING("RUNNING")
-    RUNNING -->|crash / exit| KILLED("KILLED")
+    RUNNING -->|crash / exit| STOPPED
     RUNNING -->|stall detected| STALLED("STALLED")
-    KILLED -->|auto-restart| RUNNING
+    RUNNING -->|deliberate kill| KILLED("KILLED")
+    STOPPED -->|auto-restart| RUNNING
     STALLED -->|kill + relaunch| RUNNING
 ```
 
@@ -28,9 +29,13 @@ flowchart TD
 | **QUEUED** | Launch is queued or waiting for a delay | Yellow |
 | **LAUNCH_FAILED** | Launch failed | Red |
 | **STALLED** | Process exists but is not responding (hang detected) | Yellow |
-| **KILLED** | Process was terminated (manually or by agent) | Red |
+| **KILLED** | Process was deliberately terminated — from the local app, the dashboard, or by the agent before a stall relaunch. The marker only tells the service the exit was intended, so no crash alert is raised; whether the process comes back is decided by its launch mode. The exception is a kill sent from the dashboard, which is not relaunched until an operator starts it or its launch mode is set again | Red |
 | **STOPPED** | Launch mode is active, but no running PID/runtime data is present | Red |
-| **INACTIVE** | Launch mode is `off` | Slate/grey |
+| **INACTIVE** | Launch mode is `off` and no PID/runtime data is present — an off-mode process that is still running keeps reporting `RUNNING` | Slate/grey |
+
+The desktop app draws the same states as dots beside each process in the sidebar — filled for a process that is up, a hollow ring for one that is not:
+
+![the desktop app's process list: a running process, one that is stalled, and one that is inactive](/docs-screens/agent-process-states.png)
 
 ---
 
@@ -112,7 +117,7 @@ This prevents duplicate instances after service restarts or crashes.
 
 ## relaunch limits
 
-Each process has a configurable `relaunch_attempts` limit. The desktop app creates new processes with 5 attempts, the dashboard with 3, and the service falls back to `MAX_RELAUNCH_ATTEMPTS` (3) when the stored value is missing or `0`. When the limit is reached:
+Each process has a configurable `relaunch_attempts` limit. The desktop app creates new processes with 5 attempts and the dashboard with 3; the service falls back to `MAX_RELAUNCH_ATTEMPTS` (3) only when the stored value is missing, blank, non-numeric, or negative. A stored `0` means **unlimited** — that process is relaunched forever and never escalates to a machine restart, which is how a kiosk opts out of self-rebooting. When a non-zero limit is reached:
 
 1. The agent stops trying to restart the process
 2. A **reboot countdown prompt** appears on screen (the desktop app, launched with `--restart-prompt`), and the agent writes a `rebootPending` flag so the dashboard can dismiss it remotely
@@ -125,6 +130,29 @@ Each process has a configurable `relaunch_attempts` limit. The desktop app creat
 When a process crashes, the agent reports the event to the web dashboard via the alert API. Agent code uses `firebase_client.send_alert(event_type, data)` as the canonical alert sender; older process/display helpers delegate to it. Failed sends are queued in memory and retried after reconnect, capped at 100 pending alerts. If email alerts are configured for the site, the dashboard sends a **process crash alert** email including the process name, machine name, and error details. Webhooks are also triggered if configured.
 
 </Callout>
+---
+
+## operator restart and kill
+
+**restart** and **kill** follow whether the process is running, never its launch mode — in the desktop app (the detail pane and the right-click menu) and on the dashboard alike:
+
+- A running process can be restarted or killed whatever its launch mode. Switching a running process to `off` stops monitoring but leaves it running, so the controls stay available.
+- A process that is not running has both buttons greyed out — the launch mode is what brings it back.
+- `RUNNING`, `LAUNCHING`, and `STALLED` all count as running, so a hung process stays actionable; the desktop app also counts its own in-flight `RESTARTING`.
+
+![the desktop app's restart and kill buttons greyed out on a process that is not running](/docs-screens/agent-run-controls.png)
+
+The desktop app stamps a marker on the PID's row in `tmp/app_states.json` so the service reads the exit as intended rather than a crash. `RESTARTING` is written before the terminate and re-asserted once the process is really gone — a service tick during the close would otherwise overwrite it — and `KILLED` is written once the terminate succeeds. A restart also produces a `process_restarted` event; a kill from the desktop app produces none.
+
+What happens after the stop follows the launch mode:
+
+| launch mode | kill | restart |
+|-------------|------|---------|
+| `always`, or `scheduled` inside its window | Terminated; the monitoring loop starts it again within a few seconds | Terminated; the monitoring loop relaunches it within a few seconds |
+| `off` | Terminated; it stays stopped until the launch mode changes | Terminated; the service relaunches it **once**, then goes back to leaving it alone |
+
+A kill sent from the dashboard is different: the service records the stop against the process, so even in `always` mode it is not relaunched until you start it again or switch its launch mode off and back on.
+
 ---
 
 ## metrics collection

@@ -44,7 +44,7 @@ description: "Cross-cutting troubleshooting guide for common issues across the e
 
 1. Verify `launch_mode` is `always`, or `scheduled` with the current time inside a configured schedule window
 2. Check if `relaunch_attempts` limit was reached (reboot prompt should appear)
-3. Verify `exe_path` exists on the machine (`INACTIVE` state means file not found)
+3. Verify `exe_path` exists on the machine — a missing executable leaves the process `STOPPED` on the dashboard, not `INACTIVE`, and the agent logs the failed launch and raises an `exe_missing` alert. `INACTIVE` means launch mode is `off`
 4. Check agent logs for launch errors
 5. Verify the service is running and the main loop is executing (look for periodic log entries)
 
@@ -52,7 +52,7 @@ description: "Cross-cutting troubleshooting guide for common issues across the e
 
 ## process won't launch after an app upgrade
 
-**Symptoms**: A managed process shows `INACTIVE`, or the dashboard shows an executable-missing toast after software was upgraded or installed side-by-side.
+**Symptoms**: A managed process stays `STOPPED` on the dashboard (the desktop app shows `INACTIVE` once the last run is swept from local state), or the dashboard shows an executable-missing toast after software was upgraded or installed side-by-side.
 
 1. Open the dashboard toast or activity log entry with action `exe_missing`.
 2. Review the suggested paths. The agent scans nearby sibling directories for executables with the same filename.

@@ -41,10 +41,23 @@ export const DEMO_PAIR_PHRASE = 'silver-canyon-drift'
 /**
  * `paired` is a working machine. `paired-empty` is the same machine the minute
  * after it was enrolled — joined to a site, nothing configured to run yet.
- * `unpaired` has no `firebase` block at all, which is the state the join dialog
- * exists to leave.
+ * `paired-stalled` is `paired` with one process hung, which is the only way to
+ * get all three dot states on screen at once. `unpaired` has no `firebase`
+ * block at all, which is the state the join dialog exists to leave.
  */
-export type Scenario = 'paired' | 'paired-empty' | 'unpaired'
+export type Scenario = 'paired' | 'paired-empty' | 'paired-stalled' | 'unpaired'
+
+/**
+ * Whether a scenario seeds {@link DEMO_PROCESSES}.
+ *
+ * Exported because the spec has to wait for the right thing after a re-seed,
+ * and one predicate shared by the writer and the waiter is what stops a
+ * scenario added later from being seeded with rows and then waited on as if the
+ * list were empty.
+ */
+export function hasProcesses(scenario: Scenario): boolean {
+  return scenario === 'paired' || scenario === 'paired-stalled'
+}
 
 /**
  * Agent version in the footer. Read from the repo's `VERSION`, not hardcoded —
@@ -143,12 +156,34 @@ const DEMO_PROCESSES = [
 export const DEMO_PROCESS_NAMES = DEMO_PROCESSES.map((process) => process.name)
 
 /**
+ * Pids the live rows are keyed by. Named, not inlined, so a variant can restate
+ * one row and be sure it lands on that row instead of adding a second.
+ */
+const SHOW_PID = '4212'
+const SERVER_PID = '5188'
+
+/**
  * The service's live table. The two always-on entries run; the kiosk has NO row,
  * which is how an entry outside its schedule window looks (hollow INACTIVE ring).
  */
 const DEMO_APP_STATES = {
-  '4212': { id: SHOW_ID, status: 'RUNNING', timestamp: FIXED_EPOCH_SECONDS },
-  '5188': { id: SERVER_ID, status: 'RUNNING', timestamp: FIXED_EPOCH_SECONDS },
+  [SHOW_PID]: { id: SHOW_ID, status: 'RUNNING', timestamp: FIXED_EPOCH_SECONDS },
+  [SERVER_PID]: { id: SERVER_ID, status: 'RUNNING', timestamp: FIXED_EPOCH_SECONDS },
+}
+
+/**
+ * The same table with the media server hung. STALLED is what the service writes
+ * when a process stops answering but before it kills anything, so the entry is
+ * still live — the restart and kill controls stay enabled, unlike the kiosk's.
+ *
+ * The KIOSK is deliberately not the stalled one. Its missing row IS the INACTIVE
+ * ring, and it is the only entry that has none, so stalling it would buy orange
+ * at the cost of the third state — leaving a "process states" shot with two
+ * greens and an orange and nothing to say about a process that is not up at all.
+ */
+const STALLED_APP_STATES = {
+  ...DEMO_APP_STATES,
+  [SERVER_PID]: { ...DEMO_APP_STATES[SERVER_PID], status: 'STALLED' },
 }
 
 function serviceStatusFile(scenario: Scenario): Record<string, unknown> {
@@ -222,13 +257,20 @@ export function seedStaticFiles(root: string): void {
   writeTextFile(root, 'agent/src/configure_site.py', PAIRING_STUB)
 }
 
+/** The live table each scenario is seen through. Empty = nothing running. */
+function appStatesFor(scenario: Scenario): Record<string, unknown> {
+  if (scenario === 'paired') return DEMO_APP_STATES
+  if (scenario === 'paired-stalled') return STALLED_APP_STATES
+  return {}
+}
+
 /** Put one scenario's seam files in place. See {@link Scenario}. */
 export function seedScenario(root: string, scenario: Scenario): void {
   const config = baseConfig()
-  if (scenario === 'paired') config.processes = DEMO_PROCESSES
+  if (hasProcesses(scenario)) config.processes = DEMO_PROCESSES
   if (scenario !== 'unpaired') config.firebase = { enabled: true, site_id: DEMO_SITE_ID }
 
   writeSeamFile(root, 'config/config.json', config)
-  writeSeamFile(root, 'tmp/app_states.json', scenario === 'paired' ? DEMO_APP_STATES : {})
+  writeSeamFile(root, 'tmp/app_states.json', appStatesFor(scenario))
   writeSeamFile(root, 'tmp/service_status.json', serviceStatusFile(scenario))
 }

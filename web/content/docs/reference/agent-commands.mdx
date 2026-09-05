@@ -134,13 +134,18 @@ These are the command types accepted by the public machine-command action in
 
 | type | fields | behavior |
 |------|--------|----------|
-| `restart_process` | `process_name` or `process_id`/`processId` | Kill and relaunch a configured process, or launch it if it is not already running. |
+| `restart_process` | `process_name` or `process_id`/`processId`, optional `timeout_seconds` | Kill and relaunch a configured process, or launch it if it is not already running. `timeout_seconds` is the graceful-terminate window before a force kill, default 5 and capped at 30. If the process is scheduled and outside its window, the agent records a manual override. |
 | `start_process` | `process_name` or `process_id`/`processId` | Start a configured process. If it is scheduled and outside its window, the agent records a manual override. |
 | `stop_process` | `process_name` or `process_id`/`processId` | Gracefully terminate a running process and mark it `STOPPED`. |
 | `kill_process` | `process_name` or `process_id`/`processId` | Gracefully terminate a running process and mark it `KILLED`. |
 | `set_launch_mode` | `process_name` or `process_id`/`processId`, `mode`, optional `schedules` | Set `mode` to `off`, `always`, or `scheduled`. The agent matches process id first, falls back to name, and derives legacy `autolaunch` from the launch mode. |
 
 The public route shim still requires `process_name` for `set_launch_mode`; direct Firestore command writers and the agent handler accept `process_id` / `processId` as the preferred identifier.
+
+The endpoint stamps a body-level `timeout_seconds` (default 60, max 600) into
+every command payload, so an API-queued `restart_process` is clamped to the
+agent's 30-second graceful-terminate cap unless the request body sends a value
+of 30 or less.
 
 ### machine power and reboot state
 
@@ -215,10 +220,13 @@ admin actions.
 
 ---
 
-## router-registered roost v2 command types
+## roost v2 command types
 
 These commands are registered in `agent/src/sync_commands.py` through
-`CommandRouter` and dispatch before the legacy if/elif chain.
+`CommandRouter` and dispatch before the legacy if/elif chain. The same router
+also carries `capture_screenshot` (`agent/src/machine_commands.py`) and
+`restart_process` (`agent/src/process_commands.py`), documented in their own
+sections above.
 
 ### sync_pull
 
@@ -269,7 +277,13 @@ changed the current-version pointer. The payload matches `sync_pull`.
 
 ## coverage checklist
 
-Dispatcher entries covered from `agent/src/owlette_service.py`:
+Router entries, checked before the legacy if/elif chain:
+
+- `agent/src/sync_commands.py`: `sync_pull`, `cancel_sync`, `rollback_to_version`.
+- `agent/src/machine_commands.py`: `capture_screenshot`.
+- `agent/src/process_commands.py`: `restart_process`.
+
+Legacy if/elif entries in `agent/src/owlette_service.py`:
 
 `restart_process`, `start_process`, `kill_process`, `stop_process`,
 `toggle_autolaunch`, `set_launch_mode`, `update_config`, `install_software`,
@@ -281,6 +295,13 @@ Dispatcher entries covered from `agent/src/owlette_service.py`:
 `stop_live_view`, `apply_display_topology`, `enumerate_display_modes`,
 `ack_display_topology`, and `test_display_apply`.
 
-Router entries covered from `agent/src/sync_commands.py`:
+`restart_process` and `capture_screenshot` still have branches here, but the
+router handles them first, so these fire only if the matching handler module
+fails to import at service startup. The `restart_process` branch is shared with
+`start_process`, which is still dispatched here normally.
 
-`sync_pull`, `cancel_sync`, and `rollback_to_version`.
+Handled in `agent/src/firebase_client.py` rather than the service:
+
+`cancel_mcp_tool`. The client answers it and writes the terminal record before
+the service command callback runs, so it reaches neither the router nor the
+legacy chain.

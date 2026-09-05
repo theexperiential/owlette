@@ -34,14 +34,16 @@ Both documents store command IDs as top-level map fields. A successful terminal 
 
 | command | description | data payload |
 |---------|-------------|--------------|
-| `restart_process` | Restart a configured process | `{process_name?, process_id?}` |
-| `start_process` | Start a configured process | `{process_name?, process_id?}` |
-| `stop_process` | Stop a configured process | `{process_name?, process_id?}` |
-| `kill_process` | Terminate a process | `{process_name?, process_id?}` |
+| `restart_process` | Restart a configured process | `{process_name?, process_id?, processId?, timeout_seconds?}` |
+| `start_process` | Start a configured process | `{process_name?, process_id?, processId?}` |
+| `stop_process` | Stop a configured process | `{process_name?, process_id?, processId?}` |
+| `kill_process` | Terminate a process | `{process_name?, process_id?, processId?}` |
 | `set_launch_mode` | Set launch mode (`off`, `always`, or `scheduled`) | `{process_name?, process_id?, processId?, mode, schedules?}` |
 | `toggle_autolaunch` | Legacy launch-mode toggle | `{process_name?, process_id?, processId?, autolaunch}` |
 
-For `set_launch_mode` and `toggle_autolaunch`, the agent matches `process_id` / `processId` first and falls back to `process_name`. `set_launch_mode` persists the requested `mode` and any supplied `schedules`.
+Every process command matches `process_id` / `processId` first and falls back to `process_name`. `set_launch_mode` persists the requested `mode` and any supplied `schedules`.
+
+`restart_process` is served by the agent's command router (`agent/src/process_commands.py`) rather than the legacy dispatch branch. Its `timeout_seconds` is the graceful-terminate window before the running process is force-killed: it defaults to 5 seconds, must be `>= 0`, and is capped at 30. `POST /api/sites/{siteId}/machines/{machineId}/commands` stamps its own top-level `timeout_seconds` (default 60, max 600) into every payload it queues, so an API-queued restart hits the 30-second cap unless the request body sends a smaller value — a `timeout_seconds` placed inside `params` is dropped by the route. Restarting a process whose launch mode is `scheduled` outside its window records a manual override, the same as `start_process`.
 
 ### screenshots and live view
 
@@ -154,7 +156,7 @@ Merged into `sites/{siteId}/machines/{machineId}/commands/completed`, then remov
 {
   "restart_process_machineA_1711234567890": {
     "type": "restart_process",
-    "result": "Process 'TouchDesigner' restarted successfully (PID: 12345)",
+    "result": "Process TouchDesigner restarted (PID 4242 → 12345)",
     "status": "completed",
     "completedAt": "<server timestamp>"
   }
@@ -167,12 +169,14 @@ Merged into `sites/{siteId}/machines/{machineId}/commands/completed`, then remov
 {
   "restart_process_machineA_1711234567890": {
     "type": "restart_process",
-    "error": "Process 'TouchDesigner' not found in configuration",
+    "error": "Error: relaunch of TouchDesigner returned no PID",
     "status": "failed",
     "completedAt": "<server timestamp>"
   }
 }
 ```
+
+A record is written as `failed` only when the agent's result string starts with `Error:` — the agent's Firestore client decides completed-vs-failed on that prefix alone. Naming a process that is not in the machine's configuration is not an `Error:` string, so `restart_process`, `start_process`, `stop_process`, `kill_process`, `set_launch_mode`, and `toggle_autolaunch` all record `status: "completed"` with `result: "Process <name> not found in configuration"`. Consumers must inspect `result`, not `status` alone, to detect a bad process name. Genuine `restart_process` failures read `Error: invalid timeout_seconds value: ...`, `Error: timeout_seconds must be >= 0 ...`, `Error: failed to stop <name>: ...`, `Error: failed to relaunch <name>: ...`, or `Error: relaunch of <name> returned no PID`.
 
 Progress updates are also merged into the completed document under the same command ID with fields such as `status`, `progress`, `deployment_id`, and `updatedAt`. Terminal states include `completed`, `failed`, and `cancelled`.
 
@@ -243,14 +247,17 @@ The `sync_pull` command is the current distribution path:
 ```
 1. Validate required site, roost, version, URL, and target-root fields.
 2. Check the site-level roost kill switch.
-3. Report the target state as pending.
-4. Mint a fresh version download URL when the Firebase client can do so.
-5. Fetch and validate the version manifest.
-6. Diff against the most recent local committed version for that roost.
-7. Register or resume a local distribution row.
-8. Download missing chunks with throttled progress updates.
-9. Assemble files atomically into extract_root.
-10. Commit the distribution and report final target state.
+3. Validate extract_root against the agent's destination allowlist.
+   A path outside the allowed roots is refused here, before any download —
+   the target state goes straight to failed with "destination refused".
+4. Report the target state as pending.
+5. Mint a fresh version download URL when the Firebase client can do so.
+6. Fetch and validate the version manifest.
+7. Diff against the most recent local committed version for that roost.
+8. Register or resume a local distribution row.
+9. Download missing chunks with throttled progress updates.
+10. Assemble files atomically into extract_root.
+11. Commit the distribution and report final target state.
 ```
 
 `cancel_sync` looks up the matching in-flight distribution by `site_id`, `roost_id`, and `version_id`, then signals its cancellation event. `rollback_to_version` reuses the same `sync_pull` path; the server-side roost rollback has already selected the older version.

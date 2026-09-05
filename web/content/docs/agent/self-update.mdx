@@ -94,7 +94,7 @@ After the update completes:
 If the machine goes offline and does not come back:
 
 1. Check the machine physically if remote access is unavailable.
-2. Open the desktop app from the start menu (**Owlette**). The service is what relaunches it, so it will not be in the tray while the service is down. Opening the app attempts to start the service on its own, and its status footer keeps a **start service** button — either may raise a single UAC prompt.
+2. Open the desktop app from the start menu (**Owlette**). The service is what relaunches it, so it will not be in the tray while the service is down. The app does not start the service by itself while the update is still in flight: its automatic start stands down for 10 minutes after `update_in_progress.json` was written, so it cannot race the installer's own stop and restart. That automatic start never elevates in any case, and it says nothing when it is refused — the status footer simply keeps offering the button. Starting the service yourself is the consent path: **start service** in the status footer, or **restart service** on the tray menu of a stopped service. Both may raise a UAC prompt, and neither waits for the marker to expire.
 3. Read the logs. The app menu (☰) → **logs** opens `%ProgramData%\owlette\logs`, and the start menu's **View Logs** shortcut opens the same folder without the app:
    - `service.log` — the agent's own account of the update.
    - `installer_update.log` — what the installer did.

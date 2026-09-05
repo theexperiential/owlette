@@ -12,7 +12,14 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { chromium, expect, test, type Browser, type Locator, type Page } from '@playwright/test'
-import { DEMO_PAIR_PHRASE, seedScenario, type Scenario } from './fixtures'
+import {
+  DEMO_PAIR_PHRASE,
+  DEMO_PROCESS_NAMES,
+  DEMO_SITE_ID,
+  hasProcesses,
+  seedScenario,
+  type Scenario,
+} from './fixtures'
 import { CAPTURE_HOSTNAME, SCRATCH_ROOT, readSession } from './harness'
 
 const DOCS_DIR = 'public/docs-screens'
@@ -74,14 +81,23 @@ async function useScenario(scenario: Scenario): Promise<void> {
   await page.mouse.move(POINTER_PARK.x, POINTER_PARK.y)
 
   seedScenario(SCRATCH_ROOT, scenario)
-  if (scenario === 'paired') await expect(page.getByTestId('process-row')).toHaveCount(3)
-  else await expect(page.getByTestId('process-list-empty')).toBeVisible()
+  // The same predicate the seed writes from: a scenario added later cannot be
+  // given rows and then waited on as if the list were empty.
+  if (hasProcesses(scenario)) {
+    await expect(page.getByTestId('process-row')).toHaveCount(DEMO_PROCESS_NAMES.length)
+  } else {
+    await expect(page.getByTestId('process-list-empty')).toBeVisible()
+  }
 
   // The list may already look right, so the footer is the only proof the new
   // `config.json` was read.
   await expect(page.getByTestId('footer-status')).toContainText(
     scenario === 'unpaired' ? 'disabled' : 'connected',
   )
+
+  // Neither check can see a difference confined to `app_states.json` — `paired`
+  // and `paired-stalled` write the same config and the same footer — so a test
+  // that turns on a status waits on that row itself.
 }
 
 /** Select a process by the name the sidebar shows, leaving no hover behind. */
@@ -154,6 +170,141 @@ test('the app menu', async () => {
   await page.keyboard.press('Escape')
   await expect(page.getByTestId('menu-leave-site')).toBeHidden()
 })
+
+test('leaving a site: the confirmation', async () => {
+  await useScenario('paired')
+  await selectProcess('gallery show')
+
+  await page.getByTestId('app-menu-trigger').click()
+  await page.getByTestId('menu-leave-site').click()
+
+  const dialog = page.getByTestId('leave-site-dialog')
+  await expect(dialog).toBeVisible()
+  // The confirm phase is copy and two buttons — the service is stopped and the
+  // machine document deleted only once `leave site` is pressed, and the only
+  // key this test presses is Escape. Naming the site proves that phase rendered.
+  await expect(dialog).toContainText(DEMO_SITE_ID)
+  // Radix moves focus into the dialog on open (`cancel` is the first control);
+  // a focus ring on a button the reader is not being told to press is noise.
+  await clearFocus()
+  await page.mouse.move(POINTER_PARK.x, POINTER_PARK.y)
+
+  await shoot('agent-leave-site.png')
+
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+})
+
+test('the bug report dialog', async () => {
+  await useScenario('paired')
+  await selectProcess('gallery show')
+
+  await page.getByTestId('app-menu-trigger').click()
+  await page.getByTestId('menu-report-issue').click()
+
+  const dialog = page.getByTestId('report-issue-dialog')
+  await expect(dialog).toBeVisible()
+  // An empty draft, which is also what makes this shot safe to take: `submit`
+  // stays disabled until something is typed, so a capture run cannot post to
+  // `bug_reports`. The counter is the opening state stated in full
+  // (`ReportIssueDialog.MAX_DESCRIPTION`, 1000).
+  await expect(page.getByTestId('report-remaining')).toHaveText('1000 characters left')
+  await expect(page.getByRole('button', { name: 'submit', exact: true })).toBeDisabled()
+  await clearFocus()
+  await page.mouse.move(POINTER_PARK.x, POINTER_PARK.y)
+
+  await shoot('agent-report-issue.png')
+
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+})
+
+test('how to run: the folded section, opened', async () => {
+  await useScenario('paired')
+  // Always-on, so the group is at full strength: `ProcessDetail` dims it and
+  // appends "applies once a launch mode is set" while the mode is off
+  // (`unmanaged`), and a dimmed shot would document the wrong thing about
+  // fields that apply to every managed process.
+  await selectProcess('gallery show')
+
+  // Closed on first launch since 3.2.2 (`DETAIL_SECTION_DEFAULTS.howToRun`),
+  // which is why attempts / priority / visibility appear in no other shot.
+  await page.getByTestId('how-to-run-toggle').click()
+  await expect(page.getByTestId('how-to-run-fields')).toBeVisible()
+  await clearFocus()
+  await page.mouse.move(POINTER_PARK.x, POINTER_PARK.y)
+
+  // Three open sections nearly fill the pane, and the pane scrolls: with the
+  // last field below the fold this shot would show everything except its
+  // subject. If this ever fails, the fix is a taller capture window
+  // (`CAPTURE_WINDOW`), not a scrolled shot.
+  await expect(page.getByTestId('visibility')).toBeInViewport({ ratio: 1 })
+
+  await shoot('agent-how-to-run.png', detailPanel())
+
+  // Fold it back. Not tidiness: the open state is owned above the pane so it
+  // survives a process change, and it is written to the per-user layout file
+  // the moment it is toggled (`set_detail_section`) — every later detail shot
+  // would inherit it.
+  await page.getByTestId('how-to-run-toggle').click()
+  await expect(page.getByTestId('how-to-run-fields')).toBeHidden()
+})
+
+test('restart and kill on a process that is not running', async () => {
+  await useScenario('paired')
+  // The kiosk has no row in `app_states.json` — outside its window, nothing
+  // launched it — so it reads INACTIVE while its launch mode is `scheduled`.
+  // That pair is the shot: since 3.2.2 both controls follow liveness alone, so
+  // a managed process that is not up has both greyed out.
+  await selectProcess('lobby kiosk')
+  await expect(page.getByTestId('detail-status')).toHaveText('inactive')
+  await expect(page.getByRole('button', { name: 'restart process' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'kill process' })).toBeDisabled()
+
+  // The header, not the panel: `agent-launch-mode.png` is already this process's
+  // panel, so a second panel-wide shot would differ from it by two buttons.
+  await shoot('agent-run-controls.png', page.getByTestId('detail-header'))
+})
+
+test('the status dots: running, stalled and inactive together', async () => {
+  await useScenario('paired-stalled')
+  // Selecting is not incidental — the selected row is drawn differently, and
+  // without this whichever process the previous test left selected would decide
+  // which row is highlighted here.
+  await selectProcess('gallery show')
+
+  // `useScenario` cannot see this scenario arrive (same config, same footer as
+  // `paired`), so the rows are the proof: one status word moved in
+  // `app_states.json`, and the kiosk's absence from it is the hollow ring.
+  const row = (name: string) => page.getByTestId('process-row').filter({ hasText: name })
+  await expect(row('gallery show')).toHaveAttribute('data-status', 'RUNNING')
+  await expect(row('media server')).toHaveAttribute('data-status', 'STALLED')
+  await expect(row('lobby kiosk')).toHaveAttribute('data-status', 'INACTIVE')
+
+  await shoot('agent-process-states.png', page.getByTestId('process-list'))
+})
+
+/*
+ * NOT captured: the drop-confirm review card (`DropConfirm`).
+ *
+ * There is no route to it that isn't a real OS drag. `useFileDrop` subscribes to
+ * the host's `tauri://drag-*` events, and with `dragDropEnabled`
+ * (tauri.conf.json) the webview hands drops to Rust so the page's own `ondrop`
+ * never fires — which leaves CDP's drag primitives, an html5 DataTransfer
+ * synthesized inside the page, with nothing to deliver to and no file paths to
+ * carry. The only thing left is to invoke `plugin:event|emit` from the page and
+ * have the backend broadcast a `tauri://drag-drop` nobody performed, i.e. to
+ * fabricate the interaction.
+ *
+ * It would not even buy a truthful picture. Every field on the card is derived
+ * by `classifyDrop` from THIS machine's disk (a TouchDesigner install under
+ * `C:\Program Files\Derivative`, `C:\Windows\py.exe`), and the dropped file has
+ * to exist — for a capture that means the scratch tree, so the card would show
+ * an `e2e/.output/...` path and would differ between capture machines, which is
+ * the opposite of what this pipeline promises. If the shot is ever needed it has
+ * to come from a real drag, driven the way `capture-tray-menu.ps1` drives the
+ * tray.
+ */
 
 test('a machine with nothing to supervise yet', async () => {
   // Enrolled but unconfigured — the state the drop hint is written for.

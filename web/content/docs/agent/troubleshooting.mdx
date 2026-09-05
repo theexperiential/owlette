@@ -19,12 +19,13 @@ Logs live in two trees. The service and everything it launches write machine-wid
 | **Service host** | `service_host.log` | owlette-host's own narration — service registration, agent spawns, exit codes, restart backoff, stop escalations |
 | **hoot** | `cortex.log` | hoot runtime and CLI fetch. Only written when hoot is enabled. |
 | **Pairing** | `pairing_debug.log` | Device-code pairing and token setup |
+| **Token exchange** | `oauth_debug.log` | Every registration-code → token exchange: the URL called, and the response status and headers. Response bodies are never written — they carry tokens. |
 | **Self-update installer** | `installer_update.log` | Inno Setup log written during remote agent updates |
 | **Defender setup** | `defender_setup.log` | The installer's Defender-exclusion retraction step (removes the exclusions pre-PawnIO versions added) — one entry per install |
 | **roost scrub reports** | `roost_scrub_reports\` | One JSON report per roost integrity scrub |
 | **Interactive installer** | Path passed with `/LOG=...` | Inno Setup log for manual installs; no fixed ProgramData installer log is written by default |
 
-Main shared-logger files use rotating file handlers: 10 MB per file, 5 backups. owlette-host rotates the three files it writes by size, keeping exactly one `.1` sibling each: 10 MB for `service_stdout.log` and `service_stderr.log`, 2 MB for `service_host.log`. `tmp/status_writer.log` rotates at 100 KB with 2 backups, and `pairing_debug.log` uses plain writes. Old main logs are auto-deleted after 90 days by default.
+Main shared-logger files use rotating file handlers: 10 MB per file, 5 backups. owlette-host rotates the three files it writes by size, keeping exactly one `.1` sibling each: 10 MB for `service_stdout.log` and `service_stderr.log`, 2 MB for `service_host.log`. `tmp/status_writer.log` rotates at 100 KB with 2 backups, and `pairing_debug.log` uses plain writes — truncated at the start of each pairing run, while `oauth_debug.log` appends across runs rather than rotating. Old main logs are auto-deleted after 90 days by default.
 
 ### per-user — `%LOCALAPPDATA%\app.owlette.desktop\logs\`
 
@@ -44,18 +45,22 @@ This one is **per-user**: it belongs to whoever the app runs as, typically the m
 
 ## debug mode
 
-Run the service in debug mode to see real-time console output:
+Run the agent in the console to watch it live. Stop the service first, so two agents never run at once:
 
-```bash
+```cmd
+net stop OwletteService
 cd C:\ProgramData\Owlette\agent\src
-python owlette_service.py debug
+C:\ProgramData\Owlette\python\python.exe owlette_runner.py
 ```
 
-<Callout type="warning" title={"Requires Administrator"}>
+`owlette_runner.py` is the exact process owlette-host supervises — same bundled interpreter, same working directory — so this is the code path the service runs. Log lines still go to `service.log`; an interpreter-level traceback prints to the console. Ctrl+C shuts it down cleanly, and `net start OwletteService` hands the machine back to the host.
 
-Debug mode must be run from an elevated command prompt.
+<Callout type="warning" title={"requires administrator"}>
+
+The agent must be run from an elevated command prompt — the service normally runs as `LocalSystem`.
 
 </Callout>
+
 ---
 
 ## common issues
@@ -66,11 +71,12 @@ Debug mode must be run from an elevated command prompt.
 
 **Check**:
 
-1. Run in debug mode to see the error:
-    ```bash
-    cd C:\ProgramData\Owlette\agent\src
-    python owlette_service.py debug
+1. Stop the service and run the agent in the console, so a startup crash lands in front of you instead of in a log:
+    ```cmd
+    net stop OwletteService
+    C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\owlette_runner.py
     ```
+    This is the exact command owlette-host runs. Press Ctrl+C to stop, then `net start OwletteService`.
 2. Check `service.log` for startup errors, and `service_host.log` for what owlette-host saw — the spawn, the exit code the agent returned, and any crash-loop backoff. A traceback that never reached the logger lands in `service_stderr.log`.
 3. Verify Python is installed: `C:\ProgramData\Owlette\python\python.exe --version`.
 4. Verify `C:\ProgramData\Owlette\config\config.json` is valid JSON.
@@ -124,7 +130,7 @@ Debug mode must be run from an elevated command prompt.
 3. The console prints a 3-word pairing phrase and the authorization link for the server this machine is bound to, then starts polling. Open that link from any device — this machine, a phone, another computer — and enter the phrase. Nothing opens a browser here on its own.
 4. Wait for authorization to complete, then restart the service.
 
-If pairing fails before authorization completes, check `C:\ProgramData\Owlette\logs\pairing_debug.log`.
+If pairing fails before authorization completes, check `C:\ProgramData\Owlette\logs\pairing_debug.log`. If the phrase was authorized but the token exchange failed, check `oauth_debug.log` beside it.
 
 ---
 
@@ -204,8 +210,14 @@ If stuck in `BACKOFF`:
     ```
 5. Confirm the WebView2 runtime is installed — the app renders in it and cannot open a window without it. The installer adds it when missing, but a blocked or offline install can leave it absent:
     ```powershell
-    (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv
+    $guid = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients',
+    'HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients',
+    'HKCU:\Software\Microsoft\EdgeUpdate\Clients' |
+      ForEach-Object { (Get-ItemProperty "$_\$guid" -ErrorAction SilentlyContinue).pv } |
+      Where-Object { $_ -and $_ -ne '0.0.0.0' }
     ```
+    A printed version means the runtime is present; no output means it is missing. A `pv` of `0.0.0.0` counts as missing — it is the "not installed" value Microsoft documents, and the filter above drops it, exactly as the installer's own detection does. WebView2 installs machine-wide or per-user, so all three keys are checked.
 
 ---
 
@@ -284,5 +296,8 @@ The desktop app restarts the service without one. `restart service` in the app's
 ## getting help
 
 - Use `submit bug report` in the desktop app's menu — it also takes feature requests and general feedback. The agent attaches the machine's system metrics and the last 100 lines of `service.log` automatically, along with the hostname and site id, so the report arrives diagnosable.
+
+  ![the submit bug report dialog, with a category and a description field](/docs-screens/agent-report-issue.png)
+
 - Email us at [support@owlette.app](mailto:support@owlette.app)
 - File a bug or feature request on [GitHub](https://github.com/theexperiential/owlette/issues)
