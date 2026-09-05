@@ -186,6 +186,111 @@ REBOOT_OS_COUNTDOWN_SECONDS = 60
 # fulfilling that entry (retroactive lastFiredByEntry stamp).
 REBOOT_SUCCESS_DETECTION_WINDOW_SECONDS = 60 * 60
 
+# The screenshot snippet run inside the interactive user session. mss cannot
+# reach the desktop from session 0, so every capture path ships this same body
+# to the session executor and differs only in what it grabs, how hard it
+# compresses, and what it echoes back on stdout.
+_SCREENSHOT_CAPTURE_TEMPLATE = """
+import mss
+import io
+import os
+from mss.tools import to_png
+
+with mss.mss() as sct:
+{grab}
+    png_bytes = to_png(screenshot.rgb, screenshot.size)
+
+try:
+    from PIL import Image
+    img = Image.open(io.BytesIO(png_bytes))
+    max_width = {max_width}
+    if img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+    buffer = io.BytesIO()
+    img.save(buffer, format='JPEG', quality={quality})
+    jpeg_bytes = buffer.getvalue()
+except ImportError:
+    jpeg_bytes = png_bytes
+
+out_path = os.path.join(output_dir, 'screenshot.jpg')
+with open(out_path, 'wb') as f:
+    f.write(jpeg_bytes)
+{trailer}"""
+
+
+def _screenshot_capture_code(monitor, max_width, quality, trailer=''):
+    """Build the user-session capture snippet.
+
+    `monitor` None grabs the virtual "all monitors" screen; an index grabs that
+    monitor, falling back to the virtual screen when it is out of range.
+    `trailer` is appended verbatim, for callers that echo diagnostics on stdout.
+    """
+    if monitor is None:
+        grab = "    screenshot = sct.grab(sct.monitors[0])"
+    else:
+        grab = (
+            "    mon_idx = {m} if {m} > 0 and {m} < len(sct.monitors) else 0\n"
+            "    screenshot = sct.grab(sct.monitors[mon_idx])"
+        ).format(m=monitor)
+    return _SCREENSHOT_CAPTURE_TEMPLATE.format(
+        grab=grab, max_width=max_width, quality=quality, trailer=trailer,
+    )
+
+
+def _read_session_screenshot():
+    """Read the screenshot the capture snippet left behind.
+
+    Returns (jpeg_bytes, screenshot_b64, result_dir), or (None, None, None)
+    when no result dir holds one. The caller discards result_dir itself, so it
+    can log against the file before the directory goes away.
+    """
+    import base64
+
+    # Locate the screenshot in the most recent execution's result dir.
+    ipc_dir = shared_utils.get_data_path('ipc')
+    results_base = os.path.join(ipc_dir, 'results')
+    screenshot_path = None
+    for d in sorted(os.listdir(results_base), reverse=True):
+        candidate = os.path.join(results_base, d, 'screenshot.jpg')
+        if os.path.exists(candidate):
+            screenshot_path = candidate
+            break
+
+    if not screenshot_path:
+        return None, None, None
+
+    with open(screenshot_path, 'rb') as f:
+        jpeg_bytes = f.read()
+
+    screenshot_b64 = base64.b64encode(jpeg_bytes).decode('ascii')
+
+    return jpeg_bytes, screenshot_b64, os.path.dirname(screenshot_path)
+
+
+def _discard_session_result_dir(result_dir):
+    """Drop a consumed user-session result dir, best effort."""
+    try:
+        import shutil
+        shutil.rmtree(result_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+
+def _display_error_result(result):
+    """Render a display_manager failure as an "Error: ..." string."""
+    err = (
+        result.get('error', 'unknown')
+        if isinstance(result, dict) else str(result)
+    )
+    # Prefixed with the failure code so the dashboard can show a
+    # targeted toast instead of "recall failed".
+    code = result.get('code') if isinstance(result, dict) else None
+    if code:
+        return f"Error: {code}: {err}"
+    return f"Error: {err}"
+
+
 class Util:
 
     @staticmethod
@@ -4554,18 +4659,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             f"Display topology applied — {change_count} changes, "
                             f"revert in {revert_s}s"
                         )
-                    err = (
-                        result.get('error', 'unknown')
-                        if isinstance(result, dict) else str(result)
-                    )
-                    # Prefixed with the failure code so the dashboard can show a
-                    # targeted toast instead of "recall failed".
-                    code = (
-                        result.get('code') if isinstance(result, dict) else None
-                    )
-                    if code:
-                        return f"Error: {code}: {err}"
-                    return f"Error: {err}"
+                    return _display_error_result(result)
                 except Exception as e:
                     return f"Error: {e}"
 
@@ -4635,16 +4729,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             f"Self-test ok — {seen} monitors, "
                             f"query {q}ms, validate {v}ms"
                         )
-                    err = (
-                        result.get('error', 'unknown')
-                        if isinstance(result, dict) else str(result)
-                    )
-                    code = (
-                        result.get('code') if isinstance(result, dict) else None
-                    )
-                    if code:
-                        return f"Error: {code}: {err}"
-                    return f"Error: {err}"
+                    return _display_error_result(result)
                 except Exception as e:
                     return f"Error: {e}"
 
@@ -6223,62 +6308,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
         lower quality settings for speed, and never blocks the relaunch path.
         """
         try:
-            import base64
-            capture_code = """
-import mss
-import io
-import os
-from mss.tools import to_png
-
-with mss.mss() as sct:
-    screenshot = sct.grab(sct.monitors[0])
-    png_bytes = to_png(screenshot.rgb, screenshot.size)
-
-try:
-    from PIL import Image
-    img = Image.open(io.BytesIO(png_bytes))
-    max_width = 1920
-    if img.width > max_width:
-        ratio = max_width / img.width
-        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
-    buffer = io.BytesIO()
-    img.save(buffer, format='JPEG', quality=60)
-    jpeg_bytes = buffer.getvalue()
-except ImportError:
-    jpeg_bytes = png_bytes
-
-out_path = os.path.join(output_dir, 'screenshot.jpg')
-with open(out_path, 'wb') as f:
-    f.write(jpeg_bytes)
-"""
+            capture_code = _screenshot_capture_code(None, 1920, 60)
             result = self.execute_in_user_session('python', capture_code, timeout=8, trusted=True)
 
             if result.get('error') or 'screenshot.jpg' not in result.get('files', []):
                 logging.debug("Crash screenshot capture failed — proceeding with relaunch")
                 return None
 
-            ipc_dir = shared_utils.get_data_path('ipc')
-            results_base = os.path.join(ipc_dir, 'results')
-            screenshot_path = None
-            for d in sorted(os.listdir(results_base), reverse=True):
-                candidate = os.path.join(results_base, d, 'screenshot.jpg')
-                if os.path.exists(candidate):
-                    screenshot_path = candidate
-                    break
+            jpeg_bytes, screenshot_b64, result_dir = _read_session_screenshot()
 
-            if not screenshot_path:
+            if not result_dir:
                 return None
 
-            with open(screenshot_path, 'rb') as f:
-                jpeg_bytes = f.read()
-
-            screenshot_b64 = base64.b64encode(jpeg_bytes).decode('ascii')
-
-            try:
-                import shutil
-                shutil.rmtree(os.path.dirname(screenshot_path), ignore_errors=True)
-            except Exception:
-                pass
+            _discard_session_result_dir(result_dir)
 
             upload_result = self._upload_screenshot(screenshot_b64)
             url = upload_result.get('url', '') if upload_result else ''
@@ -6339,40 +6381,15 @@ with open(out_path, 'wb') as f:
     def _handle_capture_screenshot(self, command_data):
         """Handle screenshot capture via user-session execution."""
         try:
-            import base64
-
             monitor = command_data.get('monitor', 0)
 
-            capture_code = f"""
-import mss
-import io
-import os
-from mss.tools import to_png
-
-with mss.mss() as sct:
-    mon_idx = {monitor} if {monitor} > 0 and {monitor} < len(sct.monitors) else 0
-    screenshot = sct.grab(sct.monitors[mon_idx])
-    png_bytes = to_png(screenshot.rgb, screenshot.size)
-
-try:
-    from PIL import Image
-    img = Image.open(io.BytesIO(png_bytes))
-    max_width = 7680
-    if img.width > max_width:
-        ratio = max_width / img.width
-        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
-    buffer = io.BytesIO()
-    img.save(buffer, format='JPEG', quality=72)
-    jpeg_bytes = buffer.getvalue()
-except ImportError:
-    jpeg_bytes = png_bytes
-
-out_path = os.path.join(output_dir, 'screenshot.jpg')
-with open(out_path, 'wb') as f:
-    f.write(jpeg_bytes)
-print(f'size_kb={{len(jpeg_bytes) // 1024}}')
-print(f'monitors={{len(sct.monitors) - 1}}')
-"""
+            capture_code = _screenshot_capture_code(
+                monitor, 7680, 72,
+                trailer=(
+                    "print(f'size_kb={len(jpeg_bytes) // 1024}')\n"
+                    "print(f'monitors={len(sct.monitors) - 1}')\n"
+                ),
+            )
 
             result = self.execute_in_user_session('python', capture_code, timeout=20, trusted=True)
 
@@ -6383,33 +6400,16 @@ print(f'monitors={{len(sct.monitors) - 1}}')
                 stderr = result.get('stderr', '')
                 return {'error': f"Screenshot capture failed{': ' + stderr if stderr else ''}"}
 
-            # Locate the screenshot in the most recent execution's result dir.
-            ipc_dir = shared_utils.get_data_path('ipc')
-            results_base = os.path.join(ipc_dir, 'results')
-            screenshot_path = None
-            for d in sorted(os.listdir(results_base), reverse=True):
-                candidate = os.path.join(results_base, d, 'screenshot.jpg')
-                if os.path.exists(candidate):
-                    screenshot_path = candidate
-                    break
+            jpeg_bytes, screenshot_b64, result_dir = _read_session_screenshot()
 
-            if not screenshot_path:
+            if not result_dir:
                 return {'error': 'Screenshot file not found after capture'}
 
-            with open(screenshot_path, 'rb') as f:
-                jpeg_bytes = f.read()
-
             size_kb = len(jpeg_bytes) / 1024
-            screenshot_b64 = base64.b64encode(jpeg_bytes).decode('ascii')
 
             logging.info(f"Screenshot captured: {size_kb:.0f}KB")
 
-            result_dir = os.path.dirname(screenshot_path)
-            try:
-                import shutil
-                shutil.rmtree(result_dir, ignore_errors=True)
-            except Exception:
-                pass
+            _discard_session_result_dir(result_dir)
 
             upload_result = self._upload_screenshot(screenshot_b64)
 
@@ -6516,64 +6516,20 @@ print(f'monitors={{len(sct.monitors) - 1}}')
     def _live_view_loop(self, interval):
         """Background loop that captures and uploads screenshots periodically."""
         try:
-            import base64
-
             logging.info(f"Live view loop started (interval={interval}s)")
 
             while self._live_view_active and time.time() < self._live_view_stop_time:
                 try:
-                    capture_code = """
-import mss
-import io
-import os
-from mss.tools import to_png
-
-with mss.mss() as sct:
-    screenshot = sct.grab(sct.monitors[0])
-    png_bytes = to_png(screenshot.rgb, screenshot.size)
-
-try:
-    from PIL import Image
-    img = Image.open(io.BytesIO(png_bytes))
-    max_width = 1920
-    if img.width > max_width:
-        ratio = max_width / img.width
-        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
-    buffer = io.BytesIO()
-    img.save(buffer, format='JPEG', quality=50)
-    jpeg_bytes = buffer.getvalue()
-except ImportError:
-    jpeg_bytes = png_bytes
-
-out_path = os.path.join(output_dir, 'screenshot.jpg')
-with open(out_path, 'wb') as f:
-    f.write(jpeg_bytes)
-"""
+                    capture_code = _screenshot_capture_code(None, 1920, 50)
                     result = self.execute_in_user_session('python', capture_code, timeout=10, trusted=True)
 
                     if result.get('error') or 'screenshot.jpg' not in result.get('files', []):
                         logging.debug(f"Live view capture failed: {result.get('error', 'no screenshot file')}")
                     else:
-                        ipc_dir = shared_utils.get_data_path('ipc')
-                        results_base = os.path.join(ipc_dir, 'results')
-                        screenshot_path = None
-                        for d in sorted(os.listdir(results_base), reverse=True):
-                            candidate = os.path.join(results_base, d, 'screenshot.jpg')
-                            if os.path.exists(candidate):
-                                screenshot_path = candidate
-                                break
+                        _, screenshot_b64, result_dir = _read_session_screenshot()
 
-                        if screenshot_path:
-                            with open(screenshot_path, 'rb') as f:
-                                jpeg_bytes = f.read()
-
-                            screenshot_b64 = base64.b64encode(jpeg_bytes).decode('ascii')
-
-                            try:
-                                import shutil
-                                shutil.rmtree(os.path.dirname(screenshot_path), ignore_errors=True)
-                            except Exception:
-                                pass
+                        if result_dir:
+                            _discard_session_result_dir(result_dir)
 
                             self._upload_screenshot(screenshot_b64)
 

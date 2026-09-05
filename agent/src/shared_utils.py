@@ -2080,39 +2080,6 @@ def find_running_process_by_exe(exe_path, file_path=None, strict=False):
     return None
 
 
-def pid_matches_exe(pid, exe_path, file_path=None):
-    """True if PID is alive and its image matches exe_path.
-
-    Kill/restart must never terminate a PID whose image doesn't match the entry
-    it came from: state-file entries go stale once a process stops being
-    monitored, and Windows reuses PIDs. .bat/.cmd entries match a cmd.exe whose
-    command line references the script (and file_path too, when given).
-    """
-    if not pid or not exe_path:
-        return False
-    exe_lower = exe_path.replace('/', '\\').lower()
-    try:
-        proc = psutil.Process(int(pid))
-        proc_exe = (proc.exe() or '').lower()
-        cmdline = None
-        if exe_lower.endswith(('.bat', '.cmd')):
-            if os.path.basename(proc_exe) != 'cmd.exe':
-                return False
-            cmdline = ' '.join(proc.cmdline()).replace('/', '\\').lower()
-            if exe_lower not in cmdline:
-                return False
-        elif proc_exe != exe_lower and os.path.basename(proc_exe) != os.path.basename(exe_lower):
-            return False
-        if file_path:
-            if cmdline is None:
-                cmdline = ' '.join(proc.cmdline()).replace('/', '\\').lower()
-            if file_path.replace('/', '\\').lower() not in cmdline:
-                return False
-        return True
-    except (psutil.Error, OSError, ValueError):
-        return False
-
-
 def fetch_process_id_by_name(name, data):
     process = next((process for process in data['processes'] if process['name'] == name), None)
     return process['id'] if process else None
