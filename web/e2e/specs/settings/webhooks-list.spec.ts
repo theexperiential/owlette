@@ -132,7 +132,13 @@ test('create webhook reveals whsec_* once, copies to clipboard, then list shows 
   expect(data.url).toBe(WEBHOOK_URL);
   expect(data.events).toEqual(expect.arrayContaining([...SUBSCRIBED_EVENTS]));
   expect(data.paused).toBe(false);
-  expect(data.signingSecret).toBe(rawSecret);
+  // The secret is NOT on the client-readable webhook document — that was the leak.
+  expect(data.signingSecret).toBeUndefined();
+  expect(data.secret).toBeUndefined();
+  const secretSnap = await getAdminDb()
+    .collection('sites').doc(SITE_ID)
+    .collection('webhook_secrets').doc(webhookId).get();
+  expect(secretSnap.data()?.signingSecret).toBe(rawSecret);
 
   // The contract holds across navigations.
   await page.reload();

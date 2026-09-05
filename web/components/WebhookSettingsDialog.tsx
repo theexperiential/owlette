@@ -41,7 +41,6 @@ interface WebhookData {
   name: string;
   events: string[];
   enabled: boolean;
-  secret: string;
   createdAt: Date | null;
   createdBy: string;
   lastTriggered: Date | null;
@@ -119,15 +118,13 @@ function useWebhooks(siteId: string) {
         if (data.deletedAt) return null;
         const description = typeof data.description === 'string' ? data.description : '';
         const legacyName = typeof data.name === 'string' ? data.name : '';
-        const signingSecret = typeof data.signingSecret === 'string' ? data.signingSecret : '';
-        const legacySecret = typeof data.secret === 'string' ? data.secret : '';
+
         return {
           id: d.id,
           url: data.url || '',
           name: legacyName || description || data.url || '',
           events: data.events || [],
           enabled: data.enabled ?? data.paused !== true,
-          secret: legacySecret || signingSecret,
           createdAt: toDate(data.createdAt),
           createdBy: data.createdBy || '',
           lastTriggered: toDate(data.lastTriggered) || toDate(data.lastDeliveryAt),

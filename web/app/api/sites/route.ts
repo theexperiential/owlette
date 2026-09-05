@@ -216,6 +216,17 @@ export const POST = withRateLimit(async (request: NextRequest) => {
             'body.name': [result.reason],
           });
         }
+        if (result.kind === 'id_retired') {
+          return problem({
+            type: ProblemType.Conflict,
+            title: 'site id retired',
+            status: 409,
+            detail:
+              `site id ${String(body.siteId)} belonged to a deleted site and cannot be reused; choose another`,
+            instance: '/api/sites',
+            code: 'site_id_retired',
+          });
+        }
         if (result.kind === 'already_exists') {
           return problem({
             type: ProblemType.Conflict,

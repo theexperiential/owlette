@@ -146,6 +146,30 @@ service cloud.firestore {
     }
 
     // ============================================
+    // Retired Site IDs
+    // ============================================
+
+    match /site_ids/{siteId} {
+      // Tombstones for deleted sites. Site ids are caller-supplied slugs and
+      // deleting a site does not clear `users/{uid}.sites[]`, so reusing a slug
+      // would hand the new site's data to the old site's members. createSite
+      // refuses any id with a tombstone.
+      //
+      // GET only, never LIST: the availability check is a single-document read
+      // (hooks/useFirestore.ts). `allow read: if isAuthenticated()` would also
+      // permit a collection query, since the condition binds neither `resource`
+      // nor the wildcard — that would let any signed-in user enumerate every
+      // deleted site slug in the fleet, which live sites do not allow
+      // (`sites/{siteId}` is gated on canAccessSite). The document holds a
+      // timestamp and nothing else; the deleting principal is in the platform
+      // audit row, not here.
+      // WRITE: trusted server APIs only.
+      allow get: if isAuthenticated();
+      allow list: if false;
+      allow write: if isServiceAccount();
+    }
+
+    // ============================================
     // Sites Collection
     // ============================================
 
@@ -355,40 +379,24 @@ service cloud.firestore {
 
       match /roosts/{roostId} {
         allow read: if canAccessSite(siteId);
-        // CREATE: site-scoped users can create the roost shell, but the
-        // pointer fields (currentVersionId, previousVersionId, versionUrl —
-        // and the legacy currentManifestId/previousManifestId/manifestUrl
-        // names) MUST be null/unset at create time. The first real version
-        // is published via /api/roosts/.../versions using the admin SDK
-        // (which bypasses these rules). This prevents a direct-Firestore
-        // client from publishing a fake "v0" pointing at attacker-
-        // controlled storage.
-        allow create: if canAccessSite(siteId) &&
-                         hasRequiredFields(['name', 'targets', 'createdAt', 'schemaVersion']) &&
-                         request.resource.data.schemaVersion == 2 &&
-                         (!('currentVersionId' in request.resource.data) ||
-                          request.resource.data.currentVersionId == null) &&
-                         (!('previousVersionId' in request.resource.data) ||
-                          request.resource.data.previousVersionId == null) &&
-                         (!('versionUrl' in request.resource.data) ||
-                          request.resource.data.versionUrl == null) &&
-                         (!('currentManifestId' in request.resource.data) ||
-                          request.resource.data.currentManifestId == null) &&
-                         (!('previousManifestId' in request.resource.data) ||
-                          request.resource.data.previousManifestId == null) &&
-                         (!('manifestUrl' in request.resource.data) ||
-                          request.resource.data.manifestUrl == null);
-        // UPDATE: pointer fields cannot be flipped client-side. They go
-        // through the /api/roosts/.../versions + /rollback routes,
-        // which use Firestore transactions (CAS) under admin SDK creds.
-        allow update: if canAccessSite(siteId) &&
-                         !request.resource.data.diff(resource.data).affectedKeys()
-                            .hasAny([
-                              'currentVersionId', 'previousVersionId', 'versionUrl',
-                              'currentManifestId', 'previousManifestId', 'manifestUrl',
-                              'schemaVersion'
-                            ]);
-        allow delete: if canAccessSite(siteId);
+        // WRITE: trusted server APIs only.
+        //
+        // These three were previously `canAccessSite(siteId)` — membership with
+        // no role term — while the API gates the same operations on
+        // DISTRIBUTION_MANAGE (site admin). A plain member could therefore
+        // create and delete roosts straight from the client SDK, bypassing the
+        // capability model entirely. The old create/update conditions guarded
+        // the pointer fields (currentVersionId, versionUrl and the legacy
+        // manifest names) against a forged "v0" pointing at attacker-controlled
+        // storage, but they said nothing about WHO could write.
+        //
+        // Nothing in the app writes these documents from a client: every roost
+        // mutation goes through /api/roosts/** under the admin SDK, and
+        // hooks/useRoosts.ts holds a read-only listener. So this is server-only
+        // rather than isSiteAdmin(siteId) — a stronger rule at no cost, and it
+        // avoids the trap that isSiteAdmin requires a GLOBAL admin role, which a
+        // self-serve site owner does not have (see dev/active/per-site-roles/).
+        allow create, update, delete: if isServiceAccount();
 
         // ------------------------------------------
         // Per-target reported state (one doc per machine)
@@ -446,11 +454,25 @@ service cloud.firestore {
       // ----------------------------------------
 
       match /webhooks/{webhookId} {
-        // Webhook notification endpoints
+        // Webhook notification endpoints — url, events, counters and rotation
+        // METADATA only. The signing secret is NOT here; see webhook_secrets below.
         // READ: any user with site access (superadmins fall through via canAccessSite)
         // WRITE: trusted server APIs only
         allow read: if canAccessSite(siteId);
         allow write: if isServiceAccount();
+      }
+
+      match /webhook_secrets/{webhookId} {
+        // Webhook signing secrets — server-only, following the talon_secrets
+        // pattern. They previously lived on the webhook document above, whose
+        // read rule is canAccessSite(): every site MEMBER could read the HMAC
+        // secret and forge deliveries the receiver would accept as authentic.
+        // The comment on talon_secrets named that leak; this is it closed.
+        //
+        // Not even isSiteAdmin(): nothing client-side needs these. A secret is
+        // returned exactly once, in the create and rotate API responses.
+        allow read: if false;
+        allow write: if false;
       }
 
       // ----------------------------------------

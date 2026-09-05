@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ApiAuthError } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { readWebhookSecrets } from '@/lib/webhookSecrets.server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { testWebhook } from '@/lib/webhookSender.server';
 import { apiError } from '@/lib/apiErrorResponse';
@@ -53,8 +54,12 @@ export async function POST(request: NextRequest) {
     }
 
     const webhook = webhookDoc.data()!;
+    // Secrets live in the server-only sibling; the legacy in-document fields are
+    // the fallback for subscriptions that predate the migration.
+    const stored = await readWebhookSecrets(siteId, webhookId);
     const signingSecret =
-      typeof webhook.signingSecret === 'string' ? webhook.signingSecret : webhook.secret;
+      stored.signingSecret ??
+      (typeof webhook.signingSecret === 'string' ? webhook.signingSecret : webhook.secret);
     const result = await testWebhook(webhook.url, signingSecret);
 
     // Update last triggered

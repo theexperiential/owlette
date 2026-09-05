@@ -2,14 +2,29 @@
 
 const mockUpdate = jest.fn().mockResolvedValue(undefined);
 const mockGet = jest.fn();
+/**
+ * Secrets now live at `sites/{id}/webhook_secrets/{webhookId}`, fetched with one
+ * batched `getAll` over the fan-out. Default: the sibling is ABSENT, so these
+ * tests exercise the legacy in-document `secret` fallback they were written for.
+ * `mockSecretDocs` overrides it to assert the sibling takes precedence.
+ */
+let mockSecretDocs: Array<{ data: () => Record<string, unknown> | undefined }> = [];
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
-    // Subscription query path — `sites/{id}/webhooks`.
+    // Subscription query path — `sites/{id}/webhooks`; also the secret-sibling
+    // path, which only needs to be chainable since getAll does the reading.
     collection: () => ({
       where: jest.fn().mockReturnThis(),
       get: mockGet,
+      doc: () => ({
+        collection: () => ({ doc: () => ({}) }),
+      }),
     }),
+    getAll: (...refs: unknown[]) =>
+      Promise.resolve(
+        refs.map((_, i) => mockSecretDocs[i] ?? { data: () => undefined }),
+      ),
   }),
 }));
 
@@ -36,6 +51,7 @@ function makeWebhookDoc(overrides: Record<string, unknown> = {}) {
 describe('webhookSender', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSecretDocs = [];
   });
 
   describe('fireWebhooks', () => {
@@ -76,6 +92,43 @@ describe('webhookSender', () => {
       expect(body.site).toEqual({ id: 'site1', name: 'My Site' });
       expect(body.data.machine).toEqual({ id: 'm1', name: 'Machine 1' });
       expect(body.timestamp).toBeDefined();
+    });
+
+    it('signs with the server-only sibling secret in preference to the legacy field', async () => {
+      // The whole point of the relocation: the webhook document's `secret` is the
+      // leaked one, so once a sibling exists it must win.
+      const doc = makeWebhookDoc({ secret: 'stale-leaked-secret' });
+      mockGet.mockResolvedValue({ empty: false, docs: [doc] });
+      mockSecretDocs = [{ data: () => ({ signingSecret: 'sibling-secret-999' }) }];
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+
+      await fireWebhooks('site1', 'My Site', 'process.crashed', {
+        machine: { id: 'm1', name: 'Machine 1' },
+      });
+
+      const [, init] = mockFetch.mock.calls[0]!;
+      const sent = (init as { headers: Record<string, string>; body: string });
+      const expected = crypto
+        .createHmac('sha256', 'sibling-secret-999')
+        .update(sent.body)
+        .digest('hex');
+      expect(sent.headers['X-owlette-Signature']).toBe(`sha256=${expected}`);
+    });
+
+    it('skips delivery instead of throwing when no secret exists anywhere', async () => {
+      // Without the guard, createHmac(undefined) throws inside the delivery, the
+      // catch counts it as a failure, and ten of those auto-disable a
+      // subscription whose only fault is a missing key.
+      const doc = makeWebhookDoc({ secret: undefined });
+      mockGet.mockResolvedValue({ empty: false, docs: [doc] });
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+
+      const result = await fireWebhooks('site1', 'My Site', 'process.crashed', {
+        machine: { id: 'm1', name: 'Machine 1' },
+      });
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result).toBe(0);
     });
 
     it('sends correct HMAC-SHA256 signature', async () => {

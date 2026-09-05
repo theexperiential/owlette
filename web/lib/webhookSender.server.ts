@@ -6,6 +6,8 @@
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
+import { WEBHOOK_SECRETS_COLLECTION } from '@/lib/webhookSecrets.server';
+import logger from '@/lib/logger';
 import { DISPLAY_EVENT_ROUTING } from '@/lib/alerts/displayEventRouting';
 import crypto from 'crypto';
 
@@ -252,6 +254,30 @@ export async function fireWebhooks(
 
   let successCount = 0;
 
+  // Signing secrets live outside the webhook document (lib/webhookSecrets.server.ts),
+  // so they are fetched separately. One batched read for the whole fan-out; the
+  // legacy in-document `secret` / `signingSecret` remain the fallback for
+  // subscriptions that predate the migration.
+  const secretSnaps = await db.getAll(
+    ...snapshot.docs.map((doc) =>
+      db
+        .collection('sites')
+        .doc(siteId)
+        .collection(WEBHOOK_SECRETS_COLLECTION)
+        .doc(doc.id),
+    ),
+  );
+  const secretByWebhookId = new Map<string, string>();
+  snapshot.docs.forEach((doc, i) => {
+    const stored = secretSnaps[i]?.data();
+    const resolved =
+      (typeof stored?.signingSecret === 'string' && stored.signingSecret) ||
+      (typeof doc.data().signingSecret === 'string' && doc.data().signingSecret) ||
+      (typeof doc.data().secret === 'string' && doc.data().secret) ||
+      '';
+    if (resolved) secretByWebhookId.set(doc.id, resolved);
+  });
+
   const deliveries = snapshot.docs.map(async (doc) => {
     const webhook = doc.data();
     try {
@@ -265,8 +291,19 @@ export async function fireWebhooks(
       };
 
       if (platform === 'generic') {
+        const signingSecret = secretByWebhookId.get(doc.id);
+        if (!signingSecret) {
+          // No secret anywhere: skip rather than let createHmac throw, which the
+          // catch below would count as a delivery failure and eventually
+          // auto-disable a subscription whose only fault is a missing key.
+          logger.warn('webhook has no signing secret; skipping delivery', {
+            context: 'webhookSender',
+            data: { siteId, webhookId: doc.id, eventType },
+          });
+          return;
+        }
         const signature = crypto
-          .createHmac('sha256', webhook.secret)
+          .createHmac('sha256', signingSecret)
           .update(body)
           .digest('hex');
         headers['X-owlette-Signature'] = `sha256=${signature}`;

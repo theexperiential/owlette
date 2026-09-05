@@ -26,6 +26,9 @@ jest.mock('firebase-admin/firestore', () => ({
   FieldValue: {
     arrayUnion: (...items: unknown[]) => ({ __op: 'arrayUnion', items }),
     arrayRemove: (...items: unknown[]) => ({ __op: 'arrayRemove', items }),
+    // deleteSite writes its record to the platform audit sink before the delete,
+    // and that row is server-timestamped.
+    serverTimestamp: () => ({ __op: 'serverTimestamp' }),
   },
 }));
 
@@ -55,6 +58,16 @@ class FakeDb {
    */
   collectionGroup(id: string): FakeCollectionGroup {
     return new FakeCollectionGroup(this, id);
+  }
+
+  /**
+   * Batched multi-document read, as used by `removeSiteFromUser` to check every
+   * named site for ownership in one round trip. Real `getAll` preserves argument
+   * order and returns a non-existent snapshot for a missing doc rather than
+   * omitting it — both are relied on by the caller's `.filter(exists)`.
+   */
+  async getAll(...refs: FakeDoc[]) {
+    return Promise.all(refs.map((ref) => ref.get()));
   }
 
   /**

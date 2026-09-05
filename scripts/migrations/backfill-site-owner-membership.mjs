@@ -43,7 +43,12 @@ const ROOT = join(__dirname, '..', '..');
 // firebase-admin lives in web/node_modules — resolve it from there so the
 // script runs without a root-level package.json.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
-const admin = require('firebase-admin');
+// Modular entry points, not the `firebase-admin` root namespace: the installed
+// version exports only initializeApp/getApp/getApps/deleteApp/applicationDefault/
+// cert/refreshToken from the root, so `admin.credential.cert` and
+// `admin.firestore()` are both undefined and this script threw on startup.
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 
 const args = process.argv.slice(2);
 
@@ -239,7 +244,7 @@ async function runRollback(db) {
     const batch = db.batch();
     for (const { siteId, owner } of chunk) {
       batch.update(db.collection('users').doc(owner), {
-        sites: admin.firestore.FieldValue.arrayRemove(siteId),
+        sites: FieldValue.arrayRemove(siteId),
       });
     }
     await batch.commit();
@@ -254,11 +259,11 @@ async function main() {
     `\n${dryRun ? '[DRY RUN] ' : ''}Site owner membership backfill — env=${env}, project=${projectId}\n`
   );
 
-  admin.initializeApp({
-    credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+  initializeApp({
+    credential: cert({ projectId, clientEmail, privateKey }),
     projectId,
   });
-  const db = admin.firestore();
+  const db = getFirestore();
 
   if (rollback) {
     await runRollback(db);
@@ -411,7 +416,7 @@ async function main() {
     const batch = db.batch();
     for (const { siteId, owner } of chunk) {
       batch.update(db.collection('users').doc(owner), {
-        sites: admin.firestore.FieldValue.arrayUnion(siteId),
+        sites: FieldValue.arrayUnion(siteId),
       });
     }
     await batch.commit();

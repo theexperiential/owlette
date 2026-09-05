@@ -49,7 +49,6 @@ async function seedWebhook(
       hostname,
       events: opts.events ?? WEBHOOK_EVENTS,
       ...(opts.description ? { description: opts.description } : {}),
-      signingSecret: opts.signingSecret ?? SEEDED_SECRET,
       secretRotatedAt: null,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
@@ -59,6 +58,18 @@ async function seedWebhook(
       lastDeliveryAt: null,
       lastDeliveryStatus: null,
       failureCount: 0,
+    });
+
+  // Secrets live in the server-only sibling now — seed it there, not on the doc.
+  await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('webhook_secrets')
+    .doc(webhookId)
+    .set({
+      signingSecret: opts.signingSecret ?? SEEDED_SECRET,
+      previousSigningSecret: null,
+      updatedAt: FieldValue.serverTimestamp(),
     });
 }
 
@@ -177,20 +188,28 @@ test('pause -> resume -> rotate-secret -> delete round-trip', async ({ page, con
   const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
   expect(clipboardText).toBe(rotateBody.signingSecret);
 
+  // Secrets live in the server-only sibling, not on the webhook document.
   await expect.poll(
     async () => {
       const snap = await getAdminDb()
         .collection('sites').doc(SITE_ID)
-        .collection('webhooks').doc(WEBHOOK_ID).get();
+        .collection('webhook_secrets').doc(WEBHOOK_ID).get();
       return snap.data()?.signingSecret;
     },
     { timeout: 5_000, intervals: [100, 250, 500] },
   ).toBe(rotateBody.signingSecret);
 
+  const rotatedSecret = await getAdminDb()
+    .collection('sites').doc(SITE_ID)
+    .collection('webhook_secrets').doc(WEBHOOK_ID).get();
+  expect(rotatedSecret.data()?.previousSigningSecret).toBe(SEEDED_SECRET);
+
+  // ...and the client-readable document carries none of it.
   const rotatedDoc = await getAdminDb()
     .collection('sites').doc(SITE_ID)
     .collection('webhooks').doc(WEBHOOK_ID).get();
-  expect(rotatedDoc.data()?.previousSigningSecret).toBe(SEEDED_SECRET);
+  expect(rotatedDoc.data()?.signingSecret).toBeUndefined();
+  expect(rotatedDoc.data()?.previousSigningSecret).toBeUndefined();
 
   // 4) delete — confirm() -> DELETE -> row disappears (soft-deleted, list filters)
   page.once('dialog', (d) => {

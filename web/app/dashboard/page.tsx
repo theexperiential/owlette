@@ -831,11 +831,18 @@ export default function DashboardPage() {
         onUpdateSite={updateSite}
         onDeleteSite={async (siteId) => {
           await deleteSite(siteId);
-          // Deleting the current site: switch to another.
+          // Deleting the current site: switch to another, or clear the selection
+          // when that was the last one. Without the else, currentSiteId keeps
+          // pointing at a site that no longer exists and every child query runs
+          // against a dead id — reachable now that deleting your last site is
+          // allowed (the browser-only guard was removed, see
+          // dev/active/per-site-roles/).
           if (siteId === currentSiteId) {
             const remainingSites = sites.filter(s => s.id !== siteId);
             if (remainingSites.length > 0) {
               handleSiteChange(remainingSites[0].id);
+            } else {
+              setCurrentSiteId('');
             }
           }
         }}

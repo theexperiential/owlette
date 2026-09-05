@@ -132,6 +132,57 @@ export async function writeAuditEntryBlocking(
   }
 }
 
+/**
+ * Awaitable write to the PLATFORM sink at `global/audit_log/entries`, for records
+ * that must outlive the site they describe.
+ *
+ * Site audit rows live at `sites/{siteId}/audit_log/` — a subcollection of the site
+ * document — so a site deletion destroys its own evidence, including the record of
+ * the deletion. Anything auditing the destruction of a site (or of any other
+ * audited container) writes here instead, BEFORE the cascade begins, and rejects on
+ * failure so the caller can refuse to proceed unrecorded.
+ */
+export async function writeGlobalAuditEntryBlocking(
+  entry: AuditEntryInput,
+  /** Injected by callers that already hold an instance (and by tests); production omits. */
+  db?: FirebaseFirestore.Firestore,
+): Promise<void> {
+  const database = db ?? getAdminDb();
+  const docRef = database.collection('global').doc('audit_log').collection('entries').doc();
+
+  const payload: Record<string, unknown> = {
+    correlationId: entry.correlationId,
+    actor: entry.actor,
+    capability: entry.capability,
+    target: stripUndefined({ ...entry.target } as Record<string, unknown>),
+    outcome: entry.outcome,
+    timestamp: FieldValue.serverTimestamp(),
+  };
+  if (entry.metadata !== undefined) payload.metadata = entry.metadata;
+  if (entry.denyReason !== undefined) payload.denyReason = entry.denyReason;
+  if (entry.errorCode !== undefined) payload.errorCode = entry.errorCode;
+  if (entry.enforcementBypassed !== undefined) {
+    payload.enforcementBypassed = entry.enforcementBypassed;
+  }
+
+  try {
+    await docRef.set(payload);
+  } catch (err) {
+    emitAuditWriteFailure('__platform__', entry, err);
+    throw err;
+  }
+
+  emitSecurityBoundaryMetric('capability_decision_total', 1, {
+    labels: {
+      outcome: entry.outcome,
+      capability: entry.capability,
+      role: actorRoleLabel(entry.actor),
+      site: '__platform__',
+    },
+    fields: { correlationId: entry.correlationId, target: entry.target },
+  });
+}
+
 async function writeAuditEntryInternal(
   siteId: string,
   entry: AuditEntryInput,

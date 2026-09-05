@@ -527,4 +527,59 @@ describe('/api/sites/{siteId}', () => {
     expect(body).toEqual({ siteId: 'site-a', deleted: true });
     expect(docStore['sites/site-a']?.data).toBeNull();
   });
+
+  /*
+   * DELETE moved from SITE_MEMBER_MANAGE to SITE_DELETE, a capability NO role
+   * holds — so it resolves only through the ownership short-circuit or the
+   * superadmin grant. The test above cannot show that: its caller is superadmin
+   * AND owner, so it passes identically under the old capability. These three
+   * pin the boundary that actually moved.
+   */
+  it('refuses DELETE for a site admin who is not the owner, but still allows PATCH', async () => {
+    authedKey('admin-uid', 'admin', [siteScope('site-a', 'admin')], { sites: ['site-a'] });
+    seedSite('site-a', { owner: 'someone-else', name: 'Site A' });
+
+    const del = await siteDELETE(
+      createMockRequest('http://localhost/api/sites/site-a', { method: 'DELETE' }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+    expect(del.status).toBe(403);
+    expect(docStore['sites/site-a']?.data).not.toBeNull();
+
+    // The same actor still administers the site — only destruction narrowed.
+    const patch = await sitePATCH(
+      createMockRequest('http://localhost/api/sites/site-a', {
+        method: 'PATCH',
+        body: { name: 'Renamed' },
+      }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+    expect(patch.status).toBe(200);
+  });
+
+  it('allows DELETE for a member who OWNS the site (self-serve owners are role member)', async () => {
+    authedKey('owner-uid', 'member', [siteScope('site-a', 'admin')], { sites: ['site-a'] });
+    seedSite('site-a', { owner: 'owner-uid' });
+
+    const res = await siteDELETE(
+      createMockRequest('http://localhost/api/sites/site-a', { method: 'DELETE' }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(docStore['sites/site-a']?.data).toBeNull();
+  });
+
+  it('allows a superadmin to delete a site they do not own', async () => {
+    authedKey('super-uid', 'superadmin', [siteScope('site-a', 'admin')]);
+    seedSite('site-a', { owner: 'someone-else' });
+
+    const res = await siteDELETE(
+      createMockRequest('http://localhost/api/sites/site-a', { method: 'DELETE' }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(docStore['sites/site-a']?.data).toBeNull();
+  });
 });

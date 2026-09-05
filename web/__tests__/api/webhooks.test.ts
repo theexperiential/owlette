@@ -1,6 +1,7 @@
 /** @jest-environment node */
 
 import { createMockRequest } from './helpers/utils';
+import { FieldValue } from 'firebase-admin/firestore';
 import {
   mocks,
   mockDbFactory,
@@ -154,7 +155,7 @@ describe('POST /api/webhooks', () => {
     expect(body.errors?.['body.events']?.[0]).toMatch(/unknown:.*not\.a\.real\.event/);
   });
 
-  it('201 returns signingSecret + stores plaintext secret on the doc', async () => {
+  it('201 returns signingSecret + keeps it OFF the client-readable webhook doc', async () => {
     const req = createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`, {
       method: 'POST',
       body: {
@@ -178,9 +179,17 @@ describe('POST /api/webhooks', () => {
     expect(body.events.sort()).toEqual(['deployment.failed', 'version.published']);
     expect(body.paused).toBe(false);
     expect(body.description).toBe('ci pager');
-    expect(mocks.set).toHaveBeenCalledTimes(1);
-    const stored = mocks.set.mock.calls[0]![0] as { signingSecret: string };
-    expect(stored.signingSecret).toBe(body.signingSecret);
+    // Two writes now: the secret to the server-only sibling
+    // (sites/{siteId}/webhook_secrets/{id}), then the webhook document itself.
+    expect(mocks.set).toHaveBeenCalledTimes(2);
+    const secretDoc = mocks.set.mock.calls[0]![0] as { signingSecret: string };
+    expect(secretDoc.signingSecret).toBe(body.signingSecret);
+    // The leak this closes: the webhook document is readable by any site member,
+    // so it must carry no secret material at all.
+    const webhookDoc = mocks.set.mock.calls[1]![0] as Record<string, unknown>;
+    expect(webhookDoc.signingSecret).toBeUndefined();
+    expect(webhookDoc.secret).toBeUndefined();
+    expect(webhookDoc.previousSigningSecret).toBeUndefined();
     expect(mockEmitMutation).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'webhook_mutated',
@@ -573,9 +582,19 @@ describe('POST /api/webhooks/{webhookId}/rotate-secret', () => {
     expect(typeof body.previousSecretValidUntil).toBe('string');
     expect(typeof body.rotatedAt).toBe('string');
 
-    const updatePayload = mocks.update.mock.calls[0]![0] as Record<string, unknown>;
-    expect(updatePayload.signingSecret).toBe(body.signingSecret);
-    expect(updatePayload.previousSigningSecret).toBe('whsec_OLD');
+    // Both writes are in ONE batch, so a partial rotation cannot leave the
+    // subscription signing with a secret the caller was never handed.
+    // batch.set/update take (ref, data) — the payload is the second argument.
+    const secretDoc = mocks.batchSet.mock.calls[0]![1] as Record<string, unknown>;
+    expect(secretDoc.signingSecret).toBe(body.signingSecret);
+    expect(secretDoc.previousSigningSecret).toBe('whsec_OLD');
+    // The rotation also HEALS the leak on this subscription: the legacy
+    // in-document fields are deleted, not overwritten.
+    const updatePayload = mocks.batchUpdate.mock.calls[0]![1] as Record<string, unknown>;
+    // Real FieldValue.delete() sentinels (DeleteTransform), not plain objects.
+    expect(updatePayload.signingSecret).toEqual(FieldValue.delete());
+    expect(updatePayload.previousSigningSecret).toEqual(FieldValue.delete());
+    expect(updatePayload.secret).toEqual(FieldValue.delete());
     expect(updatePayload.previousSecretValidUntil).toBeDefined();
     expect(mockEmitMutation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -751,15 +770,18 @@ describe('GET /api/webhooks/{webhookId}/deliveries/{deliveryId}', () => {
 
 describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
   it('creates a new pending delivery with retryOf pointer + fresh stripe signature', async () => {
-    // get 1: subscription (current secret). get 2: original delivery
-    // (canonicalBody + headers).
+    // get 1: subscription doc (no secret on it any more). get 2: the server-only
+    // secret sibling, which is now where the signing key comes from. get 3: the
+    // original delivery (canonicalBody + headers).
     mocks.get
       .mockResolvedValueOnce(
         docSnapshot(WEBHOOK, {
           url: 'https://ex.com/hook',
           events: ['version.published'],
-          signingSecret: 'whsec_CURRENT',
         }),
+      )
+      .mockResolvedValueOnce(
+        docSnapshot(WEBHOOK, { signingSecret: 'whsec_CURRENT' }),
       )
       .mockResolvedValueOnce(
         docSnapshot(DELIVERY, {
@@ -920,7 +942,8 @@ describe('WEBHOOK_MANAGE enforcement', () => {
     const res = await createPOST(req);
 
     expect(res.status).toBe(201);
-    expect(mocks.set).toHaveBeenCalledTimes(1);
+    // Secret document + webhook document.
+    expect(mocks.set).toHaveBeenCalledTimes(2);
   });
 
   it('lets an admin of the site rotate a secret', async () => {

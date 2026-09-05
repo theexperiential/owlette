@@ -21,6 +21,8 @@ export const mocks = {
   batchSet: jest.fn(),
   /** db.batch().delete() */
   batchDelete: jest.fn(),
+  /** Real WriteBatch has update(); rotate-secret batches a set + an update. */
+  batchUpdate: jest.fn(),
   /** db.batch().commit() */
   batchCommit: jest.fn().mockResolvedValue(undefined),
   /** collection().orderBy() — chainable */
@@ -95,9 +97,19 @@ export function mockDbFactory(): Record<string, unknown> {
     ),
     batch: () => ({
       set: mocks.batchSet,
+      update: mocks.batchUpdate,
       delete: mocks.batchDelete,
       commit: mocks.batchCommit,
     }),
+    /**
+     * Batched multi-document read. Real `getAll` preserves argument order and
+     * yields a non-existent snapshot for a missing document rather than omitting
+     * it, so callers can zip the results against their inputs by index — which is
+     * exactly what the webhook fan-out in lib/roostWebhooks.server.ts does.
+     * Delegates to each ref's own `get`, so it shares the `mocks.get` queue.
+     */
+    getAll: (...refs: Array<{ get: () => Promise<unknown> }>) =>
+      Promise.all(refs.map((ref) => ref.get())),
   };
 }
 

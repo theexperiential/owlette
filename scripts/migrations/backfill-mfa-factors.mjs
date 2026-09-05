@@ -53,7 +53,10 @@ const ROOT = join(__dirname, '..', '..');
 
 // firebase-admin lives in web/node_modules — no root-level dependency on it.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
-const admin = require('firebase-admin');
+// See the note in backfill-site-owner-membership.mjs: the root `firebase-admin`
+// namespace no longer carries .credential/.firestore in the installed version.
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getFirestore, FieldPath } = require('firebase-admin/firestore');
 
 const args = process.argv.slice(2);
 
@@ -393,7 +396,7 @@ async function scanUsers(db) {
     let query = db
       .collection('users')
       .select('email', 'mfaEnrolled', 'mfaFactors', 'backupCodes', 'deletedAt')
-      .orderBy(admin.firestore.FieldPath.documentId())
+      .orderBy(FieldPath.documentId())
       .limit(SCAN_PAGE_SIZE);
     if (cursor) query = query.startAfter(cursor);
     const snap = await query.get();
@@ -416,11 +419,11 @@ async function main() {
     );
   }
 
-  admin.initializeApp({
-    credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+  initializeApp({
+    credential: cert({ projectId, clientEmail, privateKey }),
     projectId,
   });
-  const db = admin.firestore();
+  const db = getFirestore();
 
   const users = await scanUsers(db);
   console.log(`scanned ${users.length} user document(s)`);

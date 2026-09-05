@@ -770,10 +770,15 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
       return false;
     }
 
-    const siteRef = doc(db, 'sites', siteId);
-    const siteSnap = await getDoc(siteRef);
+    // A live site OR a tombstone from a deleted one makes the id unavailable —
+    // createSite refuses retired ids, so reporting them as free would send the
+    // user through the form only to 409 on submit.
+    const [siteSnap, tombstoneSnap] = await Promise.all([
+      getDoc(doc(db, 'sites', siteId)),
+      getDoc(doc(db, 'site_ids', siteId)),
+    ]);
 
-    return !siteSnap.exists();
+    return !siteSnap.exists() && !tombstoneSnap.exists();
   };
 
   return { sites, loading, error, createSite, updateSite, deleteSite, checkSiteIdAvailability };

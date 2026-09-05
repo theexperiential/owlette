@@ -19,6 +19,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { WEBHOOK_SECRETS_COLLECTION } from '@/lib/webhookSecrets.server';
 
 import type { Firestore } from 'firebase-admin/firestore';
 
@@ -74,14 +75,15 @@ function resolveSubscription(
   if (data.paused === true || data.enabled === false) return null;
   const url = typeof data.url === 'string' ? data.url : '';
   if (!url) return null;
-  const secret =
+  // Legacy in-document secrets only — the current location is the server-only
+  // sibling, read separately below. A subscription with neither is skipped.
+  const legacySecret =
     typeof data.signingSecret === 'string' && data.signingSecret
       ? data.signingSecret
       : typeof data.secret === 'string' && data.secret
         ? data.secret
         : '';
-  if (!secret) return null;
-  return { id, url, secret };
+  return { id, url, secret: legacySecret };
 }
 
 export interface EmitRoostWebhookArgs {
@@ -112,8 +114,33 @@ export async function emitRoostWebhook(args: EmitRoostWebhookArgs): Promise<numb
       .where('events', 'array-contains', event)
       .get();
 
-    const subscribers = snap.docs
+    const candidates = snap.docs
       .map((doc) => resolveSubscription(doc.id, doc.data()))
+      .filter((sub): sub is ResolvedSubscription => sub !== null);
+    if (candidates.length === 0) return 0;
+
+    // Secrets live outside the webhook document (lib/webhookSecrets.server.ts).
+    // One batched read for the whole fan-out; the legacy in-document value is the
+    // fallback for subscriptions that predate the migration, and a subscription
+    // with no secret at all cannot be signed for, so it is dropped.
+    const secretSnaps = await db.getAll(
+      ...candidates.map((sub) =>
+        db
+          .collection('sites')
+          .doc(siteId)
+          .collection(WEBHOOK_SECRETS_COLLECTION)
+          .doc(sub.id),
+      ),
+    );
+    const subscribers = candidates
+      .map((sub, i) => {
+        const stored = secretSnaps[i]?.data();
+        const secret =
+          typeof stored?.signingSecret === 'string' && stored.signingSecret
+            ? stored.signingSecret
+            : sub.secret;
+        return secret ? { ...sub, secret } : null;
+      })
       .filter((sub): sub is ResolvedSubscription => sub !== null);
     if (subscribers.length === 0) return 0;
 

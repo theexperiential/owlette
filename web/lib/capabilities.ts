@@ -12,6 +12,12 @@ export const Capability = {
   UNINSTALL_TRIGGER: 'UNINSTALL_TRIGGER',
   PRESET_MANAGE: 'PRESET_MANAGE',
   SITE_MEMBER_MANAGE: 'SITE_MEMBER_MANAGE',
+  // Deleting the site itself, as distinct from administering it. Site-scoped but
+  // deliberately ABSENT from SITE_ADMIN_CAPABILITIES: an admin manages a site's
+  // members, machines and deployments; only the owner destroys it. Until per-site
+  // roles land, the owner short-circuit in authorizedSiteHandler is what resolves
+  // this to owner-or-superadmin — see dev/active/per-site-roles/.
+  SITE_DELETE: 'SITE_DELETE',
   WEBHOOK_MANAGE: 'WEBHOOK_MANAGE',
   SITE_LOGS_MANAGE: 'SITE_LOGS_MANAGE',
   TALON_MANAGE: 'TALON_MANAGE',
@@ -88,6 +94,8 @@ const SITE_ADMIN_CAPABILITIES: readonly Capability[] = [
   Capability.TALON_MANAGE,
   Capability.AGENT_TOKEN_REVOKE,
   Capability.ALERT_RULES_MANAGE,
+  // NOTE: SITE_DELETE is deliberately absent — see its definition above. Only the
+  // owner (via the ownership short-circuit) and superadmin destroy a site.
 ];
 
 const SUPERADMIN_CAPABILITIES: readonly Capability[] = Object.values(Capability);
@@ -107,6 +115,7 @@ const SITE_SCOPED_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   Capability.TALON_MANAGE,
   Capability.AGENT_TOKEN_REVOKE,
   Capability.ALERT_RULES_MANAGE,
+  Capability.SITE_DELETE,
 ]);
 
 export const RoleCapabilityMatrix: Readonly<Record<Role, readonly Capability[]>> = {

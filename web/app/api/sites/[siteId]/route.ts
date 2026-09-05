@@ -166,7 +166,11 @@ export const PATCH = authorizedSiteHandler<RouteParams>({
 });
 
 export const DELETE = authorizedSiteHandler<RouteParams>({
-  capability: Capability.SITE_MEMBER_MANAGE,
+  // SITE_DELETE, not SITE_MEMBER_MANAGE: destroying a site is the owner's call, not
+  // every site admin's. No role holds it in the matrix, so it resolves through the
+  // ownership short-circuit (owner) or the superadmin grant — which is the target
+  // semantics under per-site roles, reachable on today's data with no new machinery.
+  capability: Capability.SITE_DELETE,
   siteIdParam: 'path',
   targetKind: 'site',
   apiKeyPermission: 'admin',
@@ -188,6 +192,8 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
             auditActor: auditActor(ctx),
             endpoint: `/api/sites/${ctx.siteId}`,
             method: 'DELETE',
+            actor: ctx.actor,
+            correlationId: ctx.correlationId,
           },
           { siteId: ctx.siteId },
         );

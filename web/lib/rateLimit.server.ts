@@ -47,6 +47,8 @@ export const USER_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
   [CapabilityEnum.UNINSTALL_TRIGGER]: { perMinute: 30 },
   [CapabilityEnum.PRESET_MANAGE]: { perMinute: 60 },
   [CapabilityEnum.SITE_MEMBER_MANAGE]: { perMinute: 30 },
+  // Destructive and rare — matches MACHINE_REMOVE rather than the 30/min admin verbs.
+  [CapabilityEnum.SITE_DELETE]: { perMinute: 5 },
   [CapabilityEnum.WEBHOOK_MANAGE]: { perMinute: 30 },
   [CapabilityEnum.SITE_LOGS_MANAGE]: { perMinute: 30 },
   [CapabilityEnum.TALON_MANAGE]: { perMinute: 30 },
@@ -75,6 +77,7 @@ export const SYSTEM_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
   [CapabilityEnum.UNINSTALL_TRIGGER]: { perMinute: 150 },
   [CapabilityEnum.PRESET_MANAGE]: { perMinute: 300 },
   [CapabilityEnum.SITE_MEMBER_MANAGE]: { perMinute: 150 },
+  [CapabilityEnum.SITE_DELETE]: { perMinute: 25 },
   [CapabilityEnum.WEBHOOK_MANAGE]: { perMinute: 150 },
   [CapabilityEnum.SITE_LOGS_MANAGE]: { perMinute: 150 },
   [CapabilityEnum.TALON_MANAGE]: { perMinute: 150 },

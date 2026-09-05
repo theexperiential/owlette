@@ -9,9 +9,11 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import {
+  problem,
   problemFromError,
   problemNotFound,
   problemValidation,
+  ProblemType,
 } from '@/lib/apiErrors';
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedPlatformHandler, type PlatformHandlerContext } from '@/lib/authorizedHandler.server';
@@ -93,6 +95,20 @@ export const POST = authorizedPlatformHandler<RouteParams>({
             'body.siteIds': [
               'each entry must match site-id format (1-128 chars: letters, digits, underscore, hyphen)',
             ],
+          });
+        }
+        if (result.kind === 'owns_sites') {
+          // Mirrors cannot_remove_owner on the members endpoint: stripping an
+          // owner's membership would leave the site with nobody who can
+          // administer or delete it.
+          return problem({
+            type: ProblemType.Conflict,
+            title: 'cannot remove owned sites',
+            status: 409,
+            detail:
+              `user ${uid} owns ${result.ownedSiteIds.join(', ')}; transfer ownership before removing membership`,
+            instance: `/api/users/${uid}/remove-sites`,
+            code: 'cannot_remove_owner',
           });
         }
 

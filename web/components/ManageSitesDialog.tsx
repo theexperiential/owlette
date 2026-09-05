@@ -189,13 +189,11 @@ export function ManageSitesDialog({
   const handleDeleteSite = async () => {
     if (!siteToDelete) return;
 
-    if (sites.length === 1) {
-      toast.error('Cannot delete the last site');
-      setDeletingDialogOpen(false);
-      setSiteToDelete(null);
-      return;
-    }
-
+    // No "cannot delete the last site" guard. It existed only here, in the
+    // browser, so the API, the CLI and any script ignored it — a guard that reads
+    // as enforced and is not. Having zero sites is a supported state: the
+    // dashboard has a first-run empty state and every self-serve user starts
+    // there. Decided 2026-09-04; see dev/active/per-site-roles/.
     try {
       await onDeleteSite(siteToDelete);
       toast.success('Site deleted successfully!');
@@ -474,13 +472,12 @@ export function ManageSitesDialog({
                                 onClick={() => confirmDeleteSite(site.id)}
                                 aria-label={`delete ${site.name}`}
                                 className="h-7 w-7 p-0 text-muted-foreground hover:bg-muted hover:text-red-400 cursor-pointer"
-                                disabled={sites.length === 1}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>{sites.length === 1 ? 'cannot delete the last site' : 'delete site'}</p>
+                              <p>delete site</p>
                             </TooltipContent>
                           </Tooltip>
                         </div>

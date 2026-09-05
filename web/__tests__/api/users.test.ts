@@ -312,6 +312,10 @@ jest.mock('@/lib/firebase-admin', () => ({
     collectionGroup: (id: string) => makeCollectionGroupRef(id),
     runTransaction: mockRunTransaction,
     batch: makeBatch,
+    // removeSiteFromUser reads every named site in one batch to refuse
+    // stripping membership from a site the user owns.
+    getAll: (...refs: Array<{ get: () => Promise<unknown> }>) =>
+      Promise.all(refs.map((ref) => ref.get())),
   }),
   getAdminAuth: () => ({
     verifyIdToken: jest.fn().mockRejectedValue(new Error('n/a')),

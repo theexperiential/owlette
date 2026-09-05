@@ -46,7 +46,6 @@ async function seedWebhook(name = SEEDED_WEBHOOK.name, url = SEEDED_WEBHOOK.url)
     url,
     events: SEEDED_WEBHOOK.events,
     paused: false,
-    signingSecret: `whsec_${'deadbeef'.repeat(8)}`,
     createdAt: Timestamp.now(),
     updatedAt: Timestamp.now(),
     createdBy: 'super-uid',
@@ -114,7 +113,12 @@ test('creating a webhook writes Firestore doc and shows the signing secret', asy
   expect(data.url).toBe(newUrl);
   expect(data.paused).toBe(false);
   expect(data.events).toEqual(expect.arrayContaining(['machine.offline', 'deployment.failed']));
-  expect(data.signingSecret).toMatch(/^whsec_[0-9a-f]{64}$/);
+  // The secret is in the server-only sibling, never on this document.
+  expect(data.signingSecret).toBeUndefined();
+  const secretSnap = await db
+    .collection('sites').doc(SITE_ID)
+    .collection('webhook_secrets').doc(matching!.id).get();
+  expect(secretSnap.data()?.signingSecret).toMatch(/^whsec_[0-9a-f]{64}$/);
 });
 
 test('editing a webhook updates the Firestore URL', async ({ page }) => {

@@ -29,6 +29,7 @@ import {
   ProblemType,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { writeWebhookSecret } from '@/lib/webhookSecrets.server';
 import { checkIdempotency, saveIdempotency } from '@/lib/idempotency';
 import {
   collectFilteredPage,
@@ -155,13 +156,17 @@ export async function POST(request: NextRequest) {
       .collection('webhooks')
       .doc(webhookId);
 
+    // The secret goes to the server-only sibling, never onto the webhook
+    // document — that document is client-readable by any site member.
+    // See lib/webhookSecrets.server.ts.
+    await writeWebhookSecret(site.siteId, webhookId, signingSecret, null, db);
+
     await webhookRef.set({
       schemaVersion: 1,
       url: urlValidation.url,
       hostname: urlValidation.hostname,
       events: eventsValidation.events,
       ...(description !== undefined ? { description } : {}),
-      signingSecret,
       secretRotatedAt: null,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),

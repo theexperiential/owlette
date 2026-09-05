@@ -28,6 +28,7 @@ import {
   ProblemType,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { readWebhookSecrets } from '@/lib/webhookSecrets.server';
 import { checkIdempotency, saveIdempotency } from '@/lib/idempotency';
 
 import {
@@ -100,8 +101,11 @@ export async function POST(
     if (!webhookSnap.exists || !webhookData || webhookData.deletedAt) {
       return problemNotFound(`webhook ${webhookId} not found on site ${site.siteId}`);
     }
+    // Server-only sibling first; legacy in-document field as the pre-migration fallback.
+    const storedSecrets = await readWebhookSecrets(site.siteId, webhookId);
     const currentSecret =
-      typeof webhookData.signingSecret === 'string' ? webhookData.signingSecret : null;
+      storedSecrets.signingSecret ??
+      (typeof webhookData.signingSecret === 'string' ? webhookData.signingSecret : null);
     if (!currentSecret) {
       return problem({
         type: ProblemType.Internal,

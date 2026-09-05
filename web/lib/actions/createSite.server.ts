@@ -49,6 +49,7 @@ export type CreateSiteResult =
   | { kind: 'invalid_site_id'; reason: string }
   | { kind: 'invalid_name'; reason: string }
   | { kind: 'already_exists' }
+  | { kind: 'id_retired' }
   | {
       kind: 'created';
       siteId: string;
@@ -105,6 +106,14 @@ export async function createSite(
   const existing = await siteRef.get();
   if (existing.exists) {
     return { kind: 'already_exists' };
+  }
+
+  // A retired id is not free. Deleting a site leaves every member's
+  // `users/{uid}.sites[]` entry in place, so reusing the slug would hand the new
+  // site's data to the old site's members. Refused rather than silently reused.
+  const tombstone = await db.collection('site_ids').doc(input.siteId).get();
+  if (tombstone.exists) {
+    return { kind: 'id_retired' };
   }
 
   const nowDate = (input.now ?? (() => new Date()))();

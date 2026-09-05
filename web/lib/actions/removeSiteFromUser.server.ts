@@ -34,6 +34,7 @@ export type RemoveSiteFromUserResult =
   | { kind: 'not_found' }
   | { kind: 'invalid_format'; malformed: string[] }
   | { kind: 'too_many'; count: number; max: number }
+  | { kind: 'owns_sites'; ownedSiteIds: string[] }
   | {
       kind: 'updated';
       removedSiteIds: string[];
@@ -68,6 +69,21 @@ export async function removeSiteFromUser(
   const userSnap = await userRef.get();
   if (!userSnap.exists) {
     return { kind: 'not_found' };
+  }
+
+  // Refuse to strip membership from a site this user OWNS. Without this the
+  // superadmin path can leave a site with no owner at all — unreachable through
+  // the members endpoint, which returns 409 cannot_remove_owner for exactly this
+  // case (app/api/sites/[siteId]/members/[uid]/route.ts). Ownership must be
+  // transferred first. Reads are batched: one getAll over the named sites.
+  const siteSnaps = await db.getAll(
+    ...validatedSiteIds.map((id) => db.collection('sites').doc(id)),
+  );
+  const ownedSiteIds = siteSnaps
+    .filter((snap) => snap.exists && snap.data()?.owner === input.uid)
+    .map((snap) => snap.id);
+  if (ownedSiteIds.length > 0) {
+    return { kind: 'owns_sites', ownedSiteIds };
   }
 
   await userRef.update({

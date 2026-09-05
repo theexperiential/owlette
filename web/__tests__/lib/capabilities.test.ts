@@ -31,6 +31,7 @@ const SITE_SCOPED: Capability[] = [
   Capability.TALON_MANAGE,
   Capability.AGENT_TOKEN_REVOKE,
   Capability.ALERT_RULES_MANAGE,
+  Capability.SITE_DELETE,
 ];
 
 const GLOBAL_CAPABILITIES: Capability[] = ALL_CAPABILITIES.filter(
@@ -69,6 +70,7 @@ describe('Capability enum', () => {
         'UNINSTALL_TRIGGER',
         'PRESET_MANAGE',
         'SITE_MEMBER_MANAGE',
+        'SITE_DELETE',
         'WEBHOOK_MANAGE',
         'SITE_LOGS_MANAGE',
         'TALON_MANAGE',

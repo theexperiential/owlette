@@ -3307,8 +3307,11 @@ paths:
       tags: [Sites]
       summary: create a site
       description: |
-        Creates a top-level site owned by the caller. Requires a
-        superadmin caller; API-key callers must hold `site=*:admin`.
+        Creates a top-level site owned by the caller. Any authenticated,
+        active user may create a site — self-serve signup depends on it — so
+        there is no role requirement; API-key callers must hold `site=*:admin`.
+        Returns 409 `site_already_exists` for a live id, or `site_id_retired`
+        for one belonging to a deleted site (ids are not reusable).
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -3443,8 +3446,10 @@ paths:
       summary: delete a site
       description: |
         Deletes the top-level site document. Requires
-        `site=<siteId>:admin`. Subcollection cascade cleanup is deferred
-        from the MVP surface.
+        `site=<siteId>:admin`, AND the caller must be the site **owner** or a
+        superadmin — a site admin who does not own the site is refused. The id is
+        tombstoned on delete and cannot be reused. Subcollection cascade cleanup
+        is deferred from the MVP surface.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -7096,6 +7101,7 @@ paths:
         '401': { description: Unauthorized }
         '403': { description: Forbidden (not superadmin) }
         '404': { description: User not found }
+        '409': { description: User owns one or more of the named sites; transfer ownership first }
 
   # ──────────────────────────────────────────────────────────────────────
   # Site members (users-api / api-sprint wave 3 — track 3B)
