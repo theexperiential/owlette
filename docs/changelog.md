@@ -9,6 +9,12 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
+## [3.2.4] - 2026-09-05
+
+### changed
+
+- **internal cleanup only — no behaviour changes.** this release removes code that stopped being reachable when the python interface was replaced in 3.0.0, and folds several copy-pasted implementations into one each. the tkinter colour tables, window-title lookups and window-closing routine that served the old interface are gone, along with a handful of functions and parameters nothing had called since. the three near-identical screenshot pipelines, the token-cloning logic that existed in two modules, and the command-completion writers that differed only in a status word now each have a single implementation. agents on 3.2.3 gain nothing by updating; the value is in a smaller, clearer codebase for what comes next.
+
 ## [3.2.3] - 2026-08-30
 
 ### fixed
