@@ -441,7 +441,14 @@ def test_post_rename_realpath_catches_escape(tmp_path, monkeypatch):
         def fake_realpath(p, *args, **kwargs):
             s = str(p)
             # spoof ONLY the final target; leave extract_root alone or the compare never triggers.
-            if s.endswith('a.toe'):
+            # Gated on the file existing: since Python 3.10, pathlib.Path.resolve()
+            # delegates to os.path.realpath, so an ungated spoof leaks into
+            # DestinationAllowlist.validate() and rejects the target BEFORE the
+            # post-rename check this test exists to exercise (validate runs while
+            # the target does not exist yet; the post-rename check runs after it
+            # does). On 3.9 the gate is inert - only sync_assembler's own call on
+            # the renamed, now-existing file was ever spoofed.
+            if s.endswith('a.toe') and os.path.exists(s):
                 return os.path.join(outside_real, 'a.toe')
             return real_realpath(s, *args, **kwargs)
 
