@@ -685,7 +685,13 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
     }
   }, [userId, userSites, isSuperadmin]);
 
-  const createSite = async (siteId: string, name: string, _userId: string, timezone?: string): Promise<string> => {
+  const createSite = async (
+    siteId: string,
+    name: string,
+    _userId: string,
+    timezone?: string,
+    schedulesFollowSiteTime?: boolean,
+  ): Promise<string> => {
     if (!db) throw new Error('Firebase not configured');
 
     const { isValid, error } = await import('@/lib/validators').then(m => m.validateSiteId(siteId));
@@ -704,6 +710,11 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
           siteId,
           name,
           timezone: timezone || 'UTC',
+          // Omitted, never `false`, when the caller states nothing. The field is
+          // three-state and an absent flag means "never asked" — sending `false`
+          // would spend that state at creation and permanently suppress the
+          // opt-in banner for a site nobody ever asked.
+          ...(schedulesFollowSiteTime !== undefined ? { schedulesFollowSiteTime } : {}),
         }),
       });
     } catch (err: unknown) {

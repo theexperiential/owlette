@@ -20,12 +20,24 @@
  * need the standalone ScheduleEditor dialog (preset bar + "save schedule")
  * reached from the row's gear, not the inline ProcessDialog editor.
  *
- * TIMEZONE: do NOT frame the chip under the "configure schedule" title, or the
- * "times in …" label in the process dialog. The chip is labelled `source="site"`,
- * but the agent can never read the site document (firestore.rules scopes it to
- * its own machine subtree), so `site_timezone` is always None and every window
- * is evaluated on the machine's own local clock. Site-time evaluation is
- * designed, not wired. No timezone claim is spoken either way.
+ * SITE-TIME FLAG: `sites/{siteId}.schedulesFollowSiteTime` decides whose clock
+ * evaluates a launch window (agent support shipped in 3.2.3). Three states, and
+ * absent is a real one: absent = never asked, `false` = declined, `true` = site
+ * time. Only `true` renders the `source="site"` chip under the "configure
+ * schedule" title and swaps the copy to "times run on the site's clock";
+ * absent and `false` both keep "times run on each machine's own clock" byte for
+ * byte (lib/scheduleClockCopy).
+ *
+ * This scene pins the flag to FALSE on its own site doc (below) — it does NOT
+ * touch the shared fixture, where absent must keep meaning machine-local for
+ * every other scene. Two reasons. The frames then match the narration, which
+ * makes no timezone claim and is served by the machine-clock wording. And it
+ * keeps SiteTimeConfirmBanner off camera: that banner needs a site admin,
+ * `flag === undefined`, and at least one scheduled process — which b03's save
+ * creates — so on a flag-absent site it would pop in above the machines heading
+ * partway through, shift the layout under b03–b07, and print an amber "these
+ * machines run an agent older than 3.2.3" line naming the fixture's seeded
+ * 3.0.0 agents. Teaching that banner is a scripted beat, not a side effect.
  *
  * Run:  cd web && npm run videos -- --grep "episode 6"
  * Out:  dev/video-tutorials/footage/web/06-run-on-a-schedule.mp4
@@ -58,6 +70,14 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
       .collection('users')
       .doc(TEST_USERS.admin.uid)
       .set({ lastSiteId: ctx.siteId }, { merge: true });
+
+    // Declined, not absent — see the SITE-TIME FLAG note in the header. Written
+    // here and never in `seedScreenshotFixtures`, because absent is the state
+    // every other scene's frames were shot in.
+    await db
+      .collection('sites')
+      .doc(ctx.siteId)
+      .set({ schedulesFollowSiteTime: false }, { merge: true });
 
     // Pre-seed a process on lobby-display so b02 has something to "open for
     // edit" and b03+ has a row with a schedule gear.

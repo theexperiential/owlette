@@ -237,6 +237,99 @@ Status of the items below, after working the suggested order:
     Gap report for the implementing agent:
     `dev/active/site-admin-panel-access/REPORT.md`. ep14 stays on hold until
     that ships, then films against the real site-admin UI.
+- **2026-09-05 late — site-time wave 3a video slice (task 3.7 + 3b.2 audio):
+  SCRIPT/SCENE WORK DONE, BOTH CAPTURES AND THE REVOICE DELIBERATELY NOT RUN.**
+  * **3.7 (a)+(b) done.** The ep06 b06 NOTE (`scripts/06:58`) and the scene
+    header TIMEZONE block (`videos/06-run-on-a-schedule.video.ts:23-28`) both
+    asserted "site-time evaluation is designed but not wired / the agent can
+    never read the site document" — INVERTED by wave 2 (shipped inside the
+    3.2.3 installer) and wave 3a (`cac83105`). Both rewritten to the real
+    three-state contract: `sites/{siteId}.schedulesFollowSiteTime` absent =
+    never asked, `false` = declined, `true` = site time; only `true` renders
+    the `source="site"` chip or swaps the copy, and absent/`false` keep
+    "times run on each machine's own clock" byte for byte
+    (`web/lib/scheduleClockCopy.ts`).
+  * **The scene now PINS the flag to `false` on its own site doc** (never in
+    `seedScreenshotFixtures` — absent must keep meaning machine-local for every
+    other scene's frames). Reason, and it is the thing to know before
+    re-shooting any schedule episode: `SiteTimeConfirmBanner` renders for a
+    site admin whenever the flag is `undefined` AND the site has >=1 scheduled
+    process. ep06 b03 SAVES the process as scheduled on camera, so on a
+    flag-absent site the banner pops in above the machines heading partway
+    through, shifts the layout under b03-b07, and prints an amber "these
+    machines run an agent older than 3.2.3" line naming the fixture's seeded
+    `agent_version: '3.0.0'` machines. Unnarrated warning card in a tutorial.
+  * **WHAT ACTUALLY CHANGES ON CAMERA when ep06 is re-shot** (only reason the
+    re-capture is needed at all): the process dialog's schedule-config header.
+    It used to print `times in Los Angeles` whenever a site timezone existed —
+    asserting site-time evaluation the agent only performs for an opted-in site
+    — and now prints the honest machine-clock string. That is a b02 frame, and
+    the whole web scene re-records as one take. Everything else in ep06 is
+    byte-identical at flag `false`, INCLUDING the outside-window banner string
+    the scene exact-matches at `:227-231`.
+  * **(d) b06.5 "teach the flag" beat SKIPPED, deliberately.** It is not small:
+    a new beat means new VO, and a cold per-beat render breaks the continuous
+    take's timbre (see section 4), so the honest version is a whole-episode
+    re-render (~1,900 credits, unapproved) plus b07 -> b08 renumbering plus a
+    re-record. Left for rosco to price. If he wants it, shoot that version with
+    the flag ABSENT so the banner is on camera as the subject.
+  * **(c)+(e) CAPTURE NOT RUN - PRECONDITION FAILURE, and this is the finding.**
+    The checkout was clean at the start of this session and 15 minutes later
+    held three unrelated in-flight workstreams from concurrent sessions:
+    `desktop/` (task 3.4 - a `vitest run` fired in `desktop/` seconds before
+    the check), `web/components/CreateSiteDialog.tsx` + a new test + a
+    `useFirestore.ts` edit (that is task **3b.1**, landing live), and a large
+    roost project-distributions removal (deleted API routes, actions and hooks
+    with `RoostsPageClient.tsx` modified) plus a modified `firestore.rules`.
+    `npx tsc --noEmit` in `web/` is RED because of it (9 errors, all stale
+    `.next*/types/validator.ts` references to the deleted distribution routes;
+    zero in the video files). `npm run videos` wipes `.next-e2e` and rebuilds
+    from whatever the tree holds, so a capture now films a half-landed app -
+    and it seizes the primary display fullscreen for ~15 min while the
+    `desktop/` session is one step away from `npx tauri build` + launching the
+    app, which is exactly the concurrent-window trap that already cost ep15.
+    A worktree does not help: the shared resource is the one 1080p display.
+  * **3b.2 AUDIO ABORTED at the dry run, correctly - the changed-set is NOT
+    {b08}.** `python generate.py ../scripts/02-day-zero.md --changed --dry-run`
+    reports **{b01, b09}, 658 chars ~= 658 credits**, and b08 as *unchanged*.
+    Two separate causes, one of them a NEW PIPELINE TRAP:
+    - **`render-continuous.py` never writes `manifest.json`** (zero occurrences
+      of the word in the file). `generate.py --changed` diffs the script against
+      that manifest's recorded per-beat `text`, so every beat re-voiced through
+      the continuous path still carries its PRE-rewrite text there. ep02's
+      manifest still holds the retired b01 opener ("owlette holds the keys...")
+      and the retired superadmin b09 - both correct on disk, both stale in the
+      manifest. So `--changed` on ANY continuously re-voiced episode targets
+      beats that are already right, spends credits, and replaces continuous-take
+      audio with cold per-beat renders (timbre break + provenance goes MIXED).
+      Treat `--changed` as unsafe series-wide until `render-continuous.py`
+      writes the manifest text back; `--only-beat` is the safe targeting mode.
+    - b08's VOICEOVER text has not been rewritten yet, and it cannot be written
+      from here: its new copy depends on the CreateSiteDialog change (3b.1),
+      which is uncommitted and in flight in this same tree. Writing it now would
+      voice a dialog behavior that does not ship.
+  * **NEW, and independent of 3b.1: ep02 b08 is factually WRONG in shipped
+    product as of `cac83105`.** It says the dashboard reads this site's times
+    on the site clock "from schedule editors to log windows". On a site that has
+    not opted in - which is every existing site - the schedule editor now says
+    the opposite in as many words. The log-window half is still true. That is a
+    live inaccuracy in a released episode, not a 3b sequencing detail.
+  * **Gates run, all green (read-only):** `gen-assembly.py` (17 sheets + 17
+    manifests; the ONLY diff is ep06's b06 NOTE string - no beat timing moved),
+    `simulate-conform.py` **0 problems, 17/17, ep06 7 placed / gaps=none**,
+    `vet-recordings.py 06` **0 failures** (edges CLEAN at 36s/73s/117s, 7 beats
+    COVERED, 145.8s) - that is the EXISTING 2026-09-01 take, still intact and
+    still the one on disk. `npx eslint` clean on the scene file.
+  * **TO FINISH 3.7, once the tree is quiet and one writer owns it:**
+    `cd web && npm run videos -- --grep "run apps on a schedule"` (~10 min cold
+    rebuild + ~2.5 min take). Aside: `videos/README.md` still warns that test
+    titles carry pre-renumbering episode numbers - they no longer do, all 17
+    titles match their filenames now, so `--grep "episode 6"` also resolves
+    uniquely. Then `python assembly/gen-assembly.py`,
+    `python assembly/simulate-conform.py`, `python assembly/vet-recordings.py 06`,
+    and eyeball a b02 frame for the new machine-clock string. No Resolve work is
+    implied - ep06's b07 native insert does not exist yet and task 3.4 (desktop
+    schedule copy) is a separate session's.
 
 ---
 

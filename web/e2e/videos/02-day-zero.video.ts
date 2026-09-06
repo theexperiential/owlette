@@ -292,7 +292,13 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         await narrate(page, 'b09 tail — card advances to the download step', 10);
 
         // ── [b08] the site's clock (~26.7s) ──────────────────────────────────
-        // The create dialog never asks for a timezone; it takes the browser's.
+        // STALE PREMISE — the b08 voiceover still says the create dialog "never
+        // asks about the site's clock". Since wave 3b it does: it shows the
+        // detected browser timezone, lets it be changed, and writes it with
+        // `schedulesFollowSiteTime: true`, so a new site starts on site time.
+        // Manage sites is now where you CHANGE that clock, not where you first
+        // set it. The revoice + re-capture is task 3b.2 of
+        // dev/active/site-time-schedules; the beat below is unchanged until then.
         await clickWithCursor(page, page.getByTestId('site-switcher-trigger'));
         await clickWithCursor(page, page.getByRole('menuitem', { name: /manage sites/i }));
         const manageDialog = page.getByRole('dialog');

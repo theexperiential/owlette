@@ -3,8 +3,10 @@
  *
  * Superadmin: site switcher → "manage sites" → "new site" → custom site ID + name →
  * submit. Verifies the "created successfully" toast, the site appearing in the switcher
- * dropdown, and sites/{id} in Firestore with owner set to the creator's uid and a
- * populated timezone.
+ * dropdown, and sites/{id} in Firestore with owner set to the creator's uid, a
+ * populated timezone, and `schedulesFollowSiteTime: true` — new sites are born on site
+ * time (wave 3b), and this is the only end-to-end proof that the dialog's flag survives
+ * the hook, the POST body and the create action into the document.
  *
  * Edge case: reusing an existing site ID flips the availability indicator to "taken",
  * surfaces the error text, and keeps the submit button disabled.
@@ -56,6 +58,10 @@ test('superadmin can create a new site via the switcher', async ({ page }) => {
   await createDialog.getByRole('button', { name: /customize site id/i }).click();
   await createDialog.locator('#site-id').fill(newSiteId);
 
+  // The detected browser timezone is shown before anything is written — it is
+  // the clock the new site's schedules will be read against.
+  await expect(createDialog.getByTestId('create-site-timezone')).not.toBeEmpty();
+
   const submit = createDialog.getByRole('button', { name: /^create site$/i });
   await expect(submit).toBeEnabled({ timeout: 5_000 });
   await submit.click();
@@ -79,6 +85,9 @@ test('superadmin can create a new site via the switcher', async ({ page }) => {
   expect(data.owner).toBe('super-uid');
   expect(typeof data.timezone).toBe('string');
   expect(data.timezone.length).toBeGreaterThan(0);
+  // Born opted in, and never with the flag alone: `true` without a timezone is
+  // the one combination the site-time contract refuses.
+  expect(data.schedulesFollowSiteTime).toBe(true);
 });
 
 test('create-site blocks submission when site ID is already taken', async ({ page }) => {

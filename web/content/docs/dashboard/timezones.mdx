@@ -11,7 +11,7 @@ description: "Owlette tracks three independent timezone actors: each user picks 
 |-------|--------|-----------|------------------------------|
 | **machine** | The agent's own Windows local timezone | Agent writes `machine_timezone_iana` into the machine's Firestore doc on every heartbeat | Always for scheduled reboots. For process launch windows too, unless the site has opted into site time |
 | **user** | The dashboard viewer's preferred IANA timezone | User sets `timezone` in Preferences (default: browser-detected) | Never — display only |
-| **site** | The site's configured timezone | Site admin sets it in Manage Sites | Process launch windows, but only once the site turns on `schedulesFollowSiteTime` (see [process schedules](#process-schedules)) |
+| **site** | The site's configured timezone | Set when the site is created (detected from the creator's browser, editable there) and changeable afterwards in Manage Sites | Process launch windows, but only once the site turns on `schedulesFollowSiteTime` (see [process schedules](#process-schedules)) |
 
 All three are stored as IANA identifiers (e.g. `America/New_York`, `Europe/Berlin`). There is no "offset" or "abbreviation" field — offsets are resolved from the IANA name so that DST transitions work correctly.
 
@@ -63,15 +63,15 @@ All three are wall-clock schedules, not absolute UTC instants. Changing your das
 
 ## process schedules
 
-By default a process window of "09:00-17:00 Mon-Fri" means 09:00 on the machine running it — a fleet spread across five cities opens at five different absolute instants. A site can opt out of that and have every one of its machines evaluate process windows against the site's own timezone instead.
+A process window of "09:00-17:00 Mon-Fri" means 09:00 on whichever clock its site follows. Sites created since site time shipped follow the site's own timezone — the create-site dialog detects it from your browser and you can change it there before the site exists. Sites created before it evaluate windows on each machine's own clock, so a fleet spread across five cities opens at five different absolute instants, until a site admin answers the dashboard's one-time prompt.
 
 The switch is a single field on the site, `schedulesFollowSiteTime`, and it has three states rather than two:
 
 | state | what the machines do | how a site gets here |
 |-------|----------------------|----------------------|
-| **absent** | Machine-local windows — the original behavior, unchanged | Every site that predates site time. Site admins see a one-time banner on the dashboard asking which clock the site should use; it appears only when the site actually has a scheduled process |
+| **absent** | Machine-local windows — the original behavior, unchanged | Every site that predates site time (plus the rare new site whose browser reported no timezone at all). Site admins see a one-time banner on the dashboard asking which clock the site should use; it appears only when the site actually has a scheduled process |
 | **`false`** | Machine-local windows | The site was asked and kept machine clocks. Touring rigs and multi-city fleets usually want this |
-| **`true`** | Every machine evaluates its process windows in the site's timezone | The site was asked and chose site time, or an admin turned it on afterwards |
+| **`true`** | Every machine evaluates its process windows in the site's timezone | The site was created after site time shipped — the create-site dialog writes this flag and the timezone together — or it was asked and chose site time, or an admin turned it on afterwards |
 
 Absent and `false` behave identically on the machines. They are stored differently so the dashboard can tell whether the site has answered yet — that is the only thing the banner's presence depends on.
 
@@ -99,4 +99,5 @@ It does not rewrite saved schedule entries. The same stored "09:00" is simply re
 - `web/contexts/AuthContext.tsx` — `UserPreferences.timezone` / `timeDisplayMode` / `timeFormat`
 - `web/app/api/agent/site/route.ts` — the projection agents read; gates `timezone` on `schedulesFollowSiteTime === true`
 - `web/lib/actions/updateSite.server.ts` — refuses `true` for a site that would end the write without a timezone
+- `web/components/CreateSiteDialog.tsx` — surfaces the detected browser timezone and creates the site with it and `schedulesFollowSiteTime: true` in one write
 - Agent-side: `machine_timezone_iana` is written alongside other heartbeat metrics; the cached schedule timezone is published in `service_status.json` as `firebase.schedule_timezone`

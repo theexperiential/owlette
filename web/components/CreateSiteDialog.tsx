@@ -9,6 +9,7 @@ import { toast } from '@/lib/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { validateSiteId, generateRandomSiteId } from '@/lib/validators';
 import { getBrowserTimezone } from '@/lib/timeUtils';
+import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { CheckCircle2, XCircle, Loader2, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { db } from '@/lib/firebase';
@@ -17,7 +18,13 @@ import { doc, getDoc } from 'firebase/firestore';
 interface CreateSiteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreateSite: (siteId: string, siteName: string, userId: string, timezone?: string) => Promise<string>;
+  onCreateSite: (
+    siteId: string,
+    siteName: string,
+    userId: string,
+    timezone?: string,
+    schedulesFollowSiteTime?: boolean,
+  ) => Promise<string>;
   onSiteCreated?: (siteId: string) => void;
 }
 
@@ -33,6 +40,9 @@ export function CreateSiteDialog({
   const [newSiteName, setNewSiteName] = useState('');
   const [newSiteId, setNewSiteId] = useState('');
   const [customIdOpen, setCustomIdOpen] = useState(false);
+  const [timezone, setTimezone] = useState('');
+  const [detectedTimezone, setDetectedTimezone] = useState('');
+  const [timezoneOpen, setTimezoneOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [availabilityStatus, setAvailabilityStatus] = useState<AvailabilityStatus>('idle');
   const [validationError, setValidationError] = useState<string>('');
@@ -43,6 +53,15 @@ export function CreateSiteDialog({
       setNewSiteId(generateRandomSiteId());
       setNewSiteName('');
       setCustomIdOpen(false);
+      // Detected here rather than in a useState initializer so a dialog kept
+      // mounted across a timezone change (laptop moved, OS setting edited)
+      // re-reads it on the next open instead of serving a stale zone. Kept
+      // alongside the working value so the "from your browser" provenance stops
+      // being claimed the moment the operator overrides it.
+      const detected = getBrowserTimezone();
+      setDetectedTimezone(detected);
+      setTimezone(detected);
+      setTimezoneOpen(false);
       setAvailabilityStatus('idle');
       setValidationError('');
     }
@@ -147,8 +166,22 @@ export function CreateSiteDialog({
 
     setIsCreating(true);
     try {
-      const browserTimezone = getBrowserTimezone();
-      const createdSiteId = await onCreateSite(newSiteId, newSiteName, user.uid, browserTimezone);
+      // New sites start on site time (dev/active/site-time-schedules, wave 3b):
+      // the flag rides along with the timezone it depends on, in one write.
+      //
+      // The two ALWAYS travel together. `schedulesFollowSiteTime: true` on a site
+      // with no timezone is a state the server refuses on update and that would
+      // silently mean UTC on create, so a zone we could not resolve drops the
+      // flag entirely rather than failing the create: the site is then simply
+      // "never asked" — the legacy state — and the dashboard banner asks later.
+      const resolvedTimezone = timezone.trim();
+      const createdSiteId = await onCreateSite(
+        newSiteId,
+        newSiteName,
+        user.uid,
+        resolvedTimezone || undefined,
+        resolvedTimezone ? true : undefined,
+      );
       toast.success(`Site "${newSiteName}" created successfully!`);
       setNewSiteId('');
       setNewSiteName('');
@@ -260,6 +293,52 @@ export function CreateSiteDialog({
                   {getAvailabilityIcon()}
                 </div>
               </div>
+            )}
+          </div>
+
+          {/* Detected timezone, shown read-only behind the same disclosure
+              idiom as the site ID: it is a decision the browser can make for
+              the operator, not one worth a required field. Editing it here is
+              the only chance to get it right before the first schedule is
+              written, since the site is created opted into site time. */}
+          <div className="space-y-2">
+            {/* flex-wrap, unlike the site ID row above: an IANA name plus its
+                provenance is long enough to overflow a 390px dialog. */}
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>site timezone:</span>
+              <span data-testid="create-site-timezone" className="font-mono text-accent-cyan">
+                {timezone || 'not detected'}
+              </span>
+              {timezone && timezone === detectedTimezone && <span>(from your browser)</span>}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              {timezone
+                ? 'scheduled processes at this site run on this clock, on every machine.'
+                : 'we could not read a timezone from your browser — pick one below to run this site’s schedules on one clock, or leave it and each machine keeps its own.'}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setTimezoneOpen(!timezoneOpen)}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-accent-cyan transition-colors cursor-pointer"
+            >
+              {timezoneOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              change timezone
+            </button>
+
+            {timezoneOpen && (
+              <>
+                {/* The read-only row above is the visible label; the select
+                    still needs one of its own to have an accessible name. */}
+                <Label htmlFor="site-timezone" className="sr-only">site timezone</Label>
+                <TimezoneSelect
+                  id="site-timezone"
+                  value={timezone}
+                  onValueChange={setTimezone}
+                  className="border-border bg-background text-white"
+                />
+              </>
             )}
           </div>
         </div>

@@ -277,7 +277,22 @@ Gaps, in order:
    webhooks page. Bonus finding filed from that investigation:
    sync_state.list_pending_distributions() has no production caller — interrupted
    syncs resume only on server re-dispatch, not at agent startup.
-8. **NEW (rewrite wave, 2026-08-25): the schedule editor asserts site-time evaluation
+8. **SHIPPED (2026-09-05) — site time is wired, opt-in, and the copy now tracks it.**
+   The recommendation below was approved and built as `dev/active/site-time-schedules`:
+   `sites/{siteId}.schedulesFollowSiteTime` (three states — absent = never asked,
+   `false` = declined, `true` = site time), `/api/agent/site` returns the timezone only
+   for `true`, the agent caches it and refreshes every 900s (in the 3.2.3 installer,
+   promoted on dev and prod), a dashboard banner asks each existing site once, and new
+   sites are created opted in. Every schedule surface reads the flag: `true` shows the
+   `source="site"` chip and "times run on the site's clock", absent and `false` keep
+   "times run on each machine's own clock" byte for byte, which is the state every
+   recorded frame was shot in. Scheduled REBOOTS stay machine-local by decision (D2).
+   FOOTAGE STILL OWED: ep06 re-capture (its scene now pins the flag `false`) and the
+   ep02 b08 revoice — the create dialog no longer "never asks about the site's clock",
+   it surfaces the detected timezone and writes it with the flag. Nothing below is
+   actionable any more; it is kept as the decision trail.
+   ---
+   ORIGINAL (rewrite wave, 2026-08-25): **the schedule editor asserts site-time evaluation
    the agent does not perform.** The dialog shows a timezone chip labelled `source="site"`
    (ScheduleEditor.tsx:493-496) and evaluates its own outside-window banner in the site
    timezone (:663), but the agent evaluates every window machine-local:
@@ -321,13 +336,17 @@ Gaps, in order:
    audit-event (deliberate prior non-transactional design — our only production
    trigger is now removed); field validations now run before the challenge
    (immaterial behind session + IP limits, but a real ordering change).
-   **DECIDED (user, 2026-08-25): relabel now, wire later** — the ScheduleEditor chip is
+   **DECIDED (user, 2026-08-25): relabel now, wire later** — [belongs to item 8; kept
+   here where it was filed] the ScheduleEditor chip is
    replaced with "times run on each machine's own clock", the outside-window banner is
    reworded as a prediction (still evaluated in site tz — the best predictor, since
    machines live at the site), and docs/dashboard/timezones.mdx row corrected. Wiring
    real site-time evaluation (timezone field on /api/agent/site + dropping the agent's
    name-only guard) is a PLANNED FEATURE needing its own rollout — it flips schedule
    behavior fleet-wide for any site whose timezone differs from its machines' clocks.
+   **The "later" happened: shipped 2026-09-05, opt-in per site — see item 8's header.**
+   The relabelled machine-clock strings survive verbatim as the absent/`false` copy, so
+   no frame shot against them went stale.
 
 ## Execution order (per the playbook's §6 repair loop)
 
