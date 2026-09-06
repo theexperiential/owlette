@@ -27,6 +27,14 @@ export interface ServiceStatusFile {
      * never the only thing a surface can say about the site.
      */
     site_name?: string
+    /**
+     * IANA zone the SITE evaluates process launch windows in, published since
+     * agent 3.2.3. Empty whenever windows follow this machine's own clock —
+     * the site never opted in, opted back out, or has no timezone set — so it
+     * is a three-state field collapsed to two on purpose: only a non-empty
+     * value may claim a clock other than this machine's.
+     */
+    schedule_timezone?: string
     last_heartbeat?: number
   }
   health?: {
@@ -111,6 +119,29 @@ export function siteNameOf(
   const published = statusFile?.firebase
   if (published?.site_name && published.site_id === site) return published.site_name
   return site
+}
+
+/**
+ * The clock this site's process launch windows are evaluated in, or `''` for
+ * this machine's own clock (plan decision D1 — absent and opted-out are the
+ * same legacy behaviour, and scheduled REBOOTS stay machine-local either way).
+ *
+ * Site-id guarded exactly like `siteNameOf`, and for the same reason: config.json
+ * is rewritten first on a join or a leave, so until the service's next status
+ * write the file still carries the zone of the site this machine just left.
+ * Naming a foreign site's clock on a schedule editor would be worse than the
+ * legacy wording, which is always true of the machine in front of the operator.
+ */
+export function scheduleTimezoneOf(
+  config: OwletteConfig | null,
+  statusFile: ServiceStatusFile | null,
+): string {
+  const site = siteIdOf(config, statusFile)
+  const published = statusFile?.firebase
+  if (published?.schedule_timezone && published.site_id === site) {
+    return published.schedule_timezone
+  }
+  return ''
 }
 
 /**

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ScheduleEditor } from '@/components/ScheduleEditor'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ScheduleBlock } from '@/lib/owletteConfig'
+import { scheduleTimezoneOf, type ServiceStatusFile } from '@/lib/serviceHealth'
 
 /**
  * Copied verbatim from a live `config.json` on a paired machine (the `touch`
@@ -22,13 +23,19 @@ const WEB_AUTHORED_COLOURED: ScheduleBlock[] = [
   },
 ]
 
-function setup(schedules: ScheduleBlock[] | null = null) {
+function setup(schedules: ScheduleBlock[] | null = null, scheduleTimezone = '') {
   const onSave = vi.fn()
   const onClose = vi.fn()
 
   render(
     <TooltipProvider>
-      <ScheduleEditor open schedules={schedules} onClose={onClose} onSave={onSave} />
+      <ScheduleEditor
+        open
+        schedules={schedules}
+        scheduleTimezone={scheduleTimezone}
+        onClose={onClose}
+        onSave={onSave}
+      />
     </TooltipProvider>,
   )
 
@@ -160,6 +167,49 @@ describe('what gets written', () => {
     ])
 
     expect(save()).toStrictEqual([{ days: ['mon'], ranges: [{ start: '09:00', stop: '17:00' }] }])
+  })
+})
+
+describe('which clock the windows follow', () => {
+  /**
+   * FROZEN. This is the sentence every recorded walkthrough frames, and it is
+   * what an operator sees on a site that never opted into site time — the only
+   * state the fleet has ever been in. Captured from the component BEFORE the
+   * site-time branch was added; if a refactor rewrites it, this fails.
+   */
+  const MACHINE_CLOCK_COPY =
+    "the service runs this process during these windows and stops it outside them. times run on this machine's own clock."
+
+  /** The dialog's description line, whitespace exactly as rendered. */
+  function description(): string {
+    return document.querySelector('[data-slot="dialog-description"]')?.textContent ?? ''
+  }
+
+  it('names this machine when the site publishes no schedule timezone', () => {
+    setup(null)
+
+    expect(description()).toBe(MACHINE_CLOCK_COPY)
+  })
+
+  it('names the site clock once the service publishes one', () => {
+    setup(null, 'America/New_York')
+
+    expect(description()).toBe(
+      "the service runs this process during these windows and stops it outside them. times run on the site's clock (New York).",
+    )
+  })
+
+  it('falls back to the machine when a zone belongs to a site this machine has left', () => {
+    // Through the real guard, not a hand-made `''`: the status file still carries
+    // the old site's zone for a moment after config.json is rewritten, and that
+    // window is exactly when a mislabelled schedule would be authored.
+    const stale: ServiceStatusFile = {
+      firebase: { site_id: 'studio', schedule_timezone: 'America/New_York' },
+    }
+
+    setup(null, scheduleTimezoneOf({ firebase: { enabled: true, site_id: 'gallery' } }, stale))
+
+    expect(description()).toBe(MACHINE_CLOCK_COPY)
   })
 })
 

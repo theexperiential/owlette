@@ -25,7 +25,7 @@ import { useOwletteConfig } from '@/hooks/useOwletteConfig'
 import { useRestartPrompt } from '@/hooks/useRestartPrompt'
 import { useServiceHealth } from '@/hooks/useServiceHealth'
 import { useSidebarLayout } from '@/hooks/useSidebarLayout'
-import { isPaired, siteNameOf } from '@/lib/serviceHealth'
+import { isPaired, scheduleTimezoneOf, siteNameOf } from '@/lib/serviceHealth'
 import { classifyDrop, toProcessEntry, type ProcessEntryDraft } from '@/lib/dropClassifier'
 import {
   cardBlockedReason,
@@ -142,6 +142,11 @@ function App() {
 
   // Operator-facing label; logs and config still carry the id.
   const siteLabel = siteNameOf(config.config, health.statusFile)
+
+  // Which clock the schedule editor may name, `''` for this machine's own. Same
+  // site-id guard as the label above: a zone published for a site this machine
+  // has left must not survive into the copy.
+  const scheduleTimezone = scheduleTimezoneOf(config.config, health.statusFile)
 
   /** Drives leave-vs-join in the menu, and the footer's `join site` button. */
   const paired = isPaired(config.config) === true
@@ -526,6 +531,7 @@ function App() {
                     setSchedules(process, schedules),
                   )
                 }
+                scheduleTimezone={scheduleTimezone}
                 onPriority={(priority: Priority) =>
                   editSelected('could not change the priority', (process) =>
                     setPriority(process, priority),

@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ScheduleBlock } from '@/lib/owletteConfig'
+import { scheduleClockDescription } from '@/lib/scheduleClockCopy'
 import { BLOCK_COLORS, DEFAULT_SCHEDULE } from '@/lib/scheduleDefaults'
 
 /**
@@ -408,6 +409,12 @@ interface ScheduleEditorProps {
   open: boolean
   /** Null, absent, or empty seeds the web's default. */
   schedules: ScheduleBlock[] | null | undefined
+  /**
+   * The site's clock, from `scheduleTimezoneOf` — `''` (the default) whenever
+   * these windows are evaluated on this machine's own clock, which is every
+   * site that has not opted into site time. Copy only; nothing here evaluates.
+   */
+  scheduleTimezone?: string
   onClose: () => void
   /** Only fires on `save schedule`. */
   onSave: (blocks: ScheduleBlock[]) => void
@@ -418,7 +425,13 @@ interface ScheduleEditorProps {
  * dialog) so the draft reseeds every time and any dismissal discards it, leaving
  * `config.json` untouched.
  */
-export function ScheduleEditor({ open, schedules, onClose, onSave }: ScheduleEditorProps) {
+export function ScheduleEditor({
+  open,
+  schedules,
+  scheduleTimezone = '',
+  onClose,
+  onSave,
+}: ScheduleEditorProps) {
   const [blocks, setBlocks] = useState<ScheduleBlock[]>(() => seedBlocks(schedules))
 
   const handleSave = () => {
@@ -447,15 +460,14 @@ export function ScheduleEditor({ open, schedules, onClose, onSave }: ScheduleEdi
         </DialogHeader>
 
         <div className="flex min-h-0 flex-col gap-4">
-          <DialogDescription>
-            {/* Machine-local is the truth: the agent's site_timezone is never
-                populated in production (deferred by design — see
-                firebase_client._fetch_site_name_from_api and drift-audit item 8),
-                so windows always run on this machine's clock. Mirrors the web
-                editor's relabel in cabdc2cf. */}
-            the service runs this process during these windows and stops it outside them. times
-            run on this machine&apos;s own clock.
-          </DialogDescription>
+          {/* Which clock times these windows is the site's call, resolved by the
+              service and published as `firebase.schedule_timezone` — a zone name
+              only when the site opted in (`sites/{siteId}.schedulesFollowSiteTime`,
+              agent support since 3.2.3), `''` otherwise. Empty keeps the
+              machine-clock sentence BYTE FOR BYTE: that is the state every
+              recorded tutorial frame was shot in, and the state of every site
+              that has not answered the dashboard's banner. */}
+          <DialogDescription>{scheduleClockDescription(scheduleTimezone)}</DialogDescription>
 
           <div className="space-y-3 rounded-lg border border-blue-600/30 bg-blue-950/10 p-3">
             <div className="flex items-center gap-2">

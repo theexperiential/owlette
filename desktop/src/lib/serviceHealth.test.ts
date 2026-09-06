@@ -4,6 +4,7 @@ import {
   deriveFooterState,
   footerSentence,
   isPaired,
+  scheduleTimezoneOf,
   siteIdOf,
   siteNameOf,
   type FooterState,
@@ -164,6 +165,41 @@ describe('site name', () => {
 
   it('trusts the status file before config.json has been read', () => {
     expect(siteNameOf(null, named)).toBe('TEC')
+  })
+})
+
+describe('schedule timezone', () => {
+  const optedIn: ServiceStatusFile = {
+    ...connected,
+    firebase: { ...connected.firebase, schedule_timezone: 'America/New_York' },
+  }
+
+  it('takes the zone the service published for this site', () => {
+    expect(scheduleTimezoneOf(joined, optedIn)).toBe('America/New_York')
+  })
+
+  it('reads it before config.json has landed, like the site name does', () => {
+    expect(scheduleTimezoneOf(null, optedIn)).toBe('America/New_York')
+  })
+
+  it('means this machine\'s own clock whenever the site published nothing', () => {
+    // Opted out, never asked, and an agent too old to publish the field at all
+    // are one state to every surface: the legacy machine-local wording.
+    expect(scheduleTimezoneOf(joined, connected)).toBe('')
+    expect(
+      scheduleTimezoneOf(joined, {
+        firebase: { site_id: 'default_site', schedule_timezone: '' },
+      }),
+    ).toBe('')
+    expect(scheduleTimezoneOf(joined, null)).toBe('')
+    expect(scheduleTimezoneOf(null, null)).toBe('')
+  })
+
+  it('ignores a zone published for a site this machine has left', () => {
+    // The same window between a join/leave rewriting config.json and the
+    // service's next status write that `siteNameOf` guards. Naming another
+    // site's clock here would mislabel every schedule in the editor.
+    expect(scheduleTimezoneOf({ firebase: { enabled: true, site_id: 'studio' } }, optedIn)).toBe('')
   })
 })
 

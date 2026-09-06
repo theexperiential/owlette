@@ -118,6 +118,12 @@ interface ProcessDetailProps {
   onLaunchMode: (mode: LaunchMode) => void
   /** Persist the schedule windows authored in the editor. */
   onSchedules: (schedules: ScheduleBlock[]) => void
+  /**
+   * The site's clock for launch windows, or `''` for this machine's own —
+   * passed straight to the schedule editor, which is the only surface that
+   * names a clock. Nothing here evaluates a window; the service does that.
+   */
+  scheduleTimezone?: string
   onPriority: (priority: Priority) => void
   onVisibility: (visibility: Visibility) => void
   onRestart: () => void
@@ -146,6 +152,7 @@ export function ProcessDetail({
   onSave,
   onLaunchMode,
   onSchedules,
+  scheduleTimezone = '',
   onPriority,
   onVisibility,
   onRestart,
@@ -795,6 +802,7 @@ export function ProcessDetail({
         <ScheduleEditor
           open
           schedules={process.schedules}
+          scheduleTimezone={scheduleTimezone}
           onClose={() => setEditingSchedule(false)}
           onSave={onSchedules}
         />

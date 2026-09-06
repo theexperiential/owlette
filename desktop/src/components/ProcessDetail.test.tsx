@@ -30,6 +30,7 @@ interface Options {
   status?: ProcessStatus
   startedAt?: number | null
   sections?: Partial<DetailSections>
+  scheduleTimezone?: string
 }
 
 function setup(process: ProcessEntry = base, options: Options = {}) {
@@ -52,6 +53,7 @@ function setup(process: ProcessEntry = base, options: Options = {}) {
           onSave={onSave}
           onLaunchMode={onLaunchMode}
           onSchedules={onSchedules}
+          scheduleTimezone={options.scheduleTimezone}
           onPriority={vi.fn()}
           onVisibility={vi.fn()}
           onRestart={onRestart}
@@ -317,6 +319,29 @@ describe('schedules', () => {
 
     rerender({ ...base, launch_mode: 'scheduled' })
     expect(screen.getByTestId('edit-schedule')).toBeTruthy()
+  })
+
+  it('hands the editor the clock the service published for this site', () => {
+    // The pane is where the zone arrives from App; dropping it here would leave
+    // an opted-in site reading "this machine's own clock" in the one dialog
+    // that authors the windows.
+    setup({ ...base, launch_mode: 'scheduled' }, { scheduleTimezone: 'Europe/Berlin' })
+
+    fireEvent.click(screen.getByTestId('edit-schedule'))
+
+    expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
+      "the service runs this process during these windows and stops it outside them. times run on the site's clock (Berlin).",
+    )
+  })
+
+  it('leaves the editor on the machine clock when no site clock was published', () => {
+    setup({ ...base, launch_mode: 'scheduled' })
+
+    fireEvent.click(screen.getByTestId('edit-schedule'))
+
+    expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
+      "the service runs this process during these windows and stops it outside them. times run on this machine's own clock.",
+    )
   })
 
   it('stores the windows authored from an unscheduled entry without switching mode', () => {
