@@ -331,7 +331,16 @@ agent/
 │   ├── mcp_tools.py               # Cortex AI tool implementations
 │   ├── configure_site.py          # Site join/leave device-code pairing flow
 │   ├── installer_utils.py         # Remote deployment handler
-│   ├── project_utils.py           # Project distribution handler
+│   ├── command_router.py          # Command dispatch (fast lane / slow worker)
+│   ├── sync_commands.py           # roost handlers: sync_pull, cancel_sync, rollback
+│   ├── sync_version.py            # roost version fetch, validation, diff
+│   ├── sync_downloader.py         # roost chunk download + SHA-256 verification
+│   ├── sync_assembler.py          # roost atomic file assembly + ACL hardening
+│   ├── sync_state.py              # roost sqlite state (resume, pinning)
+│   ├── sync_scrub.py              # roost content-store cleanup
+│   ├── destination_allowlist.py   # roost write-destination gate (fail-closed)
+│   ├── roost_kill_switch.py       # roost per-site emergency stop
+│   ├── project_utils.py           # legacy by-URL distribution handler (pre-roost)
 │   └── registry_utils.py          # Windows registry operations
 ├── tests/                         # pytest tests
 ├── config/                        # Configuration (gitignored)

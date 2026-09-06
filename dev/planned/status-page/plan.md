@@ -47,7 +47,7 @@ record component ids + status update endpoint details in `reference/instatus-con
 
 **duration**: ~2 days. all code work; depends on wave 1 reference doc landing.
 
-Public API W5.1 has landed the autonomous foundation early: `web/lib/healthChecks.server.ts`, `web/lib/instatusClient.ts`, `web/app/api/cron/status-ping/route.ts`, focused tests, and `docs/api/status-uptime.md`. Keep the wave-2 tasks open until the Instatus page id/component ids exist, the 60-second cron is configured, and a degraded/recovered state change is verified against the live hosted status page.
+Public API W5.1 has landed the autonomous foundation early: `web/lib/healthChecks.server.ts`, `web/lib/instatusClient.ts`, `web/app/api/cron/status-ping/route.ts`, focused tests, and `docs/internal/status-page-uptime.md` (moved there 2026-09-05 from `docs/api/status-uptime.md`). Keep the wave-2 tasks open until the Instatus page id/component ids exist, the 60-second cron is configured, and a degraded/recovered state change is verified against the live hosted status page.
 
 ### 2.1 — healthcheck module
 new `web/lib/healthChecks.server.ts`. one async function per component, all returning `{component: string, ok: boolean, latency_ms: number, error?: string}`. specifics:

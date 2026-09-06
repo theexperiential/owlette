@@ -1,6 +1,20 @@
 # public API launch runbook
 
-**Last updated**: 2026-04-29
+**Last updated**: 2026-04-29 | **moved** 2026-09-05 from `docs/api/launch-runbook.md` | **reviewed** 2026-09-05
+
+**INTERNAL — keep inside `docs/internal/`**, which the fumadocs migration excludes from
+publishing (`excludedPrefixes` in `web/scripts/migrate-docs-to-fumadocs.mjs`). This page was
+written for the MkDocs site that was deleted 2026-05-20 and never reached a published docs
+route; it is an operator process, not customer reference material.
+
+> **2026-09-05 accuracy review.** Corrected against HEAD: the validation command list (MkDocs
+> is gone), the status-page component count (seven → nine), and hoot's product name in the
+> monitoring list. Verified still true: the four launch probe endpoints, the security-boundary
+> and roost kill-switch runbook paths, and the k6 SLO gate. Verified changed and flagged inline
+> below: no package in the Wave 5.3 gate is published, the billing system that "pricing/signup"
+> assumed was removed end to end (`adbfd06f`), and the Wave 5 plan is archived at
+> `dev/completed/public-api/`. Not verifiable from the repo: whether a launch ticket, support
+> rota, or Instatus page has ever actually been staffed or configured.
 
 This runbook controls the external public API launch window. It covers the launch-state decision, go/no-go checks, support intake, rollback paths, and first-week monitoring.
 
@@ -52,13 +66,17 @@ Do not use Slack history or local notes as the only launch record.
 
 Move from `preview` to `launch_ready` only after these checks pass or have an explicit launch waiver:
 
-- Wave 5.1 status page: Instatus hosted page exists, seven components are configured, uptime checks run, and a test incident can be published and resolved.
+- Wave 5.1 status page: Instatus hosted page exists, the nine components are configured, uptime checks run, and a test incident can be published and resolved.
 - Wave 5.2 load testing: k6 launch fixture exists and the final report records p95, p99, error rate, runner, base URL, fixture ids, and waivers.
 - Wave 5.3 distribution: `@owlette/cli@rc`, `@owlette/sdk@rc`, and `owlette-sdk` pre-release packages are published and install-smoked, or blocked package-manager channels have approved waivers.
+  > **status 2026-09-05:** none of the three is on its registry — `npm view @owlette/cli` and
+  > `@owlette/sdk` both return 404, and `sdks/python/pyproject.toml` is still at `1.0.0rc0`
+  > locally. Publish workflows exist (`.github/workflows/{cli,node-sdk,py-sdk}-publish.yml`)
+  > but have not produced a public release. This gate is open.
 - Wave 5.4 launch assets: public site, pricing/signup, docs links, download path, examples, marketplace copy, and one clean consumer workflow run are verified.
 - Support: first-week owner, backup owner, inbox, escalation channel, and response targets are staffed.
 - Rollback: prior web commit, docs rollback path, package deprecation/dist-tag process, and support messaging template are ready.
-- Validation: `npm.cmd run validate:api`, `python -m mkdocs build`, and `git diff --check` have run on the launch branch, with new warnings resolved or waived.
+- Validation: `npm.cmd run validate:api` and `git diff --check` have run on the launch branch, with new warnings resolved or waived. Docs now build with the app (`npm.cmd run build` runs `fumadocs-mdx && next build`); there is no separate docs build step since MkDocs was removed 2026-05-20.
 
 Move from `launch_ready` to `launched` only after the support owner confirms the monitoring window is open and the status page has no active launch-blocking incident.
 
@@ -70,6 +88,11 @@ Move from `launch_ready` to `launched` only after the support owner confirms the
 
 - Confirm owners, backup owners, launch window, and decision deadline.
 - Recheck the public site, signup path, pricing copy, docs path, download path, status page, package links, and example workflow.
+  > **stale (2026-09-05):** "pricing copy" was written when a billing system was being built.
+  > That system was removed end to end in `adbfd06f` — there is no `web/lib/billing`, no Stripe
+  > integration, and the landing page's `PricingSection` quotes post-beta rates from
+  > `web/lib/product-facts.ts` while the tiers read "free during beta". Recheck the copy for
+  > honesty, not for a live checkout.
 - Confirm registry access, package owner 2FA, and rollback permissions.
 - Freeze non-launch changes unless they fix a launch gate.
 
@@ -133,8 +156,8 @@ Choose the narrowest containment path that protects customers without weakening 
 | CLI or SDK package regression | Pin examples to the last known good version and publish an advisory. | Move npm `rc` dist-tags, deprecate the broken version if needed, yank only if registry policy and impact justify it, and publish a fixed RC. |
 | GitHub Action workflow regression | Remove or annotate the template link and direct users to the raw CLI workflow. | Patch the composite action and tag a new release once verified. |
 | API 5xx, auth, or route regression | Pause onboarding, collect `requestId`s, and open a status incident when customer-visible. | Redeploy the previous web commit or revert the route commit. Revoke or rotate affected keys if exposure is possible. |
-| Site-specific roost distribution incident | Pause new roost work for the affected site if continuing rollout increases risk. | Ask an operator to apply the site distribution kill switch for that site, then re-enable after publish/signed-URL and agent sync smokes pass. |
-| Capability or privileged rate-limit bug | Use the internal security-boundary kill switch process only for legitimate capability/rate-limit enforcement incidents. | Flip `capability_enforcement` or `rate_limit_enforcement` for the shortest possible window, with reason, owner, expiry, and follow-up fix. |
+| Site-specific roost distribution incident | Pause new roost work for the affected site if continuing rollout increases risk. | Ask an operator to apply the site distribution kill switch for that site ([roost kill switch runbook](../ops/roost-kill-switch.md)), then re-enable after publish/signed-URL and agent sync smokes pass. |
+| Capability or privileged rate-limit bug | Use the internal security-boundary kill switch process only for legitimate capability/rate-limit enforcement incidents ([kill switches](../ops/security-boundary-kill-switches.md)). | Flip `capability_enforcement` or `rate_limit_enforcement` for the shortest possible window, with reason, owner, expiry, and follow-up fix. |
 | Load or latency regression | Pause launch announcements and reduce onboarding volume. | Tune limits, roll back the deployment, or mark impacted components degraded while the fix is validated. |
 | Status-page vendor issue | Publish manual updates in the operator-approved channel. | Keep API behavior unchanged; do not hide incidents because the vendor is degraded. |
 
@@ -163,13 +186,13 @@ Run a monitoring review at launch, twice daily on days 0 and 1, then daily throu
 
 Check these signals each time:
 
-- Instatus page and all seven public components.
+- Instatus page and all nine public components (`STATUS_COMPONENTS` in `web/lib/healthChecks.server.ts`).
 - Synthetic checks for `GET /api/version`, `GET /api/whoami`, `GET /api/openapi`, and `GET /docs/api`.
 - API 4xx and 5xx rates by route and problem `code`.
 - Request p95 and p99 against the launch SLO targets.
 - Auth failures, `scope_insufficient`, `rate_limited`, and idempotency errors.
 - Webhook delivery success rate and retry volume.
-- Cortex conversation list and request success if Cortex is advertised in launch material.
+- hoot conversation list (`GET /api/cortex/conversations` — the wire path keeps the `cortex` spelling) and request success if hoot is advertised in launch material.
 - npm and PyPI install smoke status for the current RC versions.
 - GitHub Action example smoke status.
 - Support inbox volume by severity, top route, and top problem `code`.
@@ -200,7 +223,7 @@ Append one report per review to the launch ticket:
 
 5.5 is foundation-complete when:
 
-- this page is in the API docs nav
+- this page is discoverable to operators — as of 2026-09-05 that means `docs/internal/`, not an API docs nav; the original "in the API docs nav" criterion assumed the deleted MkDocs site
 - the launch-state model is explicit and does not claim a runtime launch flag
 - go/no-go gates link back to the Wave 5 status, load, distribution, and launch-asset work
 - rollback and containment steps distinguish route incidents from docs, package, status-page, and support issues
@@ -208,3 +231,8 @@ Append one report per review to the launch ticket:
 - operators can decide `preview`, `launch_ready`, `launched`, or `paused` without relying on ad hoc knowledge
 
 External completion still requires executing this runbook during the actual public launch window.
+
+The Wave 5 plan this runbook was written against is archived at `dev/completed/public-api/`
+(plan, tasks, and the reference notes explaining why each route is public, internal, or
+deferred). The follow-on API work shipped through `dev/completed/api-sprint/` and
+`dev/completed/roost-public-api/`.

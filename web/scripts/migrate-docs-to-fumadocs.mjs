@@ -13,14 +13,11 @@ const sourceRoot = path.join(repoRoot, "docs");
 const targetRoot = path.join(webRoot, "content", "docs");
 const targetRootIndex = path.join(targetRoot, "index.mdx");
 
+// The five `api/*.md` launch/preview pages that used to be listed here moved to
+// `docs/internal/` on 2026-09-05 and are now covered by the `internal/` prefix below.
 const excludedFiles = new Set([
   "maintainer-quickstart.md",
   "reference/api.md",
-  "api/launch-runbook.md",
-  "api/launch-assets.md",
-  "api/developer-preview-checklist.md",
-  "api/load-testing.md",
-  "api/status-uptime.md",
 ]);
 
 const excludedPrefixes = ["internal/", "ops/", "runbooks/"];

@@ -43,7 +43,7 @@ Use this switch for:
 Do not use it for:
 
 - missing API-key scopes or failed authentication
-- general public API launch pause; use the [public API launch runbook](../api/launch-runbook.md) instead
+- general public API launch pause; use the [public API launch runbook](../internal/public-api-launch-runbook.md) instead
 - docs, SDK, CLI, or GitHub Action package regressions
 - broad platform outage where a deployment rollback or status incident is the right response
 - capability or privileged rate-limit bugs covered by the security-boundary kill switches

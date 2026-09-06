@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)](https://owlette.app)
 
-[live app](https://owlette.app) &nbsp;&bull;&nbsp; [documentation](https://theexperiential.github.io/owlette/) &nbsp;&bull;&nbsp; [download agent](https://owlette.app/download)
+[live app](https://owlette.app) &nbsp;&bull;&nbsp; [documentation](https://owlette.app/docs) &nbsp;&bull;&nbsp; [download agent](https://owlette.app/download)
 
 </div>
 
@@ -39,17 +39,21 @@ LLM-powered fleet management with natural language. AI executes commands on agen
 **multi-site management**
 organize machines by location, department, or project. three-tier role-based access control (member / admin / superadmin) with site-level permissions. multi-user accounts, per-site admin delegation, and platform-wide administrator roles.
 
-**project distribution**
-sync project files (ZIPs, .toe files, media assets) across your fleet from any URL — Dropbox, Google Drive, your own hosting. zero infrastructure cost. automatic extraction and file verification.
+**roost — project distribution**
+drag a project folder onto the dashboard and it syncs to your fleet. files are split into 4 MiB content-addressed chunks, hashed in the browser, and uploaded once — re-deploys and machines that already hold a chunk skip it entirely. every deploy is an immutable version you can roll back to in one click, and agents verify every chunk by SHA-256 before assembling files atomically into an allowlisted destination.
+
+legacy by-URL distribution (point the fleet at a ZIP on Dropbox, Google Drive, or your own hosting; the agent downloads and extracts it) is still supported alongside roost for existing setups.
 
 **alerts & notifications**
 configurable threshold alerts for system metrics. email notifications with branded templates. webhook integrations for external platforms. activity logging across your entire fleet.
 
-> **[full documentation →](https://theexperiential.github.io/owlette/)**
+> **[full documentation →](https://owlette.app/docs)**
 
 ## architecture
 
-all communication flows through Cloud Firestore — there is no direct connection between agents and the dashboard. Firestore acts as the message bus.
+control and state flow through Cloud Firestore — there is no direct connection between agents and the dashboard. Firestore acts as the message bus, with Next.js API routes handling authenticated control actions.
+
+bulk file bytes do **not** go through Firestore. roost chunks and version bodies live in object storage (Cloudflare R2); browsers and agents read and write them directly using short-lived, single-object signed URLs minted by the API.
 
 ```
 agents                    cloud                     dashboard
@@ -66,7 +70,8 @@ agents                    cloud                     dashboard
 
 - **agent** — Python Windows service. monitors processes every 10s, sends heartbeats every 30s, reports metrics every 60s, executes commands, works offline.
 - **dashboard** — Next.js 16 web app. real-time Firestore listeners, 63+ API endpoints, OpenAPI documentation.
-- **firestore** — real-time NoSQL database. all data sync, command relay, and state management.
+- **firestore** — real-time NoSQL database. state sync, command relay, and roost version pointers.
+- **object storage** — Cloudflare R2. content-addressed roost chunks and version bodies under a per-site prefix, reachable only through signed URLs.
 - **cortex ai** — LLM chat with tool-calling capabilities relayed through Firestore to agents.
 
 ## quick start
@@ -108,7 +113,7 @@ cp .env.example .env.local               # configure Firebase credentials
 npm run dev                               # http://localhost:3000
 ```
 
-> **[full setup guide →](https://theexperiential.github.io/owlette/getting-started/)**
+> **[full setup guide →](https://owlette.app/docs/getting-started)**
 
 ## screenshots
 
@@ -139,17 +144,17 @@ npm run dev                               # http://localhost:3000
 
 ## documentation
 
-full documentation is available at **[theexperiential.github.io/owlette](https://theexperiential.github.io/owlette/)**.
+full documentation is available at **[owlette.app/docs](https://owlette.app/docs)**.
 
-- [getting started](https://theexperiential.github.io/owlette/getting-started/) — first machine in under 5 minutes
-- [agent guide](https://theexperiential.github.io/owlette/agent/) — installation, configuration, system tray, troubleshooting
-- [dashboard guide](https://theexperiential.github.io/owlette/dashboard/) — monitoring, process management, views
-- [remote deployment](https://theexperiential.github.io/owlette/dashboard/deployments/) — silent software installation across machines
-- [project distribution](https://theexperiential.github.io/owlette/dashboard/roost/) — sync project files across your fleet
-- [cortex ai & tools](https://theexperiential.github.io/owlette/reference/cortex-tools/) — AI capabilities and tool reference
-- [API reference](https://theexperiential.github.io/owlette/api/reference/) — 63+ endpoints with OpenAPI docs
-- [architecture](https://theexperiential.github.io/owlette/architecture/) — system design and data flow
-- [authentication](https://theexperiential.github.io/owlette/reference/authentication/) — auth methods, device code pairing, tokens
+- [getting started](https://owlette.app/docs/getting-started) — first machine in under 5 minutes
+- [agent guide](https://owlette.app/docs/agent) — installation, configuration, system tray, troubleshooting
+- [dashboard guide](https://owlette.app/docs/dashboard) — monitoring, process management, views
+- [remote deployment](https://owlette.app/docs/dashboard/deployments) — silent software installation across machines
+- [roost](https://owlette.app/docs/dashboard/roost) — content-addressed project sync, versions, rollback
+- [hoot tools](https://owlette.app/docs/reference/hoot-tools) — AI capabilities and tool reference
+- [API reference](https://owlette.app/docs/api) — interactive OpenAPI reference
+- [architecture](https://owlette.app/docs/architecture) — system design and data flow
+- [authentication](https://owlette.app/docs/reference/authentication) — auth methods, device code pairing, tokens
 
 ## contributing
 

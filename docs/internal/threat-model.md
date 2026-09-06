@@ -2,9 +2,10 @@
 
 **status**: canonical security design constraint for project distribution v2 (roost).
 **created**: 2026-04-19 | **owner**: dylan@roscover.com
+**reconciled against shipped code**: 2026-09-05 — the upload path, api surface, and trust boundaries below describe what is in the tree, not the wave-1 design sketch. two components this doc used to model (tusd on cloud run, an `/api/v2/*` url prefix) were designed and then never built; sections that referenced them have been rewritten against the code that shipped instead. where a baseline's mitigation is only partly wired, that is said plainly rather than left as an aspiration.
 **applies to**: wave 2-5 of `dev/active/project-distribution-v2/plan.md`. every implementation task in those waves must be implementable against this doc. if a task cannot be implemented without violating a baseline below, the plan is wrong, not this doc.
 
-> roost is always lowercase, including in code, docs, and ui. this doc covers the cloud-side (r2, cloud run, cloud functions, firestore) and agent-side (windows service running as `nt authority\system`) of roost — the content-addressed file sync platform that hosts customer media files.
+> roost is always lowercase, including in code, docs, and ui. this doc covers the cloud-side (r2, next.js api routes, cloud functions, firestore) and agent-side (windows service running as `nt authority\system`) of roost — the content-addressed file sync platform that hosts customer media files.
 
 ---
 
@@ -12,10 +13,10 @@
 
 ### in scope
 
-- **customer file storage** — upload, chunking, storage in cloudflare r2, server-side dedup, per-tenant namespace.
+- **customer file storage** — browser-side chunking + hashing, storage in cloudflare r2 under a per-tenant prefix, dedup by content address at the `check` step.
 - **agent download / extract** — windows service pulls chunks, verifies sha-256, assembles files, atomic-swaps into allowlisted destination roots.
-- **web upload** — drag-and-drop folder upload via uppy + tus + tusd on cloud run; manifest builder web worker.
-- **api surface** — `/api/v2/*` next.js routes, cloud functions (`chunkVerify`, `chunkGc`, `quotaEnforce`, `distributionFanout`, `webhookDispatch`, `auditLog`, `telemetry`), tusd hooks.
+- **web upload** — drag-and-drop folder upload orchestrated entirely in the browser (`web/lib/roostUpload.ts`): hash off the main thread (`web/lib/chunking.ts` + `versionBuilder`) → `POST /api/chunks/check` → `POST /api/chunks/upload-urls` → parallel presigned `PUT`s **straight to r2** → `POST /api/roosts/{roostId}/versions` to finalise. an indexeddb-backed queue (`web/lib/uploadQueue.idb.ts`) survives a tab close. **no tus, no tusd, no uppy** — that design was dropped before wave 3; nothing in the tree speaks the tus protocol and there is no cloud run service.
+- **api surface** — `/api/chunks/*` and `/api/roosts/*` next.js routes (there is **no `/api/v2/` prefix** — these routes *are* the api; settled decision, see `.claude/CLAUDE.md`), plus the cloud functions actually exported from `functions/src/index.ts`: `verifyChunk`, `chunkGcNightly`, `preUploadCheck` + `reconcileQuota`, `onRoostWritten` + `onTargetStateWritten`, `emitWebhook` + `processRetryQueue`, `recordAuditEvent` + `exportAuditDaily` + `verifyAuditChain`, telemetry.
 - **firestore data plane** — pointer documents, distribution records, audit log, manifest metadata.
 - **r2 control plane** — bucket policies, signed urls, lifecycle rules, per-tenant prefixes.
 - **identity** — `owk_*` api keys, firebase id tokens, agent oauth refresh tokens, device pairing phrases.
@@ -63,12 +64,12 @@ every wave 2-5 task must satisfy or extend these. **if a task removes one of the
 | # | baseline | threat addressed | mitigation | wave / task | verification test |
 |---|---|---|---|---|---|
 | B1 | default-deny `storage.rules` (r2 bucket policy) | actor 1, 3, 4 — public bucket exposure | r2 bucket policy denies all unsigned reads + writes by default; only signed urls and worker-bound credentials allowed; ci test runs unauthenticated curl against a known chunk path and asserts http 403 | wave 1.8 (firestore.rules) + wave 1.4 (`infra/r2/r2-bucket-policy.json`) | `tests/storage/test_default_deny.py` — fails build if 200/206 returned for unsigned read |
-| B2 | `customerId` / `siteId` derived from token claims, never request body | actors 1, 2, 4, 5 — cross-tenant access via parameter tampering | every `/api/v2/*` route resolves tenant ids from `requireAdminOrIdToken()` claims; request body fields ignored if present; lint rule (`web/lint/no-tenant-from-body`) fails on `req.body.siteId` reads | wave 2a.1-2a.6 (api stubs, already wired) | `__tests__/api/v2/tenant-isolation.test.ts` — sends mismatched body siteid + token siteid, asserts 403 |
-| B3 | signed-url ttl ≤15min download, ≤60min upload, single-object scope | actors 1, 2 — leaked url replay window | r2 presigned urls issued with `X-Amz-Expires` capped at 900s (download) / 3600s (upload); url scope is single chunk hash, never prefix | wave 2a.2 (`/api/v2/chunks/upload-urls`), 2a.3 (`/api/v2/chunks/download-urls`) | `__tests__/api/v2/signed-url-ttl.test.ts` — asserts every issued url has `X-Amz-Expires ≤ 900/3600` and exact-key scope |
-| B4 | content-addressed chunks; agent re-hashes after download | actors 1, 3, 6 — chunk substitution at rest, in transit, or mitm of r2 cdn edge | chunk filename **is** the sha-256 of its bytes; agent re-computes sha-256 after download and rejects mismatched chunks via `sync_downloader.py` | wave 1.1 spike + wave 4a (`agent/src/sync_downloader.py`) | `agent/tests/test_chunk_verify.py::test_corrupted_chunk_rejected` — replaces chunk byte at random offset, asserts download fails |
-| B5 | cloud-function-validated chunk uploads (server sha-256 verify on storage trigger) | actor 4 — uploading content under wrong hash to poison dedup pool | `functions/src/chunkVerify.ts` triggers on r2 put (via cloudflare worker → pubsub bridge), recomputes sha-256, deletes object if mismatch + writes audit entry; chunk filename **must** equal computed hash or the object is purged within 60s | wave 2b (`functions/src/chunkVerify.ts`) | `functions/__tests__/chunkVerify.test.ts` — uploads object named `<hashA>` containing bytes that hash to `<hashB>`, asserts deletion within 60s |
-| B6 | per-file `destination_allowlist` validation before atomic rename + realpath check + reject symlinks on windows | actor 3, 4, 6 — path traversal on extract, symlink swap to `c:\windows\system32` | v2 does **not** unpack archives — there is no `tarfile` / `zipfile` call site. instead, `agent/src/sync_assembler.py` (planned, wave 4a.5/4b.2) does per-file chunked assembly: for every file in the manifest, the destination path is validated against the `destination_allowlist` module (wave 1.7) **before** any bytes are written; `os.path.realpath(target).startswith(allowed_root)` is asserted for every file; any `os.path.islink()` entry is rejected outright on windows (audit entry written); only after all checks pass does the agent write `<path>.partial`, fsync, and `MoveFileEx`. installer pins bundled python to ≥3.12 (existing 3.9 floor is a breaking change — user-approved per context.md) for `pathlib.Path` improvements + general security posture. **lesson from cve-2025-4330**: even mature stdlib path-validation (python's `data` filter) has been bypassed via crafted member names; defense in depth (multiple independent checks per file) is mandatory, not optional. see [manifest-format.md `validation`](./manifest-format.md#validation) for the schema-level constraints that complement these runtime checks. | wave 4b.2 + wave 1.7 (`destination_allowlist.py`) | `agent/tests/test_path_traversal.py` — manifest with `../../etc/passwd` member; manifest with windows symlink; assert both rejected with named exception |
-| B7 | per-customer storage quotas + per-token signed-url rate limits | actors 1, 2, 4 + failure mode F1 — runaway r2 bill, quota abuse | tusd pre-upload hook checks customer quota in firestore before issuing tus session; daily reconcile job recomputes from r2 list; `quotaEnforce.ts` cloud function emits 50/80/100% alarms; per-`owk_*`-token signed-url rate limiter (token-bucket, redis or firestore counter) caps url issuance; hard cap returns http 402 + upgrade cta | wave 2b (`functions/src/quotaEnforce.ts`) + tusd hook | `functions/__tests__/quota.test.ts` — burst 100 url requests, assert rate-limit kicks in; upload past hard cap, assert 402 |
+| B2 | every `siteId` is **authorized against the caller** on every call — a body value never grants access | actors 1, 2, 4, 5 — cross-tenant access via parameter tampering | as shipped, `siteId` does arrive in the request body or query (`validateSiteIdBody`, `web/app/api/_shared.ts:131`) — the guarantee is not that the body is ignored, it is that the body value is authorized before use. every roost/chunk route calls `requireSiteAuthAndScope` (`_shared.ts:377`), `requireRoostAuthAndScope` (`:495`) or `requireAgentOrSiteAuthAndScope` (`:632`), which resolve the caller (session cookie / firebase id token / `owk_*` key), assert site membership via `assertUserHasSiteAccess`, then run the api-key scope check (`site=<id>:<permission>`). mutations additionally clear `requireDistributionManageCapability` (`:336`, the OWL-32 fix). the doc's original "derive from claims, never read the body" wording was never implemented and is not the invariant to test for | wave 2a.1-2a.6 + wave 2.4 scope wiring | `web/__tests__/api/scopeEnforcement.test.ts` (resource × permission matrix incl. wrong-site keys), `web/__tests__/api/roosts.test.ts`, `web/__tests__/api/chunks-advanced.test.ts` |
+| B3 | signed-url ttl ≤15min download, ≤60min upload, single-object scope | actors 1, 2 — leaked url replay window | r2 presigned urls issued via `@aws-sdk/s3-request-presigner` with `expiresIn` from `GET_URL_TTL_SECONDS = 900` / `PUT_URL_TTL_SECONDS = 3600` (`web/lib/r2Client.server.ts:171-172`); every url is signed against a single fully-qualified key built by `chunkKey(siteId, hash)` / `versionKey(siteId, roostId, versionId)` (`:56`, `:62`) — never a prefix, and both helpers throw on a malformed hash or site id | wave 2a.2 (`/api/chunks/upload-urls`), 2a.5 (`/api/chunks/download-urls`) | ttl constants + key construction are unit-covered; the per-route `expiresAt` echoed to the client is derived from the same constants (`upload-urls/route.ts:61`, `download-urls/route.ts:44`) so a drift shows up in the response contract |
+| B4 | content-addressed chunks; agent re-hashes after download | actors 1, 3, 6 — chunk substitution at rest, in transit, or mitm of r2 cdn edge | chunk filename **is** the sha-256 of its bytes; agent re-computes sha-256 after download and rejects mismatched chunks via `sync_downloader.py` | wave 1.1 spike + wave 4a (`agent/src/sync_downloader.py`) | `agent/tests/unit/test_sync_downloader.py::test_hash_mismatch_triggers_retry_then_fails` — mismatched bytes are discarded and retried, then the chunk fails; never accepted |
+| B5 | server-side sha-256 re-verification of uploaded chunks | actor 4 — uploading content under a hash it does not match, to poison the tenant's dedup pool | **partly wired — read this row before relying on it.** r2 emits no firebase storage events, so `verifyChunk` is an https `onRequest` endpoint (`functions/src/chunkVerify.ts:100`) taking `{ objectPath }`, gated on a firebase id token whose uid is in `CHUNK_VERIFY_CALLER_UIDS` (fails closed on an unrecognised caller). the decision logic (`lib/chunkVerifyLogic.ts`) is complete and unit-tested, but **nothing calls the endpoint** — the cloudflare worker webhook it was designed for is not in `infra/`, no scheduled sweep is exported from `functions/src/index.ts`, and `getDefaultStore()` (`chunkVerify.ts:145`) is still the throwing stub, so a live call would 500. what actually holds the line today: finalize refuses to publish a version referencing a chunk absent from r2 (`web/app/api/roosts/[roostId]/versions/route.ts:282`), and the agent re-hashes every chunk after download and rejects mismatches (B4). residual: an authorised uploader can `PUT` bytes that do not match the hash in their own presigned key and nothing catches it until an agent does — self-inflicted deploy failure inside one tenant, not a cross-tenant primitive (dedup is per-tenant, see "cross-tenant chunk read") | wave 2b (`functions/src/chunkVerify.ts`); wiring still open | `functions/test/chunkVerify.test.ts` — verdict + delete + alert paths against an injected store |
+| B6 | per-file `destination_allowlist` validation before atomic rename + realpath check + reject symlinks on windows | actor 3, 4, 6 — path traversal on extract, symlink swap to `c:\windows\system32` | v2 does **not** unpack archives — there is no `tarfile` / `zipfile` call site. instead, `agent/src/sync_assembler.py` (**shipped** — see boundary 7 for the as-built control list and line references) does per-file chunked assembly: for every file in the manifest, the destination path is validated against the `destination_allowlist` module (wave 1.7) **before** any bytes are written; `os.path.realpath(target).startswith(allowed_root)` is asserted for every file; any `os.path.islink()` entry is rejected outright on windows (audit entry written); only after all checks pass does the agent write `<path>.partial`, fsync, and `MoveFileEx`. installer pins bundled python to ≥3.12 (existing 3.9 floor is a breaking change — user-approved per context.md) for `pathlib.Path` improvements + general security posture. **lesson from cve-2025-4330**: even mature stdlib path-validation (python's `data` filter) has been bypassed via crafted member names; defense in depth (multiple independent checks per file) is mandatory, not optional. see [manifest-format.md `validation`](./manifest-format.md#validation) for the schema-level constraints that complement these runtime checks. | wave 4b.2 + wave 1.7 (`destination_allowlist.py`) | `agent/tests/unit/test_destination_allowlist.py` — `test_path_traversal_with_dotdot_is_rejected`, `test_windows_reparse_point_detected_via_mocked_attribute`, `test_empty_roots_rejects_all_paths` (fail-closed), plus `test_sync_assembler.py` for the write-path integration |
+| B7 | per-customer storage quotas + per-token signed-url rate limits | actors 1, 2, 4 + failure mode F1 — runaway r2 bill, quota abuse | **partly wired.** shipped: `reconcileQuota` (`functions/src/quotaEnforce.ts:224`, daily at 03:45 utc) rebuilds `usedBytes` from the authoritative r2 listing, fires only newly-crossed 50/80/100% alarms, and releases reservations past the 24h pending ttl; the pre-upload gate the operator actually meets is `web/lib/preUploadCheck.ts` (size + dedup preview, per-machine free disk, site quota) which disables the confirm button on a `blocking` check. **not wired**: `preUploadCheck` the cloud function (`quotaEnforce.ts:242`, `x-internal-secret` gated) is exported from `index.ts` but has no caller — it was built for the tusd pre-create hook that never shipped, so the atomic pending-bytes reservation never happens server-side and the browser check is advisory only. **not built**: per-`owk_*` signed-url rate limiting (tracked as OWL-16). the only hard bound on url issuance is `MAX_HASHES_PER_REQUEST = 1000` per call (`web/app/api/_shared.ts:38`) | wave 2b (`functions/src/quotaEnforce.ts`); admission + rate-limit wiring still open | `functions/test/quotaEnforce.test.ts` (admit/reserve/alarm logic), `web/__tests__/lib/preUploadCheck.test.ts` (blocking-check matrix) |
 | B8 | append-only audit log of signed-url issuance, distribution starts, `owk_*` use, manifest pointer changes, gc runs | actors 2, 3, 4, 5 — investigation + soc 2 cc7.2 evidence | `functions/src/auditLog.ts` writes immutable entries (firestore subcollection with rules denying update + delete); every signed url issuance, distribution start, `owk_*` request, manifest pointer compare-and-swap, and gc mark/sweep gets an entry with actor identity, timestamp, action, target | wave 2b (`functions/src/auditLog.ts`) | firestore.rules must reject update/delete on `auditLog/{entryId}`; `firestore.rules.test.ts` covers it |
 | B9 | no tokens in logs — enforced by pre-commit lint rule, not just policy | actors 1, 2 — credential exfil via log aggregation, support tickets | pre-commit hook + ci lint rule scans diffs for `Bearer `, `owk_`, `firebase-id-token`, `refresh_token`, `access_token` in any `*.py`, `*.ts`, `*.tsx` log/print statement; rule lives in `.claude/hooks/no-token-logs.mjs` | wave 1 (pre-commit infra) + ongoing | `tests/lint/no-token-logs.test.ts` — staged file with `logger.info(f"token={token}")` fails commit |
 | B10 | authenticode-signed installer; sha-256 published in firestore; ephemeral build vm | actors 3, 6 — installer trojan via build-server compromise | ev code-signing cert (6-8 week lead time per plan wave 0.7); installer build runs on ephemeral vm (gcp shielded vm, fresh per release); sha-256 published to `installer_metadata/{version}` doc and shown in admin ui; `add` page asserts checksum match before accepting download | wave 0.7 + wave 5 release flow | manual: corrupt installer in transit, assert agent-side checksum check rejects |
@@ -76,7 +77,7 @@ every wave 2-5 task must satisfy or extend these. **if a task removes one of the
 | B12 | filename sanitization at upload; safe rendering in dashboard | actors 4, 5 — stored xss via `<img onerror=alert(1)>.toe` filename | `web/lib/sanitize.ts` strips control chars, normalizes unicode (nfkc), rejects path separators, caps length 255; dashboard renders filenames via react text nodes only — **never `dangerouslySetInnerHTML`**; eslint rule `react/no-danger` set to `error` repo-wide | wave 3 (`web/lib/sanitize.ts`) + lint config | `__tests__/lib/sanitize.test.ts` — payloads from xss-cheat-sheet; ui snapshot test asserts no html injection in filename column |
 | B13 | `X-Frame-Options: DENY` + baseline csp | actors 4 — clickjacking on dashboard, deployment-confirm flows | `next.config.js` headers block sets `X-Frame-Options: DENY`, `Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://*.firebaseapp.com; connect-src 'self' https://*.googleapis.com https://*.cloudflare.com wss://*; frame-ancestors 'none'`; csp tightened iteratively to remove `unsafe-inline` (tracked separately) | wave 2a (next.js config) | `__tests__/headers.test.ts` — assert headers present on every route |
 | B14 | hardware-backed mfa on every firebase admin / gcp owner / npm publisher / signing-cert holder | actors 2, 3, 6 — credential reuse (dropbox 2012/2016 archetype) | yubikey 5 (or equivalent fido2) required for: firebase project owners, gcp project owners, npm `@owlette/*` publish accounts, ev code-signing cert custodian, cloudflare account, registrar account; sms + totp explicitly disallowed for these accounts; documented in `docs/internal/key-custody.md` (separate doc, not this one) | wave 0 ops (key custody) | quarterly attestation: list account holders, confirm mfa method per account, store screenshot evidence |
-| B15 | documented deletion sla in dpa | gdpr art. 17, soc 2, customer trust | dpa (wave 0.1, lawyer-drafted) commits to: 30-day hard-delete from r2 + firestore; 90-day soft-delete expiry (manifest pointer hidden, chunks marked for gc, full purge after 90d); per-tenant deletion api at `/api/v2/customers/{customerId}/data` (admin-only) | wave 0.1 + wave 5 (deletion api) | `__tests__/api/v2/data-deletion.test.ts` — issue delete, assert manifest pointer hidden in <1min, chunks tombstoned, scheduled purge entry created |
+| B15 | documented deletion sla in dpa | gdpr art. 17, soc 2, customer trust | dpa (wave 0.1, lawyer-drafted) commits to: 30-day hard-delete from r2 + firestore; 90-day soft-delete expiry (version pointer hidden, chunks marked for gc, full purge after 90d). the shipped deletion surfaces are `DELETE /api/users/me` (self-serve account delete, cascade in `web/lib/userDeleteCascade.server.ts`, request-tracking under `/api/users/deletions`) and `DELETE /api/roosts/{roostId}`; there is **no** `/api/v2/customers/{customerId}/data` route and no per-customer bulk-purge endpoint — chunk reclamation runs through `chunkGcNightly`'s tombstone-then-sweep instead (`functions/src/chunkGc.ts`), which is still dry-run by default (F2) | wave 0.1 + wave 5 (deletion api) | account-delete cascade covered by the `userDeleteCascade` suites (OWL-33/OWL-39); gc plan logic by `functions/test/chunkGc.test.ts` |
 
 ---
 
@@ -86,11 +87,11 @@ these are failure modes that would not be prevented by the baselines above unles
 
 | # | failure mode | blast radius | mitigation in plan | verification |
 |---|---|---|---|---|
-| F1 | per-customer storage / egress quota enforcement does not exist as a task → unbounded r2 bill | catastrophic financial exposure: a single misconfigured customer or runaway agent could rack up $10k+ in egress in hours; r2 egress is free but put/get and storage are not | wave 2b `quotaEnforce.ts` + tusd pre-upload hook + daily reconcile + 50/80/100% alarms (B7) — must exist as a tracked task before wave 3 ui ships, not bolted on later | load test: 1tb upload from a single token in 1h; assert hard-cap kicks in at tier limit and 402 returned |
+| F1 | per-customer storage / egress quota enforcement does not exist as a task → unbounded r2 bill | catastrophic financial exposure: a single misconfigured customer or runaway agent could rack up $10k+ in egress in hours; r2 egress is free but put/get and storage are not | **still open in part.** shipped: `reconcileQuota` daily recompute + 50/80/100% alarms + the browser-side `preUploadCheck` gate (B7). not shipped: the server-side admission check — it was written against the tusd pre-create hook, and when tus was dropped for direct presigned `PUT`s nothing took over the call, so a caller driving `POST /api/chunks/upload-urls` straight (api key, script, or a patched client) is not admission-controlled and no 402 is ever returned. closing this is the open half of B7 and should be a tracked task before roost upload is enabled for any external account | load test: 1tb upload from a single token in 1h; assert hard-cap kicks in at tier limit and 402 returned — **cannot pass today**; the test is the acceptance gate for wiring the admission check |
 | F2 | chunk gc is undesigned → first gc run deletes live chunks | fleet-wide breakage: every agent referencing a deleted chunk fails its next sync; rollback impossible if previous-version chunks are gone | wave 2b `chunkGc.ts`: nightly mark-and-sweep, **30-day tombstone** (deleted chunks recoverable for 30d), **dry-run mode for first month in production** (logs what would be deleted but deletes nothing), **pause-during-publish** (gc holds a global lock that publish operations check), per-tenant scope (no cross-tenant gc) | dry-run validation: 30 consecutive nights of dry-run output reviewed; zero false positives required before enabling delete mode |
 | F3 | manifest pointer race + no rollback pin → two rapid publishes corrupt fleet state | partial fleet on v1, partial on v2, partial on a torn intermediate state; no clear "good version" to roll back to | firestore transaction with compare-and-swap on `currentManifestId`; atomic write of `previousManifestId`; agent **pins the manifest revision** at start of download (toctou mitigation — see attack surfaces below) and refuses to switch mid-download; rollback ui (wave 3) flips pointer back to `previousManifestId` in single transaction | concurrency test: 100 concurrent publishes against same folder, assert exactly one wins per round, no torn state in firestore |
 | F4 | allowlist of destination roots has no schema / default / ui / migration → system-level arbitrary file write | catastrophic: agent runs as `system`; if allowlist is empty, missing, or accepts `*`, a malicious manifest writes anywhere on disk (e.g. `c:\windows\system32\drivers\evil.sys`) | wave 1.7 `agent/src/destination_allowlist.py` (already landed): **fail-closed if list is empty or missing**; default at install: `[~/Documents/Owlette]`; admin ui (`web/components/AllowlistEditor.tsx`) for explicit additions; migration on agent upgrade preserves existing allowlist; manifest extract checks every member's realpath against allowlist (B6) | `agent/tests/test_allowlist.py::test_empty_allowlist_fails_closed` + `test_realpath_escape_rejected` |
-| F5 | wave 0 legal items not hard blockers on customer-facing upload → bmg v. cox class liability ($25m precedent) | regulatory + civil: dmca repeat-infringer policy not enforced → contributory copyright liability; no insurance → uninsured loss; no tos → no enforceable terms | plan.md "hard blocks" section: **v2 upload ui cannot be enabled for any external account** until wave 0.1 (tos), 0.2 (dmca + actual repeat-infringer enforcement), 0.3 (cyber insurance) all complete; ui flag gated on firestore feature flag tied to legal-readiness signoff | manual signoff doc (wave 0 exit criteria); ci check that asserts `ENABLE_V2_UPLOAD=false` in any environment whose `legal_ready=false` flag is set |
+| F5 | wave 0 legal items not hard blockers on customer-facing upload → bmg v. cox class liability ($25m precedent) | regulatory + civil: dmca repeat-infringer policy not enforced → contributory copyright liability; no insurance → uninsured loss; no tos → no enforceable terms | plan.md "hard blocks" section: **v2 upload ui cannot be enabled for any external account** until wave 0.1 (tos), 0.2 (dmca + actual repeat-infringer enforcement), 0.3 (cyber insurance) all complete; ui flag gated on a firestore flag tied to legal-readiness signoff — **note: no `legal_ready` / `ENABLE_V2_UPLOAD` flag was ever built.** the only shipped gate of this shape is the per-site `roostEnabled` kill switch, which is an incident control, not a legal one, and defaults to *enabled*. the block is currently procedural | manual signoff doc (wave 0 exit criteria); a real ci check needs a real flag first |
 
 ---
 
@@ -98,9 +99,10 @@ these are failure modes that would not be prevented by the baselines above unles
 
 ### zip bombs / decompression bombs
 
-- **threat**: customer uploads a 1mb file that decompresses to 10tb, exhausting agent disk + crashing service.
-- **mitigation**: agent enforces decompression-ratio cap of **100:1** during extract (`sync_assembler.py`); aborts with named error if exceeded; per-file uncompressed-size cap matches tier max-file-size (5gb starter, 10gb pro, 50gb enterprise); manifest-declared total size validated against r2-reported sum before download begins.
-- **verification**: `agent/tests/test_zip_bomb.py` — synthetic 100kb gz that expands to 1gb, assert rejected.
+- **threat**: a 1mb archive that decompresses to 10tb, exhausting agent disk + crashing the service.
+- **where it applies**: **not roost.** roost never decompresses anything — files are concatenated byte-for-byte from chunks whose sizes are declared in the version body and paid for at upload time (boundary 7). the exposure is the **v1 by-url** flow, where `agent/src/project_utils.py` extracts a customer-supplied zip with no ratio cap, no per-file size cap, and no declared-size cross-check.
+- **status**: the 100:1 ratio cap this section used to claim for `sync_assembler.py` was never implemented, there or anywhere. it is not needed for roost; it *is* the missing control on v1 extraction, which is one more reason v1 removal is the cheapest fix available.
+- **verification**: none exists (`agent/tests/test_zip_bomb.py` was never written). if v1 extraction outlives roost cutover, write it against `project_utils.extract_zip`, not against the assembler.
 
 ### touchdesigner `.toe` files embed python (run as system unless mitigated)
 
@@ -120,7 +122,7 @@ these are failure modes that would not be prevented by the baselines above unles
   1. **per-file `destination_allowlist` check** before any bytes are written (wave 1.7 module, enforced in `agent/src/sync_assembler.py` per B6); fail-closed if the allowlist is empty or missing.
   2. **independent realpath check**: for every file, compute `os.path.realpath(target_path)` and assert `startswith(allowlisted_root)` (B6); reject otherwise. catches normalization tricks the allowlist string match might miss.
   3. **reject `os.path.islink()`** outright on windows (windows symlinks require `SeCreateSymbolicLinkPrivilege`, which agent has as `system` — a malicious symlink could swap-in arbitrary content after assembly).
-- **verification**: `agent/tests/test_path_traversal.py` covers all three layers; manifest fixture with `../`-laden path stored in `agent/tests/fixtures/path_traversal_manifest.json`.
+- **verification**: `agent/tests/unit/test_destination_allowlist.py` covers the gate itself (dot-dot traversal, reparse points via mocked `FILE_ATTRIBUTE_REPARSE_POINT`, case-folded comparison, empty-allowlist fail-closed); `agent/tests/unit/test_sync_assembler.py` covers the write path that calls it, including the post-rename realpath re-check.
 
 ### hash collision on sha-256
 
@@ -132,7 +134,7 @@ these are failure modes that would not be prevented by the baselines above unles
 
 - **threat**: attacker swaps a published manifest's bytes for malicious content while keeping the firestore pointer the same.
 - **mitigation**: defeated by content-addressing — the chunk hash **is** the storage key. you cannot swap bytes without also changing the key, and the key is recorded in firestore + audit log + agent local sqlite. tampering requires writing to multiple independent stores simultaneously. see [manifest-format.md `goals` and `chunk constraints`](./manifest-format.md#hash-constraints) for the content-addressing invariants this defense relies on.
-- **verification**: `tests/integration/test_manifest_substitution.py` — replace manifest bytes in r2, assert agent rejects on next sync (sha-256 mismatch).
+- **verification**: covered for chunk bytes — `agent/tests/unit/test_sync_downloader.py::test_hash_mismatch_triggers_retry_then_fails` (mismatched bytes are discarded, retried, then the chunk fails rather than being accepted). **not** covered for the version body itself: `fetch_version` treats the version id as a cache key and never re-derives it from the bytes (boundary 6), so a swapped-but-well-formed body would be parsed. the substitution still cannot introduce content that was not uploaded under its own hash, but it could drop or reorder files. re-deriving the id from the fetched body is a cheap hardening step and the test to write with it.
 
 ### toctou between manifest check and download
 
@@ -143,8 +145,8 @@ these are failure modes that would not be prevented by the baselines above unles
 ### cross-tenant chunk read
 
 - **threat**: tenant a obtains tenant b's chunk hash (e.g. via a leaked manifest or guessing) and requests download.
-- **mitigation**: per-tenant path prefix `project-content/{siteId}/{hash[0:2]}/{hash}` — chunks are physically isolated by `siteId` namespace (not in a shared global pool). r2 bucket policy + signed-url issuance route (B2) ensures `siteId` in path matches `siteId` in token claims. dedup is **per-tenant**, not global — a chunk uploaded by tenant a is not automatically reusable by tenant b (eliminates a class of side-channel attacks where reuse confirms presence of specific content).
-- **verification**: `__tests__/api/v2/cross-tenant-read.test.ts` — request signed url for `siteId=B`'s chunk using `siteId=A`'s token; assert 403.
+- **mitigation**: per-tenant path prefix `project-content/{siteId}/{hash[0:2]}/{hash}`, built server-side by `chunkKey(siteId, hash)` (`web/lib/r2Client.server.ts:56`) — chunks are physically isolated by `siteId` namespace, not pooled globally. the caller never supplies a raw key: it supplies a `siteId` that the route authorizes against the caller's own access + scopes (B2) and a hash, and the server composes the key. dedup is **per-tenant**, not global — a chunk uploaded by tenant a is not automatically reusable by tenant b (eliminates a class of side-channel attacks where reuse confirms presence of specific content).
+- **verification**: `web/__tests__/api/scopeEnforcement.test.ts` — a key scoped to site a against site b's chunks is refused; `web/__tests__/api/chunks-advanced.test.ts` covers the route-level path.
 
 ### ssrf in v1 byo-url flow
 
@@ -152,11 +154,18 @@ these are failure modes that would not be prevented by the baselines above unles
 - **mitigation**: B11 (`web/lib/safeFetch.ts`) **must be patched into v1 in parallel with v2 work** — explicitly called out in plan.md risks: "ssrf in v1 byo-url flow — fix v1 in parallel with v2 (don't wait for deprecation)". v1 is not safe to keep running in production without this patch even though it's being deprecated; deprecation is calendar-months away (wave 6.4).
 - **verification**: ssrf-bible fixture suite run against v1 byo-url endpoint; assert all malicious urls rejected.
 
-### tusd hook injection / smuggling
+### presigned-put abuse (the direct-to-r2 upload path)
 
-- **threat**: tusd pre-upload hook receives request from tusd over http; if hook auth is missing or weak, anyone who can reach the hook url can authorize uploads bypassing quota.
-- **mitigation**: tusd → cloud-function hook secured with hmac-signed body (`X-Tusd-Signature: sha256=...`); cloud function rejects requests with missing or invalid signature; tusd config + cloud function share the secret via gcp secret manager; secret rotated quarterly.
-- **verification**: `functions/__tests__/tusdHook.test.ts` — call hook with missing signature → 401; tampered body → 401; valid signature → 200.
+this replaces the "tusd hook injection" surface. there is no upload service to smuggle past: the browser writes to r2 directly, and the only thing standing between a caller and the bucket is the url the api mints.
+
+- **threat**: `POST /api/chunks/upload-urls` returns a presigned `PUT` per hash. that url is a **bearer credential for one object key** — whoever holds it can write those bytes with no further authentication, from anywhere, until it expires. two abuse shapes: (a) a leaked url is replayed by a third party; (b) an authorised caller writes bytes that do not match the hash in the key, poisoning their own dedup pool.
+- **mitigation**:
+  1. **minting is gated**: site access + `site=<id>:write` scope + `DISTRIBUTION_MANAGE` capability (B2, `upload-urls/route.ts:38-42`), and the per-site roost kill switch (`gateOrProceed`, `:44`) returns 503 while a site is disabled.
+  2. **single-key scope + 60-minute ttl** (B3) — the url cannot be walked to another chunk, another roost, or another tenant, and `chunkKey()` rejects a malformed hash or site id before signing.
+  3. **content-addressing bounds (b)**: the key name *is* the sha-256, so bytes written under it can never impersonate a *different* chunk; the agent re-hashes after download and refuses the mismatch (B4), and dedup is per-tenant so the damage does not cross a site boundary.
+  4. **finalize is a second gate**: a version referencing a chunk that is not in r2 is rejected 412 with the missing hashes (`web/app/api/roosts/[roostId]/versions/route.ts:282`).
+- **residual**: no server-side verify at write time while B5 stays unwired, and no per-token rate limit on url issuance (B7 / OWL-16) — 1000 urls per request is the only bound. a leaked url stays usable for its full ttl; shortening the put ttl is the cheapest lever if that ever bites.
+- **verification**: `web/__tests__/api/chunks-advanced.test.ts` (validation + auth paths), `web/__tests__/api/roosts/killSwitch.test.ts` (503 while disabled), `web/__tests__/api/scopeEnforcement.test.ts` (wrong-scope + wrong-site keys refused).
 
 ### worker dispatch poisoning
 
@@ -167,7 +176,7 @@ these are failure modes that would not be prevented by the baselines above unles
 ### dependency supply chain (codecov 2021, npm sept 2025 worm, axios 2026)
 
 - **threat**: a transitive npm or pip dependency is compromised; ci or production picks up malicious code.
-- **mitigation**: `package-lock.json` + `requirements.txt` pinned exact versions; renovate / dependabot pull requests reviewed by human before merge (no auto-merge); ci runs `npm audit --omit=dev` and `pip-audit` and fails on high+ severity; build vm is ephemeral (B10) — even if a dep is compromised post-build, secrets baked into the build vm don't persist; `.npmrc` set to `ignore-scripts=true` for ci installs to defang lifecycle script attacks; for `@uppy/*` packages added in wave 3, audit + pin + defer auto-update.
+- **mitigation**: `package-lock.json` + `requirements.txt` pinned exact versions; renovate / dependabot pull requests reviewed by human before merge (no auto-merge); ci runs `npm audit --omit=dev` and `pip-audit` and fails on high+ severity; build vm is ephemeral (B10) — even if a dep is compromised post-build, secrets baked into the build vm don't persist; `.npmrc` set to `ignore-scripts=true` for ci installs to defang lifecycle script attacks. the wave-3 upload ui added **no** third-party upload dependency (the `@uppy/*` + tus packages this doc once planned for were never installed — the chunker, queue, and put loop are first-party); the roost dependency of record is `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner`, server-only, which is the one to audit before bumping.
 - **verification**: `ci/audit.sh` runs on every pr; manual audit of any new dep added.
 
 ### cloudflare control-plane outage (cf nov 2025 archetype)
@@ -190,14 +199,14 @@ each compliance requirement maps to existing baselines and surface-area tasks. t
   - dashboard exposes "delete my account" flow (wave 5 deletion api).
   - manifest history retained for 90 days (soft-delete window, B15) for accidental-deletion recovery; full purge after.
   - audit log entries are immutable but pseudonymized after deletion (actor id replaced with `deleted-user-{hash}`; original mapping destroyed).
-- **verification**: `__tests__/api/v2/gdpr-deletion.test.ts` — delete customer, assert all chunks tombstoned within 1min, full purge entry scheduled for t+30d, audit entries pseudonymized.
+- **verification**: the account-delete cascade is covered (`web/lib/userDeleteCascade.server.ts` suites, OWL-33/OWL-39). the chunk half is **not** end-to-end verified: `chunkGcNightly` deletes nothing unless `CHUNK_GC_MODE=apply` is set explicitly (`functions/src/chunkGc.ts:126`), and the rollout note in that file asks for 30 days of dry-run logs first — so "chunks tombstoned within 1min, purged at t+30d" is a commitment the deployment cannot demonstrate today. write that test alongside the switch to apply mode.
 
 ### soc 2 cc7.2 (system monitoring)
 
 - **requirement**: monitor system components for anomalies; produce evidence of monitoring + response.
 - **hooks**:
   - append-only audit log (B8) is the primary evidence source.
-  - opentelemetry traces (per plan.md observability section) cover browser → tusd → cf → agent.
+  - opentelemetry traces (per plan.md observability section) cover browser → web api → cloud functions → agent.
   - per-tenant cost attribution + 50/80/100% alarms (B7) double as anomaly detection (sudden quota spike = potential compromise).
   - failed-auth alerting on `owk_*` token misuse (3 failed-auth events in 5min triggers slack alert).
 - **verification**: quarterly soc 2 evidence pack pulled from audit log + monitoring dashboards.
@@ -219,7 +228,7 @@ each compliance requirement maps to existing baselines and surface-area tasks. t
 
 ### encryption in transit
 
-- tls 1.3 enforced on all endpoints (`*.owlette.app`, cloud functions, tusd cloud run, r2 endpoints).
+- tls 1.3 enforced on all endpoints (`*.owlette.app`, cloud functions, r2 endpoints).
 - agent rejects non-tls connections (`firestore_rest_client.py` enforces https-only).
 - hsts header on all web responses (`Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`).
 
@@ -238,14 +247,13 @@ each compliance requirement maps to existing baselines and surface-area tasks. t
 
 each engagement covers (at minimum):
 - web app authn + authz (focus on cross-tenant access — B2)
-- `/api/v2/*` surface (focus on rate limiting, signed url issuance, problem+json error info disclosure)
-- agent download + extract (focus on path traversal, symlinks, zip bombs — B6)
+- the roost api surface — `/api/chunks/*`, `/api/roosts/*` (focus on rate limiting, presigned-url issuance and replay, problem+json error info disclosure)
+- agent download + assembly (focus on path traversal, reparse points, allowlist escape — B6)
 - installer + signing (focus on supply chain — B10)
 - ssrf surfaces (B11)
 
 ### out of scope (cost containment)
 
-- tusd internals (delegated to upstream maintainers; we audit configuration only)
 - cloudflare workers + r2 (delegated to cloudflare's own audits; we audit our policies only)
 - firebase auth internals (delegated to google)
 
@@ -299,7 +307,7 @@ quick lookup for plan.md task authors. if your task touches the surface listed, 
 
 | surface | applicable baselines | applicable failure modes |
 |---|---|---|
-| any new `/api/v2/*` route | B2, B3, B7, B8, B9, B11, B12, B13 | F1, F3 |
+| any new roost api route (`/api/chunks/*`, `/api/roosts/*`) | B2, B3, B7, B8, B9, B11, B12, B13 | F1, F3 |
 | any cloud function | B5, B7, B8, B9, B11 | F1, F2, F3 |
 | any r2 bucket policy or signed-url issuer | B1, B2, B3, B7 | F1 |
 | any agent file extract or write | B4, B6 | F4 |
@@ -319,8 +327,8 @@ quick lookup for plan.md task authors. if your task touches the surface listed, 
 - **manifest pointer**: firestore document referencing the current + previous manifest ids for a folder.
 - **pinned manifest revision**: the manifest id an agent commits to for a single download cycle; used to defeat toctou (see attack surfaces).
 - **owk_***: long-lived api key prefix for programmatic api access.
-- **tusd**: tus protocol server, runs on cloud run.
-- **uppy**: browser upload library, paired with tus + dashboard plugins.
+- **version (code) = manifest (older sections of this doc)**: the same object. the shipped code calls the immutable content list a *version* — stored at `sites/{siteId}/roosts/{roostId}/versions/{versionId}` with `currentVersionId` / `previousVersionId` on the roost doc — and `versionId` is the sha-256 of its canonical json body. read "manifest pointer" below as `currentVersionId`.
+- **presigned url**: a signed, time-limited, single-key r2 credential. the only way any client — browser or agent — reaches the bucket (B1, B3). replaced tusd/uppy/tus, none of which shipped.
 - **content store**: agent-local cache at `~/Documents/Owlette/.owlette-content/{hash[0:2]}/{hash}`.
 - **fail-closed**: when input is missing or invalid, deny the operation. opposite of fail-open.
 - **defense in depth**: multiple independent mitigations for the same threat, so a bypass of one does not bypass all.
@@ -336,51 +344,56 @@ quick lookup for plan.md task authors. if your task touches the surface listed, 
 
 every arrow that crosses a trust boundary is a place where the receiving side must validate input. listing them here so no boundary is implicit.
 
-### boundary 1: browser → tusd (cloud run)
+### boundary 1: browser → web api (roost routes)
 
-- **trust delta**: untrusted (browser is on customer device, possibly compromised) → semi-trusted (tusd is our infra but processes customer bytes).
-- **what crosses**: file bytes, tus upload metadata (filename, mime type, size), firebase id token in `Authorization` header.
-- **what tusd must validate**: id token signature + expiry + tenant claim (B2); upload size against per-tenant quota via pre-upload hook (B7); filename sanitization (B12); mime type is informational only (never trusted for security decisions); chunk size matches expected 4 mib boundary (reject malformed tus offsets).
-- **what tusd must not assume**: that filename is utf-8, that chunk bytes match any client-claimed hash (server recomputes via chunkVerify, B5), that the same browser will resume the upload (resumption may be from a different device, must re-validate token).
+- **trust delta**: untrusted (browser is on a customer device, possibly compromised; the client half of the upload is fully attacker-controlled) → trusted (next.js api routes).
+- **what crosses**: a session cookie / firebase id token / `owk_*` key in `Authorization` or `x-api-key`; a `siteId`; chunk hash lists (`/api/chunks/check`, `/api/chunks/upload-urls`); and at finalize the whole version body — relative file paths, sizes, and per-file chunk hashes (`POST /api/roosts/{roostId}/versions`).
+- **what the api must validate**: caller identity, site access, and api-key scope on every call, with the body-supplied `siteId` authorized rather than trusted (B2); the kill switch (`gateOrProceed`) before any work; hash lists as 64-char lowercase hex, ≤1000 per request (`validateHashList`, `_shared.ts:145`); the version envelope structurally — `schemaVersion === 2`, exact `mediaType`, non-empty `files[]`, every chunk `{hash: /^[0-9a-f]{64}$/, size > 0}` (`versions/route.ts:588`); `Idempotency-Key` on finalize; description ≤500 chars, targets deduped and capped at 500.
+- **what the api must not assume**: that the client hashed honestly (it did not necessarily — every referenced chunk is re-checked for presence at finalize, `:282`, and the agent re-hashes the bytes, B4); that `files[i].path` is a safe filesystem path (it is validated **on the agent**, per-file, against the destination allowlist — the api stores it as data, see boundary 7); that a `versionId` supplied by a client means anything (it is derived server-side from the canonical json body, `:296-298`, so the content addresses itself).
 
-### boundary 2: tusd → r2 (object put)
+### boundary 2: browser → r2 (presigned put)
 
-- **trust delta**: semi-trusted (tusd) → trusted (our r2 bucket).
-- **what crosses**: chunk bytes, object name (= sha-256 hash from chunkVerify), per-tenant prefix.
-- **what r2 must enforce**: bucket policy denies puts to objects outside `project-content/{siteId}/...` even from tusd's iam principal (defense in depth — if tusd is compromised, blast radius is limited to one tenant's prefix at a time, gated by the tenant of the request); object lifecycle rule moves stale uploads (`uploads/staging/...`) to deletion after 24h.
+- **trust delta**: untrusted (browser) → trusted (our r2 bucket). **this is the boundary that used to be tusd's job.** there is no upload service in the middle: the client writes chunk bytes straight into the bucket with a url our api signed.
+- **what crosses**: raw chunk bytes (≤4 mib), to exactly one key the api chose.
+- **what constrains it**: the presigned url is scoped to a single fully-qualified key `project-content/{siteId}/{hash[0:2]}/{hash}` and expires in 60 minutes (B3) — the client cannot choose the bucket, the prefix, or another tenant's namespace, and cannot list. the bucket is meant to take no unsigned reads or writes (B1) — note that `infra/r2/r2-bucket-policy.json` is a checked-in source of truth **applied by hand** to r2, and B1's ci probe (`tests/storage/test_default_deny.py`) does not exist, so "default-deny is live" is an assumption rather than a tested fact.
+- **what must not be assumed**: that the bytes hash to the key they were written under (B5 is unwired — see "presigned-put abuse"); that the uploader is the account that requested the url (a leaked url is a bearer credential for its ttl); that a written chunk is referenced by anything (unreferenced chunks are `chunkGcNightly`'s problem, F2).
 
-### boundary 3: r2 → cloud function (chunkverify trigger)
+### boundary 3: r2 → cloud function (chunkverify)
 
-- **trust delta**: trusted (r2) → trusted (cloud function).
-- **what crosses**: object metadata + bytes (function reads object after trigger fires).
-- **what function must validate**: re-compute sha-256 of object bytes; if mismatch with object name, delete + audit (B5); if customer's quota is exceeded after this put, mark object for deletion + emit alarm (B7).
-- **failure mode**: if cloud function execution lags behind upload rate, a poisoned chunk could be visible for a window. mitigation: function p99 latency budget = 60s; alerting on latency breach; signed-url-issuance (boundary 4) does not list a chunk as available until chunkverify has succeeded (chunk is in `staging/` prefix until verify, then atomically moved to canonical prefix).
+- **trust delta**: trusted (r2) → trusted (cloud function). **not currently wired** — r2 emits no firebase storage events, and the cloudflare worker webhook that would call `verifyChunk` is not in `infra/`; the function's object store is still a throwing stub (B5).
+- **what would cross**: an object path, then the object's bytes read back by the function.
+- **what the function must validate when it is wired**: caller identity against `CHUNK_VERIFY_CALLER_UIDS` (already enforced, fails closed); the object path must parse as a tenant chunk path; re-compute sha-256 and delete + alert on mismatch (`lib/chunkVerifyLogic.ts`).
+- **until then**: the compensating checks are finalize's presence check and the agent's post-download re-hash. do not describe chunk poisoning as "purged within 60s" in customer-facing material.
 
-### boundary 4: web api → r2 (signed url issuance)
+### boundary 4: web api → r2 (server credentials + signed-url issuance)
 
-- **trust delta**: trusted (our api) → trusted (r2), but the url leaves boundary 4 to land in untrusted hands.
-- **what crosses outbound**: signed url with ttl ≤ 15min (download) or 60min (upload), single-object scope (B3).
-- **what api must enforce before issuing**: caller's token claims include the `siteId` in the requested chunk path (B2); rate limit per `owk_*` token not exceeded (B7); audit entry written before url is returned to caller (B8).
-- **threat at boundary**: signed url leaks via browser history, ci log, screenshot in support ticket. mitigation: short ttl + single-object scope + url cannot be used to enumerate other chunks.
+- **trust delta**: trusted (our api) → trusted (r2). two distinct crossings live here: writes the server makes itself, and urls it mints for someone else to use.
+- **what crosses outbound**: (a) direct server-side operations under the `R2_S3_*` credentials — `HeadObject` presence checks, the version-body `PutObject` at finalize, `DeleteObject` from the verify path (`web/lib/r2Client.server.ts`); (b) presigned urls with ttl ≤15min (download) / ≤60min (upload), single-object scope (B3), which then leave our control entirely.
+- **what the api must enforce before issuing**: site access + scope + (on mutations) `DISTRIBUTION_MANAGE` (B2); kill switch clear; every key composed server-side from a validated `siteId` + hash — no caller-supplied keys. bucket selection is environment-derived (`currentEnv()`, `bucketFor()`), and `currentEnv()` **fails toward `dev`** so a misconfigured deploy cannot write prod buckets.
+- **what is not enforced yet**: per-token rate limiting on url issuance (B7 / OWL-16), and an audit entry per issuance (B8 covers mutations via `emitMutation`; url minting itself is not individually audited).
+- **threat at boundary**: the `R2_S3_*` credentials are the crown jewels — the bucket policy bounds them to the `project-content/*` / `project-manifests/*` prefixes and forbids enumeration, but **within** those prefixes they reach every tenant, so an rce or ssrf in the web tier reads and rewrites all customers' chunks. they live only in railway env (and `.claude/.env.local` for dev) and never reach the client bundle — `r2Client.server.ts` opens with `import 'server-only'`, which turns a client import into a build error.
 
 ### boundary 5: agent → web api (download url request)
 
 - **trust delta**: semi-trusted (agent could be compromised at customer site) → trusted (api).
-- **what crosses**: agent oauth bearer token (firebase id token, 1h ttl), requested chunk hash list, requested manifest id.
-- **what api must validate**: token claims include `siteId`; requested chunks all belong to a manifest the `siteId` is authorized to deploy (folder ↔ site mapping in firestore); chunk count per request capped (e.g. 100 chunks per call) to bound url-issuance cost; rate limit on per-agent url issuance (B7).
-- **what api must not assume**: that the agent will actually download the chunks (signed url may be leaked or replayed); audit log every issuance (B8).
+- **what crosses**: the agent's firebase id token (1h ttl, `role: 'agent'`), a `siteId`, and a chunk hash list — `POST /api/chunks/download-urls`, called from `_make_chunk_url_provider` (`agent/src/sync_commands.py:747`) via `firebase_client.get_chunk_download_urls`. the version body url is minted separately (`get_version_download_url`, called at `sync_commands.py:248`) because the url baked into the `sync_pull` command has usually expired by the time the slow worker runs.
+- **what api must validate**: `requireAgentOrSiteAuthAndScope` (`_shared.ts:632`) verifies the id token and requires `decoded.role === 'agent'` **and** `decoded.site_id === siteId` — for agents this genuinely is claim-derived tenancy, and a mismatch 404s rather than confirming the site exists. agent callers then bypass the api-key scope gate by design (internal traffic); operator and `owk_*` callers fall through to the full site-access + scope path. request size is capped at `MAX_HASHES_PER_REQUEST = 1000`; the agent asks in batches of 500 (`URL_PREFETCH_BATCH_SIZE`).
+- **what the api does not do**: it does not check that a requested hash belongs to a version this site is currently deploying — any hash under the caller's own `project-content/{siteId}/` prefix will be signed. that keeps a compromised agent inside its own tenant (which is the security boundary that matters) but means agent-token theft grants read of everything that site has ever uploaded, for as long as the token lives. per-agent issuance rate limiting is still unbuilt (B7).
+- **what api must not assume**: that the agent will actually download the chunks (a minted url may be leaked or replayed for its 15 minutes).
 
 ### boundary 6: agent → r2 (download via signed url)
 
 - **trust delta**: semi-trusted (agent) → trusted (r2).
-- **what r2 enforces**: signed-url validity (ttl, signature, scope); no other auth needed.
-- **what agent must validate after download**: sha-256 of downloaded bytes matches the requested hash (B4); reject and re-request (with backoff) if mismatch; circuit-breaker after n consecutive mismatches (suggests upstream poisoning, not transient corruption).
+- **what r2 enforces**: signed-url validity (ttl, signature, single-key scope); no other auth.
+- **what agent validates after download**: sha-256 of the received bytes against the hash that *is* the chunk's filename, in `sync_downloader.py` — a mismatch deletes the file and re-queues the chunk, with a per-chunk retry budget (5) and exponential backoff; partial downloads resume by `Range` request rather than restarting; cancellation is checked between chunks and between range requests (B4).
+- **what the agent does not verify**: the **version body** itself. `fetch_version(url, expected_version_id=...)` (`agent/src/sync_version.py:126`) uses the version id only as a cache filename — it never re-derives the content hash from the bytes it received, so version-body integrity rests on tls + the presigned single-key scope + the id being minted server-side from canonical json, not on the agent re-checking it. per-chunk hashes inside the body are still enforced downstream, so a forged body cannot smuggle in bytes that were not uploaded under their own hash; it could, in principle, reorder or drop files. the body fetch is size-capped (`MAX_VERSION_SIZE_BYTES`, streamed, with a `Content-Length` pre-check) so a hostile endpoint cannot oom the service.
 
 ### boundary 7: agent → local filesystem (extract + write)
 
 - **trust delta**: trusted (agent has verified all chunk hashes) → trusted (local fs is the agent's own machine).
-- **what agent must enforce**: every output path's realpath must be inside an allowlisted root (B6, F4); no symlinks accepted (B6); file modes set explicitly to admin+system only (B6 acl requirement); decompression-ratio cap (zip bombs); atomic swap via `MoveFileEx(REPLACE_EXISTING|WRITE_THROUGH)` after fsync.
-- **what agent must not assume**: that filenames in manifest are filesystem-safe (sanitize); that destination directory exists (create with secure default acl); that target file is not currently locked by another process (handle gracefully — atomic rename via temp-then-replace pattern handles open files on windows).
+- **what agent enforces** (all verified in `agent/src/sync_assembler.py`): `extract_root` is validated against the allowlist **before any egress** (`sync_commands.py:211`, so a refused deploy costs zero bytes) and again at assembly (`:96`); every individual output path goes through `allowlist.validate()` (`:217`) and is realpath-re-resolved **after** the rename (`:572-581`) to close the toctou window where a parent dir is swapped to a junction; reparse points are rejected by `FILE_ATTRIBUTE_REPARSE_POINT`, not `is_symlink()`, because junctions need no privilege (`destination_allowlist.py`); writes go to a `.partial` sidecar, fsync, then `os.replace` (`:236-276`); each file gets an explicit inheritance-stripped dacl — SYSTEM + Administrators full, interactive operator "modify" without `WRITE_DAC`/`WRITE_OWNER` (`_harden_acl`, `:639`), re-applied even on a skipped file so a stale dacl cannot survive a re-sync; the prune pass re-validates every deletion candidate the same way (`:420-433`).
+- **no archive is unpacked here**: v2 assembles files byte-for-byte from chunks. there is no `zipfile`/`tarfile` call site in the roost path, so the decompression-ratio cap this doc describes under "zip bombs" is not implemented on this boundary and does not need to be — total size is bounded by the version body and the pre-upload disk check. the only zip extraction left in the agent is the **v1 by-url** path (`agent/src/project_utils.py:48`), which caps nothing; that is where the zip-bomb section actually applies, and it is unmitigated there.
+- **what agent must not assume**: that paths in the version body are filesystem-safe (they are attacker-influenced data — that is what the per-file allowlist + realpath checks are for); that the destination directory exists; that the target file is not locked by a running show (the temp-then-replace pattern handles open files on windows, and a failed prune is logged rather than fatal).
 
 ### boundary 8: cloud functions → firestore (audit log writes)
 
@@ -423,7 +436,7 @@ this is the contract — a separate `docs/internal/incident-response.md` (not in
 
 ### sev-0 / sev-1 first-hour playbook (security-relevant only)
 
-1. **contain**: rotate the affected credential class immediately (signing cert → revoke + new cert; `owk_*` token → invalidate via firestore tombstone; firebase admin → rotate via console); if necessary, freeze the affected api route via feature flag (`ENABLE_V2_*` flag set false in firestore — agents and web both honor it).
+1. **contain**: rotate the affected credential class immediately (signing cert → revoke + new cert; `owk_*` token → invalidate via firestore tombstone; firebase admin → rotate via console); if necessary, halt roost for the affected tenant with the kill switch — set `sites/{siteId}.roostEnabled = false`, which both halves honor (`web/lib/roostKillSwitch.ts` 503s every chunk/roost route; `agent/src/roost_kill_switch.py` refuses new `sync_pull`s, 30s cache so it takes effect inside a minute). it is **per-site and fail-open** by design: it does not stop an in-flight distribution (that is `cancel_sync`) and a firestore read error leaves roost enabled, so for a platform-wide incident pull the credential or the deploy, not the flag.
 2. **preserve**: snapshot audit log + relevant firestore subtrees + r2 bucket inventory **before** any cleanup; copy to write-once gcs bucket for forensics.
 3. **assess blast radius**: query audit log for all `owk_*` use within the credential's lifetime; query signed-url issuance log for all urls issued via the credential; cross-check cloudflare access logs for r2 reads.
 4. **notify**: customers affected within 72 hours per gdpr art. 33 obligations (controller notification — for customer-facing incidents we are processor; we notify the controller, they notify subjects); legal in the loop within the first hour for any sev-0.
@@ -446,9 +459,9 @@ this section is the **schedule**, not the procedure. procedures live in `docs/in
 | ev code-signing cert | every 3 years (cert lifetime) | suspected compromise; cert custodian role change | owner |
 | firebase admin sdk service account | every 6 months | any audit-log anomaly involving admin operations | owner |
 | `owk_*` api keys (per-customer) | customer-driven; ui supports rotation | any failed-auth pattern; offboarding event | customer + owner |
-| tusd ↔ cloud function hook hmac secret | every 3 months | function deployment with new permissions; suspected leak | owner |
+| `CORTEX_INTERNAL_SECRET` — the `x-internal-secret` shared by web and the internal-only https functions (`functions/src/lib/requireInternalSecret.ts`, constant-time compared) | every 3 months | function deployment with new permissions; suspected leak | owner |
 | gcp workload identity federation oidc trust | annual review | any github org-level change; ci pipeline change | owner |
-| cloudflare api tokens | every 6 months | r2 policy change attempt detected; cloudflare account access change | owner |
+| cloudflare api tokens **and** the web tier's r2 bucket credentials (`R2_S3_ACCESS_KEY_ID` / `R2_S3_SECRET_ACCESS_KEY`) | every 6 months | r2 policy change attempt detected; cloudflare account access change; any suspected compromise of the web tier | owner |
 | encryption key for `.tokens.enc` (machine-bound fernet) | per-machine, on first install + on os reinstall detection | machine ownership change | agent (automatic) |
 | device pairing phrase wordlist | never (canonical list lives in web `pairPhrases.ts`); additions append-only | n/a | dev team |
 
@@ -467,7 +480,7 @@ scattered observations from designing v2 that should not be lost in commit messa
 - **defense in depth is not optional.** cve-2025-4330 bypassed python's `data` filter — relying on a single mitigation, even a well-tested one, is brittle. B6 has three independent layers. the same logic applies to every "the platform handles it" assertion.
 - **never trust bytes from the public internet, even after they touch our servers.** every byte that came from a customer device is suspect at every subsequent boundary (boundaries 2, 3, 4, 6, 7) until it has been verified again at that boundary.
 - **the agent is on a machine we do not control.** agent-side checks are a safety net, not a security boundary. the security boundary is the cloud — agent compromise must not enable cloud compromise. token claims (B2), per-tenant chunk paths (cross-tenant read mitigation), command addressing (boundary 9) all enforce that agent compromise stays bounded to the compromised site.
-- **legal blocks are technical blocks.** F5 is in this doc, not just in a contract drawer, because the implementation must enforce the legal precondition. an `ENABLE_V2_UPLOAD` feature flag tied to a `legal_ready` flag in firestore is the technical embodiment of the legal block.
+- **legal blocks are technical blocks.** F5 is in this doc, not just in a contract drawer, because the implementation must enforce the legal precondition. that was the intent behind the planned upload feature flag — and it is worth noting the flag never got built, so today the block is procedural. a lesson that only holds in a doc is not a control.
 
 ---
 
@@ -486,8 +499,8 @@ each actor from the top-level table is expanded into a concrete attack-tree sket
    - **closed by**: B1 r2 bucket policy + signed-url-only access pattern.
 3. scan github for `OWLETTE_API_KEY=owk_*` patterns → attempt api calls with discovered keys.
    - **closed by**: B9 pre-commit lint rule + gitguardian secondary scan + post-leak rotation procedure (appendix e).
-4. attempt parameter tampering on `/api/v2/folders/{folderId}/manifests` to read other tenants' folders.
-   - **closed by**: B2 token-derived tenant ids + cross-tenant test (`tenant-isolation.test.ts`).
+4. attempt parameter tampering on `GET /api/roosts/{roostId}/versions?siteId=…` to read other tenants' roosts.
+   - **closed by**: B2 — the `siteId` is authorized against the caller's own access + key scopes before it is used, and a roost that does not exist on that site 404s (`versions/route.ts:95`) rather than leaking existence. covered by `web/__tests__/api/scopeEnforcement.test.ts`.
 
 **hardest leaf to close**: leaked `owk_*` from a customer's own ci. mitigation requires customer education + key-rotation ui + rate limits (B7) so a single leaked key has bounded blast radius.
 
@@ -620,19 +633,19 @@ operationalizes this doc against `dev/active/project-distribution-v2/plan.md` wa
 | webhookDispatch.ts | B11 (ssrf on webhook destination url) | B11 |
 | auditLog.ts | B8 | B8 |
 | telemetry.ts | no token logging in traces (B9); pii handling for trace attributes | B9 |
-| tusd hook function | B7 (pre-upload quota), boundary 1 (filename sanitize), tusd hook hmac | B7, B12, "specific attack surfaces" |
+| ~~tusd hook function~~ — never built; the quota admission call it would have made is the open half of B7/F1, and needs a new home on the presigned-url path | B7, F1 | B7, F1, boundary 2 |
 
 ### wave 3 — web upload + rollback ui
 
 | task | security item | doc reference |
 |---|---|---|
-| folder upload dropzone | B12 (sanitize), boundary 1 (browser → tusd) | B12, appendix c |
+| folder upload dropzone | B12 (sanitize), boundary 1 (browser → web api) + boundary 2 (browser → r2) | B12, appendix c |
 | pre-upload summary | quota visibility (B7 ui surface) | B7 |
 | rollback confirm dialog | F3 (rollback pin), B8 (audit on rollback) | F3, B8 |
 | empty-state upload | n/a directly; ensure no info leak in empty-state messaging | n/a |
 | allowlist editor (admin ui) | F4 ui surface | F4 |
 | sanitize.ts | B12 | B12 |
-| upload queue | resume token storage in localstorage acceptable (no secret data); upload metadata only | n/a |
+| upload queue | resume state is indexeddb, not localstorage (`web/lib/uploadQueue.idb.ts`). note the task payload holds the **presigned put url + the chunk blob** (`roostUpload.ts:210`), so a live single-key upload credential does sit in browser storage until it expires — origin-scoped, ≤60 min, one object. acceptable, but it is the reason B3's put ttl is a real control and not a formality | B3 |
 
 ### wave 4a — agent core
 
@@ -686,7 +699,7 @@ these are items where the threat model is **complete enough to ship v2** but whe
 4. **support staff access procedure**: actor 5 mitigation references `docs/internal/support-access.md`. that doc does not exist yet; before first hire of support staff, this doc must be written. tracked for whichever wave introduces support hires.
 5. **incident response runbook full text**: appendix d is an outline; full runbook (`docs/internal/incident-response.md`) needed before first external customer. tracked for wave 0 exit criteria.
 6. **key custody full text**: appendix e is a schedule; full procedures (`docs/internal/key-custody.md`) needed before first ev cert + first customer onboarding. tracked for wave 0 exit criteria.
-7. **csp `unsafe-inline` removal**: B13 ships with `unsafe-inline` in `script-src` because firebase auth iframe + uppy require it. tracking removal as a separate cleanup task post-v2.
+7. **csp `unsafe-inline` removal**: **resolved for `script-src`** — the shipped csp is built per request with a fresh nonce plus `strict-dynamic` (`web/proxy.ts:63`; the static headers in `next.config.ts` carry only `X-Frame-Options: DENY` and friends). `unsafe-inline` survives deliberately in `style-src` / `style-src-elem` / `style-src-attr`, because removing it breaks next 16 hydration (react #418, commit `f3f6ecc`). the uppy dependency this question assumed would need it never existed. remaining work is style-src only.
 8. **byo-bucket enterprise tier security review**: enterprise customers can use their own r2 / s3 buckets. the threat model assumes our r2 — when enterprise byo ships, a separate review is required for the customer-bucket trust delta (their iam is now in the loop).
 9. **virustotal scan on upload**: cloud function `virusTotalScan.ts` is queued for v3 but actor-3 + actor-4 mitigations would benefit from it earlier. proposal: re-evaluate in wave 5; if cheap to bolt on, ship in v2.
 

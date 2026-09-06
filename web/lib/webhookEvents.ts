@@ -2,7 +2,7 @@
  * Canonical roost webhook event catalog — single source of truth for subscription
  * validation, dispatcher publishing, and sdk/probe type hints.
  *
- * Mirrors docs/api/webhooks.md — keep both in sync when adding events.
+ * Mirrors web/content/docs/api/webhooks.mdx — keep both in sync when adding events.
  */
 
 export const ROOST_WEBHOOK_EVENTS = [

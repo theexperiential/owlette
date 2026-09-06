@@ -112,4 +112,4 @@ Public launch should use:
 
 A non-zero k6 exit code means a latency or reliability threshold failed and should block launch until the run is explained or the regression is fixed.
 
-Record real run results in [API load testing and SLOs](../../../docs/api/load-testing.md).
+Record real run results in [API load testing and SLOs](../../../docs/internal/public-api-load-testing.md).

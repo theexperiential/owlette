@@ -1,6 +1,24 @@
 # API load testing and SLOs
 
-**Last updated**: 2026-04-29
+**Last updated**: 2026-04-29 | **moved** 2026-09-05 from `docs/api/load-testing.md` | **reviewed** 2026-09-05
+
+**INTERNAL — keep inside `docs/internal/`**, which the fumadocs migration excludes from
+publishing (`excludedPrefixes` in `web/scripts/migrate-docs-to-fumadocs.mjs`). This page was
+written for the MkDocs site that was deleted 2026-05-20 and never reached a published docs
+route. It is a load-test operating note, and it names internal fixture ids — publish SLO
+numbers to customers only through a status page or a purpose-written docs page, never by
+publishing this.
+
+> **2026-09-05 accuracy review.** No corrections needed — this is the one orphaned page that
+> is still fully accurate. Verified against HEAD: all twelve scripts exist under
+> `test/load/k6/`; every p99 target in the table matches `SLO_P99_MS` in
+> `test/load/k6/lib/config.js` exactly; the `http_req_failed < 0.01` budget and the
+> `avg/p(95)/p(99)/max` summary stats match `optionsFor()`; the `smoke` (1 VU / 10s), `spike`
+> (200 VUs / 30s) and `burst` (50 VUs / 30s) shapes match the scripts; and `publish-version.js`
+> still enforces exactly one 201 winner and nineteen 412 losers in the `race` scenario, with
+> `K6_EXPECTED_CURRENT_VERSION_ID` required. Not verifiable from the repo: whether any run has
+> ever been executed — the "current status" note at the bottom still stands, no p95/p99 numbers
+> are recorded anywhere.
 
 External public launch requires a load-test pass against the public API hot paths. The k6 suite lives in `test/load/k6` and enforces p99 latency plus a base reliability budget.
 
@@ -33,7 +51,7 @@ The authoritative p99 thresholds are enforced in `test/load/k6/lib/config.js`.
 | `machines-list.js` | `GET /api/sites/{siteId}/machines` | 500 ms | fleet inventory bootstrap |
 | `sites-deployments-list.js` | `GET /api/sites/{siteId}/deployments` | 250 ms | deployment history polling |
 | `process-list.js` | `GET /api/sites/{siteId}/machines/{machineId}/processes` | 250 ms | process monitoring and CLI reads |
-| `cortex-conversations-list.js` | `GET /api/cortex/conversations` | 300 ms | Cortex conversation list |
+| `cortex-conversations-list.js` | `GET /api/cortex/conversations` | 300 ms | hoot conversation list (script and route keep the `cortex` wire spelling) |
 | `users-list.js` | `GET /api/users` | 300 ms | platform admin list |
 | `dispatch-machine-command.js` | `POST /api/sites/{siteId}/machines/{machineId}/commands` | 400 ms | async machine command queue |
 | `process-create.js` | `POST /api/sites/{siteId}/machines/{machineId}/processes` | 400 ms | process config mutation |

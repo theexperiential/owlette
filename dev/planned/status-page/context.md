@@ -49,7 +49,7 @@ a public Instatus-hosted status page that shows:
 
 ### create
 
-Public API W5.1 has already created the autonomous foundation files: `web/lib/healthChecks.server.ts`, `web/lib/instatusClient.ts`, `web/app/api/cron/status-ping/route.ts`, focused tests, and `docs/api/status-uptime.md`. The remaining new files in this section are still needed after vendor setup.
+Public API W5.1 has already created the autonomous foundation files: `web/lib/healthChecks.server.ts`, `web/lib/instatusClient.ts`, `web/app/api/cron/status-ping/route.ts`, focused tests, and `docs/internal/status-page-uptime.md` (moved there 2026-09-05 from `docs/api/status-uptime.md`). The remaining new files in this section are still needed after vendor setup.
 - `web/lib/healthChecks.server.ts` (new) — internal healthcheck functions returning `{component, ok, latency_ms}` for each tracked component.
 - `web/app/api/cron/status-ping/route.ts` (new) — railway cron handler, runs every 60s, calls each healthcheck, posts Instatus component-status updates on state change.
 - `dev/active/status-page/reference/instatus-config.md` (new) — vendor setup notes (hosted page URL, page id, component ids, component-status API template, email template).

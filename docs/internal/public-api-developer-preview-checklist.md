@@ -1,6 +1,22 @@
 # developer-preview release checklist
 
-**Last updated**: 2026-04-28
+**Last updated**: 2026-04-28 | **moved** 2026-09-05 from `docs/api/developer-preview-checklist.md` | **reviewed** 2026-09-05
+
+**INTERNAL — keep inside `docs/internal/`**, which the fumadocs migration excludes from
+publishing (`excludedPrefixes` in `web/scripts/migrate-docs-to-fumadocs.mjs`). This page was
+written for the MkDocs site that was deleted 2026-05-20 and never reached a published docs
+route; it is a release gate for operators, not customer reference material.
+
+> **2026-09-05 accuracy review.** This is the stalest of the five orphaned pages. Corrected
+> against HEAD: the MkDocs build step is gone, every `docs/api/*.md` consumer link now lives in
+> fumadocs at `web/content/docs/api/*.mdx` (published under `/docs/api/`), the sprint reference
+> notes moved from `dev/active/public-api/` to `dev/completed/public-api/`, the smoke-spec
+> invocation now goes through `npm run e2e`, and Cortex is called hoot in product copy.
+> Verified still true: `npm run validate:api`, `web/openapi.yaml` +
+> `web/scripts/validate-openapi.ts` as the source of truth, `web/__tests__/api/openapi.test.ts`,
+> `web/e2e/specs/api-contracts/public-api-smoke.spec.ts`, and every deferred route call except
+> the two flagged inline. Not verifiable from the repo: whether any internal consumer has ever
+> been onboarded against this checklist.
 
 This checklist defines the API surface that is safe to point internal consumers at on `dev.owlette.app` or a staging deployment. It is not the external public launch checklist.
 
@@ -19,7 +35,7 @@ Developer preview is ready when an internal consumer can:
 - use documented shared behavior for auth, errors, pagination, idempotency, and rate limits
 - inspect the rendered reference at `/docs/api`
 
-Preview does not mean the public launch packaging is complete. Status page, [public SLOs](load-testing.md), [published SDK/CLI channels](distribution.md), [marketplace/example assets](launch-assets.md), pricing/signup pages, and the [first-week launch runbook](launch-runbook.md) remain Wave 5 launch work.
+Preview does not mean the public launch packaging is complete. [Status page](status-page-uptime.md), [public SLOs](public-api-load-testing.md), published SDK/CLI channels (`/docs/api/distribution`), [marketplace/example assets](public-api-launch-assets.md), pricing/signup pages, and the [first-week launch runbook](public-api-launch-runbook.md) remain Wave 5 launch work.
 
 ---
 
@@ -33,17 +49,23 @@ Before pointing internal consumers at the preview:
 - [ ] Confirm the quickstart can run with a `test` key against a real dev/staging site and one online machine.
 - [ ] Run `npm.cmd run validate:api` from `web`.
 - [ ] Run `npm.cmd test -- --runTestsByPath __tests__/api/openapi.test.ts --runInBand` from `web`.
-- [ ] Run `python -m mkdocs build` from the repository root and review any new warnings from this page or its links.
-- [ ] Run the public API smoke spec when Firebase emulators are available:
+- [ ] Run `npm.cmd run build` from `web` — docs build with the app now (`fumadocs-mdx && next build`), so a broken docs link or bad MDX fails the same build as the app.
+- [ ] Run the public API smoke spec. It lives at `web/e2e/specs/api-contracts/public-api-smoke.spec.ts` and runs inside the standard emulator suite:
 
-```powershell
-firebase.cmd emulators:exec --only auth,firestore,storage --project demo-playwright-e2e "cd web && npx.cmd playwright test specs/api-contracts/public-api-smoke.spec.ts"
+```bash
+cd web && npm run e2e
 ```
+
+> Run the whole suite (`/preflight` does), not a hand-rolled `firebase emulators:exec` line —
+> PowerShell splats a comma-joined `--only auth,firestore,storage` into three argv entries and
+> the emulator starts nothing.
 
 - [ ] Run `git diff --check` before commit.
 - [ ] Record any known validation blockers in the sprint log before sharing the preview link.
 
-Known local docs-build caveat: `python -m mkdocs build --strict` currently fails on pre-existing repo-wide warnings for links to source files outside the docs tree. Treat new warnings from this page as 4.4 blockers; treat unrelated existing warnings as follow-up docs cleanup.
+> **corrected 2026-09-05:** this gate used to require `python -m mkdocs build` and carried a
+> caveat about MkDocs strict-mode warnings. MkDocs was deleted 2026-05-20; the docs are
+> fumadocs MDX under `web/content/docs/` and build with the Next.js app.
 
 ---
 
@@ -53,7 +75,7 @@ These surfaces are safe for internal developer-preview consumers when accessed w
 
 | surface | safe preview scope |
 |---|---|
-| docs and contract | `/docs/api`, `/api/openapi`, `/api/version`, [quickstart](quickstart.md), and shared behavior docs |
+| docs and contract | `/docs/api`, `/api/openapi`, `/api/version`, the quickstart at `/docs/api/quickstart`, and the shared-behavior pages under `/docs/api/` |
 | auth and identity | dashboard-created API keys, `POST /api/keys` with user session or Firebase ID token, `/api/whoami`, scoped `owk_test_*` keys |
 | sites | site list/detail/create/update/delete and member add/list/remove where caller role/scope allows it |
 | users | platform user management for superadmin-only internal testing |
@@ -61,7 +83,7 @@ These surfaces are safe for internal developer-preview consumers when accessed w
 | processes | process list/detail/create/update/delete plus start/stop/kill/schedule/launch-mode |
 | classic deployments | `/api/sites/{siteId}/deployments/**` create/list/detail/retry/cancel/uninstall/delete |
 | roost and chunks | roost CRUD, version publish/list/detail/files/diff, chunk check/upload/download/mount/referrers, deploy/rollback/resync |
-| Cortex | canonical `/api/cortex/conversations/**`; `/api/chat/**` remains a compatibility alias, not the path to promote |
+| hoot | canonical `/api/cortex/conversations/**` — the wire path keeps the `cortex` spelling on purpose; `/api/chat/**` remains a compatibility alias, not the path to promote |
 | webhooks and events | webhook CRUD, delivery history/detail, manual retry, secret rotate, and `POST /api/webhooks/probe`; `/api/events/stream` liveness only |
 | quota, audit, logs | quota current/history, audit-log reads, site operational log read/detail/clear with documented admin controls |
 | installer management | `/api/installer/**` for superadmin/platform internal testing; unauthenticated installer download remains `/download` |
@@ -75,13 +97,13 @@ Use `test` keys for dev/staging unless the integration intentionally exercises l
 
 Do not advertise these as developer-preview public APIs:
 
-- `/api/admin/**` compatibility paths.
+- `/api/admin/**` — the flat compatibility namespace this bullet described was removed in `644c57f`; what remains (`alerts`, `installer`, `security`, `system-presets`) is superadmin tooling and still stays out of the preview contract.
 - `/api/agent/**` agent writeback/auth routes, except where the rendered reference explicitly documents an agent-compatible operation.
 - `/api/cron/**` scheduler routes.
 - Routes on the OpenAPI validator's internal allowlist, including session auth, MFA/passkeys, settings/setup helpers, bug/test-email helpers, legal/unsubscribe helpers, and dashboard-only support utilities, unless the rendered reference explicitly documents the route.
 - `/api/webhooks/test`; use `POST /api/webhooks/probe` for public receiver checks.
 - `/api/cortex/autonomous`, `/api/cortex/escalation`, `/api/cortex/provision-key`, and `/api/cortex/categorize`.
-- Site-nested Cortex paths such as `/api/sites/{siteId}/cortex/conversations/**`.
+- Site-nested hoot paths. The `/api/sites/{siteId}/cortex/conversations/**` shape this bullet named was never built; what exists today is `/api/sites/{siteId}/cortex-settings` and `/api/sites/{siteId}/hoot-settings`, both internal.
 - Dedicated display enumeration/capture paths and site-level display-layout library routes; use machine-level display layout plus generic machine commands for preview.
 - Public WebRTC/live-view session APIs.
 - Machine pairing UX as a general public API; current CLI/agent device-code routes are implementation surfaces.
@@ -90,11 +112,11 @@ Do not advertise these as developer-preview public APIs:
 - Production event fanout through `/api/events/stream`; current stream validates auth/filters and emits liveness events only.
 - New path aliases such as `/api/installers`, `/api/sites/{siteId}/installer-deploys`, or `/api/sites/{siteId}/cortex/...`.
 - New `X-Owlette-Api-Version` request header; no Owlette-wide version header is required for preview.
-- External package publication, Homebrew/Scoop/winget distribution, status page, public uptime checks, launch marketing, and support SLAs. Use the [distribution gate](distribution.md) before claiming SDK or CLI packages are live.
+- External package publication, Homebrew/Scoop/winget distribution, status page, public uptime checks, launch marketing, and support SLAs. Use the distribution gate at `/docs/api/distribution` (`web/content/docs/api/distribution.mdx`) before claiming SDK or CLI packages are live — as of 2026-09-05 none of them is published.
 
 If an internal consumer asks for one of these, record it as a follow-up instead of expanding the preview contract ad hoc.
 
-The source of truth for the exposed route set is `web/openapi.yaml` plus the internal allowlist in `web/scripts/validate-openapi.ts`. Historical sprint references under `dev/active/public-api/reference` explain why a route is included, renamed, internal, or deferred; they are not consumer-facing docs.
+The source of truth for the exposed route set is `web/openapi.yaml` plus the internal allowlist in `web/scripts/validate-openapi.ts`. Historical sprint references under `dev/completed/public-api/reference` explain why a route is included, renamed, internal, or deferred; they are not consumer-facing docs.
 
 ---
 
@@ -104,13 +126,15 @@ Send internal consumers this minimal set:
 
 - Base URL: `https://dev.owlette.app`
 - Docs: `https://dev.owlette.app/docs/api`
-- Quickstart: [quickstart.md](quickstart.md)
-- Auth: [authentication.md](authentication.md)
-- Shared behavior: [pagination.md](pagination.md), [idempotency.md](idempotency.md), [errors.md](errors.md), [rate-limits.md](rate-limits.md)
+- Quickstart: `https://dev.owlette.app/docs/api/quickstart`
+- Auth: `https://dev.owlette.app/docs/api/authentication`
+- Shared behavior: `/docs/api/pagination`, `/docs/api/idempotency`, `/docs/api/errors`, `/docs/api/rate-limits`
 - Required setup: account, accessible site, online machine, scoped `test` API key
 - Scope reminder: use exact permissions; `write` does not imply `read`
 - Support payload: method, URL, status, problem `code`, `requestId`, `X-Request-Id`, and any `RateLimit-*` / `Retry-After` headers
-- External launch support payload and severity targets live in the [public launch runbook](launch-runbook.md).
+- External launch support payload and severity targets live in the [public API launch runbook](public-api-launch-runbook.md).
+
+Those consumer pages are fumadocs MDX under `web/content/docs/api/`; the `docs/api/*.md` files this list used to point at no longer exist.
 
 Recommend the 10-minute quickstart as the first smoke test before SDK or CLI workflows.
 
@@ -135,7 +159,7 @@ Never work around preview issues by sharing broader production keys or undocumen
 
 4.4 is done when:
 
-- this page is in the API docs nav
+- this page is discoverable to operators — as of 2026-09-05 that means `docs/internal/`, not an API docs nav; the original "in the API docs nav" criterion assumed the deleted MkDocs site
 - safe and deferred preview surfaces are explicit
 - validation gates are listed with runnable commands
 - consumer handoff links point at current Owlette API docs
