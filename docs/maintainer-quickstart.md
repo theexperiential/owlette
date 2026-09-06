@@ -1,6 +1,6 @@
 # maintainer quickstart
 
-This is the canonical first-time path for a senior engineer cloning Owlette for maintenance work; use [README.md](../README.md) for the product overview. It links to the existing setup and operations docs instead of duplicating their deeper procedures. AI-agent operating notes live in [CLAUDE.md](../CLAUDE.md) and [agent/CLAUDE.md](../agent/CLAUDE.md), but those are not a replacement for this human onboarding path.
+This is the canonical first-time path for a senior engineer cloning Owlette for maintenance work; use [README.md](../README.md) for the product overview. It links to the existing setup and operations docs instead of duplicating their deeper procedures. AI-agent operating notes live in [.claude/CLAUDE.md](../.claude/CLAUDE.md) and [agent/CLAUDE.md](../agent/CLAUDE.md), but those are not a replacement for this human onboarding path.
 
 ## prerequisites
 
@@ -21,12 +21,12 @@ When available, run `/scripts/bootstrap-windows.ps1` to validate your local tool
 
 ## day-1: web dev server
 
-Use the setup landing page for the full path: [docs/setup/index.md](setup/index.md). The web dev server needs Firebase credentials from [docs/setup/firebase.md](setup/firebase.md), and `--legacy-peer-deps` is required.
+Use the setup landing page for the full path: [setup/index.mdx](../web/content/docs/setup/index.mdx) (published at `/docs/setup`). The web dev server needs Firebase credentials from [setup/firebase.mdx](../web/content/docs/setup/firebase.mdx), and `--legacy-peer-deps` is required.
 
 ```bash
 git clone https://github.com/theexperiential/owlette.git
 cd owlette/web
-cp env.example env.local  # fill Firebase creds from docs/setup/firebase.md
+cp env.example env.local  # fill Firebase creds from /docs/setup/firebase
 npm ci --legacy-peer-deps
 npm run dev
 ```
@@ -34,18 +34,18 @@ npm run dev
 ## day-2: agent dev + pairing
 
 1. Install the agent installer on a Windows 10/11 64-bit machine.
-2. Pair the machine with a device code using [docs/agent/installation.md](agent/installation.md).
+2. Pair the machine with a device code using [agent/installation.mdx](../web/content/docs/agent/installation.mdx) (published at `/docs/agent/installation`).
 3. When running through Claude Code, local agent edits auto-deploy to ProgramData via the `.claude/hooks/deploy-agent.mjs` hook.
 
 ## week-1: ship a new installer
 
-Treat [docs/internal/version-management.md](internal/version-management.md) and [docs/changelog.md](changelog.md) as authoritative for releases and release history. The full installer build script discovers Inno Setup and Python through environment variables including `PYTHON311_ROOT` and `ISCC`. Installer release follows the 3-step API upload flow documented in [CLAUDE.md](../CLAUDE.md).
+Treat [docs/internal/version-management.md](internal/version-management.md) and [docs/changelog.md](changelog.md) as authoritative for releases and release history. The full installer build script discovers Inno Setup and Python through environment variables including `PYTHON311_ROOT` and `ISCC`. Installer release follows the 3-step API upload flow documented in [.claude/CLAUDE.md](../.claude/CLAUDE.md).
 
 ## credentials bootstrap order
 
-1. Firebase dev + prod projects (Auth, Firestore, Storage) → [docs/setup/firebase.md](setup/firebase.md)
-2. Firestore rules + indexes → [docs/setup/firestore-rules.md](setup/firestore-rules.md)
-3. Web env vars (Railway dev + prod) → [docs/setup/web-deployment.md](setup/web-deployment.md) and [docs/setup/environment-variables.md](setup/environment-variables.md)
+1. Firebase dev + prod projects (Auth, Firestore, Storage) → [setup/firebase.mdx](../web/content/docs/setup/firebase.mdx)
+2. Firestore rules + indexes → [setup/firestore-rules.mdx](../web/content/docs/setup/firestore-rules.mdx)
+3. Web env vars (Railway dev + prod) → [setup/web-deployment.mdx](../web/content/docs/setup/web-deployment.mdx) and [setup/environment-variables.mdx](../web/content/docs/setup/environment-variables.mdx)
 4. Cloudflare R2 → run `/scripts/provision-r2.mjs` and configure env vars
 5. GitHub release secrets (`NPM_TOKEN` for cli publish, etc.)
 6. Agent installer code-signing cert (currently incomplete; installer ships unsigned with SmartScreen warnings)
@@ -74,9 +74,10 @@ For specific operational procedures, see the dedicated runbooks:
 
 ## further reading
 
-- [docs/architecture.md](architecture.md)
-- [docs/setup/environment-variables.md](setup/environment-variables.md)
-- [docs/agent/installation.md](agent/installation.md)
+- [docs/README.md](README.md) - what lives in this tree vs. the published one
+- [architecture.mdx](../web/content/docs/architecture.mdx) (published at `/docs/architecture`)
+- [setup/environment-variables.mdx](../web/content/docs/setup/environment-variables.mdx)
+- [agent/installation.mdx](../web/content/docs/agent/installation.mdx)
 - [web/e2e/README.md](../web/e2e/README.md)
 - [docs/internal/version-management.md](internal/version-management.md)
 - GUI automation machine setup (internal, unpublished): [docs/internal/gui-automation-machine-setup.md](internal/gui-automation-machine-setup.md) — provisioning a Windows box for native GUI automation (video capture + the full-machine e2e gate); executable form: `scripts/bootstrap-gui-automation.ps1`

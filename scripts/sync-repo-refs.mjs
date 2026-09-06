@@ -54,7 +54,8 @@ const SCAN_ROOTS = [
   'web',
 ];
 
-const SCAN_FILES = ['README.md', 'SECURITY.md', 'roadmap.md'];
+// Root-level files only; `roadmap.md` now lives under the `docs` scan root.
+const SCAN_FILES = ['README.md', 'SECURITY.md'];
 
 const EXTENSIONS = new Set([
   '.bat',

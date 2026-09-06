@@ -311,7 +311,7 @@ git tag v2.0.5-agent
 
 - [changelog](../changelog.md) - Release history
 - Development guide: root `.claude/CLAUDE.md`
-- [firestore security rules](../setup/firestore-rules.md) - Security rules
+- [firestore security rules](../../web/content/docs/setup/firestore-rules.mdx) - Security rules
 
 ---
 

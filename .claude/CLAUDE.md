@@ -75,7 +75,7 @@ cd agent && build_installer_quick.bat             # Quick build (~30 sec)
 node scripts/sync-versions.js X.Y.Z
 ```
 
-Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules` (independent). See `docs/version-management.md`.
+Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules` (independent). See `docs/internal/version-management.md`.
 
 **E2E prereqs**: JDK 21 on PATH (Temurin), `npm i -g firebase-tools@15`, `npx playwright install chromium --with-deps` (once). Emulator ports: Auth :9099, Firestore :8080, Storage :9199. App runs on :3100 during E2E (not :3000). Report output: `web/e2e/.output/report/`. Full guide: `web/e2e/README.md`.
 

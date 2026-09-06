@@ -14,6 +14,10 @@ Each runbook is self-contained - read the one that matches your situation.
 | "I'm turning on Firebase App Check enforcement" | [app-check-rollout.md](app-check-rollout.md) |
 | "I'm enabling talons (the automations cron) for an environment" | [talons.md](talons.md) |
 | "who owns the cron schedules, the load balancer, or anything else not deployed by a push?" | [manual-infrastructure.md](manual-infrastructure.md) |
+| "one site's roost distribution needs stopping right now" | [roost-kill-switch.md](roost-kill-switch.md) |
+| "capability or privileged rate-limit enforcement has to be flipped" | [security-boundary-kill-switches.md](security-boundary-kill-switches.md) |
+| "a security-boundary alert just fired and I'm first response" | [security-boundary-incident-playbook.md](security-boundary-incident-playbook.md) |
+| "what emits the security-boundary metrics, and what alerts on them?" | [security-boundary-monitoring.md](security-boundary-monitoring.md) |
 | "I'm new to the repo and need a setup path" | [/docs/maintainer-quickstart.md](../maintainer-quickstart.md) |
 
 ## release paths
@@ -51,6 +55,19 @@ Use [dev-to-prod-workflow.md](dev-to-prod-workflow.md) when you need the meta-mo
 - where branch protection is unknown
 - which deployment surfaces are still manual
 
+## containment and security-boundary paths
+
+These four moved here from `docs/ops/` on 2026-09-05 — same genre, one directory.
+They are for incidents and planned drills, not for routine releases.
+
+- [roost-kill-switch.md](roost-kill-switch.md) - per-site emergency stop for roost publish, signed-URL, and agent sync.
+- [security-boundary-kill-switches.md](security-boundary-kill-switches.md) - the two W9 enforcement switches (capability, privileged rate limit), with the reason/owner/expiry discipline they require.
+- [security-boundary-incident-playbook.md](security-boundary-incident-playbook.md) - first response for W9.1-and-later security-boundary incidents.
+- [security-boundary-monitoring.md](security-boundary-monitoring.md) - the `[security-boundary-metric]` emissions, their Sentry events, and the alert definitions in `infra/monitoring/security-boundary-alerts.yaml`.
+
+The customer-facing notice drafted for the member-seat rules lockdown lives beside them:
+[security-boundary-customer-email.md](security-boundary-customer-email.md) (draft, not sent).
+
 ## meta
 
 These runbooks are based on a portability audit, research into actual deploy mechanics,
@@ -61,9 +78,10 @@ If you find them stale, update them - these are not sacred.
 
 For the "why" behind some decisions, see:
 
-- [/docs/architecture.md](../architecture.md)
+- [architecture (published docs)](../../web/content/docs/architecture.mdx)
 - [/agent/CLAUDE.md](../../agent/CLAUDE.md)
-- [/CLAUDE.md](../../CLAUDE.md)
+- [/.claude/CLAUDE.md](../../.claude/CLAUDE.md)
+- [/docs/README.md](../README.md) - what lives in each docs tree
 
 Those docs cover context such as the custom Firestore REST client, machine-bound
 encryption, MockService parity, and repository operating rules.

@@ -3,7 +3,7 @@
 !!! warning "Deprecated"
     This document is from the v2.1.0 OAuth browser flow, which was **replaced in v2.4.1** with the device code pairing flow. The browser-based OAuth, localhost:8765 callback, and Windows Credential Manager references below are no longer accurate.
 
-    **Current auth flow:** See [Agent Installation](../agent/installation.md#how-pairing-works).
+    **Current auth flow:** See [Agent Installation](../../web/content/docs/agent/installation.mdx#how-pairing-works).
 
     **Current token storage:** `.tokens.enc` (Fernet-encrypted, machine-bound key), not Windows Credential Manager.
 

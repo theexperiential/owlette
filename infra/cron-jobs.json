@@ -13,7 +13,7 @@
     "configLocation": "vendor UI only — no repo config, no CLI, no Terraform for these jobs",
     "healthyResponse": "HTTP 200. 401 means the header name or its value is wrong for that environment. 500 means the handler threw — check the host logs for the route's own log prefix, e.g. `[retention] failed:`. Do not assert on an ok:true body: /api/hoot/escalation answers `success:true` with no ok field at all (route.ts:117), and /api/cron/status-ping derives ok from aggregate component health (route.ts:262), so a successful sweep legitimately reports ok:false while a monitored component is down.",
     "note": "Not Railway, and not Cloud Scheduler (docs/runbooks/talons.md:105; web/app/api/cron/talons/route.ts:4). Three route docstrings still say 'Railway cron config (set in Railway dashboard)' — health-check:23, process-alerts:21, display-alerts:26. Those are stale; this registry is correct.",
-    "risk": "Free tier, no SLA. If cron-job.org stops quietly, health alerts, status pings, and talon dispatch stop with it until someone notices by hand (roadmap.md:15)."
+    "risk": "Free tier, no SLA. If cron-job.org stops quietly, health alerts, status pings, and talon dispatch stop with it until someone notices by hand (docs/roadmap.md:15)."
   },
   "hosts": {
     "dev": {
