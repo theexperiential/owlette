@@ -5,9 +5,9 @@
  *   node scripts/generate-rate-limit-calibration.mjs --since=2026-04-20 --until=2026-04-27
  *
  * Reads top-level `rate_limit_observations` docs written under
- * RATE_LIMIT_OBSERVE_ONLY=true and writes the markdown that
- * scripts/checks/check-lockdown-ready.mjs consumes. Exits non-zero while the report is
- * incomplete, so it is automation-safe.
+ * RATE_LIMIT_OBSERVE_ONLY=true and writes the security-boundary wave 8.0
+ * calibration report. Exits non-zero while the report is incomplete, so it is
+ * automation-safe.
  */
 
 import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
@@ -18,10 +18,12 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..');
+// The security-boundary-migration plan was archived to dev/completed in 98c8ebbf;
+// the report it appends to lives there now.
 const DEFAULT_OUTPUT_PATH = join(
   ROOT,
   'dev',
-  'active',
+  'completed',
   'security-boundary-migration',
   'reference',
   'rate-limit-calibration.md',

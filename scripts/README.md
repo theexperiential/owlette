@@ -23,7 +23,7 @@ pipeline lives in `vm/`.
 | script | wired into |
 |---|---|
 | `check-no-token-logs.mjs` | `.github/workflows/no-token-logs.yml` |
-| `scan-firestore-writes.mjs` | `web/package.json` → `npm run scan:firestore-writes`; also invoked by `checks/check-lockdown-ready.mjs` |
+| `scan-firestore-writes.mjs` | `web/package.json` → `npm run scan:firestore-writes` — the standing lockdown invariant: browser control-plane writes must stay at 0 |
 | `check-system-invoker-callers.mjs` | `web/eslint.config.mjs` + a jest twin (`web/__tests__/eslint/system-invoker-allowlist.test.ts`) |
 | `check-status-page-ready.mjs` | Deploy runbooks + `infra/cron-jobs.json` (Instatus status-page readiness) |
 
@@ -32,7 +32,6 @@ pipeline lives in `vm/`.
 | script | purpose |
 |---|---|
 | `checks/smoke-r2-roundtrip.mjs` | R2 chunk-pipeline round-trip against a deployed env (used in deploy runbooks). |
-| `checks/check-lockdown-ready.mjs` | Pre-lockdown gate for Firestore rules (security-boundary wave 9 — prod lockdown still pending). |
 | `checks/security-boundary-probe.mjs` | 60s synthetic privileged-read probe against dev (`docs/ops/security-boundary-monitoring.md`). |
 | `checks/test-rules.mjs` | Firestore rules matrix under the emulator (the jest twin is `web` → `npm run test:rules`). |
 | `checks/sentinel-emulator.mjs` | Prove Admin SDK writes hit the emulator, not prod. |

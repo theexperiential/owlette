@@ -120,8 +120,8 @@ open as a known-low backlog.
 
 | rule | count | where | why it is low |
 |---|---|---|---|
-| `js/incomplete-sanitization` | 4 | `scripts/sync-versions.js`, `scripts/checks/check-lockdown-ready.mjs` | build/ops tooling, run by a maintainer on a trusted checkout; never bundled |
-| `js/insecure-temporary-file` | 3 | `scripts/checks/check-lockdown-ready.mjs` | same; local temp files on a dev machine |
+| `js/incomplete-sanitization` | 4 | `scripts/sync-versions.js`, ~~`scripts/checks/check-lockdown-ready.mjs`~~ | build/ops tooling, run by a maintainer on a trusted checkout; never bundled. The lockdown-gate alerts self-close — that script was retired 2026-09-05; only the `sync-versions.js` alerts still need dismissing. |
+| `js/insecure-temporary-file` | 3 | ~~`scripts/checks/check-lockdown-ready.mjs`~~ | moot — the only affected file was retired 2026-09-05; these self-close on the next scan, no dismissal needed. |
 | `js/file-system-race` | 2 | incl. `web/e2e/desktop-screenshots/harness.ts:237` | Playwright harness, never shipped; TOCTOU against local files it created |
 
 ### `js/polynomial-redos` (2) — dismiss

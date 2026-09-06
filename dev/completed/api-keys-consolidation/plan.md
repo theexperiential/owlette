@@ -1,5 +1,5 @@
 # api keys consolidation — Plan
-**Created**: 2026-08-17 | **Status**: COMPLETE 2026-09-05 — all five waves shipped (waves 4+5 in `8e5afdcc`). Ops residuals, none blocking: register `/api/cron/api-key-expiry` on cron-job.org (0 8 * * *, dev AND prod, per-env CRON_SECRET); `firebase deploy --only functions` for the revived expiredMarkedAt sweep + decide the one-off backfill for pre-change keys; SDK `ApiKey` types lack the new `revoked` field (release-bearing, deferred deliberately).
+**Created**: 2026-08-17 | **Status**: COMPLETE 2026-09-05 — all five waves shipped (waves 4+5 in `8e5afdcc`). Ops residuals, none blocking: register `/api/cron/api-key-expiry` on cron-job.org (0 8 * * *, dev AND prod, per-env CRON_SECRET) — **ORDER MATTERS on prod: deploy firestore indexes to prod FIRST** (`npx firebase deploy --only firestore:indexes --project owlette-prod-90a12`; the scan needs the api_keys.expiresAt COLLECTION_GROUP field override added in 02371bef, or the route 500s — proven live on dev 2026-09-05, fixed same day); `firebase deploy --only functions` for the revived expiredMarkedAt sweep + decide the one-off backfill for pre-change keys; SDK `ApiKey` types lack the new `revoked` field (release-bearing, deferred deliberately).
 
 ## Summary
 
