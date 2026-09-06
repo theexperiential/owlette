@@ -18,7 +18,12 @@ COPY requirements.txt /tmp/agent-runner-requirements.txt
 RUN python - <<'PY' > /tmp/agent-requirements-linux.txt
 from pathlib import Path
 
-skip_packages = {"pywin32"}
+# Windows-only, in dependency order of discovery: pywin32 (stubbed under
+# /app/stubs), wmi (depends on pywin32 — broke the first CI build), and the
+# HardwareMonitor + pythonnet CLR pair (wrap a .NET lib around a signed Windows
+# driver; no Linux purpose). The sync-pipeline modules under test import none
+# of them. Names are compared lowercased.
+skip_packages = {"pywin32", "wmi", "pythonnet", "hardwaremonitor"}
 
 for raw in Path("/tmp/agent-requirements.txt").read_text().splitlines():
     stripped = raw.strip()
