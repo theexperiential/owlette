@@ -133,7 +133,7 @@ and the Wave 1 controller are reused throughout. Hand an agent one wave at a tim
   `/ADD=` re-pairs. Exclude the N-1 snapshot's baked-in refresh token from teardown.
 - Reuse `run_wave1.py`'s oracles; skip stage 0's empty-machine check.
 
-### Wave 2 — GUI tier (the flakiest; keep advisory longest)
+### Wave 2 — GUI tier (REMOVED 2026-09-06 — it drove the CustomTkinter GUI deleted in 3.0.0; OWL-46)
 - **Needs**: Part A3 provisioning done (pywinauto venv, DPI/theme pinned, interactive session).
 - **Build**: an env-gated (`OWLETTE_E2E=1`), read-only tk-introspection shim in the GUI that
   writes widget rects to a side file (CustomTkinter widgets are invisible to UIAutomation);
