@@ -41,7 +41,14 @@ def _make_service():
 
 @pytest.fixture
 def graceful_terminate(monkeypatch):
-    """Patch the I/O boundary; yield the graceful_terminate spy."""
+    """Patch the I/O boundary; yield the graceful_terminate spy.
+
+    The Wave-5 identity gate is stubbed open here (and the durable-record
+    resolver stubbed empty) because these tests pin the PID-plumbing
+    contract, not the gate -- the gate has its own suite in
+    test_kill_safety.py, and left real it would read the live app_states
+    file, which unit tests must never depend on.
+    """
     import owlette_service
     monkeypatch.setattr(
         owlette_service.shared_utils, 'read_config',
@@ -53,6 +60,10 @@ def graceful_terminate(monkeypatch):
         owlette_service.shared_utils, 'update_process_status_in_json', MagicMock(),
     )
     monkeypatch.setattr(owlette_service.Util, 'is_pid_running', lambda pid: True)
+    monkeypatch.setattr(owlette_service, '_identity_gate',
+                        lambda pid, process_list_id: (True, None))
+    monkeypatch.setattr(owlette_service, '_resolve_recorded_pid',
+                        lambda process_list_id: None)
     return gt
 
 
