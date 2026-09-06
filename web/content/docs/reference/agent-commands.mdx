@@ -211,13 +211,6 @@ admin actions.
 | `cancel_uninstall` | `software_name` | Cancel an active uninstall tracked as `uninstall_<software_name>`. |
 | `refresh_software_inventory` | none | Force an immediate installed-software inventory sync. |
 
-### legacy project distribution
-
-| type | fields | behavior |
-|------|--------|----------|
-| `distribute_project` | `project_url`, optional `project_name`, optional `extract_path`, optional `distribution_id` | Legacy ZIP distribution path. Prefer the roost v2 router commands for current project sync. |
-| `cancel_distribution` | `project_name` | Clean up the temporary ZIP file for an in-progress legacy distribution. |
-
 ---
 
 ## roost v2 command types
@@ -288,8 +281,8 @@ Legacy if/elif entries in `agent/src/owlette_service.py`:
 `restart_process`, `start_process`, `kill_process`, `stop_process`,
 `toggle_autolaunch`, `set_launch_mode`, `update_config`, `install_software`,
 `update_owlette`, `cancel_installation`, `uninstall_software`,
-`cancel_uninstall`, `refresh_software_inventory`, `distribute_project`,
-`cancel_distribution`, `mcp_tool_call`, `capture_screenshot`,
+`cancel_uninstall`, `refresh_software_inventory`,
+`mcp_tool_call`, `capture_screenshot`,
 `reboot_machine`, `shutdown_machine`, `cancel_reboot`,
 `dismiss_reboot_pending`, `provision_cortex_key`, `start_live_view`,
 `stop_live_view`, `apply_display_topology`, `enumerate_display_modes`,

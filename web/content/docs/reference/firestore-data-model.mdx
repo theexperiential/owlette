@@ -30,7 +30,6 @@ firestore/
 |   |-- deployments/{deploymentId}
 |   |-- installer_templates/{templateId}
 |   |-- project_templates/{templateId}
-|   |-- project_distributions/{distributionId}
 |   |-- roosts/{roostId}
 |   |   |-- versions/{versionId}
 |   |   `-- target_state/{machineId}
@@ -490,17 +489,11 @@ should use the current public API storage models and routes instead.
 
 ### `sites/{siteId}/project_distributions/{distributionId}`
 
-Legacy project distribution records. They coexist with roost v2 during the
-cutover but are not the current project sync model.
-
-| field | type | notes |
-| --- | --- | --- |
-| `name` | string | Distribution name. |
-| `project_name`, `project_url` | string | Legacy package metadata. |
-| `extract_path` | string | Destination path. |
-| `targets` | array | Per-machine target rows. |
-| `status` | string | `pending`, `in_progress`, `completed`, `failed`, `partial`, or `cancelled`. |
-| `createdAt`, `createdBy`, `updatedAt` | timestamp/string | Metadata. |
+Retired. The v1 by-URL distribution system was removed — its API routes, agent
+command, and security-rules block are gone. Documents written before the
+removal remain at rest but are unreachable from any client or server route, and
+they carry no fields the current model reads. roost v2 is the only project sync
+model.
 
 ### `sites/{siteId}/project_templates/{templateId}`
 

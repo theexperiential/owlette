@@ -252,7 +252,7 @@ function inferAuthScopeNotes(path: string, method: string, operation: JsonRecord
     return protectedNotes([`machine=<machineId>:${permission}`], 'Machine operations are also constrained by site membership and machine capability checks.');
   }
 
-  if (path.includes('/sites/{siteId}/deployments') || path.includes('/sites/{siteId}/project-distributions')) {
+  if (path.includes('/sites/{siteId}/deployments')) {
     return protectedNotes([`site=<siteId>:${permission}`], 'Site-scoped deployment operations require access to the owning site.');
   }
 

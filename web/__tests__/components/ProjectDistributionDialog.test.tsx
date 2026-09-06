@@ -2,13 +2,13 @@
 /**
  * @jest-environment jsdom
  *
- * Render tests for ProjectDistributionDialog. Tabs are `new deploy` |
- * `history`; inside `new deploy` every field except the URL input / upload
- * dropzone is shared across sources, so the source picker only swaps those two.
+ * Render tests for ProjectDistributionDialog. Uploading a folder is the only
+ * source — the v1 by-url path (and its source picker) was removed in the v1
+ * distribution cutover, so there is no mode to switch.
  */
 
 import React from 'react';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ProjectDistributionDialog from '@/components/ProjectDistributionDialog';
 
@@ -39,12 +39,7 @@ jest.mock('sonner', () => ({
 
 function renderDialog() {
   return render(
-    <ProjectDistributionDialog
-      open
-      onOpenChange={jest.fn()}
-      siteId="site-a"
-      onCreateDistribution={jest.fn(async () => 'dist-id')}
-    />,
+    <ProjectDistributionDialog open onOpenChange={jest.fn()} siteId="site-a" />,
   );
 }
 
@@ -61,53 +56,26 @@ describe('ProjectDistributionDialog — shell', () => {
   });
 });
 
-describe('ProjectDistributionDialog — source picker (inside deploy)', () => {
-  it('renders a two-option source radiogroup: by url + upload files', () => {
+describe('ProjectDistributionDialog — upload is the only source', () => {
+  // Inverted guard for the v1 removal: both assertions FAIL against the
+  // pre-removal dialog, which rendered a `source` radiogroup with a `by url`
+  // option and a `#project-url` input.
+  it('has no source picker and no project URL input', () => {
     renderDialog();
-    const group = screen.getByRole('radiogroup', { name: /source/i });
-    const options = within(group).getAllByRole('radio');
-    expect(options).toHaveLength(2);
-    expect(options.map((o) => o.textContent?.trim().toLowerCase())).toEqual(
-      expect.arrayContaining([expect.stringContaining('by url'), expect.stringContaining('upload files')]),
-    );
-  });
-
-  it('defaults to "upload files" — shows the folder dropzone by default', () => {
-    renderDialog();
-    const group = screen.getByRole('radiogroup', { name: /source/i });
-    const uploadRadio = within(group).getByRole('radio', { name: /upload files/i });
-    expect(uploadRadio).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByRole('region', { name: /folder drop zone/i })).toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: /source/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /by url/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/project URL/i)).not.toBeInTheDocument();
   });
 
-  it('switching source to "by url" hides the folder dropzone + shows URL input', async () => {
-    const user = userEvent.setup();
+  it('always shows the folder dropzone', () => {
     renderDialog();
-    const urlRadio = within(
-      screen.getByRole('radiogroup', { name: /source/i }),
-    ).getByRole('radio', { name: /by url/i });
-    await user.click(urlRadio);
-    expect(urlRadio).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByLabelText(/project URL/i)).toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: /folder drop zone/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: /folder drop zone/i })).toBeInTheDocument();
   });
 
-  it('shared fields stay visible regardless of source choice', async () => {
-    const user = userEvent.setup();
+  it('renders the shared deploy fields', () => {
     renderDialog();
     // `verify_files` was dropped in the v2 cutover — the version is
     // authoritative, so a spot-check is dead weight.
-    expect(screen.getByLabelText(/roost name/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/extract to/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/verify critical files/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/target machines/i)).toBeInTheDocument();
-
-    const urlRadio = within(
-      screen.getByRole('radiogroup', { name: /source/i }),
-    ).getByRole('radio', { name: /by url/i });
-    await user.click(urlRadio);
-
     expect(screen.getByLabelText(/roost name/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/extract to/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/verify critical files/i)).not.toBeInTheDocument();
@@ -136,24 +104,7 @@ describe('ProjectDistributionDialog — target selection', () => {
 });
 
 describe('ProjectDistributionDialog — distribute button gating', () => {
-  it('disabled on fresh url dialog until name + url + target are filled', async () => {
-    const user = userEvent.setup();
-    renderDialog();
-    // Defaults to upload; flip to url to exercise url gating.
-    const urlRadio = within(
-      screen.getByRole('radiogroup', { name: /source/i }),
-    ).getByRole('radio', { name: /by url/i });
-    await user.click(urlRadio);
-    const btn = screen.getByRole('button', { name: /distribute to/i });
-    expect(btn).toBeDisabled();
-    // The title must itemise what's still missing.
-    const title = btn.getAttribute('title') ?? '';
-    expect(title).toMatch(/name/);
-    expect(title).toMatch(/project URL/);
-    expect(title).toMatch(/target machine/);
-  });
-
-  it('disabled on deploy+upload with no folder, no name, no target', () => {
+  it('disabled with no folder, no name, no target — title itemises all three', () => {
     renderDialog();
     const btn = screen.getByRole('button', { name: /distribute to/i });
     expect(btn).toBeDisabled();
@@ -162,31 +113,26 @@ describe('ProjectDistributionDialog — distribute button gating', () => {
     expect(title).toMatch(/name/);
     expect(title).toMatch(/target machine/);
   });
+
+  it('upload-only button gates on name + folder, but not on a target', () => {
+    renderDialog();
+    const btn = screen.getByRole('button', { name: /^upload$/i });
+    expect(btn).toBeDisabled();
+    const title = btn.getAttribute('title') ?? '';
+    expect(title).toMatch(/name/);
+    expect(title).toMatch(/folder/);
+    expect(title).not.toMatch(/target machine/);
+  });
 });
 
 describe('ProjectDistributionDialog — reopen resets state', () => {
-  it('re-opening the dialog defaults back to upload-files source', () => {
+  it('re-opening the dialog still renders the folder dropzone', () => {
     const { rerender } = render(
-      <ProjectDistributionDialog
-        open={false}
-        onOpenChange={jest.fn()}
-        siteId="site-a"
-        onCreateDistribution={jest.fn()}
-      />,
+      <ProjectDistributionDialog open={false} onOpenChange={jest.fn()} siteId="site-a" />,
     );
     rerender(
-      <ProjectDistributionDialog
-        open
-        onOpenChange={jest.fn()}
-        siteId="site-a"
-        onCreateDistribution={jest.fn()}
-      />,
+      <ProjectDistributionDialog open onOpenChange={jest.fn()} siteId="site-a" />,
     );
-    const sourceSelected = within(
-      screen.getByRole('radiogroup', { name: /source/i }),
-    )
-      .getAllByRole('radio')
-      .find((r) => r.getAttribute('aria-checked') === 'true');
-    expect(sourceSelected?.textContent).toMatch(/upload files/i);
+    expect(screen.getByRole('region', { name: /folder drop zone/i })).toBeInTheDocument();
   });
 });

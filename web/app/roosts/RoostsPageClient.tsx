@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMachines } from '@/hooks/useFirestore';
 import { useCurrentSite } from '@/hooks/useCurrentSite';
 import { NoSitesEmptyState } from '@/components/NoSitesEmptyState';
-import { useProjectDistributionManager } from '@/hooks/useProjectDistributions';
+import { useProjectDistributionPresets } from '@/hooks/useProjectDistributionPresets';
 import { useRoosts } from '@/hooks/useRoosts';
 import { useSelectedRoost } from '@/hooks/useSelectedRoost';
 import { RoostStatusPill } from '@/components/RoostTargetRow';
@@ -75,10 +75,8 @@ export default function RoostsPageClient() {
   const [versionRefreshKey, setVersionRefreshKey] = useState(0);
   const router = useRouter();
 
-  const {
-    presets,
-    createDistribution,
-  } = useProjectDistributionManager(currentSiteId);
+  // Presets only — the page renders the count; the dialog owns preset editing.
+  const { presets } = useProjectDistributionPresets(currentSiteId);
 
   // Main page IS the history. Source of truth is roosts (v2).
   const { roosts, loading: roostsLoading, error: roostsError } = useRoosts(currentSiteId);
@@ -326,7 +324,6 @@ export default function RoostsPageClient() {
             if (!open) setNewVersionContext(null);
           }}
           siteId={currentSiteId}
-          onCreateDistribution={createDistribution}
           upload={upload}
           newVersion={newVersionContext ?? undefined}
           existingRoostIds={roosts.map((r) => r.id)}

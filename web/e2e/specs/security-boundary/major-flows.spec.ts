@@ -343,44 +343,8 @@ test('live dev API major control-plane flows stay server-mediated after lockdown
     );
     expectStatus(checks, 'deployment delete after cancel', deploymentDelete, 200);
 
-    const distributionCreate = await apiCall(
-      request,
-      baseUrl,
-      client.idToken,
-      'POST',
-      `/api/sites/${ids.siteId}/project-distributions`,
-      {
-        name: 'W8 Project Distribution',
-        file_name: 'w8-project.toe',
-        project_url: 'https://example.com/w8-project.toe',
-        extract_path: 'C:\\Owlette\\Projects\\W8',
-        verify_files: ['w8-project.toe'],
-        machines: fanOutMachineIds.slice(0, 3),
-      },
-    );
-    expectStatus(checks, 'distribution create', distributionCreate, 201);
-    createdIds.distributionId = nestedString(distributionCreate.body, 'distributionId');
-    expect(createdIds.distributionId).toBeTruthy();
-
-    const distributionCancel = await apiCall(
-      request,
-      baseUrl,
-      client.idToken,
-      'POST',
-      `/api/sites/${ids.siteId}/project-distributions/${createdIds.distributionId}/cancel`,
-      {},
-    );
-    expectStatus(checks, 'distribution cancel', distributionCancel, 200);
-
-    const distributionDelete = await apiCall(
-      request,
-      baseUrl,
-      client.idToken,
-      'DELETE',
-      `/api/sites/${ids.siteId}/project-distributions/${createdIds.distributionId}`,
-      {},
-    );
-    expectStatus(checks, 'distribution delete after cancel', distributionDelete, 200);
+    // The v1 by-URL distribution routes were removed — roost v2 owns project
+    // distribution, and its API surface is covered by `specs/roosts/*`.
 
     const uninstallTrigger = await apiCall(
       request,

@@ -1,4 +1,4 @@
-import { type App, cert, initializeApp } from 'firebase-admin/app';
+import { type App, cert, initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { type Auth } from 'firebase-admin/auth';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -123,7 +123,7 @@ export function makeRunIds(prefix = 'w8'): RunIds {
 }
 
 export function createAdminApp(projectId: string, appName: string): App {
-  return initializeApp(
+  return initializeAdminApp(
     {
       credential: cert({
         projectId,

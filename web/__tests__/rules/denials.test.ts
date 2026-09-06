@@ -210,9 +210,18 @@ describe('site-scoped control-plane writes', () => {
     await assertFails(deleteDoc(doc(db, 'sites', SITE_A, 'deployments', 'dep-1')));
   });
 
-  test('member cannot create project distributions directly', async () => {
+  // v1 distribution removal: the `project_distributions` rule block is gone, so
+  // the collection falls through to default-deny. The READ assertion is the
+  // negative control — the old block allowed `read: if canAccessSite(siteId)`,
+  // so this test fails against the pre-removal rules. Existing docs stay at
+  // rest (seeded above) but are unreachable from any client.
+  test('retired project_distributions collection is unreachable for every verb', async () => {
     const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
+    const existing = doc(db, 'sites', SITE_A, 'project_distributions', 'dist-1');
 
+    await assertFails(getDoc(existing));
+    await assertFails(updateDoc(existing, { status: 'cancelled' }));
+    await assertFails(deleteDoc(existing));
     await assertFails(
       setDoc(doc(db, 'sites', SITE_A, 'project_distributions', 'dist-direct'), {
         name: 'Direct Distribution',
@@ -221,24 +230,6 @@ describe('site-scoped control-plane writes', () => {
         status: 'pending',
         createdAt: serverTimestamp(),
       }),
-    );
-  });
-
-  test('member cannot update project distributions directly', async () => {
-    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
-
-    await assertFails(
-      updateDoc(doc(db, 'sites', SITE_A, 'project_distributions', 'dist-1'), {
-        status: 'cancelled',
-      }),
-    );
-  });
-
-  test('member cannot delete project distributions directly', async () => {
-    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
-
-    await assertFails(
-      deleteDoc(doc(db, 'sites', SITE_A, 'project_distributions', 'dist-1')),
     );
   });
 

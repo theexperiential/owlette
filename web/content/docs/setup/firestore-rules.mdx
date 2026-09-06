@@ -78,7 +78,6 @@ These are Firestore client-rule permissions. Trusted server routes that use the 
 | `sites/{siteId}/deployments/{deploymentId}` | Read deployments in accessible sites; no direct write | Read all deployments; no direct write | No access | Create/update/delete |
 | `sites/{siteId}/installer_templates/{templateId}` | Read templates in accessible sites; no direct write | Read all templates; no direct write | No access | Create/update/delete |
 | `sites/{siteId}/project_templates/{templateId}` | Read templates in accessible sites; no direct write | Read all templates; no direct write | No access | Create/update/delete |
-| `sites/{siteId}/project_distributions/{distributionId}` | Read legacy distributions in accessible sites; no direct write | Read all legacy distributions; no direct write | No access | Create/update/delete |
 | `sites/{siteId}/roosts/{roostId}` | Read/create/update/delete roost shells in accessible sites; client creates cannot set version pointers and client updates cannot change version pointers or `schemaVersion` | Same for all sites | No access | Publish/rollback version pointer changes |
 | `sites/{siteId}/roosts/{roostId}/target_state/{machineId}` | Read/delete target state in accessible sites; no direct create/update | Read/delete all target state; no direct create/update | Create/update own machine target state | Full write |
 | `sites/{siteId}/roosts/{roostId}/versions/{versionId}` | Read version history in accessible sites; no direct write | Read all version history; no direct write | No access | Server/Admin SDK only |

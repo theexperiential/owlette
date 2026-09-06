@@ -142,7 +142,6 @@ Quick reference of everything that exists. Check here before creating new files 
 | `useMachineOperations.ts` | Machine actions (remove, commands) | `useMachineOperations()` |
 | `useInstallerVersion.ts` | Fetch latest Owlette version | `useInstallerVersion()` |
 | `useInstallerManagement.ts` | Installer upload/management | `useInstallerManagement()` |
-| `useProjectDistributions.ts` | Project distribution CRUD | `useProjectDistributions()` |
 | `useSparklineData.ts` | Historical metrics for sparklines | `useSparklineData(machineId)` |
 | `useHistoricalMetrics.ts` | Detailed historical metrics | `useHistoricalMetrics(machineId)` |
 | `useSystemPresets.ts` | System preset CRUD | `useSystemPresets()` |
@@ -228,7 +227,6 @@ interface UserPreferences { temperatureUnit: 'C' | 'F'; healthAlerts: boolean; p
 | `owlette_updater.py` | Self-update bootstrap (download + silent install) |
 | `installer_utils.py` | Download/execute/cancel remote installers |
 | `registry_utils.py` | Windows registry queries (installed software detection) |
-| `project_utils.py` | Project directory management |
 
 ### GUI / UX
 The local UI is the Tauri desktop app in `desktop/`, not python. It ships as

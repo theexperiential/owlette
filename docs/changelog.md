@@ -9,6 +9,25 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
+## [Unreleased]
+
+> Version number assigned at release time. This batch removes a public API
+> surface, so the release that carries it is a breaking one.
+
+### breaking — the legacy by-URL distribution path is removed
+
+roost is now the only way to get files onto a machine. The v1 "point the fleet at a hosted ZIP and let the agent download and extract it" path is gone in one clean cut — no deprecation window, no compatibility shim. An agent that receives a `distribute_project` command now logs and skips it.
+
+**removal surface**
+- API routes: `POST|GET /api/sites/{siteId}/project-distributions`, `GET|DELETE /api/sites/{siteId}/project-distributions/{distId}`, and `POST /api/sites/{siteId}/project-distributions/{distId}/cancel` all 404. Their OpenAPI paths and the `listProjectDistributions` / `createProjectDistribution` / `getProjectDistribution` / `deleteProjectDistribution` / `cancelProjectDistribution` operations are dropped from the published spec.
+- Agent commands: `distribute_project` and `cancel_distribution` no longer have handlers, and `agent/src/project_utils.py` (download, ZIP extract, verify, cleanup) is deleted. The agent no longer extracts archives at all.
+- Dashboard: the roost dialog's `by url` source picker and its project-URL field are gone — uploading a folder is the only source. Saved distribution presets are unaffected; a stored `project_url` on one is simply no longer read.
+- Security rules (2.9.0): the `sites/{siteId}/project_distributions/{distributionId}` block is removed, so the collection falls through to default-deny for every verb.
+
+**data at rest** — existing `project_distributions` documents are **not** deleted. They stay in Firestore, unreachable from any client or server route. Nothing reads them; no archival or purge job was run.
+
+**migration** — recreate any recurring by-URL deployment as a roost: open `/roosts`, click `new roost`, drop the project folder, and pick the same target machines. You get content-addressed chunking, resumable uploads, immutable versions, and one-click rollback, none of which the URL path ever had.
+
 ## [3.3.0] - 2026-09-05
 
 ### changed

@@ -83,12 +83,7 @@ Current project distribution uses roost v2 handlers registered through the agent
 | `cancel_sync` | Signal cancellation for an in-flight roost sync | `{site_id, roost_id, version_id}` |
 | `rollback_to_version` | Pull an older roost version after the server-side rollback pointer changes | `{site_id, roost_id, version_id, version_url, extract_root}` |
 
-Legacy v1 ZIP distribution still ships in the agent for older dashboard paths:
-
-| command | description | data payload |
-|---------|-------------|--------------|
-| `distribute_project` | Legacy ZIP download and extraction | `{project_url, project_name?, extract_path?, distribution_id?}` |
-| `cancel_distribution` | Legacy ZIP distribution cancellation | `{project_name}` |
+The legacy v1 ZIP commands (`distribute_project`, `cancel_distribution`) were removed — the roost commands above are the only distribution path.
 
 ### system commands
 
@@ -261,10 +256,6 @@ The `sync_pull` command is the current distribution path:
 ```
 
 `cancel_sync` looks up the matching in-flight distribution by `site_id`, `roost_id`, and `version_id`, then signals its cancellation event. `rollback_to_version` reuses the same `sync_pull` path; the server-side roost rollback has already selected the older version.
-
-### legacy v1 ZIP distribution
-
-`distribute_project` remains available for older dashboard paths only. It downloads a ZIP archive, extracts it to `extract_path` or the default Owlette projects directory, optionally checks expected extracted paths, cleans up the ZIP, and reports progress with the legacy `distribution_id`.
 
 ---
 

@@ -1,8 +1,8 @@
 rules_version = '2';
 
 // Owlette Firestore Security Rules
-// Version: 2.8.1 - users create: dropped the retired passkeyEnrolled clause (superseded by mfaFactors)
-// Last Updated: 2026-08-19
+// Version: 2.9.0 - removed the v1 project_distributions block (legacy by-URL distribution retired; roost v2 is the only distribution system)
+// Last Updated: 2026-09-05
 //
 // Security Model:
 // - Role-based access control (RBAC): user | admin | agent
@@ -350,22 +350,13 @@ service cloud.firestore {
       }
 
       // ----------------------------------------
-      // Project Distributions Subcollection
-      // ----------------------------------------
-
-      match /project_distributions/{distributionId} {
-        // Project file distributions (v1, legacy)
-        // Server APIs create and manage distributions
-        // Coexists with roosts/ (v2 / roost) during migration
-        allow read: if canAccessSite(siteId);
-        allow create, update, delete: if isServiceAccount();
-      }
-
-      // ----------------------------------------
       // Roosts Subcollection (roost / v2)
       // ----------------------------------------
-      // The v2 replacement for project_distributions. Each roost
-      // represents a project that's kept in sync with one or more machines.
+      // The only distribution system. The v1 `project_distributions` block was
+      // removed in rules 2.9.0 — existing docs stay at rest but are no longer
+      // readable or writable through any rule.
+      //
+      // Each roost represents a project kept in sync with one or more machines.
       // The doc itself stores ONLY the version pointer (currentVersionId,
       // previousVersionId, versionUrl) plus targets[] + metadata.
       // Version bodies themselves live in R2 (size: a 500GB project ~10MB

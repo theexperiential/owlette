@@ -7,10 +7,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { FolderArchive, Link2, Loader2, Pencil, Plus, Save, Trash2, TriangleAlert, Upload, X } from 'lucide-react';
+import { FolderArchive, Loader2, Pencil, Plus, Save, Trash2, TriangleAlert, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useMachines } from '@/hooks/useFirestore';
-import { ProjectDistribution } from '@/hooks/useProjectDistributions';
 import {
   useProjectDistributionPresets,
   type ProjectDistributionPreset,
@@ -51,10 +50,6 @@ interface ProjectDistributionDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   siteId: string;
-  onCreateDistribution: (
-    distribution: Omit<ProjectDistribution, 'id' | 'createdAt' | 'status'>,
-    machineIds: string[]
-  ) => Promise<string>;
   /**
    * Owned by the parent page so a multi-GB run survives dismissing the dialog.
    * Omitted = dialog-local fallback (tests).
@@ -103,21 +98,14 @@ function formatDurationShort(seconds: number): string {
 }
 
 /** Stable key for detecting whether current form matches a preset's config. */
-function presetConfigKey(
-  projectUrl: string | undefined,
-  extractPath: string | undefined,
-): string {
-  return JSON.stringify({
-    project_url: projectUrl || '',
-    extract_path: extractPath || '',
-  });
+function presetConfigKey(extractPath: string | undefined): string {
+  return JSON.stringify({ extract_path: extractPath || '' });
 }
 
 export default function ProjectDistributionDialog({
   open,
   onOpenChange,
   siteId,
-  onCreateDistribution,
   upload: externalUpload,
   newVersion,
   existingRoostIds,
@@ -134,7 +122,10 @@ export default function ProjectDistributionDialog({
   const [distributionName, setDistributionName] = useState('');
   const [description, setDescription] = useState('');
   const MAX_DESCRIPTION_LENGTH = 500;
-  const namePlaceholder = React.useMemo(() => {
+  // useState's lazy initializer, not useMemo: picking randomly is impure, and
+  // the hooks purity rule (rightly) rejects impure memo bodies. State init runs
+  // once per mount, which is the behavior the joke placeholder always wanted.
+  const [namePlaceholder] = useState(() => {
     const examples = [
       'e.g., summer vibes (final final v3)',
       'e.g., lobby loop — do not delete',
@@ -147,11 +138,9 @@ export default function ProjectDistributionDialog({
       'e.g., please work please work',
     ];
     return examples[Math.floor(Math.random() * examples.length)];
-  }, []);
-  const [projectUrl, setProjectUrl] = useState('');
+  });
   const [extractPath, setExtractPath] = useState('');
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(new Set());
-  const [distributing, setDistributing] = useState(false);
 
   // FolderDropzone output; execution lives on the `upload` hook, not here.
   const [droppedFiles, setDroppedFiles] = useState<NamedBlob[] | null>(null);
@@ -159,10 +148,6 @@ export default function ProjectDistributionDialog({
   // Set while the PreUploadSummary confirmation gate is showing. Holds the FULL
   // UploadInputs so later form edits can't leak into the confirmed run.
   const [pendingKickoff, setPendingKickoff] = useState<UploadInputs | null>(null);
-  // url = v1 one-shot download link; upload = v2 chunked. Upload is the default
-  // path; URL is the escape hatch for mirroring an existing public archive.
-  type SourceMode = 'url' | 'upload';
-  const [sourceMode, setSourceMode] = useState<SourceMode>('upload');
 
   const uploadProgress = upload.state.progress;
   const uploading = upload.state.status === 'uploading';
@@ -188,17 +173,19 @@ export default function ProjectDistributionDialog({
   // mid-run must resume rendering progress; the hook resets on its own start().
   useEffect(() => {
     if (!open) return;
+    // Reset-on-open predates the compiler rules; the sanctioned fix is
+    // remounting via a key at the call site — a caller-side refactor
+    // (repo-cleanup follow-up), not a change to smuggle into this commit.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setActivePresetId(null);
     setSavingNewPreset(false);
     setNewPresetName('');
     setEditingPresetId(null);
     setConfirmDeletePresetId(null);
     setPendingReplacePreset(null);
-    setSourceMode('upload');
     setDescription('');
     setPendingKickoff(null);
-    // "+ new version": locked fields, upload mode forced (no url-source
-    // equivalent for an existing roost).
+    // "+ new version": name, extract path and targets are locked to the roost.
     if (newVersion) {
       setDistributionName(newVersion.name);
       setExtractPath(newVersion.extractPath ?? '');
@@ -228,8 +215,8 @@ export default function ProjectDistributionDialog({
     if (!preset || preset.isBuiltIn) return;
 
     // Skip when current values already match the preset (no diff to write).
-    const currentKey = presetConfigKey(projectUrl || undefined, extractPath || undefined);
-    const presetKey = presetConfigKey(preset.project_url, preset.extract_path);
+    const currentKey = presetConfigKey(extractPath || undefined);
+    const presetKey = presetConfigKey(preset.extract_path);
     if (currentKey === presetKey) return;
 
     // Queue only; "saving" flips when the Firestore call is actually in flight,
@@ -238,7 +225,6 @@ export default function ProjectDistributionDialog({
       setAutosaveStatus('saving');
       try {
         await updatePreset(preset.id, {
-          project_url: projectUrl || undefined,
           extract_path: extractPath || undefined,
         });
         setAutosaveStatus('saved');
@@ -251,7 +237,7 @@ export default function ProjectDistributionDialog({
     }, 800);
 
     return () => clearTimeout(handle);
-  }, [open, activePresetId, projectUrl, extractPath, presets, updatePreset]);
+  }, [open, activePresetId, extractPath, presets, updatePreset]);
 
   const applyPreset = async (preset: ProjectDistributionPreset) => {
     // Re-clicking the active preset deselects it (the escape hatch, now that
@@ -265,13 +251,12 @@ export default function ProjectDistributionDialog({
     // cleanup, which would drop edits still inside the 800ms debounce window.
     const outgoing = activePresetId ? presets.find(p => p.id === activePresetId) : null;
     if (outgoing && !outgoing.isBuiltIn) {
-      const currentKey = presetConfigKey(projectUrl || undefined, extractPath || undefined);
-      const outgoingKey = presetConfigKey(outgoing.project_url, outgoing.extract_path);
+      const currentKey = presetConfigKey(extractPath || undefined);
+      const outgoingKey = presetConfigKey(outgoing.extract_path);
       if (currentKey !== outgoingKey) {
         setAutosaveStatus('saving');
         try {
           await updatePreset(outgoing.id, {
-            project_url: projectUrl || undefined,
             extract_path: extractPath || undefined,
           });
         } catch (err) {
@@ -286,7 +271,6 @@ export default function ProjectDistributionDialog({
 
     // A switch fully replaces fields, clearing ones the new preset lacks —
     // otherwise old values bleed in and look stuck. Name stays per-deployment.
-    setProjectUrl(preset.project_url || '');
     setExtractPath(preset.extract_path || '');
     setActivePresetId(preset.id);
     // These values came FROM the preset; don't write them straight back.
@@ -310,7 +294,6 @@ export default function ProjectDistributionDialog({
     try {
       await createPreset({
         name: trimmedName,
-        project_url: projectUrl || undefined,
         extract_path: extractPath || undefined,
         isBuiltIn: false,
         order: 100,
@@ -328,7 +311,6 @@ export default function ProjectDistributionDialog({
     if (!pendingReplacePreset) return;
     try {
       await updatePreset(pendingReplacePreset.id, {
-        project_url: projectUrl || undefined,
         extract_path: extractPath || undefined,
       });
       toast.success(`preset "${pendingReplacePreset.name}" replaced`);
@@ -372,64 +354,6 @@ export default function ProjectDistributionDialog({
 
   const selectOnlyOnlineMachines = () => {
     setSelectedMachines(new Set(onlineMachines.map(m => m.machineId)));
-  };
-
-  const handleDistribute = async () => {
-    if (!distributionName.trim()) {
-      toast.error('please provide a roost name');
-      return;
-    }
-
-    if (!projectUrl.trim()) {
-      toast.error('please provide a project URL');
-      return;
-    }
-
-    let parsedUrl;
-    try {
-      parsedUrl = new URL(projectUrl);
-    } catch {
-      toast.error('invalid project URL format');
-      return;
-    }
-
-    if (selectedMachines.size === 0) {
-      toast.error('please select at least one machine');
-      return;
-    }
-
-    setDistributing(true);
-
-    try {
-      const urlPath = parsedUrl.pathname;
-      const projectName = urlPath.substring(urlPath.lastIndexOf('/') + 1) || 'project.zip';
-
-      // verify_files dropped in the v2 cutover — the version is authoritative.
-      await onCreateDistribution(
-        {
-          name: distributionName,
-          file_name: projectName,
-          project_url: projectUrl,
-          extract_path: extractPath.trim() ? resolveExtractPath(extractPath) : undefined,
-          targets: [],  // Will be filled by the hook
-        },
-        Array.from(selectedMachines)
-      );
-
-      toast.success(`roost started — syncing to ${selectedMachines.size} machine${selectedMachines.size > 1 ? 's' : ''}`);
-
-      setDistributionName('');
-      setProjectUrl('');
-      setExtractPath('');
-      setSelectedMachines(new Set());
-
-      onOpenChange(false);
-    } catch (error) {
-      console.error('Distribution error:', error);
-      toast.error('failed to create distribution', { description: sanitizeError(error) });
-    } finally {
-      setDistributing(false);
-    }
   };
 
   const selectedPreset = activePresetId ? presets.find(p => p.id === activePresetId) : null;
@@ -553,7 +477,11 @@ export default function ProjectDistributionDialog({
         `roost published — ${versionLabel}` +
           ` (uploaded ${formatBytesShort(result.uploadedBytes)} of ${formatBytesShort(result.totalBytes)})`,
       );
-      // Clear per-deploy inputs so a follow-up roost starts clean.
+      // Clear per-deploy inputs so a follow-up roost starts clean. This effect
+      // IS the subscription to the upload hook's state machine (ref-deduped);
+      // the sanctioned fix is an onSuccess callback on the hook's API
+      // (repo-cleanup follow-up).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDistributionName('');
       setExtractPath('');
       setDroppedFiles(null);
@@ -870,204 +798,150 @@ export default function ProjectDistributionDialog({
             </p>
           </div>
 
-          {/* Source picker. Bytes-source is a sub-choice within a deployment,
-              not a top-level mode. Hidden for "+ new version" — those always
-              come from a fresh file drop. */}
-          {!isNewVersion && (
+          {/* Uploading a folder is the only source — the v1 by-url path was
+              removed, so bytes always come from a fresh file drop. */}
           <div className="space-y-2">
-            <Label className="text-white">source</Label>
-            <div
-              role="radiogroup"
-              aria-label="source"
-              className="inline-flex rounded-md border border-border bg-background/50 p-0.5 text-xs"
-            >
-              {(['upload', 'url'] as const).map((src) => {
-                const isActive = sourceMode === src;
-                const labels: Record<SourceMode, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
-                  url: { label: 'by url', icon: Link2 },
-                  upload: { label: 'upload files', icon: Upload },
-                };
-                const { label, icon: Icon } = labels[src];
-                return (
-                  <button
-                    key={src}
-                    role="radio"
-                    type="button"
-                    aria-checked={isActive}
-                    onClick={() => setSourceMode(src)}
-                    className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 cursor-pointer transition-colors ${
-                      isActive
-                        ? 'bg-muted text-white'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    <Icon className="h-3 w-3" />
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
+            <Label className="text-white">folder to upload</Label>
+            <FolderDropzone
+              onFilesReady={(files, rootName) => {
+                setDroppedFiles(files);
+                setDroppedRootName(rootName);
+                // Pre-fill distribution name from the folder if the field is empty.
+                if (!distributionName) setDistributionName(rootName);
+              }}
+              onFilesAppend={(newFiles) => {
+                // Merge by relative path, later wins, so re-picking a folder
+                // refreshes it. rootName + distribution name are kept.
+                setDroppedFiles((prev) => {
+                  const byPath = new Map<string, NamedBlob>();
+                  for (const f of prev ?? []) byPath.set(f.path, f);
+                  for (const f of newFiles) byPath.set(f.path, f);
+                  return Array.from(byPath.values());
+                });
+              }}
+              onClear={() => {
+                setDroppedFiles(null);
+                setDroppedRootName('');
+              }}
+              summary={
+                droppedFiles
+                  ? (() => {
+                      const s = summariseVersion([]);
+                      // Raw-blob summary; the deduped one needs hashing first.
+                      s.fileCount = droppedFiles.length;
+                      s.totalBytes = droppedFiles.reduce((n, f) => n + f.blob.size, 0);
+                      return { fileCount: s.fileCount, totalBytes: s.totalBytes };
+                    })()
+                  : undefined
+              }
+              files={droppedFiles ?? undefined}
+              disabled={uploading}
+            />
+            {/* Non-blocking pre-submit warnings. >5k files = noticeable
+                hashing time; >20 GB = minutes, warn about keeping the tab.
+                Both can apply at once. */}
+            {droppedFiles && droppedFiles.length > 0 && (() => {
+              const fileCount = droppedFiles.length;
+              const totalBytes = droppedFiles.reduce((n, f) => n + f.blob.size, 0);
+              const LARGE_FILE_COUNT = 5_000;
+              const LARGE_TOTAL_BYTES = 20 * 1024 ** 3; // 20 GiB
+              const warnCount = fileCount > LARGE_FILE_COUNT;
+              const warnBytes = totalBytes > LARGE_TOTAL_BYTES;
+              if (!warnCount && !warnBytes) return null;
+              return (
+                <div
+                  role="status"
+                  className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-400/90 space-y-1"
+                >
+                  <div className="flex items-center gap-1.5 font-medium text-amber-300">
+                    <TriangleAlert className="h-3.5 w-3.5" />
+                    heads up
+                  </div>
+                  {warnCount && (
+                    <p className="text-amber-400/75">
+                      large file count ({fileCount.toLocaleString()}) — version will be big;
+                      hashing may take several minutes. consider archiving into fewer files
+                      if this is a one-off.
+                    </p>
+                  )}
+                  {warnBytes && (
+                    <p className="text-amber-400/75">
+                      large upload ({formatBytes(totalBytes)}) — hashing and upload will take
+                      significant time. keep this tab open; the minimize-to-corner indicator
+                      handles if you click away.
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+            {uploadProgress && uploadProgress.phase !== 'idle' && (() => {
+              // Use only the active phase's fraction — both fields can be set
+              // on the transition tick, snapping the bar 0% → 100%.
+              const frac =
+                uploadProgress.phase === 'hashing'
+                  ? uploadProgress.hashFraction
+                  : uploadProgress.phase === 'uploading'
+                    ? uploadProgress.uploadFraction
+                    : undefined;
+              const pct = frac !== undefined ? Math.round(frac * 100) : null;
+              const isError = uploadProgress.phase === 'error';
+              // useRoostUpload needs ~3s of samples; hide rather than flash a
+              // nonsense number.
+              const throughput = uploadProgress.throughputBytesPerSec;
+              const eta = uploadProgress.etaSeconds;
+              const showRate =
+                !isError &&
+                throughput !== undefined &&
+                eta !== undefined &&
+                (uploadProgress.phase === 'hashing' || uploadProgress.phase === 'uploading');
+              // Friendlier label for the opaque "checking" phase.
+              const phaseCopy =
+                uploadProgress.phase === 'checking'
+                  ? 'checking for duplicates'
+                  : uploadProgress.phase;
+              return (
+                <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-medium text-white">{phaseCopy}</span>
+                  </div>
+                  {/* Darker track + border so the unfilled portion stays
+                      visible on the dialog's bg-muted/20 panel. Matches
+                      MinimizedUploadCard. */}
+                  {frac !== undefined && !isError && (
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <div className="h-[4px] flex-1 overflow-hidden rounded-full bg-background border border-border/40">
+                        <div
+                          className="h-full bg-accent-cyan transition-[width] duration-200 ease-out"
+                          style={{ width: `${Math.max(0, Math.min(1, frac)) * 100}%` }}
+                        />
+                      </div>
+                      {pct !== null && (
+                        <span className="text-muted-foreground tabular-nums flex-shrink-0 min-w-[2.5rem] text-right">
+                          {pct}%
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {/* One status line: "281/1841 chunks uploaded · 1 KB/s ·
+                      ~9h 30m remaining". Rate + ETA are latched across ticks
+                      so a sample window with no byte progress can't flicker. */}
+                  {(uploadProgress.message || (showRate && throughput !== undefined)) && (
+                    <div className="mt-1 text-muted-foreground tabular-nums">
+                      {uploadProgress.message}
+                      {showRate && throughput !== undefined && eta !== undefined && (
+                        <>
+                          {uploadProgress.message ? ' · ' : ''}
+                          {formatBytes(throughput)}/s
+                          {' · ~'}
+                          {formatDurationShort(eta)} remaining
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
-          )}
-
-          {!isNewVersion && sourceMode === 'url' && (
-            <div className="space-y-2">
-              <Label htmlFor="project-url" className="text-white">project URL</Label>
-              <Input
-                id="project-url"
-                placeholder="https://example.com/project.zip"
-                value={projectUrl}
-                onChange={(e) => setProjectUrl(e.target.value)}
-                className="border-border bg-muted/30 text-white font-mono text-sm"
-              />
-              <p className="text-xs text-muted-foreground">direct download link to your project ZIP (Dropbox, Google Drive, etc.)</p>
-            </div>
-          )}
-
-          {sourceMode === 'upload' && (
-            <div className="space-y-2">
-              <Label className="text-white">folder to upload</Label>
-              <FolderDropzone
-                onFilesReady={(files, rootName) => {
-                  setDroppedFiles(files);
-                  setDroppedRootName(rootName);
-                  // Pre-fill distribution name from the folder if the field is empty.
-                  if (!distributionName) setDistributionName(rootName);
-                }}
-                onFilesAppend={(newFiles) => {
-                  // Merge by relative path, later wins, so re-picking a folder
-                  // refreshes it. rootName + distribution name are kept.
-                  setDroppedFiles((prev) => {
-                    const byPath = new Map<string, NamedBlob>();
-                    for (const f of prev ?? []) byPath.set(f.path, f);
-                    for (const f of newFiles) byPath.set(f.path, f);
-                    return Array.from(byPath.values());
-                  });
-                }}
-                onClear={() => {
-                  setDroppedFiles(null);
-                  setDroppedRootName('');
-                }}
-                summary={
-                  droppedFiles
-                    ? (() => {
-                        const s = summariseVersion([]);
-                        // Raw-blob summary; the deduped one needs hashing first.
-                        s.fileCount = droppedFiles.length;
-                        s.totalBytes = droppedFiles.reduce((n, f) => n + f.blob.size, 0);
-                        return { fileCount: s.fileCount, totalBytes: s.totalBytes };
-                      })()
-                    : undefined
-                }
-                files={droppedFiles ?? undefined}
-                disabled={distributing || uploading}
-              />
-              {/* Non-blocking pre-submit warnings. >5k files = noticeable
-                  hashing time; >20 GB = minutes, warn about keeping the tab.
-                  Both can apply at once. */}
-              {droppedFiles && droppedFiles.length > 0 && (() => {
-                const fileCount = droppedFiles.length;
-                const totalBytes = droppedFiles.reduce((n, f) => n + f.blob.size, 0);
-                const LARGE_FILE_COUNT = 5_000;
-                const LARGE_TOTAL_BYTES = 20 * 1024 ** 3; // 20 GiB
-                const warnCount = fileCount > LARGE_FILE_COUNT;
-                const warnBytes = totalBytes > LARGE_TOTAL_BYTES;
-                if (!warnCount && !warnBytes) return null;
-                return (
-                  <div
-                    role="status"
-                    className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-400/90 space-y-1"
-                  >
-                    <div className="flex items-center gap-1.5 font-medium text-amber-300">
-                      <TriangleAlert className="h-3.5 w-3.5" />
-                      heads up
-                    </div>
-                    {warnCount && (
-                      <p className="text-amber-400/75">
-                        large file count ({fileCount.toLocaleString()}) — version will be big;
-                        hashing may take several minutes. consider archiving into fewer files
-                        if this is a one-off.
-                      </p>
-                    )}
-                    {warnBytes && (
-                      <p className="text-amber-400/75">
-                        large upload ({formatBytes(totalBytes)}) — hashing and upload will take
-                        significant time. keep this tab open; the minimize-to-corner indicator
-                        handles if you click away.
-                      </p>
-                    )}
-                  </div>
-                );
-              })()}
-              {uploadProgress && uploadProgress.phase !== 'idle' && (() => {
-                // Use only the active phase's fraction — both fields can be set
-                // on the transition tick, snapping the bar 0% → 100%.
-                const frac =
-                  uploadProgress.phase === 'hashing'
-                    ? uploadProgress.hashFraction
-                    : uploadProgress.phase === 'uploading'
-                      ? uploadProgress.uploadFraction
-                      : undefined;
-                const pct = frac !== undefined ? Math.round(frac * 100) : null;
-                const isError = uploadProgress.phase === 'error';
-                // useRoostUpload needs ~3s of samples; hide rather than flash a
-                // nonsense number.
-                const throughput = uploadProgress.throughputBytesPerSec;
-                const eta = uploadProgress.etaSeconds;
-                const showRate =
-                  !isError &&
-                  throughput !== undefined &&
-                  eta !== undefined &&
-                  (uploadProgress.phase === 'hashing' || uploadProgress.phase === 'uploading');
-                // Friendlier label for the opaque "checking" phase.
-                const phaseCopy =
-                  uploadProgress.phase === 'checking'
-                    ? 'checking for duplicates'
-                    : uploadProgress.phase;
-                return (
-                  <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
-                    <div className="flex items-baseline gap-2">
-                      <span className="font-medium text-white">{phaseCopy}</span>
-                    </div>
-                    {/* Darker track + border so the unfilled portion stays
-                        visible on the dialog's bg-muted/20 panel. Matches
-                        MinimizedUploadCard. */}
-                    {frac !== undefined && !isError && (
-                      <div className="mt-1.5 flex items-center gap-2">
-                        <div className="h-[4px] flex-1 overflow-hidden rounded-full bg-background border border-border/40">
-                          <div
-                            className="h-full bg-accent-cyan transition-[width] duration-200 ease-out"
-                            style={{ width: `${Math.max(0, Math.min(1, frac)) * 100}%` }}
-                          />
-                        </div>
-                        {pct !== null && (
-                          <span className="text-muted-foreground tabular-nums flex-shrink-0 min-w-[2.5rem] text-right">
-                            {pct}%
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {/* One status line: "281/1841 chunks uploaded · 1 KB/s ·
-                        ~9h 30m remaining". Rate + ETA are latched across ticks
-                        so a sample window with no byte progress can't flicker. */}
-                    {(uploadProgress.message || (showRate && throughput !== undefined)) && (
-                      <div className="mt-1 text-muted-foreground tabular-nums">
-                        {uploadProgress.message}
-                        {showRate && throughput !== undefined && eta !== undefined && (
-                          <>
-                            {uploadProgress.message ? ' · ' : ''}
-                            {formatBytes(throughput)}/s
-                            {' · ~'}
-                            {formatDurationShort(eta)} remaining
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-          )}
 
           <div className="space-y-2">
             <Label htmlFor="extract-path" className="text-white">extract to (optional)</Label>
@@ -1203,9 +1077,8 @@ export default function ProjectDistributionDialog({
         <DialogFooter className={pendingKickoff ? 'hidden' : undefined}>
           {/* Both actions are explicit during an upload — a single
               "minimize/cancel" toggle was ambiguous about whether close =
-              abort. URL-source has no cancel: handleDistribute doesn't use the
-              lifted hook. */}
-          {uploading && sourceMode === 'upload' ? (
+              abort. */}
+          {uploading ? (
             <>
               <Button
                 variant="ghost"
@@ -1227,22 +1100,18 @@ export default function ProjectDistributionDialog({
               variant="ghost"
               onClick={() => onOpenChange(false)}
               className="bg-secondary border border-border cursor-pointer"
-              disabled={distributing}
             >
               cancel
             </Button>
           )}
           {/* Two-button kickoff so a roost can be published without targets:
               "upload" needs name + bytes, "upload and distribute" also needs a
-              target. URL-source keeps one button (no upload-only counterpart).
-              `uploading` disables both — a second start() aborts the first. */}
+              target. `uploading` disables both — a second start() aborts the
+              first. */}
           {(() => {
             const baseMissing: string[] = [];
             if (!distributionName.trim()) baseMissing.push('name');
-            if (sourceMode === 'url' && !projectUrl.trim()) baseMissing.push('project URL');
-            if (sourceMode === 'upload' && (!droppedFiles || droppedFiles.length === 0)) {
-              baseMissing.push('folder');
-            }
+            if (!droppedFiles || droppedFiles.length === 0) baseMissing.push('folder');
             const distributeMissing = [...baseMissing];
             if (selectedMachines.size === 0) distributeMissing.push('target machine');
             const distributeReason =
@@ -1253,44 +1122,39 @@ export default function ProjectDistributionDialog({
               baseMissing.length === 0
                 ? undefined
                 : `needs: ${baseMissing.join(', ')}`;
-            const busy = distributing || (sourceMode === 'upload' && uploading);
-            const distributeDisabled = busy || distributeMissing.length > 0;
-            const uploadOnlyDisabled = busy || baseMissing.length > 0;
+            const distributeDisabled = uploading || distributeMissing.length > 0;
+            const uploadOnlyDisabled = uploading || baseMissing.length > 0;
             return (
               <>
-                {sourceMode === 'upload' && (
-                  <Button
-                    variant="ghost"
-                    onClick={handleUploadOnly}
-                    className="bg-secondary border border-border cursor-pointer"
-                    disabled={uploadOnlyDisabled}
-                    title={uploadOnlyReason}
-                  >
-                    {busy ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        uploading...
-                      </>
-                    ) : (
-                      <>
-                        <FolderArchive className="h-4 w-4 mr-2" />
-                        upload
-                      </>
-                    )}
-                  </Button>
-                )}
                 <Button
-                  onClick={
-                    sourceMode === 'upload' ? handleUploadDistribute : handleDistribute
-                  }
+                  variant="ghost"
+                  onClick={handleUploadOnly}
+                  className="bg-secondary border border-border cursor-pointer"
+                  disabled={uploadOnlyDisabled}
+                  title={uploadOnlyReason}
+                >
+                  {uploading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      uploading...
+                    </>
+                  ) : (
+                    <>
+                      <FolderArchive className="h-4 w-4 mr-2" />
+                      upload
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={handleUploadDistribute}
                   className="text-gray-900 cursor-pointer"
                   disabled={distributeDisabled}
                   title={distributeReason}
                 >
-                  {busy ? (
+                  {uploading ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      {uploading && sourceMode === 'upload' ? 'uploading...' : 'distributing...'}
+                      uploading...
                     </>
                   ) : (
                     <>

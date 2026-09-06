@@ -104,17 +104,14 @@ jest.mock('@/hooks/useFirestore', () => ({
   firestoreTsToMs: (ts: unknown) => (typeof ts === 'number' ? ts : 0),
 }));
 
-jest.mock('@/hooks/useProjectDistributions', () => ({
-  useProjectDistributionManager: () => ({
+jest.mock('@/hooks/useProjectDistributionPresets', () => ({
+  useProjectDistributionPresets: () => ({
     presets: [],
-    presetsLoading: false,
-    presetsError: null,
-    distributions: [],
-    distributionsLoading: false,
-    distributionsError: null,
-    createDistribution: jest.fn(),
-    cancelDistribution: jest.fn(),
-    deleteDistribution: jest.fn(),
+    loading: false,
+    error: null,
+    createPreset: jest.fn(),
+    updatePreset: jest.fn(),
+    deletePreset: jest.fn(),
   }),
 }));
 

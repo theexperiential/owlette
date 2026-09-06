@@ -45,13 +45,9 @@ firestore/
 ├── users/{userId}/                # email, role, createdAt, sites[], preferences {healthAlerts, processAlerts, temperatureUnit}
 │   └── api_keys/{keyId}/          # API key metadata (name, keyHash, keyPrefix, createdAt, lastUsedAt)
 ├── api_keys/{keyHash}/            # Top-level API key lookup (userId, keyId) — O(1) resolution
-├── deployments/{deploymentId}/    # Remote installer deployments
-│   ├── installerUrl, silentFlags, targetMachines[], status, createdBy
-│   └── results: map
-└── project_distributions/{distributionId}/
-    ├── project_url, project_name, extract_path, verify_files[]
-    ├── targets: [{machineId, status, progress}]
-    └── status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial'
+└── deployments/{deploymentId}/    # Remote installer deployments
+    ├── installerUrl, silentFlags, targetMachines[], status, createdBy
+    └── results: map
 ```
 
 ---
@@ -92,7 +88,7 @@ Agent listener picks up → executes → moves to commands/completed/{commandId}
 Web listener sees completion → updates UI
 ```
 
-Command types: `restart_process`, `kill_process`, `set_launch_mode`, `update_config`, `install_software`, `distribute_project`
+Command types: `restart_process`, `kill_process`, `set_launch_mode`, `update_config`, `install_software`
 
 ---
 

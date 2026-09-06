@@ -62,7 +62,6 @@ The local UI lives in `desktop/` (Tauri), not here. The service launches
 ### Utilities
 | Module | Purpose |
 |--------|---------|
-| `project_utils.py` | Project directory management |
 | `registry_utils.py` | Windows registry queries (installed software list) |
 
 > **Full architecture details**: See `skills/resources/agent-architecture.md`

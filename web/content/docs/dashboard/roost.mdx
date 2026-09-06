@@ -148,6 +148,4 @@ If recovery keeps failing, cancel the upload, clear the selected files, reselect
 
 ## legacy URL distribution
 
-The current checkout still contains a compatibility path for legacy URL distribution: the roost dialog exposes `by url`, and legacy `/api/sites/{siteId}/project-distributions` routes remain in code. Treat this as a migration or escape-hatch path for existing hosted archives, not the primary roost flow.
-
-The legacy URL path does not create content-addressed versions, version file lists, roost target-state rows, or rollback history. New documentation and new operational workflows should use `upload files` on `/roosts`.
+Removed. The legacy by-URL distribution path — the dialog's `by url` source, the `/api/sites/{siteId}/project-distributions` routes, and the agent's `distribute_project` command — no longer exists. roost is the only distribution system: upload a folder on `/roosts`.

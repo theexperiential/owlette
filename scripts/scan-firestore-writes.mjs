@@ -167,12 +167,6 @@ const CONTROL_PLANE_RULES = [
   },
 
   {
-    file: /^web\/hooks\/useProjectDistributions\.ts$/,
-    capability: 'DISTRIBUTION_MANAGE',
-    route: 'POST|DELETE /api/sites/{siteId}/project-distributions[/{distId}/cancel]',
-  },
-
-  {
     file: /^web\/hooks\/useUninstall\.ts$/,
     capability: 'UNINSTALL_TRIGGER',
     route: 'POST|DELETE /api/sites/{siteId}/machines/{machineId}/uninstall',

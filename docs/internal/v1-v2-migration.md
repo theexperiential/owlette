@@ -1,9 +1,15 @@
 # v1 → v2 (roost) migration
 
-**status**: canonical migration design
+**status**: **historical — superseded 2026-09-05.** v1 was removed clean, with no deprecation window: the
+`/api/sites/{siteId}/project-distributions` routes, the `project_distributions` rules block, the agent's
+`distribute_project` / `cancel_distribution` handlers, and `agent/src/project_utils.py` are all deleted.
+roost is the only distribution system. the phased coexistence, dual-write, and staged-cutover design below
+was **not executed** — it is retained as the record of what was planned and of the v1 field shapes, which
+still describe documents at rest in `sites/{siteId}/project_distributions/` (retained, unreachable, not
+archived or deleted). do not follow the phase instructions; nothing here is actionable.
 **owner**: project distribution v2 (roost)
 **referenced by**: `dev/active/project-distribution-v2/plan.md` wave 1.11 (this doc) and wave 6.3 (production cutover)
-**last updated**: 2026-04-19
+**last updated**: 2026-09-05
 
 ---
 

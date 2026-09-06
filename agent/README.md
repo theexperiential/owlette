@@ -340,7 +340,6 @@ agent/
 │   ├── sync_scrub.py              # roost content-store cleanup
 │   ├── destination_allowlist.py   # roost write-destination gate (fail-closed)
 │   ├── roost_kill_switch.py       # roost per-site emergency stop
-│   ├── project_utils.py           # legacy by-URL distribution handler (pre-roost)
 │   └── registry_utils.py          # Windows registry operations
 ├── tests/                         # pytest tests
 ├── config/                        # Configuration (gitignored)

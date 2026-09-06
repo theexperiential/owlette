@@ -18,7 +18,6 @@ owlette_service.py          Main Windows service (ServiceFramework)
   │   └── connection_manager.py  State machine, circuit breaker, thread watchdog
   ├── shared_utils.py       Config, logging, system metrics, file paths
   ├── installer_utils.py    Download/execute/cancel remote installers
-  ├── project_utils.py      Project directory management
   └── registry_utils.py     Windows registry queries (installed software)
 
 owlette_runner.py           The process owlette-host supervises (bridges the host → service main loop)

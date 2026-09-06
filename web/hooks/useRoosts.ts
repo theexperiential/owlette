@@ -2,8 +2,8 @@
 
 /**
  * Real-time listener over `sites/{siteId}/roosts/{roostId}` — one doc per deploy
- * target (current version pointer + metadata). Authoritative for /roost;
- * v1 `project_distributions` is legacy.
+ * target (current version pointer + metadata). The only distribution model;
+ * the v1 `project_distributions` path was removed.
  */
 
 import { useEffect, useState } from 'react';

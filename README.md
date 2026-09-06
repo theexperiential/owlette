@@ -42,7 +42,7 @@ organize machines by location, department, or project. three-tier role-based acc
 **roost — project distribution**
 drag a project folder onto the dashboard and it syncs to your fleet. files are split into 4 MiB content-addressed chunks, hashed in the browser, and uploaded once — re-deploys and machines that already hold a chunk skip it entirely. every deploy is an immutable version you can roll back to in one click, and agents verify every chunk by SHA-256 before assembling files atomically into an allowlisted destination.
 
-legacy by-URL distribution (point the fleet at a ZIP on Dropbox, Google Drive, or your own hosting; the agent downloads and extracts it) is still supported alongside roost for existing setups.
+roost is the only distribution system — the legacy by-URL path (point the fleet at a hosted ZIP and let the agent download and extract it) has been removed.
 
 **alerts & notifications**
 configurable threshold alerts for system metrics. email notifications with branded templates. webhook integrations for external platforms. activity logging across your entire fleet.

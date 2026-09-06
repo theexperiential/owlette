@@ -11,7 +11,6 @@ if src_dir not in sys.path:
 
 import shared_utils
 import installer_utils
-import project_utils
 import registry_utils
 import reboot_state
 import session_state
@@ -5140,86 +5139,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     error_msg = f"Failed to refresh software inventory: {str(e)}"
                     logging.error(error_msg)
                     return error_msg
-
-            elif cmd_type == 'distribute_project':
-                project_url = cmd_data.get('project_url')
-                project_name = cmd_data.get('project_name', 'project.zip')
-                extract_path = cmd_data.get('extract_path')  # Optional custom path
-                verify_files = cmd_data.get('verify_files', [])  # List of files to verify
-                distribution_id = cmd_data.get('distribution_id')  # For tracking distribution progress
-
-                if not project_url:
-                    return "Error: No project URL provided"
-
-                logging.info(f"Starting project distribution: {project_name}")
-                logging.debug(f"URL: {project_url}")
-                logging.debug(f"Extract path: {extract_path or 'default'}")
-
-                if not extract_path:
-                    extract_path = project_utils.get_default_project_directory()
-                    logging.debug(f"Using default extraction path: {extract_path}")
-
-                temp_project_path = project_utils.get_temp_project_path(project_name)
-
-                try:
-                    if self.firebase_client:
-                        self.firebase_client.update_command_progress(cmd_id, 'downloading', distribution_id)
-
-                    logging.debug(f"Downloading project to: {temp_project_path}")
-                    download_success, result = project_utils.download_project(
-                        project_url,
-                        project_name,
-                        lambda progress: self.firebase_client.update_command_progress(
-                            cmd_id, 'downloading', distribution_id, progress
-                        ) if self.firebase_client else None
-                    )
-
-                    if not download_success:
-                        return f"Error: {result}"
-
-                    if self.firebase_client:
-                        self.firebase_client.update_command_progress(cmd_id, 'extracting', distribution_id)
-
-                    logging.info(f"Extracting project to: {extract_path}")
-                    extract_success, error_msg = project_utils.extract_zip(
-                        result,  # result contains the downloaded file path
-                        extract_path,
-                        lambda progress: self.firebase_client.update_command_progress(
-                            cmd_id, 'extracting', distribution_id, progress
-                        ) if self.firebase_client else None
-                    )
-
-                    if not extract_success:
-                        return f"Error: Extraction failed - {error_msg}"
-
-                    result_msg = f"Project extracted successfully to {extract_path}"
-                    if verify_files:
-                        all_found, missing_files = project_utils.verify_project_files(extract_path, verify_files)
-                        if all_found:
-                            result_msg += f". Verified {len(verify_files)} file(s)"
-                        else:
-                            result_msg += f". Warning: {len(missing_files)} file(s) missing: {', '.join(missing_files)}"
-
-                    logging.info(result_msg)
-                    return result_msg
-
-                finally:
-                    project_utils.cleanup_project_zip(temp_project_path)
-
-            elif cmd_type == 'cancel_distribution':
-                project_name = cmd_data.get('project_name')
-
-                if not project_name:
-                    return "Error: No project name provided for cancellation"
-
-                logging.info(f"Cancellation requested for project: {project_name}")
-
-                # download_file is synchronous and can't be cancelled — all we can
-                # do is clean up the temp file.
-                project_path = project_utils.get_temp_project_path(project_name)
-                project_utils.cleanup_project_zip(project_path)
-
-                return f"Distribution cancelled: {project_name} (cleaned up temporary files)"
 
             elif cmd_type == 'mcp_tool_call':
                 tool_name = cmd_data.get('tool_name')
