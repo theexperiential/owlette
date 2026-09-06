@@ -1,5 +1,5 @@
 ---
-description: Pre-push gate — lint, typecheck, and run the playwright e2e suite locally before pushing web changes
+description: Pre-push gate — lint, typecheck, unit tests, firestore rules tests, and the playwright e2e suite locally before pushing web changes
 ---
 
 Run the same checks CI runs, locally, *before* pushing — so a red "playwright e2e" run on dev/main becomes rare. The local e2e suite is the exact mirror of CI (same Playwright tests against the same Firebase emulators), so green here means green there for everything except cold-cache / ubuntu-vs-Windows quirks.
@@ -31,20 +31,28 @@ Fix every error/warning your changes introduced before proceeding (per CLAUDE.md
 cd web && npm test
 ```
 
-### Step 4: E2E suite (the authoritative gate)
+### Step 4: Firestore rules tests (conditional)
+Run these when the pending changes touch `firestore.rules` or `web/__tests__/rules/**` — they are the only regression gate on the security rules (97 tests: denials 46, wave-hardening 32, baseline 19). CI runs them too, as the `firestore rules tests` job in `.github/workflows/e2e.yml`.
+```bash
+cd web && npm run test:rules
+```
+~2 min (boots its own firestore emulator on :8080, runs jest, tears it down). Run it BEFORE Step 5 and let it finish — it binds the same :8080 the e2e emulators want, so the two must not overlap. If nothing in scope touches the rules, skip it and say so in the report.
+
+### Step 5: E2E suite (the authoritative gate)
 This does the production build, spins up the emulators, and runs Playwright (~45s steady-state after the first build; the first run pays for `npm run build`). Run in the BACKGROUND with a generous timeout — don't block the session synchronously:
 ```bash
 cd web && npm run e2e
 ```
 Prereqs (already set up on this machine): JDK 21 on PATH, `firebase-tools@15` global, `npx playwright install chromium` done once. If the emulator ports (Auth :9099, Firestore :8080, Storage :9199) are busy, a stale emulator is the usual culprit — kill it by PID (never by name) and retry.
 
-### Step 5: Report + gate
+### Step 6: Report + gate
 ```
 ## Preflight
 - Scope:      [e2e-relevant / web-only-no-e2e / out-of-scope]
 - Lint:       [PASS/FAIL]
 - Typecheck:  [PASS/FAIL]
 - Unit tests: [PASS/FAIL — X passed]
+- Rules:      [PASS/FAIL — X passed] (or "skipped — firestore.rules untouched")
 - E2E:        [PASS/FAIL — X passed, Y failed] (or "skipped — no e2e-relevant changes")
 
 Verdict: [SAFE TO PUSH / DO NOT PUSH]

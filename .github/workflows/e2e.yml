@@ -145,3 +145,57 @@ jobs:
           name: playwright-report
           path: web/e2e/.output/
           retention-days: 14
+
+  # firestore.rules regression gate — 97 tests (denials / wave-hardening /
+  # baseline) that assert the deployed rules against the emulator. Ran
+  # manual-only until now, so a rules regression could reach dev unnoticed;
+  # this workflow's path filter already includes `firestore.rules`, so the
+  # trigger side needed nothing.
+  #
+  # A separate job, not a step in `playwright`, for two reasons: it is the fast
+  # signal (~3 min vs the suite's 6-30) and a rules-only change gets its verdict
+  # without waiting behind a production build, and its `emulators:exec` is
+  # self-contained — the playwright job's emulators live and die inside its own
+  # exec wrappers, so there is nothing to reuse. Separate runners also mean the
+  # two firestore emulators never contend for :8080.
+  rules:
+    name: firestore rules tests
+    runs-on: ubuntu-latest
+    # No browser download and no next build — npm ci, then a ~25s jest run
+    # inside one emulator boot. 15 minutes is cold-cache headroom, not a target.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # The Firestore emulator is a Java binary; JDK 21 matches local dev.
+      - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # jest + @firebase/rules-unit-testing are web devDependencies. The
+      # functions and playwright installs are not needed here.
+      - name: install web deps
+        working-directory: web
+        run: npm ci --legacy-peer-deps
+
+      - name: install firebase-tools
+        # zizmor: ignore[adhoc-packages] — emulator runner CLI, major-pinned;
+        # not a dependency of the code under test.
+        run: npm i -g firebase-tools@15 # zizmor: ignore[adhoc-packages]
+
+      # `npm run test:rules` = firebase emulators:exec --only firestore
+      # (project demo-rules-harness, no credentials) wrapping jest with
+      # jest.rules.config.js. The harness reads firestore.rules from the repo
+      # root and loads it into the emulator, so this tests the checked-in file.
+      - name: run firestore rules tests
+        working-directory: web
+        run: npm run test:rules
