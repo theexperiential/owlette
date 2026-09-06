@@ -497,7 +497,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                   <div className="space-y-2">
                     <Label className="text-white">display times in</Label>
                     <p className="text-xs text-muted-foreground">
-                      controls how heartbeats, activity logs, and other absolute timestamps render across the dashboard. schedule editors are unaffected — they always show times in the machine&apos;s own local timezone.
+                      controls how heartbeats, activity logs, and other absolute timestamps render across the dashboard. schedule editors are unaffected — they follow the site&apos;s schedule clock setting (each machine&apos;s own clock unless the site opted into site time), not this preference.
                     </p>
                     <div className="space-y-2 mt-1">
                       {([

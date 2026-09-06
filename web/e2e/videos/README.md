@@ -23,7 +23,10 @@ which fixture scenario each scene runs on.
 ```bash
 cd web
 npm run videos                       # every scene
-npm run videos -- --grep "dashboard" # one scene (grep matches the test title)
+# ONE scene: npm's `--` lands the flag on `firebase emulators:exec`, which dies
+# AFTER the ~10-min build — grep must live inside the quoted playwright command,
+# space-free (firebase runs the inner string through cmd.exe):
+#   firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e "cd web && npx playwright test --config=playwright.videos.config.ts --grep on.a.schedule"
 npm run videos:debug                 # headed + inspector, to tune selectors/pacing
 ```
 

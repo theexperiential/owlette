@@ -7,7 +7,7 @@
   "scenario": null,
   "script": "scripts/02-day-zero.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 246.117,
+  "narration_s": 251.283,
   "main_card": {
     "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\02-day-zero-main.mp4",
     "frames": 330,
@@ -25,7 +25,7 @@
       "rel": "dev/video-tutorials/footage/web/02-day-zero.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\02-day-zero.mp4",
       "exists": true,
-      "duration_s": 301.467,
+      "duration_s": 307.15,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -165,9 +165,9 @@
     {
       "id": "b07",
       "title": "your first site",
-      "screen_note": "the dashboard for a brand-new account — the \"getting started\" card with \"step 1: create your first site\". Click it → the create dialog: site name (\"NYC Office\"), the auto-generated site ID with its green available check, \"create site\". The card re-renders into the download/install steps.",
+      "screen_note": "the dashboard for a brand-new account — the \"getting started\" card with \"step 1: create your first site\". Click it → the create dialog: site name (\"NYC Office\"), the auto-generated site ID with its green available check, the \"site timezone\" row the dialog fills from the browser (\"change timezone\" underneath it), then \"create site\". The card re-renders into the download/install steps.",
       "direction": {
-        "SCREEN": "the dashboard for a brand-new account — the \"getting started\" card with \"step 1: create your first site\". Click it → the create dialog: site name (\"NYC Office\"), the auto-generated site ID with its green available check, \"create site\". The card re-renders into the download/install steps.",
+        "SCREEN": "the dashboard for a brand-new account — the \"getting started\" card with \"step 1: create your first site\". Click it → the create dialog: site name (\"NYC Office\"), the auto-generated site ID with its green available check, the \"site timezone\" row the dialog fills from the browser (\"change timezone\" underneath it), then \"create site\". The card re-renders into the download/install steps.",
         "NOTE": "needs the zero-site account from b01's note — this empty state only renders when the user has no sites at all."
       },
       "start_s": 164.25,
@@ -188,9 +188,9 @@
     {
       "id": "b08",
       "title": "the site's clock",
-      "screen_note": "the header site switcher → \"manage sites\" → the pencil \"edit site\" on the new row → the timezone picker. Show the timezone column before and after.",
+      "screen_note": "the header site switcher → \"manage sites\" → the new row, whose timezone column already reads the zone b07's dialog detected → the pencil \"edit site\" → the timezone picker, held open. Nothing is changed on camera: the beat is where the clock lives afterwards, not a correction.",
       "direction": {
-        "SCREEN": "the header site switcher → \"manage sites\" → the pencil \"edit site\" on the new row → the timezone picker. Show the timezone column before and after."
+        "SCREEN": "the header site switcher → \"manage sites\" → the new row, whose timezone column already reads the zone b07's dialog detected → the pencil \"edit site\" → the timezone picker, held open. Nothing is changed on camera: the beat is where the clock lives afterwards, not a correction."
       },
       "start_s": 188.5,
       "start_frame": 11310,
@@ -202,8 +202,8 @@
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b08.mp3",
       "mp3_name": "ep02-b08.mp3",
-      "duration_s": 26.07,
-      "duration_frames": 1564,
+      "duration_s": 31.242,
+      "duration_frames": 1875,
       "status": "ok",
       "breath_s": 0.6
     },
@@ -214,8 +214,8 @@
       "direction": {
         "SCREEN": "the OPERATOR'S user-management view (framed as theirs, not the viewer's — superadmin is an internal role, never presented as a public feature): the row menu open with \"reset 2FA...\" highlighted, then the confirm dialog. Cut back to the getting-started card, now showing \"step 1: download owlette agent\"."
       },
-      "start_s": 218.6,
-      "start_frame": 13116,
+      "start_s": 223.767,
+      "start_frame": 13426,
       "card": {
         "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\02-day-zero-b09.mp4",
         "frames": 205,

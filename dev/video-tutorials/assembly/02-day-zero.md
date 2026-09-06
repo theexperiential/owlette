@@ -1,6 +1,6 @@
 # assembly — episode 02: day zero: sign up, 2fa, and your first site
 
-Narration: **4:06.1** across 9 spoken beats.
+Narration: **4:11.3** across 9 spoken beats.
 Timecodes assume beats butt-jointed in order; add breathing room per taste and
 re-read the SCREEN notes in the script for zoom/callout direction.
 
@@ -19,5 +19,5 @@ Footage:
 | b05 | backup codes | `ep02-b05.mp3` | 19.9s | 1:33.4 | 1:53.2 |
 | b06 | trust this device | `ep02-b06.mp3` | 21.2s | 1:53.2 | 2:14.5 |
 | b07 | your first site | `ep02-b07.mp3` | 20.2s | 2:14.5 | 2:34.7 |
-| b08 | the site's clock | `ep02-b08.mp3` | 26.1s | 2:34.7 | 3:00.7 |
-| b09 | locked out, and what's next | `ep02-b09.mp3` | 26.9s | 3:00.7 | 3:27.6 |
+| b08 | the site's clock | `ep02-b08.mp3` | 31.2s | 2:34.7 | 3:05.9 |
+| b09 | locked out, and what's next | `ep02-b09.mp3` | 26.9s | 3:05.9 | 3:32.8 |

@@ -9,9 +9,12 @@
  * creates a real site.
  *
  * Rendered VO (voiceover/out/02-day-zero/, ffprobe):
- *   b01 18.6s · b02 18.6s · b03 16.7s · b04 24.7s · b05 17.5s
- *   b06 17.8s · b07 17.1s · b08 22.8s · b09 22.0s  (2026-08-31 evening
- *   re-voice — the care-led b01 opening)
+ *   b01 22.9s · b02 22.5s · b03 20.3s · b04 27.6s · b05 19.9s
+ *   b06 21.2s · b07 20.2s · b08 31.2s · b09 26.9s
+ *   b01–b07, b09 are cut from the 2026-08-31 continuous take; b08 alone is a
+ *   2026-09-06 per-beat re-render (`generate.py --only-beat b08`, wave 3b) —
+ *   see the b08 block for why, and expect its read to sit ~13% slower than its
+ *   neighbours', which is what a cold single-beat render costs.
  *
  * ── THREE PRECONDITIONS ─────────────────────────────────────────────────────
  *
@@ -254,7 +257,7 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         await clickWithCursor(page, page.getByRole('button', { name: /continue to dashboard/i }));
         await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
 
-        // ── [b07] your first site (~20.9s) ───────────────────────────────────
+        // ── [b07] your first site (~20.2s) ───────────────────────────────────
         // This account owns no sites, so the dashboard renders the getting-
         // started card at step 1. That empty state exists only here.
         await page.waitForTimeout(1200);
@@ -278,7 +281,19 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         // tick share one flex line (:210-213).
         const siteIdPreview = siteDialog.getByText('site ID:', { exact: true }).locator('..');
         await highlight(page, siteIdPreview, 2400);
-        await narrate(page, 'b07 name + generated id', 7);
+        await narrate(page, 'b07 name + generated id', 4.5);
+        // The dialog also carries the site's CLOCK now (wave 3b,
+        // CreateSiteDialog.tsx:299-343): the browser's timezone, read-only with
+        // "change timezone" under it, written with `schedulesFollowSiteTime:
+        // true`. b08 is entirely about that value, so it has to be on camera
+        // here — and inside b07's 20.2s, since the conform trims what runs past
+        // the narration. Frame the read-only value row (the testid span's flex
+        // parent: label, value, "(from your browser)"), not the collapsed
+        // disclosure below it.
+        const timezoneRow = siteDialog.getByTestId('create-site-timezone').locator('..');
+        await centerInView(page, timezoneRow);
+        await highlight(page, timezoneRow, 2600);
+        await narrate(page, 'b07 the clock the dialog detected', 3);
         await clickWithCursor(page, siteDialog.getByRole('button', { name: /^create site$/i }));
         await expect(siteDialog).not.toBeVisible({ timeout: 20_000 });
         await narrate(page, 'b07 site created', 7);
@@ -291,30 +306,42 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         ).toBeVisible({ timeout: 20_000 });
         await narrate(page, 'b09 tail — card advances to the download step', 10);
 
-        // ── [b08] the site's clock (~26.7s) ──────────────────────────────────
-        // STALE PREMISE — the b08 voiceover still says the create dialog "never
-        // asks about the site's clock". Since wave 3b it does: it shows the
-        // detected browser timezone, lets it be changed, and writes it with
-        // `schedulesFollowSiteTime: true`, so a new site starts on site time.
-        // Manage sites is now where you CHANGE that clock, not where you first
-        // set it. The revoice + re-capture is task 3b.2 of
-        // dev/active/site-time-schedules; the beat below is unchanged until then.
+        // ── [b08] the site's clock (~31.2s) ──────────────────────────────────
+        // The beat is now the OTHER half of b07's dialog: the clock it set is
+        // already on the site (wave 3b — the create dialog writes the browser's
+        // timezone together with `schedulesFollowSiteTime: true`), and manage
+        // sites is where it is CHANGED, not where it is first set. Nothing is
+        // edited on camera; the escape ladder below cancels the editor.
         await clickWithCursor(page, page.getByTestId('site-switcher-trigger'));
         await clickWithCursor(page, page.getByRole('menuitem', { name: /manage sites/i }));
         const manageDialog = page.getByRole('dialog');
         await expect(manageDialog).toBeVisible();
+        // The zone the create dialog detected, now persisted on the site row
+        // (ManageSitesDialog.tsx:391 prints the raw IANA name). Reading it back
+        // off the browser rather than hardcoding a zone keeps this scene
+        // portable, and makes the row assertion the proof of the claim b08's
+        // narration makes — if the create dialog ever stops writing the
+        // timezone, this fails here instead of shipping a lie.
+        const siteZone = await page.evaluate(
+          () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+        );
+        const zoneCell = manageDialog.getByText(siteZone, { exact: true }).first();
+        await expect(zoneCell).toBeVisible();
+        await centerInView(page, zoneCell);
+        await highlight(page, zoneCell, 2600);
+        await narrate(page, 'b08 the row already carries the detected clock', 6);
         // The site list is a CSS grid of divs, not a table — no row role to
         // target. The per-site pencil carries `aria-label="edit {site.name}"`,
         // which is the only stable handle on a given site's line.
         const editSiteButton = manageDialog.getByRole('button', { name: 'edit NYC Office' });
         await centerInView(page, editSiteButton);
         await highlight(page, editSiteButton, 2400);
-        await narrate(page, 'b08 timezone column, before', 8);
+        await narrate(page, 'b08 the pencil is where it changes', 4);
         await clickWithCursor(page, editSiteButton);
         await page.waitForTimeout(600);
-        await narrate(page, 'b08 timezone picker open', 5.4);
+        await narrate(page, 'b08 timezone picker open', 6.5);
         await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 4.0 });
-        await narrate(page, 'b08 timezone picker open - close', 4.6);
+        await narrate(page, 'b08 timezone picker open - close', 5.5);
         await slowPush(page, { scale: 1.0, seconds: 3.0 });
         await narrate(page, 'b08 timezone picker open - settle', 1.0);
         // ManageSitesDialog's Esc is a ladder (ManageSitesDialog.tsx:241-250):

@@ -330,6 +330,109 @@ Status of the items below, after working the suggested order:
     and eyeball a b02 frame for the new machine-clock string. No Resolve work is
     implied - ep06's b07 native insert does not exist yet and task 3.4 (desktop
     schedule copy) is a separate session's.
+- **2026-09-06 — 3.7 CLOSED: ep06 re-captured, gates green, frame verified.**
+  Tree was quiet (clean checkout at HEAD `075b6104`), one writer, one display.
+  * New take `footage/web/06-run-on-a-schedule.mp4` 146.2s, 7 beats, all cover
+    narration, `[edges] clean`. gen-assembly's ONLY ep06 diff is the container
+    duration (145.75 -> 146.233) - no beat timing moved, because the VO did not
+    change. simulate-conform **0 problems, 17/17**; `vet-recordings.py 06`
+    **0 failures**.
+  * **FRAME VERDICT: affirmative.** b02 at 37s (beat starts 25.48s) shows the
+    process dialog's schedule-config header reading
+    `times run on each machine's own clock` - the flag-false string, byte for
+    byte, not "times in Los Angeles". Cropped + 2.4x-scaled frame read directly.
+    A 49-tile contact sheet over the whole take is clean: no foreign window, no
+    console flash, no overlay.
+  * **NEW TRAP - `npm run videos -- --grep X` IS BROKEN, and it fails QUIETLY.**
+    npm appends extra args to the END of the script string, and `videos` is a
+    CHAIN, so `--grep` lands on `firebase emulators:exec`, which exits with
+    `error: unknown option '--grep'` AFTER the ~10 min e2e:build has already
+    run. Worse, `... | tail -80` hands you tail's exit code, so the run reports
+    **exit 0** having filmed nothing. Use the §6.4 form instead - grep INSIDE
+    the quoted playwright command:
+    `firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e "cd web && npx playwright test --config=playwright.videos.config.ts --grep on.a.schedule"`
+    and keep the pattern SPACE-FREE (`on.a.schedule`, `day.zero`): firebase runs
+    that inner string through cmd.exe, which does not treat single quotes as
+    quoting, so `--grep 'run apps on a schedule'` splits into four argv entries.
+    `videos/README.md` documents the broken form - fix it or link §6.4.
+    Corollary: e2e:build leaves `.next-e2e` valid, so a second scene shot in the
+    same session (no app-code edits between) can skip the rebuild entirely -
+    that is how both captures here cost ~3 and ~6 minutes instead of ~13 and ~16.
+- **2026-09-06 — 3b.2 CLOSED: ep02 b08 rewritten, revoiced alone, re-shot, re-captured.**
+  * **b08 copy.** OLD (373 chars, now false in shipped product): "that dialog
+    never asks about the site's clock. it quietly takes the timezone of the
+    browser you made it in - wrong the moment your machines live somewhere else.
+    fix it now: site switcher, manage sites, then the pencil. the dashboard
+    reads this site's times on that clock, from schedule editors to log windows
+    - and each machine still keeps its own clock, so set both right."
+    NEW (394 chars, +5.6%): "that clock is already set - the create dialog read
+    it from your browser and started the site on it. right if you made the site
+    where the machines live, wrong the moment they're somewhere else. change it
+    here: site switcher, manage sites, then the pencil. new sites follow the site
+    clock, so a nine a.m. window is nine at the site on every machine - restarts
+    still go by the machine's own clock." The log-window half was DROPPED on
+    purpose: which clock renders absolute timestamps is a per-user preference
+    (`AccountSettingsDialog` "display times in": machine / user / site), so the
+    old sentence only held for one of three settings.
+  * **Dry run first, and it planned exactly {b08}**: 394 chars ~= 394 credits,
+    8 beats "not targeted - keeps ep02-bNN.mp3". `--changed` still reports the
+    wrong set (see the 2026-09-05 entry) - `--only-beat` is the targeting mode.
+  * **TRAP - the episode manifest's recorded voice_settings were STALE**
+    (stability 0.30 / style 0.00, the pre-August setting) and generate.py
+    prefers the manifest over its own defaults, so an unflagged `--only-beat`
+    would have rendered the robotic voice next to eight expressive beats. Pass
+    `--stability 0.35 --style 0.40` explicitly on any targeted re-render of an
+    episode whose manifest predates the re-voice. (This run wrote the right
+    values back into `out/02-day-zero/manifest.json`, along with b08's new text.)
+  * **TRAP - `generate.py` writes MONO; every continuous-split beat is STEREO.**
+    `render-continuous.cut()` forces `pan=stereo|c0=c0|c1=c0`; generate.py has no
+    such step, so the fresh b08 came off the API 1-channel - and a mono clip on a
+    stereo Resolve track plays in the LEFT CHANNEL ONLY (§4). Converted by hand.
+    **And measure the level AFTER that conversion:** duplicating mono into two
+    channels raises BS.1770 integrated loudness ~+3 dB, so a gain computed
+    against the mono file overshoots by exactly that (it did here: +1.27 dB
+    applied, then a -2.75 dB correction). Final: b08 -20.26 LUFS vs its eight
+    siblings' -19.99 - 0.27 dB apart, inside SKIP_DB and below the 0.26 dB an
+    extra 192k generation costs, so it is done. normalize-levels dry-run: every
+    episode "skip", series spread 0.59 dB.
+  * **b08 IS NOW THE EPISODE'S ONE MIXED-PROVENANCE BEAT.** 31.24s for 394 chars
+    = 12.6 chars/s, against the continuous take's 14.3 - the cold render reads
+    ~13% slower, and its timbre is a separate generation. The §3.1 provenance
+    test consequently flags `02-day-zero take 211.72 beats 212.82 (+1.10)`; that
+    is EXPECTED and is the cost 3b.2 accepted rather than spending ~2,800 credits
+    on a whole-episode re-render. rosco should audition b08 against b07/b09 and
+    price that. (The same test also shows `17-fleet-maintenance +0.16` - 9 files
+    of mp3 frame padding, not a swapped beat; do not go hunting.)
+  * **Scene work.** `02-day-zero.video.ts`: b07 now frames the create dialog's
+    timezone row (`getByTestId('create-site-timezone').locator('..')`, 3s dwell,
+    earlier dwell trimmed 7s -> 4.5s so the create click still lands inside
+    b07's 20.2s and is not trimmed off); the b08 STALE-PREMISE note is replaced
+    by the real contract, and b08 opens on the manage-sites row's timezone cell,
+    located by reading `Intl.DateTimeFormat().resolvedOptions().timeZone` off the
+    page - so the beat ASSERTS that the create dialog persisted the zone instead
+    of narrating it on faith. b08 re-paced 27s -> 32s for the longer read.
+    Header VO table refreshed (it was three re-voices stale).
+  * **Gates.** gen-assembly diffs, all justified: ep02 b08 duration 26.1s ->
+    31.2s (the re-render), b09's start +5.2s (grid follows), episode narration
+    4:06.1 -> 4:11.2, and the two SCREEN direction strings I rewrote (b07 gains
+    the timezone row, b08 stops promising a before/after that is never filmed);
+    ep06 the container duration only. simulate-conform **0 problems, 17/17**;
+    `vet-recordings.py 02` **0 failures** (307.1s, 11 beats COVERED, edges
+    CLEAN). `npx eslint` + `npx tsc --noEmit` clean.
+  * **FRAME VERDICTS: affirmative, both.** b07 at 148s: "site timezone:
+    `America/Los_Angeles` (from your browser)" over "scheduled processes at this
+    site run on this clock, on every machine." and the "change timezone"
+    disclosure, all legible in the create dialog. b08 at 190s: the manage-sites
+    row reads `NYC Office | hue-bay | America/Los_Angeles | 0 machines` - the
+    zone the dialog wrote. 64-tile contact sheet over the 307s take is clean.
+  * **FOR THE RESOLVE PASS (rosco).** Two episodes changed: **02** (audio AND
+    picture) and **06** (picture only). ep02 must be rebuilt FRESH FROM CLEAN
+    BINS - a kept bin replays the stale decoded audio (2026-09-02 trap), so run
+    scratchpad `refresh_mp3_identity.py` with Resolve CLOSED first, then the
+    "owlette rebuild revoiced" path with `OWLETTE_BUILD_EPISODE=02,06`. Every
+    ep02 clip after b08 shifts +5.2s on the grid; nothing is hand-cut in either
+    episode (ep01 b02's hand cut was not touched). ep06's b07 native insert
+    STILL DOES NOT EXIST - the web take is cover footage only, exactly as before.
 
 ---
 
