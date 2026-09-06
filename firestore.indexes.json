@@ -196,6 +196,14 @@
       ]
     },
     {
+      "collectionGroup": "rollouts",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "stage", "order": "ASCENDING" },
+        { "fieldPath": "scheduledAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "talons",
       "queryScope": "COLLECTION_GROUP",
       "fields": [

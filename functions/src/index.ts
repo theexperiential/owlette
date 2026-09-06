@@ -7,6 +7,7 @@ initializeApp();
 export { onMetricsWrite } from './metricsHistory';
 export { onCommandCompleted } from './deploymentStatus';
 export { sweepStaleDeployments } from './deploymentSweeper';
+export { sweepScheduledRollouts } from './rolloutScheduler';
 export { onRoostWritten, onTargetStateWritten } from './distributionFanout';
 export { verifyChunk } from './chunkVerify';
 export { chunkGcNightly } from './chunkGc';

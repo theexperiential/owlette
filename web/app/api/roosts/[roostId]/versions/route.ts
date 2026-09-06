@@ -7,6 +7,11 @@
  *        -> { versionId, currentVersionId, previousVersionId }
  *      Finalizes a version: writes the body to R2, then compare-and-swaps
  *      currentVersionId in a firestore transaction. Trips the fan-out function.
+ *
+ * Webhooks: `version.published` is QUEUED per subscription once the finalize
+ * transaction commits, for a NEW version only — a promote moves the pointer to
+ * bytes published earlier, and a no-op publishes nothing at all.
+ * `functions/src/webhookDispatch.ts` owns delivery and backoff.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -19,6 +24,7 @@ import {
 import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { gateOrProceed } from '@/lib/roostKillSwitch';
+import { emitRoostWebhook } from '@/lib/roostWebhooks.server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { timestampToIso } from '@/lib/firestoreTime.server';
 import {
@@ -537,6 +543,27 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         auth.userId,
         chunkReferrers,
       );
+
+      // Awaited so a 201 means the event is durably queued; the scheduled pump
+      // in functions/src/webhookDispatch.ts does the POSTing. Never throws — a
+      // webhook outage must not fail a committed publish. Create only: the
+      // promote and no-op branches publish no new version, and `createdBy`
+      // below would be the promoter rather than the version's author.
+      await emitRoostWebhook({
+        db,
+        siteId: site.siteId,
+        event: 'version.published',
+        data: {
+          roostId,
+          siteId: site.siteId,
+          versionId: result.versionId,
+          versionNumber: result.versionNumber,
+          description: deployDescription,
+          totalFiles: m.files.length,
+          totalSize,
+          createdBy: auth.userId,
+        },
+      });
     }
 
     const response = applyAuthDeprecations(

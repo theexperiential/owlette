@@ -12,6 +12,66 @@
 /** TTL between tombstone and actual deletion. 30 days (ms). */
 export const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+/**
+ * Schema version this parser understands. The finalize route
+ * (`web/app/api/roosts/[roostId]/versions/route.ts`) rejects anything else, so a body
+ * carrying a different number came from a writer this parser has never seen — refuse
+ * it rather than under-report its chunk references.
+ */
+export const SUPPORTED_VERSION_SCHEMA = 2;
+
+const CHUNK_HASH_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * Chunk hashes referenced by one version body, as stored in R2.
+ *
+ * Strict on purpose: every deviation from the known shape throws, and the GC treats a
+ * throw as "references unknown" and deletes nothing. Silently returning a short list
+ * here is the exact failure that turns GC into a data-loss bug.
+ */
+export function extractChunkHashes(body: unknown): string[] {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return fail('version body must be a JSON object');
+  }
+  const v = body as { schemaVersion?: unknown; files?: unknown };
+  if (v.schemaVersion !== SUPPORTED_VERSION_SCHEMA) {
+    return fail(
+      `version body schemaVersion must be ${SUPPORTED_VERSION_SCHEMA} (got ${JSON.stringify(v.schemaVersion)})`,
+    );
+  }
+  if (!Array.isArray(v.files)) {
+    return fail('version body `files` must be an array');
+  }
+
+  const hashes: string[] = [];
+  for (let i = 0; i < v.files.length; i++) {
+    const file = v.files[i] as { chunks?: unknown } | null;
+    if (file === null || typeof file !== 'object' || Array.isArray(file)) {
+      return fail(`version body files[${i}] must be an object`);
+    }
+    if (!Array.isArray(file.chunks)) {
+      return fail(`version body files[${i}].chunks must be an array`);
+    }
+    for (let j = 0; j < file.chunks.length; j++) {
+      const chunk = file.chunks[j] as { hash?: unknown } | null;
+      if (chunk === null || typeof chunk !== 'object' || Array.isArray(chunk)) {
+        return fail(`version body files[${i}].chunks[${j}] must be an object`);
+      }
+      if (typeof chunk.hash !== 'string' || !CHUNK_HASH_RE.test(chunk.hash)) {
+        return fail(
+          `version body files[${i}].chunks[${j}].hash must be 64-char lowercase hex`,
+        );
+      }
+      hashes.push(chunk.hash);
+    }
+  }
+  return hashes;
+}
+
+function fail(message: string): never {
+  throw new Error(message);
+}
+
 /** A recorded tombstone: chunk was marked for deletion at this moment. */
 export interface TombstoneRecord {
   hash: string;

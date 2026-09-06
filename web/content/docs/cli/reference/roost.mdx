@@ -191,6 +191,8 @@ backing: `GET /api/roosts/{roostId}/versions?siteId=<s>&limit=<page-size>&cursor
 
 triggers a targeted fan-out for a roost: the server computes a canary / fleet split, queues `sync_pull` commands for the canary wave, and (with `--at`) defers a future rollout. this is the **real fan-out command** for content-addressed deploys — distinct from the `owlette deploy` group (classic installer pushes).
 
+a deferred rollout comes back as `stage scheduled` and is fired by a sweep that runs every 5 minutes, which queues exactly the commands an immediate deploy would have. one more than 30 minutes past its instant is written off as missed (`stage aborted`) instead of firing late — re-run the deploy to retry. see [scheduled rollouts](/docs/api/versions#scheduled-rollouts).
+
 non-dry-run invocations auto-attach an `Idempotency-Key` header so a network blip or accidental retry returns the original rollout instead of starting a second one. dry-run does not mutate state and is not auto-keyed.
 
 ```bash
@@ -203,7 +205,7 @@ owlette roost deploy <roostId> --site <siteId> [flags]
 | `--version <versionId>` | string | no | version to deploy (default: the roost's `currentVersionId`) |
 | `--machines <ids>` | csv string | no | comma-separated machine ids; overrides `roost.targets` |
 | `--dry-run` | boolean | no | compute + print the rollout plan without writing |
-| `--at <iso8601>` | string | no | schedule the rollout for a future timestamp (parsed with `Date.parse`) |
+| `--at <iso8601>` | string | no | schedule the rollout for a future timestamp (parsed with `Date.parse`); the scheduler sweep fires it within 5 minutes of that instant |
 | `--idempotency-key <key>` | string | no | explicit `Idempotency-Key` header (auto-generated for non-dry-run if omitted) |
 
 ### examples

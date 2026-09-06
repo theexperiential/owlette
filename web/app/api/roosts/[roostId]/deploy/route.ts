@@ -5,7 +5,8 @@
  *   siteId: string,
  *   versionId?: string,          // default: current version
  *   machines?: string[],         // default: roost.targets
- *   scheduleAt?: string,         // iso8601 — stub (2026-04-23: not yet wired to a scheduler)
+ *   scheduleAt?: string,         // iso8601 — >60s out parks the rollout at stage
+ *                                // 'scheduled' for functions/src/rolloutScheduler.ts
  *   dryRun?: boolean,
  * }
  * output: {
@@ -23,6 +24,11 @@
  * 202 Accepted once queued. The optional `Idempotency-Key` header returns the
  * cached shape when a rollout for the same versionId exists — per-version
  * idempotency comes free from the rollout doc key.
+ *
+ * A `scheduled` rollout is stored with its canary/fleet split, versionUrl and
+ * extractRoot already resolved; `sweepScheduledRollouts`
+ * (functions/src/rolloutScheduler.ts) flips it to `canary` and queues the same
+ * `sync_pull` commands this route would have queued immediately.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -337,8 +343,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             ? {
                 scheduled: {
                   at: new Date(scheduleAtMs).toISOString(),
+                  // Kept as `warning` because shipped sdk/cli clients read that
+                  // key; the copy states the sweep's real timing guarantees.
                   warning:
-                    'scheduled rollouts are stored but will not auto-fire until the scheduler sweep ships (wave 4)',
+                    'the scheduler sweep fires this rollout within 5 minutes of the scheduled time; ' +
+                    'a rollout more than 30 minutes late is written off as missed rather than fired',
                 },
               }
             : {}),

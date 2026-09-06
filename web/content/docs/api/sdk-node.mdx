@@ -158,6 +158,12 @@ const deploy = await owlette.roosts.deploy('rst_abc', {
   scheduleAt: '2026-04-25T03:00:00Z',   // optional — iso-8601 utc or Date
   dryRun: false,
 });
+
+// a `scheduleAt` more than 60s out comes back as stage "scheduled" plus a
+// `scheduled` object; the server sweep fires it within 5 minutes of that
+// instant, or writes it off as missed if it is more than 30 minutes late.
+// see /docs/api/versions#scheduled-rollouts
+if (deploy.stage === 'scheduled') console.log(deploy.scheduled?.at);
 ```
 
 ### hoot

@@ -498,7 +498,7 @@ Request body fields:
 | `siteId` | yes | Site that owns the roost. |
 | `versionId` | no | Concrete version id. Defaults to current. |
 | `machines` | no | Non-empty machine id list. Defaults to the roost's `targets[]`. |
-| `scheduleAt` | no | ISO-8601 timestamp. Values more than 60 seconds in the future are stored as scheduled rollouts, but the scheduler does not auto-fire them yet; past or near-future values deploy immediately. |
+| `scheduleAt` | no | ISO-8601 timestamp. Values more than 60 seconds in the future park the rollout at `stage: "scheduled"` for the scheduler sweep; past or near-future values deploy immediately. |
 | `dryRun` | no | If `true`, returns the rollout shape without writing. |
 
 Normal response (`202 Accepted`):
@@ -522,6 +522,31 @@ returns the existing rollout fields plus `alreadyRunning: true`. A dry run
 returns the same planning fields with `dryRun: true` and does not write.
 
 Deploy does not implement a current-pointer compare-and-swap guard.
+
+### scheduled rollouts
+
+A `scheduleAt` more than 60 seconds in the future returns `202` with
+`stage: "scheduled"` and a `scheduled` object carrying the resolved instant. The
+rollout is stored with its canary/fleet split, `versionUrl`, and `extractRoot`
+already resolved. A scheduler sweep runs every 5 minutes, flips the due rollout
+to `stage: "canary"`, and queues the same `sync_pull` commands an immediate
+deploy queues — so a scheduled rollout fires within 5 minutes of its instant and
+then follows the ordinary canary → fleet → complete path.
+
+Two cases do not fire:
+
+- **Missed window.** A rollout more than 30 minutes past its instant is written
+  off instead of fired: it lands at `stage: "aborted"` with an `abortReason`
+  naming how late it was. A stalled sweep must not push an overnight rollout to
+  a whole fleet at midday. `aborted` is terminal, so deploying that version again
+  starts a fresh rollout.
+- **Kill switch.** While a site has roost disabled, its scheduled rollouts are
+  left untouched — neither fired nor written off — until the switch flips back.
+
+The rollout's target list is the one resolved when the deploy was accepted, not
+the roost's `targets[]` at fire time. A scheduled rollout is non-terminal, so a
+second deploy of the same version id answers `alreadyRunning: true` rather than
+re-scheduling it.
 
 ## error codes
 

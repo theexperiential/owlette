@@ -4,7 +4,9 @@ import { createMockRequest } from './helpers/utils';
 import {
   mocks,
   docSnapshot,
+  querySnapshot,
 } from './helpers/firestore-mock';
+import { verifySignature } from '@/lib/webhookSignature';
 
 const mockEmitMutation = jest.fn();
 
@@ -61,6 +63,10 @@ function mockPathDbFactory(): Record<string, unknown> {
       delete: mocks.batchDelete,
       commit: mocks.batchCommit,
     }),
+    // Order-preserving batched read, as `lib/roostWebhooks.server.ts` relies on
+    // when it zips per-subscription secrets against its candidate list.
+    getAll: (...refs: Array<{ get: () => Promise<unknown> }>) =>
+      Promise.all(refs.map((ref) => ref.get())),
   };
 }
 
@@ -211,6 +217,8 @@ beforeEach(() => {
   txState.versionDocs.clear();
   mocks.set.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue(undefined);
+  // no webhook subscriptions unless a test seeds some
+  mocks.collectionGet.mockResolvedValue(querySnapshot([]));
 });
 
 // POST /api/roosts/{id}/versions — monotonic versionNumber
@@ -712,6 +720,191 @@ describe('PATCH /versions/{ref} — description edit', () => {
     const res = await patch({ siteId: SITE, manifestId: 'old_name' });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('version_content_immutable');
+  });
+});
+
+// POST /versions — version.published webhook
+
+describe('POST /versions — version.published webhook', () => {
+  const SIGNING_SECRET = 'whsec_' + 'b'.repeat(48);
+
+  /** Delivery records written to `webhook_deliveries` by the emitter. */
+  function deliveryWrites(): Array<Record<string, unknown>> {
+    return mocks.set.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter(
+        (payload) =>
+          !!payload && typeof payload === 'object' && 'subscriptionId' in payload,
+      );
+  }
+
+  function seedSubscription(): void {
+    mocks.collectionGet.mockResolvedValue(
+      querySnapshot([
+        {
+          id: 'wh_alpha',
+          data: {
+            url: 'https://hooks.example.test/roost',
+            events: ['version.published'],
+            signingSecret: SIGNING_SECRET,
+            paused: false,
+          },
+        },
+      ]),
+    );
+  }
+
+  async function publish(
+    hash = CHUNK_HASH,
+    fields: Record<string, unknown> = {},
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const req = createMockRequest(`http://localhost/api/roosts/${ROOST}/versions`, {
+      method: 'POST',
+      body: { siteId: SITE, version: buildVersionEnvelope(hash), ...fields },
+    });
+    const res = await createPOST(req, { params: Promise.resolve({ roostId: ROOST }) });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  }
+
+  it('queues one signed delivery per subscribed webhook on a fresh publish', async () => {
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    seedSubscription();
+
+    const res = await publish(CHUNK_HASH, { description: 'fixed broken lobby video' });
+    nowSpy.mockRestore();
+    expect(res.status).toBe(201);
+
+    // Subscriptions are looked up on the site, filtered by event name.
+    expect(mocks.where).toHaveBeenCalledWith(
+      'events',
+      'array-contains',
+      'version.published',
+    );
+
+    const writes = deliveryWrites();
+    expect(writes).toHaveLength(1);
+    const record = writes[0]!;
+    expect(record).toMatchObject({
+      subscriptionId: 'wh_alpha',
+      siteId: SITE,
+      url: 'https://hooks.example.test/roost',
+      event: 'version.published',
+      attempt: 0,
+      state: 'pending',
+      nextAttemptAt: 1_700_000_000_000,
+      createdAt: 1_700_000_000_000,
+      secret: SIGNING_SECRET,
+    });
+
+    const headers = record.headers as Record<string, string>;
+    expect(record.id).toBe(`${headers['Roost-Delivery']}__wh_alpha`);
+    expect(headers['Roost-Event']).toBe('version.published');
+
+    // Envelope matches the documented event body (docs/api/webhooks.mdx) in the
+    // dispatcher's canonical key order.
+    const canonicalBody = record.canonicalBody as string;
+    expect(canonicalBody).toBe(
+      JSON.stringify({
+        data: {
+          createdBy: 'user-1',
+          description: 'fixed broken lobby video',
+          roostId: ROOST,
+          siteId: SITE,
+          totalFiles: 1,
+          totalSize: 4,
+          versionId: res.body.versionId,
+          versionNumber: 1,
+        },
+        event: 'version.published',
+        occurredAt: new Date(1_700_000_000_000).toISOString(),
+        siteId: SITE,
+      }),
+    );
+
+    // The signature a receiver would verify actually verifies.
+    expect(
+      verifySignature(canonicalBody, SIGNING_SECRET, headers['Roost-Signature'], {
+        nowMs: 1_700_000_000_000,
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('writes nothing when the site has no matching subscription', async () => {
+    const res = await publish();
+    expect(res.status).toBe(201);
+    expect(deliveryWrites()).toHaveLength(0);
+  });
+
+  it('does not emit when the finalize is rejected on a stale expected head', async () => {
+    seedSubscription();
+    txState.versionCounter = 3;
+    txState.currentVersionId = 'vrs_existing';
+
+    const res = await publish(CHUNK_HASH, { expectedCurrentVersionId: 'vrs_stale' });
+
+    expect(res.status).toBe(412);
+    expect(res.body.code).toBe('version_stale');
+    expect(deliveryWrites()).toHaveLength(0);
+  });
+
+  it('does not emit when the body fails validation', async () => {
+    seedSubscription();
+    const req = createMockRequest(`http://localhost/api/roosts/${ROOST}/versions`, {
+      method: 'POST',
+      body: { siteId: SITE, version: { schemaVersion: 1 } },
+    });
+    const res = await createPOST(req, { params: Promise.resolve({ roostId: ROOST }) });
+
+    expect(res.status).toBe(400);
+    expect(mockRunTransaction).not.toHaveBeenCalled();
+    expect(deliveryWrites()).toHaveLength(0);
+  });
+
+  it('does not emit for a no-op republish of the bytes already at head', async () => {
+    const first = await publish();
+    expect(first.status).toBe(201);
+
+    txState.versionCounter = 1;
+    txState.currentVersionId = String(first.body.versionId);
+    seedSubscription();
+    mocks.set.mockClear();
+
+    const second = await publish();
+
+    expect(second.status).toBe(200);
+    expect(deliveryWrites()).toHaveLength(0);
+  });
+
+  it('does not emit for a promote — the version was published earlier', async () => {
+    const v1 = await publish('a'.repeat(64));
+    txState.versionCounter = 1;
+    txState.currentVersionId = String(v1.body.versionId);
+
+    const v2 = await publish('b'.repeat(64));
+    txState.versionCounter = 2;
+    txState.previousVersionId = String(v1.body.versionId);
+    txState.currentVersionId = String(v2.body.versionId);
+
+    seedSubscription();
+    mocks.set.mockClear();
+
+    const promoted = await publish('a'.repeat(64));
+
+    expect(promoted.status).toBe(200);
+    expect(promoted.body.versionId).toBe(v1.body.versionId);
+    expect(deliveryWrites()).toHaveLength(0);
+  });
+
+  it('still returns 201 when the delivery store is unavailable', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.collectionGet.mockRejectedValue(new Error('firestore unavailable'));
+
+    const res = await publish();
+
+    expect(res.status).toBe(201);
+    expect(res.body.versionNumber).toBe(1);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('[roostWebhooks]'));
+    errSpy.mockRestore();
   });
 });
 
